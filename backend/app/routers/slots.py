@@ -1,5 +1,6 @@
 # backend/app/routers/slots.py
 
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,14 @@ def _ensure_event_owner_or_admin(event: models.Event, actor: models.User):
         raise HTTPException(status_code=403, detail="Not allowed to modify this event")
 
 
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Normalize datetimes so comparisons are safe across aware/naive values."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+@router.get("", response_model=List[schemas.SlotRead], include_in_schema=False)
 @router.get("/", response_model=List[schemas.SlotRead])
 def list_slots(
     event_id: Optional[str] = Query(None),
@@ -37,6 +46,7 @@ def get_slot(slot_id: str, db: Session = Depends(get_db)):
     return slot
 
 
+@router.post("", response_model=schemas.SlotRead, include_in_schema=False)
 @router.post("/", response_model=schemas.SlotRead)
 def create_slot(
     slot_in: schemas.SlotCreate,
@@ -51,16 +61,21 @@ def create_slot(
     # ✅ ownership check
     _ensure_event_owner_or_admin(event, actor)
 
-    if slot_in.end_time <= slot_in.start_time:
+    start_time = _to_naive_utc(slot_in.start_time)
+    end_time = _to_naive_utc(slot_in.end_time)
+    event_start = _to_naive_utc(event.start_date)
+    event_end = _to_naive_utc(event.end_date)
+
+    if end_time <= start_time:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
-    if slot_in.start_time < event.start_date or slot_in.end_time > event.end_date:
+    if start_time < event_start or end_time > event_end:
         raise HTTPException(status_code=400, detail="Slot times must be within event start_date and end_date")
 
     slot = models.Slot(
         event_id=event.id,
-        start_time=slot_in.start_time,
-        end_time=slot_in.end_time,
+        start_time=start_time,
+        end_time=end_time,
         capacity=slot_in.capacity,
     )
     db.add(slot)
@@ -88,13 +103,20 @@ def update_slot(
     _ensure_event_owner_or_admin(event, actor)
 
     data = slot_in.dict(exclude_unset=True)
+    if "start_time" in data and data["start_time"] is not None:
+        data["start_time"] = _to_naive_utc(data["start_time"])
+    if "end_time" in data and data["end_time"] is not None:
+        data["end_time"] = _to_naive_utc(data["end_time"])
+
     new_start = data.get("start_time", slot.start_time)
     new_end = data.get("end_time", slot.end_time)
+    event_start = _to_naive_utc(event.start_date)
+    event_end = _to_naive_utc(event.end_date)
 
     if new_end <= new_start:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
-    if new_start < event.start_date or new_end > event.end_date:
+    if new_start < event_start or new_end > event_end:
         raise HTTPException(status_code=400, detail="Slot times must be within event start_date and end_date")
 
     for field, value in data.items():
