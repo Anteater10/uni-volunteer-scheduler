@@ -2,14 +2,11 @@ import React, { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { formatApiDateTimeLocal, toEpochMs } from "../lib/datetime";
 import { useAuth } from "../state/authContext";
 
 function isPast(endTime) {
-  try {
-    return new Date(endTime).getTime() <= Date.now();
-  } catch {
-    return false;
-  }
+  return toEpochMs(endTime) <= Date.now();
 }
 
 export default function EventDetailPage() {
@@ -29,7 +26,7 @@ export default function EventDetailPage() {
 
   const sortedSlots = useMemo(() => {
     const slots = event?.slots || [];
-    return [...slots].sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+    return [...slots].sort((a, b) => toEpochMs(a.start_time) - toEpochMs(b.start_time));
   }, [event]);
 
   async function signup(slotId) {
@@ -55,7 +52,7 @@ export default function EventDetailPage() {
       <div>
         <h2 style={{ marginBottom: 4 }}>{event.title}</h2>
         <div style={{ opacity: 0.8 }}>
-          {event.location || "TBD"} • {new Date(event.start_date).toLocaleString()} → {new Date(event.end_date).toLocaleString()}
+          {event.location || "TBD"} • {formatApiDateTimeLocal(event.start_date)} → {formatApiDateTimeLocal(event.end_date)}
         </div>
       </div>
 
@@ -78,7 +75,7 @@ export default function EventDetailPage() {
               return (
                 <div key={s.id} style={{ padding: 12, border: "1px solid #3333", borderRadius: 8 }}>
                   <div style={{ fontWeight: 600 }}>
-                    {new Date(s.start_time).toLocaleString()} → {new Date(s.end_time).toLocaleString()}
+                    {formatApiDateTimeLocal(s.start_time)} → {formatApiDateTimeLocal(s.end_time)}
                   </div>
                   <div style={{ opacity: 0.8, fontSize: 13 }}>
                     Capacity: {s.current_count}/{s.capacity} {full ? "(Full → waitlist if you signup)" : ""}

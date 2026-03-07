@@ -2,8 +2,8 @@ from datetime import datetime
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session, aliased
 
 from .. import models, schemas
 from ..celery_app import send_email_notification
@@ -183,12 +183,58 @@ def my_signups(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    return (
-        db.query(models.Signup)
+    waitlist_signup = aliased(models.Signup)
+    waitlist_position = (
+        db.query(func.count(waitlist_signup.id))
+        .filter(
+            waitlist_signup.slot_id == models.Signup.slot_id,
+            waitlist_signup.status == models.SignupStatus.waitlisted,
+            or_(
+                waitlist_signup.timestamp < models.Signup.timestamp,
+                and_(
+                    waitlist_signup.timestamp == models.Signup.timestamp,
+                    waitlist_signup.id <= models.Signup.id,
+                ),
+            ),
+        )
+        .correlate(models.Signup)
+        .scalar_subquery()
+    )
+
+    rows = (
+        db.query(
+            models.Signup,
+            models.Event.title.label("event_title"),
+            models.Event.location.label("event_location"),
+            models.Slot.start_time.label("slot_start_time"),
+            models.Slot.end_time.label("slot_end_time"),
+            waitlist_position.label("waitlist_position"),
+        )
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
         .filter(models.Signup.user_id == current_user.id)
         .order_by(models.Signup.timestamp.desc())
         .all()
     )
+
+    enriched = []
+    for signup, event_title, event_location, slot_start_time, slot_end_time, row_waitlist_position in rows:
+        payload = schemas.SignupRead.model_validate(signup).model_dump()
+        payload.update(
+            {
+                "event_title": event_title,
+                "event_location": event_location,
+                "slot_start_time": slot_start_time,
+                "slot_end_time": slot_end_time,
+                "timezone_label": slot_start_time.tzname() if slot_start_time and slot_start_time.tzinfo else "UTC",
+                "waitlist_position": row_waitlist_position
+                if signup.status == models.SignupStatus.waitlisted
+                else None,
+            }
+        )
+        enriched.append(schemas.SignupRead(**payload))
+
+    return enriched
 
 
 @router.get("/my/upcoming", response_model=List[schemas.SignupRead])

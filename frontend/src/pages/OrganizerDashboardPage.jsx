@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../lib/api";
+import { toEpochMs } from "../lib/datetime";
 
 function fromDateTimeLocalToIso(value) {
   if (!value) return null;
@@ -50,7 +51,7 @@ export default function OrganizerDashboardPage() {
     if (!me) return [];
     return (events || [])
       .filter((e) => String(e.owner_id) === String(me.id))
-      .sort((a, b) => new Date(b.created_at || b.start_date) - new Date(a.created_at || a.start_date));
+      .sort((a, b) => toEpochMs(b.created_at || b.start_date) - toEpochMs(a.created_at || a.start_date));
   }, [events, me]);
 
   async function createEvent(e) {
