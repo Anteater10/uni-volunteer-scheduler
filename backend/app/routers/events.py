@@ -1,5 +1,5 @@
 # backend/app/routers/events.py
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +12,13 @@ from ..deps import require_role, log_action
 router = APIRouter(prefix="/events", tags=["events"])
 
 
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Normalize datetimes so comparisons are safe across aware/naive values."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _ensure_event_owner_or_admin(
     event: models.Event,
     current_user: models.User,
@@ -21,6 +28,8 @@ def _ensure_event_owner_or_admin(
 
 
 def _validate_event_dates(start_date: datetime, end_date: datetime):
+    start_date = _to_naive_utc(start_date)
+    end_date = _to_naive_utc(end_date)
     if end_date <= start_date:
         raise HTTPException(status_code=400, detail="end_date must be after start_date")
 
@@ -30,12 +39,17 @@ def _validate_slot_range_within_event(
     start_time: datetime,
     end_time: datetime,
 ):
+    start_time = _to_naive_utc(start_time)
+    end_time = _to_naive_utc(end_time)
+    event_start = _to_naive_utc(event.start_date)
+    event_end = _to_naive_utc(event.end_date)
+
     if end_time <= start_time:
         raise HTTPException(
             status_code=400,
             detail="slot end_time must be after start_time",
         )
-    if start_time < event.start_date or end_time > event.end_date:
+    if start_time < event_start or end_time > event_end:
         raise HTTPException(
             status_code=400,
             detail="Slot times must be within the event start_date and end_date",
@@ -52,6 +66,11 @@ def create_event(
 ):
     _validate_event_dates(event_in.start_date, event_in.end_date)
 
+    start_date = _to_naive_utc(event_in.start_date)
+    end_date = _to_naive_utc(event_in.end_date)
+    signup_open_at = _to_naive_utc(event_in.signup_open_at) if event_in.signup_open_at else None
+    signup_close_at = _to_naive_utc(event_in.signup_close_at) if event_in.signup_close_at else None
+
     event = models.Event(
         owner_id=current_user.id,
         title=event_in.title,
@@ -59,11 +78,11 @@ def create_event(
         location=event_in.location,
         visibility=event_in.visibility,
         branding_id=event_in.branding_id,
-        start_date=event_in.start_date,
-        end_date=event_in.end_date,
+        start_date=start_date,
+        end_date=end_date,
         max_signups_per_user=event_in.max_signups_per_user,
-        signup_open_at=event_in.signup_open_at,
-        signup_close_at=event_in.signup_close_at,
+        signup_open_at=signup_open_at,
+        signup_close_at=signup_close_at,
     )
     db.add(event)
     db.flush()
@@ -99,6 +118,7 @@ def get_event(event_id: str, db: Session = Depends(get_db)):
     return event
 
 
+@router.patch("/{event_id}", response_model=schemas.EventRead, include_in_schema=False)
 @router.put("/{event_id}", response_model=schemas.EventRead)
 def update_event(
     event_id: str,
@@ -115,6 +135,10 @@ def update_event(
     _ensure_event_owner_or_admin(event, current_user)
 
     data = event_in.dict(exclude_unset=True)
+    for key in ("start_date", "end_date", "signup_open_at", "signup_close_at"):
+        if key in data and data[key] is not None:
+            data[key] = _to_naive_utc(data[key])
+
     # If dates are being updated, validate them
     new_start = data.get("start_date", event.start_date)
     new_end = data.get("end_date", event.end_date)
@@ -170,7 +194,12 @@ def generate_slots(
 
     _ensure_event_owner_or_admin(event, current_user)
 
-    if recurrence.end_time <= recurrence.start_time:
+    start_time = _to_naive_utc(recurrence.start_time)
+    end_time = _to_naive_utc(recurrence.end_time)
+    event_start = _to_naive_utc(event.start_date)
+    event_end = _to_naive_utc(event.end_date)
+
+    if end_time <= start_time:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
 
     if recurrence.capacity <= 0:
@@ -179,7 +208,7 @@ def generate_slots(
     if recurrence.count <= 0:
         raise HTTPException(status_code=400, detail="count must be positive")
 
-    if recurrence.start_time < event.start_date:
+    if start_time < event_start:
         raise HTTPException(
             status_code=400,
             detail="Recurrence start_time must be on or after event.start_date",
@@ -191,16 +220,16 @@ def generate_slots(
         step = timedelta(weeks=1)
 
     # Ensure the final generated slot does not exceed event.end_date
-    last_end = recurrence.end_time + step * (recurrence.count - 1)
-    if last_end > event.end_date:
+    last_end = end_time + step * (recurrence.count - 1)
+    if last_end > event_end:
         raise HTTPException(
             status_code=400,
             detail="Generated slots would extend beyond event end_date",
         )
 
     created_slots: List[models.Slot] = []
-    start = recurrence.start_time
-    end = recurrence.end_time
+    start = start_time
+    end = end_time
 
     for _ in range(recurrence.count):
         _validate_slot_range_within_event(event, start, end)
