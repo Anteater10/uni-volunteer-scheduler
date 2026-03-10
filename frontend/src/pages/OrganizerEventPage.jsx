@@ -2,10 +2,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api from "../lib/api";
+import { parseApiDate, toEpochMs } from "../lib/datetime";
 
 function toDateTimeLocalValue(iso) {
   if (!iso) return "";
-  const d = new Date(iso);
+  const d = parseApiDate(iso);
+  if (!d || Number.isNaN(d.getTime())) return "";
   const pad = (n) => String(n).padStart(2, "0");
   const yyyy = d.getFullYear();
   const mm = pad(d.getMonth() + 1);
@@ -71,7 +73,7 @@ export default function OrganizerEventPage() {
 
   const attachedSlotsSorted = useMemo(() => {
     const copy = [...(slots || [])];
-    copy.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+    copy.sort((a, b) => toEpochMs(a.start_time) - toEpochMs(b.start_time));
     return copy;
   }, [slots]);
 

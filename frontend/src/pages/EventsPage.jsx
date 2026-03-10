@@ -2,6 +2,7 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { formatApiDateTimeLocal } from "../lib/datetime";
 
 export default function EventsPage() {
   const { data, isLoading, error } = useQuery({
@@ -27,7 +28,7 @@ export default function EventsPage() {
                 {e.title}
               </Link>
               <div style={{ opacity: 0.8, fontSize: 13 }}>
-                {e.location || "TBD"} • {new Date(e.start_date).toLocaleString()} → {new Date(e.end_date).toLocaleString()}
+                {e.location || "TBD"} • {formatApiDateTimeLocal(e.start_date)} → {formatApiDateTimeLocal(e.end_date)}
               </div>
             </li>
           ))}
