@@ -181,12 +181,12 @@ async function cloneEvent(eventId) {
 // --------------------
 async function listSlots(params) {
   // commonly: { event_id }
-  return request("/slots", { method: "GET", auth: false, params });
+  return request("/slots/", { method: "GET", auth: false, params });
 }
 
 // IMPORTANT: your backend likely uses POST /slots?event_id=...
 async function createSlot(eventId, payload) {
-  return request("/slots", { method: "POST", params: { event_id: eventId }, body: payload });
+  return request("/slots/", { method: "POST", params: { event_id: eventId }, body: payload });
 }
 
 async function updateSlot(slotId, payload) {
