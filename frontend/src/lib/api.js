@@ -299,6 +299,25 @@ async function adminAuditLogs(params) {
   return request("/admin/audit_logs", { method: "GET", params });
 }
 
+async function adminCancelSignup(signupId) {
+  return request(`/admin/signups/${signupId}/cancel`, { method: "POST" });
+}
+
+async function adminPromoteSignup(signupId) {
+  return request(`/admin/signups/${signupId}/promote`, { method: "POST" });
+}
+
+async function adminMoveSignup(signupId, targetSlotId) {
+  return request(`/admin/signups/${signupId}/move`, {
+    method: "POST",
+    body: { target_slot_id: targetSlotId },
+  });
+}
+
+async function adminResendSignup(signupId) {
+  return request(`/admin/signups/${signupId}/resend`, { method: "POST" });
+}
+
 // Bundle API in BOTH flat + nested shapes so all your pages work
 export const api = {
   // auth
@@ -388,6 +407,12 @@ export const api = {
       request(`/admin/events/${eventId}/roster`, { method: "GET", params: { privacy } }),
     notify: (eventId, payload) =>
       request(`/admin/events/${eventId}/notify`, { method: "POST", body: payload }),
+    signups: {
+      cancel: (id) => adminCancelSignup(id),
+      promote: (id) => adminPromoteSignup(id),
+      move: (id, targetSlotId) => adminMoveSignup(id, targetSlotId),
+      resend: (id) => adminResendSignup(id),
+    },
   },
 };
 
