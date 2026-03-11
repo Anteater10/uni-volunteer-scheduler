@@ -14,13 +14,40 @@ export default function AuditLogsPage() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [query, setQuery] = useState("");
+  const [filters, setFilters] = useState({
+    q: "",
+    action: "",
+    entity_type: "",
+    entity_id: "",
+    actor_id: "",
+    start: "",
+    end: "",
+    limit: "200",
+  });
 
-  async function load() {
+  async function load(paramsOverride) {
     setErr("");
     setLoading(true);
     try {
-      const data = await api.adminAuditLogs();
+      const params = paramsOverride || filters;
+      const payload = {
+        q: params.q || undefined,
+        action: params.action || undefined,
+        entity_type: params.entity_type || undefined,
+        entity_id: params.entity_id || undefined,
+        actor_id: params.actor_id || undefined,
+        limit: params.limit ? Number(params.limit) : undefined,
+      };
+      if (params.start) {
+        const d = new Date(params.start);
+        if (!Number.isNaN(d.valueOf())) payload.start = d.toISOString();
+      }
+      if (params.end) {
+        const d = new Date(params.end);
+        if (!Number.isNaN(d.valueOf())) payload.end = d.toISOString();
+      }
+
+      const data = await api.adminAuditLogs(payload);
       setLogs(data || []);
     } catch (e) {
       setErr(e?.message || "Failed to load audit logs");
@@ -32,21 +59,6 @@ export default function AuditLogsPage() {
   useEffect(() => {
     load();
   }, []);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return logs;
-    return logs.filter((l) => {
-      const extra = l.extra ? JSON.stringify(l.extra) : "";
-      return (
-        (l.action || "").toLowerCase().includes(q) ||
-        (l.entity_type || "").toLowerCase().includes(q) ||
-        (l.entity_id || "").toLowerCase().includes(q) ||
-        (l.actor_id || "").toLowerCase().includes(q) ||
-        extra.toLowerCase().includes(q)
-      );
-    });
-  }, [logs, query]);
 
   return (
     <div style={{ padding: 16, maxWidth: 1200, margin: "0 auto" }}>
@@ -70,17 +82,72 @@ export default function AuditLogsPage() {
         </div>
       ) : null}
 
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          load();
+        }}
+        style={{
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          marginBottom: 12,
+        }}
+      >
         <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search action/entity/actor/extra..."
-          style={{ maxWidth: 420, width: "100%" }}
+          value={filters.q}
+          onChange={(e) => setFilters((p) => ({ ...p, q: e.target.value }))}
+          placeholder="Search text…"
         />
-        <button onClick={load} disabled={loading}>
-          Refresh
-        </button>
-      </div>
+        <input
+          value={filters.action}
+          onChange={(e) => setFilters((p) => ({ ...p, action: e.target.value }))}
+          placeholder="Action"
+        />
+        <input
+          value={filters.entity_type}
+          onChange={(e) => setFilters((p) => ({ ...p, entity_type: e.target.value }))}
+          placeholder="Entity type"
+        />
+        <input
+          value={filters.entity_id}
+          onChange={(e) => setFilters((p) => ({ ...p, entity_id: e.target.value }))}
+          placeholder="Entity ID"
+        />
+        <input
+          value={filters.actor_id}
+          onChange={(e) => setFilters((p) => ({ ...p, actor_id: e.target.value }))}
+          placeholder="Actor ID"
+        />
+        <input
+          type="datetime-local"
+          value={filters.start}
+          onChange={(e) => setFilters((p) => ({ ...p, start: e.target.value }))}
+          placeholder="Start time"
+        />
+        <input
+          type="datetime-local"
+          value={filters.end}
+          onChange={(e) => setFilters((p) => ({ ...p, end: e.target.value }))}
+          placeholder="End time"
+        />
+        <input
+          type="number"
+          min="1"
+          max="2000"
+          value={filters.limit}
+          onChange={(e) => setFilters((p) => ({ ...p, limit: e.target.value }))}
+          placeholder="Limit"
+        />
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button type="submit" disabled={loading}>
+            Apply
+          </button>
+          <button type="button" onClick={() => load()} disabled={loading}>
+            Refresh
+          </button>
+        </div>
+      </form>
 
       {loading ? (
         <div>Loading audit logs…</div>
@@ -98,7 +165,7 @@ export default function AuditLogsPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((l) => (
+              {logs.map((l) => (
                 <tr key={l.id}>
                   <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)", whiteSpace: "nowrap" }}>
                     {formatTs(l.timestamp)}
@@ -130,10 +197,10 @@ export default function AuditLogsPage() {
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 ? (
+              {logs.length === 0 ? (
                 <tr>
                   <td colSpan={6} style={{ padding: 12, opacity: 0.8 }}>
-                    No audit logs match this search.
+                    No audit logs match these filters.
                   </td>
                 </tr>
               ) : null}

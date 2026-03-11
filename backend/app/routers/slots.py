@@ -145,6 +145,17 @@ def delete_slot(
     # ✅ ownership check
     _ensure_event_owner_or_admin(event, actor)
 
+    existing_signups = (
+        db.query(models.Signup)
+        .filter(models.Signup.slot_id == slot.id)
+        .count()
+    )
+    if existing_signups > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete a slot with existing signups. Cancel or move signups first.",
+        )
+
     db.delete(slot)
     db.commit()
 

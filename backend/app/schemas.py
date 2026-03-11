@@ -231,6 +231,10 @@ class SignupRead(ORMBase):
     waitlist_position: Optional[int] = None
 
 
+class SignupMoveRequest(BaseModel):
+    target_slot_id: UUID
+
+
 # =========================
 # NOTIFICATION SCHEMAS
 # =========================
