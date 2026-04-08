@@ -1,5 +1,5 @@
 # backend/app/deps.py
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import uuid
 
@@ -88,7 +88,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(
+    expire = datetime.now(timezone.utc) + timedelta(
         minutes=expires_minutes or settings.access_token_expires_minutes
     )
     to_encode.update({"exp": expire})
@@ -157,35 +157,42 @@ def create_refresh_token(db: Session, user: models.User) -> str:
     """
     Create a refresh token row, but do NOT commit here.
     Caller controls transaction boundaries.
+    Stores a SHA-256 hex digest in token_hash; returns the raw token to the caller.
     """
-    token = str(uuid.uuid4())
-    expires = datetime.utcnow() + timedelta(days=settings.refresh_token_expires_days)
+    import hashlib
+    raw_token = str(uuid.uuid4())
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expires_days)
     rt = models.RefreshToken(
         user_id=user.id,
-        token=token,
+        token_hash=token_hash,
         expires_at=expires,
     )
     db.add(rt)
     db.flush()
-    return token
+    return raw_token
 
 
 def revoke_refresh_token(db: Session, token: str) -> None:
     """
     Mark a token revoked, but do NOT commit here.
     """
-    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token == token).first()
+    import hashlib
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == token_hash).first()
     if rt and rt.revoked_at is None:
-        rt.revoked_at = datetime.utcnow()
+        rt.revoked_at = datetime.now(timezone.utc)
         db.add(rt)
 
 
 def verify_refresh_token(db: Session, token: str) -> models.User:
-    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token == token).first()
+    import hashlib
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == token_hash).first()
     if (
         rt is None
         or rt.revoked_at is not None
-        or rt.expires_at < datetime.utcnow()
+        or rt.expires_at < datetime.now(timezone.utc)
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

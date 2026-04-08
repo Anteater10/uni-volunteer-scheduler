@@ -1,6 +1,6 @@
 # backend/app/celery_app.py
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from celery import Celery
 from celery.schedules import crontab
@@ -35,7 +35,7 @@ def _send_email_via_sendgrid(to_email: str, subject: str, body: str) -> None:
         sg = SendGridAPIClient(settings.sendgrid_api_key)
         sg.send(message)
     except Exception:
-        # In a real system you’d log this somewhere (Sentry, log file, etc.)
+        # In a real system you'd log this somewhere (Sentry, log file, etc.)
         pass
 
 
@@ -59,7 +59,7 @@ def send_email_notification(user_id: str, subject: str, body: str) -> None:
             subject=subject,
             body=body,
             delivery_method="email",
-            delivered_at=datetime.utcnow(),
+            delivered_at=datetime.now(timezone.utc),
         )
         db.add(notif)
         db.commit()
@@ -72,18 +72,20 @@ def schedule_reminders() -> None:
     """Periodic task: send 24h/2h reminders for upcoming confirmed signups."""
     db: Session = SessionLocal()
     try:
-        now = datetime.utcnow()
-        in_24h = now + timedelta(hours=24)
-        in_2h = now + timedelta(hours=2)
+        now = datetime.now(timezone.utc)
+        window_start_24h = now + timedelta(hours=24)
+        window_end_24h = window_start_24h + timedelta(minutes=5)
+        window_start_2h = now + timedelta(hours=2)
+        window_end_2h = window_start_2h + timedelta(minutes=5)
 
         slots_24h = (
             db.query(models.Slot)
-            .filter(models.Slot.start_time.between(in_24h, in_24h + timedelta(minutes=5)))
+            .filter(models.Slot.start_time.between(window_start_24h, window_end_24h))
             .all()
         )
         slots_2h = (
             db.query(models.Slot)
-            .filter(models.Slot.start_time.between(in_2h, in_2h + timedelta(minutes=5)))
+            .filter(models.Slot.start_time.between(window_start_2h, window_end_2h))
             .all()
         )
 
@@ -109,7 +111,7 @@ def weekly_digest() -> None:
     """Weekly digest: upcoming confirmed slots for each user in the next 7 days."""
     db: Session = SessionLocal()
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         in_7d = now + timedelta(days=7)
 
         signups = (

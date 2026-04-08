@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/signups", tags=["signups"])
 
 
 def _ensure_signup_window(event: models.Event) -> None:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if event.signup_open_at and now < event.signup_open_at:
         raise HTTPException(status_code=400, detail="Signup has not opened yet")
     if event.signup_close_at and now > event.signup_close_at:
@@ -67,7 +67,7 @@ def create_signup(
         slot.current_count = actual_confirmed
 
     # Check time: no signups for past or finished slots
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if slot.end_time <= now:
         raise HTTPException(status_code=400, detail="Cannot sign up for past slots")
 
@@ -242,7 +242,7 @@ def my_upcoming_signups(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     return (
         db.query(models.Signup)
         .join(models.Slot, models.Slot.id == models.Signup.slot_id)
@@ -406,7 +406,7 @@ def signup_ics(
     def fmt(dt: datetime) -> str:
         return dt.strftime("%Y%m%dT%H%M%SZ")
 
-    dtstamp = fmt(datetime.utcnow())
+    dtstamp = fmt(datetime.now(timezone.utc))
     dtstart = fmt(slot.start_time)
     dtend = fmt(slot.end_time)
 

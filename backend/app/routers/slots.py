@@ -19,11 +19,11 @@ def _ensure_event_owner_or_admin(event: models.Event, actor: models.User):
         raise HTTPException(status_code=403, detail="Not allowed to modify this event")
 
 
-def _to_naive_utc(dt: datetime) -> datetime:
-    """Normalize datetimes so comparisons are safe across aware/naive values."""
+def _normalize_dt(dt: datetime) -> datetime:
+    """Return an aware datetime in UTC. Naive datetimes are assumed to be UTC."""
     if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 @router.get("", response_model=List[schemas.SlotRead], include_in_schema=False)
@@ -61,10 +61,10 @@ def create_slot(
     # ✅ ownership check
     _ensure_event_owner_or_admin(event, actor)
 
-    start_time = _to_naive_utc(slot_in.start_time)
-    end_time = _to_naive_utc(slot_in.end_time)
-    event_start = _to_naive_utc(event.start_date)
-    event_end = _to_naive_utc(event.end_date)
+    start_time = _normalize_dt(slot_in.start_time)
+    end_time = _normalize_dt(slot_in.end_time)
+    event_start = _normalize_dt(event.start_date)
+    event_end = _normalize_dt(event.end_date)
 
     if end_time <= start_time:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
@@ -104,14 +104,14 @@ def update_slot(
 
     data = slot_in.dict(exclude_unset=True)
     if "start_time" in data and data["start_time"] is not None:
-        data["start_time"] = _to_naive_utc(data["start_time"])
+        data["start_time"] = _normalize_dt(data["start_time"])
     if "end_time" in data and data["end_time"] is not None:
-        data["end_time"] = _to_naive_utc(data["end_time"])
+        data["end_time"] = _normalize_dt(data["end_time"])
 
     new_start = data.get("start_time", slot.start_time)
     new_end = data.get("end_time", slot.end_time)
-    event_start = _to_naive_utc(event.start_date)
-    event_end = _to_naive_utc(event.end_date)
+    event_start = _normalize_dt(event.start_date)
+    event_end = _normalize_dt(event.end_date)
 
     if new_end <= new_start:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
