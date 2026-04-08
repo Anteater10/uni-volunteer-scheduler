@@ -157,7 +157,8 @@ def create_refresh_token(db: Session, user: models.User) -> str:
     Stores a SHA-256 hex digest in token_hash; returns the raw token to the caller.
     """
     import hashlib
-    raw_token = str(uuid.uuid4())
+    import secrets
+    raw_token = secrets.token_urlsafe(48)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     expires = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expires_days)
     rt = models.RefreshToken(
