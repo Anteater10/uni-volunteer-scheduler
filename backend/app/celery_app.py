@@ -53,14 +53,58 @@ def _send_email_via_sendgrid(to_email: str, subject: str, body: str) -> None:
         pass
 
 
-@celery.task
-def send_email_notification(user_id: str, subject: str, body: str) -> None:
-    """Core task: send an email + log to Notification table."""
+@celery.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+)
+def send_email_notification(
+    self,
+    user_id: str | None = None,
+    subject: str | None = None,
+    body: str | None = None,
+    *,
+    signup_id: str | None = None,
+    kind: str | None = None,
+) -> None:
+    """Core task: send an email + log to Notification table.
+
+    Call patterns:
+      - Transactional (signups router, weekly digest):
+          send_email_notification.delay(user_id, subject, body)
+      - Reminder (schedule_reminders):
+          send_email_notification.delay(signup_id=signup.id, kind="reminder_24h")
+
+    The scheduler owns the reminder_sent flag; this task only sends + logs.
+    """
     db: Session = SessionLocal()
     try:
-        user = db.query(models.User).filter(models.User.id == user_id).first()
-        if not user:
-            return
+        # Resolve user + content from signup_id when kind is provided
+        if kind == "reminder_24h" and signup_id is not None:
+            signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
+            if not signup:
+                return
+            slot = signup.slot
+            event = slot.event
+            user = signup.user
+            subject = f"Reminder: volunteer slot for '{event.title}'"
+            body = (
+                f"Hi {user.name},\n\n"
+                f"This is a reminder for your volunteer slot:\n"
+                f"- Event: {event.title}\n"
+                f"- When: {slot.start_time} to {slot.end_time}\n"
+                f"- Where: {event.location or 'TBD'}\n\n"
+                "Thank you for volunteering!"
+            )
+        else:
+            if user_id is None:
+                return
+            user = db.query(models.User).filter(models.User.id == user_id).first()
+            if not user:
+                return
 
         # 1) Send real email (if configured)
         if user.notify_email:
@@ -81,41 +125,49 @@ def send_email_notification(user_id: str, subject: str, body: str) -> None:
         db.close()
 
 
-@celery.task
-def schedule_reminders() -> None:
-    """Periodic task: send 24h/2h reminders for upcoming confirmed signups."""
+@celery.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+)
+def schedule_reminders(self) -> None:
+    """Periodic task: send 24h reminders for upcoming confirmed signups.
+
+    Idempotency contract: Running this task twice against the same signup
+    produces at most one reminder email thanks to the ``reminder_sent`` flag
+    and SELECT FOR UPDATE SKIP LOCKED.  First-write-wins: whichever beat
+    process claims a row and commits ``reminder_sent=True`` first wins; the
+    second sees the flag already set and skips the row.
+    """
     db: Session = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
-        window_start_24h = now + timedelta(hours=24)
-        window_end_24h = window_start_24h + timedelta(minutes=5)
-        window_start_2h = now + timedelta(hours=2)
-        window_end_2h = window_start_2h + timedelta(minutes=5)
+        window_start = now + timedelta(hours=24)
+        window_end = window_start + timedelta(minutes=5)
 
-        slots_24h = (
-            db.query(models.Slot)
-            .filter(models.Slot.start_time.between(window_start_24h, window_end_24h))
+        # SELECT FOR UPDATE SKIP LOCKED ensures at most one beat worker
+        # claims each signup under concurrent beat processes (T-00-16).
+        signups = (
+            db.query(models.Signup)
+            .join(models.Slot)
+            .filter(
+                models.Signup.status == models.SignupStatus.confirmed,
+                models.Signup.reminder_sent == False,  # noqa: E712
+                models.Slot.start_time.between(window_start, window_end),
+            )
+            .with_for_update(skip_locked=True)
             .all()
         )
-        slots_2h = (
-            db.query(models.Slot)
-            .filter(models.Slot.start_time.between(window_start_2h, window_end_2h))
-            .all()
-        )
 
-        for slot in slots_24h + slots_2h:
-            for signup in slot.signups:
-                if signup.status == models.SignupStatus.confirmed:
-                    subject = f"Reminder: volunteer slot for '{slot.event.title}'"
-                    body = (
-                        f"Hi {signup.user.name},\n\n"
-                        f"This is a reminder for your volunteer slot:\n"
-                        f"- Event: {slot.event.title}\n"
-                        f"- When: {slot.start_time} to {slot.end_time}\n"
-                        f"- Where: {slot.event.location or 'TBD'}\n\n"
-                        "Thank you for volunteering!"
-                    )
-                    send_email_notification.delay(str(signup.user_id), subject, body)
+        for s in signups:
+            send_email_notification.delay(signup_id=str(s.id), kind="reminder_24h")
+            s.reminder_sent = True
+
+        # Commit flag updates before returning so a second run sees reminder_sent=True.
+        db.commit()
     finally:
         db.close()
 
