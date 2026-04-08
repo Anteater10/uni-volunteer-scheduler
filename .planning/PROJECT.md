@@ -46,6 +46,7 @@ Everything else (CSV import, notifications, admin polish) serves that loop.
 - [ ] E2E flows: organizer login → dashboard → roster
 - [ ] E2E flows: admin login → CRUD users/portals/events
 - [ ] Playwright E2E suite in CI covering each critical flow
+- [ ] **Volunteer cancel/withdraw flow** (surfaced by research — missing from IDEAS.md; table stakes)
 
 **Phase 1 — Mobile-first frontend pass**
 - [ ] Tailwind migration (decided: yes, early)
