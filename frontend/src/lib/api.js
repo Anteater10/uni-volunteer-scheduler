@@ -165,7 +165,7 @@ async function createEvent(payload) {
 }
 
 async function updateEvent(eventId, payload) {
-  return request(`/events/${eventId}`, { method: "PATCH", body: payload });
+  return request(`/events/${eventId}`, { method: "PUT", body: payload });
 }
 
 async function deleteEvent(eventId) {
@@ -206,7 +206,7 @@ async function generateSlots(eventId, payload) {
 // SIGNUPS
 // --------------------
 async function createSignup(payload) {
-  return request("/signups", { method: "POST", body: payload });
+  return request("/signups/", { method: "POST", body: payload });
 }
 
 // Backend uses POST cancel (not DELETE) in your FastAPI design
@@ -218,6 +218,9 @@ async function listMySignups(params) {
   return request("/signups/my", { method: "GET", params });
 }
 
+// TODO(phase0): no backend endpoint at /events/{id}/signups — tracked in API-AUDIT.md.
+// Admin/organizer callers should use api.admin.eventRoster(eventId) instead.
+// A public endpoint will be added in Plan 05 or 06.
 async function listEventSignups(eventId) {
   return request(`/events/${eventId}/signups`, { method: "GET" });
 }
@@ -234,11 +237,11 @@ async function createEventQuestion(eventId, payload) {
 }
 
 async function updateEventQuestion(questionId, payload) {
-  return request(`/event-questions/${questionId}`, { method: "PATCH", body: payload });
+  return request(`/events/questions/${questionId}`, { method: "PUT", body: payload });
 }
 
 async function deleteEventQuestion(questionId) {
-  return request(`/event-questions/${questionId}`, { method: "DELETE" });
+  return request(`/events/questions/${questionId}`, { method: "DELETE" });
 }
 
 // --------------------
