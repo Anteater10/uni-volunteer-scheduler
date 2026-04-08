@@ -1,9 +1,9 @@
 # backend/app/schemas.py
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Literal, Dict, Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 
 from .models import UserRole, SignupStatus, NotificationType, PrivacyMode
 
@@ -13,6 +13,12 @@ from .models import UserRole, SignupStatus, NotificationType, PrivacyMode
 # -------------------------
 class ORMBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+def _to_utc_naive(dt: datetime | None) -> datetime | None:
+    if dt is None or dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 # =========================
@@ -72,6 +78,11 @@ class SlotBase(BaseModel):
     end_time: datetime
     capacity: int
 
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalize_slot_datetimes(cls, value: datetime) -> datetime:
+        return _to_utc_naive(value)
+
 
 class SlotCreate(SlotBase):
     pass
@@ -87,6 +98,11 @@ class SlotUpdate(BaseModel):
     end_time: Optional[datetime] = None
     capacity: Optional[int] = None
 
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalize_slot_update_datetimes(cls, value: datetime | None) -> datetime | None:
+        return _to_utc_naive(value)
+
 
 class SlotRecurrenceCreate(BaseModel):
     start_time: datetime
@@ -94,6 +110,11 @@ class SlotRecurrenceCreate(BaseModel):
     capacity: int
     frequency: Literal["daily", "weekly"]
     count: int
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalize_recurrence_datetimes(cls, value: datetime) -> datetime:
+        return _to_utc_naive(value)
 
 
 # =========================
@@ -110,6 +131,11 @@ class EventBase(BaseModel):
     max_signups_per_user: Optional[int] = None
     signup_open_at: Optional[datetime] = None
     signup_close_at: Optional[datetime] = None
+
+    @field_validator("start_date", "end_date", "signup_open_at", "signup_close_at")
+    @classmethod
+    def normalize_event_datetimes(cls, value: datetime | None) -> datetime | None:
+        return _to_utc_naive(value)
 
 
 class EventCreate(EventBase):
@@ -133,6 +159,11 @@ class EventUpdate(BaseModel):
     max_signups_per_user: Optional[int] = None
     signup_open_at: Optional[datetime] = None
     signup_close_at: Optional[datetime] = None
+
+    @field_validator("start_date", "end_date", "signup_open_at", "signup_close_at")
+    @classmethod
+    def normalize_event_update_datetimes(cls, value: datetime | None) -> datetime | None:
+        return _to_utc_naive(value)
 
 
 # =========================
@@ -192,6 +223,16 @@ class SignupRead(ORMBase):
     status: SignupStatus
     timestamp: datetime
     answers: List[SignupAnswerRead] = []
+    event_title: Optional[str] = None
+    event_location: Optional[str] = None
+    slot_start_time: Optional[datetime] = None
+    slot_end_time: Optional[datetime] = None
+    timezone_label: Optional[str] = None
+    waitlist_position: Optional[int] = None
+
+
+class SignupMoveRequest(BaseModel):
+    target_slot_id: UUID
 
 
 # =========================

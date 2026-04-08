@@ -93,6 +93,25 @@ export default function UsersAdminPage() {
     }
   }
 
+  async function deleteUser(userId) {
+    const target = users.find((u) => u.id === userId);
+    const label = target ? `${target.name || "User"} (${target.email || "no-email"})` : "this user";
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+
+    setErr("");
+    try {
+      await api.adminDeleteUser(userId);
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+      setDrafts((prev) => {
+        const copy = { ...prev };
+        delete copy[userId];
+        return copy;
+      });
+    } catch (e) {
+      setErr(e?.message || "Failed to delete user");
+    }
+  }
+
   async function createUser(e) {
     e.preventDefault();
     setErr("");
@@ -305,6 +324,9 @@ export default function UsersAdminPage() {
                             type="button"
                           >
                             {saving ? "Saving..." : "Save"}
+                          </button>
+                          <button type="button" onClick={() => deleteUser(u.id)}>
+                            Delete
                           </button>
                           {dirty ? (
                             <button

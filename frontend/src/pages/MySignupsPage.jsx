@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, downloadBlob } from "../lib/api";
+import { formatApiDateTimeLocal, toEpochMs } from "../lib/datetime";
 
 export default function MySignupsPage() {
   const qc = useQueryClient();
@@ -14,8 +15,24 @@ export default function MySignupsPage() {
   const signups = signupsQ.data || [];
 
   const sorted = useMemo(() => {
-    return [...signups].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    return [...signups].sort((a, b) => toEpochMs(b.timestamp) - toEpochMs(a.timestamp));
   }, [signups]);
+
+  const { upcoming, past } = useMemo(() => {
+    const now = Date.now();
+    const groups = { upcoming: [], past: [] };
+
+    sorted.forEach((signup) => {
+      const slotEnd = signup.slot_end_time ? toEpochMs(signup.slot_end_time) : null;
+      if (slotEnd !== null && slotEnd < now) {
+        groups.past.push(signup);
+      } else {
+        groups.upcoming.push(signup);
+      }
+    });
+
+    return groups;
+  }, [sorted]);
 
   async function cancel(signupId) {
     setErr("");
@@ -39,6 +56,34 @@ export default function MySignupsPage() {
   if (signupsQ.isLoading) return <div>Loading your signups…</div>;
   if (signupsQ.error) return <div style={{ color: "crimson" }}>Failed: {signupsQ.error.message}</div>;
 
+  function renderSignupCard(s) {
+    const timeLabel = s.slot_start_time && s.slot_end_time
+      ? `${formatApiDateTimeLocal(s.slot_start_time)} - ${formatApiDateTimeLocal(s.slot_end_time)}`
+      : "Time unavailable";
+
+    return (
+      <div key={s.id} style={{ padding: 12, border: "1px solid #3333", borderRadius: 8 }}>
+        <div style={{ fontWeight: 700 }}>{s.event_title || "Volunteer event"}</div>
+        <div style={{ opacity: 0.9, fontSize: 14 }}>
+          Status: {s.status}
+          {s.status === "waitlisted" && s.waitlist_position ? ` (position #${s.waitlist_position})` : ""}
+        </div>
+        <div style={{ opacity: 0.8, fontSize: 13 }}>{timeLabel}</div>
+        <div style={{ opacity: 0.8, fontSize: 13 }}>
+          {s.event_location || "Location TBD"}{s.timezone_label ? ` (${s.timezone_label})` : ""}
+        </div>
+        <div style={{ opacity: 0.7, fontSize: 12 }}>Signup created: {formatApiDateTimeLocal(s.timestamp)}</div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button onClick={() => downloadIcs(s.id)}>Download .ics</button>
+          {s.status !== "cancelled" && (
+            <button onClick={() => cancel(s.id)}>Cancel</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h2>My Signups</h2>
@@ -47,27 +92,30 @@ export default function MySignupsPage() {
       {sorted.length === 0 ? (
         <div>No signups yet.</div>
       ) : (
-        <div style={{ display: "grid", gap: 10 }}>
-          {sorted.map((s) => (
-            <div key={s.id} style={{ padding: 12, border: "1px solid #3333", borderRadius: 8 }}>
-              <div style={{ fontWeight: 700 }}>{s.status}</div>
-              <div style={{ opacity: 0.8, fontSize: 13 }}>Signup created: {new Date(s.timestamp).toLocaleString()}</div>
-              <div style={{ opacity: 0.8, fontSize: 13 }}>slot_id: {s.slot_id}</div>
-
-              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button onClick={() => downloadIcs(s.id)}>Download .ics</button>
-                {s.status !== "cancelled" && (
-                  <button onClick={() => cancel(s.id)}>Cancel</button>
-                )}
+        <div style={{ display: "grid", gap: 18 }}>
+          <section>
+            <h3 style={{ marginBottom: 8 }}>Upcoming</h3>
+            {upcoming.length === 0 ? (
+              <div style={{ opacity: 0.8 }}>No upcoming signups.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {upcoming.map((s) => renderSignupCard(s))}
               </div>
-            </div>
-          ))}
+            )}
+          </section>
+
+          <section>
+            <h3 style={{ marginBottom: 8 }}>Past</h3>
+            {past.length === 0 ? (
+              <div style={{ opacity: 0.8 }}>No past signups.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {past.map((s) => renderSignupCard(s))}
+              </div>
+            )}
+          </section>
         </div>
       )}
-
-      <div style={{ marginTop: 12, opacity: 0.8, fontSize: 13 }}>
-        (Next improvement: enrich each signup with slot time + event title by fetching slot/event details.)
-      </div>
     </div>
   );
 }
