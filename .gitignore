@@ -25,3 +25,8 @@ backend/.mypy_cache/
 node_modules/
 dist/
 build/
+
+# --- AI scaffolding (never commit) ---
+.planning/
+.claude/
+.gsd/
