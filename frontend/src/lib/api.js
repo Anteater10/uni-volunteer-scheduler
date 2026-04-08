@@ -7,6 +7,45 @@ import authStorage from "./authStorage";
 const RAW_BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 const API_BASE = RAW_BASE.endsWith("/api/v1") ? RAW_BASE : `${RAW_BASE}/api/v1`;
 
+// -------------------------
+// Single-flight refresh-on-401
+// -------------------------
+
+/** Module-scoped promise so concurrent 401s queue behind one refresh call. */
+let refreshPromise = null;
+
+/**
+ * Attempt to refresh the access token using the stored refresh token.
+ * Concurrent callers share the same in-flight promise (thundering-herd guard).
+ * On success: updates authStorage with new tokens and returns the new access token.
+ * On failure: clears all auth state and throws.
+ */
+async function refreshAccessToken() {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    const refreshToken = authStorage.getRefreshToken();
+    if (!refreshToken) throw new Error("NO_REFRESH_TOKEN");
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) {
+      authStorage.clearAll();
+      throw new Error("REFRESH_FAILED");
+    }
+    const data = await res.json();
+    authStorage.setToken(data.access_token);
+    authStorage.setRefreshToken(data.refresh_token);
+    return data.access_token;
+  })();
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
+  }
+}
+
 function buildQuery(params = {}) {
   const qp = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
@@ -43,6 +82,9 @@ function extractErrorMessage(json, fallback) {
   return fallback;
 }
 
+// Paths that must never trigger the refresh-on-401 retry loop.
+const NO_RETRY_PATHS = ["/auth/refresh", "/auth/token"];
+
 async function request(path, { method = "GET", params, body, auth = true, headers } = {}) {
   const token = auth ? authStorage.getToken() : "";
 
@@ -60,7 +102,34 @@ async function request(path, { method = "GET", params, body, auth = true, header
     init.body = JSON.stringify(body);
   }
 
-  const res = await fetch(url, init);
+  let res = await fetch(url, init);
+
+  // Refresh-on-401: only retry when:
+  //   1. The response is 401
+  //   2. The original request had an Authorization header (auth=true with a token)
+  //   3. The path is not an auth endpoint itself (prevents infinite loop)
+  if (
+    res.status === 401 &&
+    token &&
+    !NO_RETRY_PATHS.some((p) => path.startsWith(p))
+  ) {
+    try {
+      const newToken = await refreshAccessToken();
+      // Retry the original request with the new access token
+      const retryInit = {
+        ...init,
+        headers: {
+          ...init.headers,
+          Authorization: `Bearer ${newToken}`,
+        },
+      };
+      res = await fetch(url, retryInit);
+    } catch {
+      // Refresh failed — clear auth and fall through to throw below
+      authStorage.clearAll();
+      throw new Error("Session expired. Please log in again.");
+    }
+  }
 
   if (res.status === 204) return null;
 
@@ -127,8 +196,9 @@ async function login(email, password) {
     throw new Error(extractErrorMessage(json, fallback));
   }
 
-  // expecting { access_token, token_type }
+  // Store both tokens so refresh-on-401 works for the full session lifetime
   if (json?.access_token) authStorage.setToken(json.access_token);
+  if (json?.refresh_token) authStorage.setRefreshToken(json.refresh_token);
 
   return json;
 }
@@ -139,7 +209,7 @@ async function register(payload) {
 }
 
 function logout() {
-  authStorage.clearToken();
+  authStorage.clearAll();
 }
 
 // --------------------
