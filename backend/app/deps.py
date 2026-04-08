@@ -8,8 +8,6 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -35,7 +33,6 @@ pwd_context = CryptContext(
 # -------------------------
 
 redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-limiter = Limiter(key_func=get_remote_address)
 
 
 def rate_limit(max_requests: int | None = None, window_seconds: int | None = None):

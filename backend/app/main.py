@@ -4,36 +4,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
-
-from .deps import limiter
+from .config import settings
 from .database import get_db
 from .routers import auth, users, events, slots, signups, notifications, admin, portals
 
 app = FastAPI(title="University Volunteer Scheduler API")
 
-# Rate limiting middleware
-app.state.limiter = limiter
-app.add_middleware(SlowAPIMiddleware)
-# ✅ Return clean 429 responses when rate limited
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# CORS
-origins = [
-    # Dev frontends
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    # TODO: add your production frontend origin here, e.g.:
-    # "https://volunteer.your-university.edu",
-]
-
+# CORS origins loaded from settings.cors_allowed_origins env var
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
