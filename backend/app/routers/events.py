@@ -12,13 +12,6 @@ from ..deps import require_role, log_action
 router = APIRouter(prefix="/events", tags=["events"])
 
 
-def _to_naive_utc(dt: datetime) -> datetime:
-    """Normalize datetimes so comparisons are safe across aware/naive values."""
-    if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
-
-
 def _ensure_event_owner_or_admin(
     event: models.Event,
     current_user: models.User,
@@ -27,9 +20,16 @@ def _ensure_event_owner_or_admin(
         raise HTTPException(status_code=403, detail="Not allowed to modify this event")
 
 
+def _normalize_dt(dt: datetime) -> datetime:
+    """Return an aware datetime in UTC. Naive datetimes are assumed to be UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _validate_event_dates(start_date: datetime, end_date: datetime):
-    start_date = _to_naive_utc(start_date)
-    end_date = _to_naive_utc(end_date)
+    start_date = _normalize_dt(start_date)
+    end_date = _normalize_dt(end_date)
     if end_date <= start_date:
         raise HTTPException(status_code=400, detail="end_date must be after start_date")
 
@@ -39,10 +39,10 @@ def _validate_slot_range_within_event(
     start_time: datetime,
     end_time: datetime,
 ):
-    start_time = _to_naive_utc(start_time)
-    end_time = _to_naive_utc(end_time)
-    event_start = _to_naive_utc(event.start_date)
-    event_end = _to_naive_utc(event.end_date)
+    start_time = _normalize_dt(start_time)
+    end_time = _normalize_dt(end_time)
+    event_start = _normalize_dt(event.start_date)
+    event_end = _normalize_dt(event.end_date)
 
     if end_time <= start_time:
         raise HTTPException(
@@ -66,10 +66,10 @@ def create_event(
 ):
     _validate_event_dates(event_in.start_date, event_in.end_date)
 
-    start_date = _to_naive_utc(event_in.start_date)
-    end_date = _to_naive_utc(event_in.end_date)
-    signup_open_at = _to_naive_utc(event_in.signup_open_at) if event_in.signup_open_at else None
-    signup_close_at = _to_naive_utc(event_in.signup_close_at) if event_in.signup_close_at else None
+    start_date = _normalize_dt(event_in.start_date)
+    end_date = _normalize_dt(event_in.end_date)
+    signup_open_at = _normalize_dt(event_in.signup_open_at) if event_in.signup_open_at else None
+    signup_close_at = _normalize_dt(event_in.signup_close_at) if event_in.signup_close_at else None
 
     event = models.Event(
         owner_id=current_user.id,
@@ -137,7 +137,7 @@ def update_event(
     data = event_in.dict(exclude_unset=True)
     for key in ("start_date", "end_date", "signup_open_at", "signup_close_at"):
         if key in data and data[key] is not None:
-            data[key] = _to_naive_utc(data[key])
+            data[key] = _normalize_dt(data[key])
 
     # If dates are being updated, validate them
     new_start = data.get("start_date", event.start_date)
@@ -194,10 +194,10 @@ def generate_slots(
 
     _ensure_event_owner_or_admin(event, current_user)
 
-    start_time = _to_naive_utc(recurrence.start_time)
-    end_time = _to_naive_utc(recurrence.end_time)
-    event_start = _to_naive_utc(event.start_date)
-    event_end = _to_naive_utc(event.end_date)
+    start_time = _normalize_dt(recurrence.start_time)
+    end_time = _normalize_dt(recurrence.end_time)
+    event_start = _normalize_dt(event.start_date)
+    event_end = _normalize_dt(event.end_date)
 
     if end_time <= start_time:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")

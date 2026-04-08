@@ -1,7 +1,7 @@
 # backend/app/models.py
 import uuid
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column,
@@ -13,6 +13,7 @@ from sqlalchemy import (
     Enum,
     Text,
     JSON,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -66,7 +67,7 @@ class User(Base):
 
     university_id = Column(String(64), nullable=True)
     notify_email = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     events = relationship("Event", back_populates="owner")
@@ -93,15 +94,15 @@ class Event(Base):
     visibility = Column(String(32), default="public")
     branding_id = Column(String(64), nullable=True)
 
-    start_date = Column(DateTime, nullable=False)
-    end_date = Column(DateTime, nullable=False)
+    start_date = Column(DateTime(timezone=True), nullable=False)
+    end_date = Column(DateTime(timezone=True), nullable=False)
 
     # V3: event-level signup controls
     max_signups_per_user = Column(Integer, nullable=True)
-    signup_open_at = Column(DateTime, nullable=True)
-    signup_close_at = Column(DateTime, nullable=True)
+    signup_open_at = Column(DateTime(timezone=True), nullable=True)
+    signup_close_at = Column(DateTime(timezone=True), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     owner = relationship("User", back_populates="events")
@@ -121,11 +122,13 @@ class Slot(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False)
 
-    start_time = Column(DateTime, nullable=False)
-    end_time = Column(DateTime, nullable=False)
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=False)
 
     capacity = Column(Integer, nullable=False, default=1)
     current_count = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (Index("ix_slots_start_time", "start_time"),)
 
     # Relationships
     event = relationship("Event", back_populates="slots")
@@ -151,7 +154,8 @@ class Signup(Base):
         nullable=False,
     )
 
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    reminder_sent = Column(Boolean, nullable=False, default=False, server_default="false")
 
     # Relationships
     user = relationship("User", back_populates="signups")
@@ -218,8 +222,8 @@ class Notification(Base):
     subject = Column(String(255), nullable=True)
     body = Column(Text, nullable=False)
     delivery_method = Column(String(32), nullable=False)  # "email" or "sms"
-    delivered_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="notifications")
 
@@ -234,10 +238,11 @@ class RefreshToken(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    token = Column(String(512), unique=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    expires_at = Column(DateTime, nullable=False)
-    revoked_at = Column(DateTime, nullable=True)
+    # SHA-256 hex digest, never the raw token
+    token_hash = Column(String(512), unique=True, index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="refresh_tokens")
 
@@ -257,7 +262,7 @@ class AuditLog(Base):
     entity_id = Column(String(128), nullable=True)
 
     extra = Column(JSON, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     actor = relationship("User", back_populates="audit_logs")
 
@@ -298,7 +303,7 @@ class Portal(Base):
     slug = Column(String(255), unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)
     visibility = Column(String(32), default="public")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     events = relationship("PortalEvent", back_populates="portal", cascade="all, delete-orphan")
 
