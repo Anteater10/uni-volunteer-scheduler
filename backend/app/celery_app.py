@@ -1,4 +1,10 @@
 # backend/app/celery_app.py
+#
+# Start beat with:
+#   celery -A app.celery_app.celery beat -l info -S redbeat.RedBeatScheduler
+#
+# TODO(phase0-infra): Update docker-compose.yml beat service command to add
+#   -S redbeat.RedBeatScheduler flag — tracked as a Plan 07 CI concern.
 
 from datetime import datetime, timedelta, timezone
 
@@ -17,6 +23,14 @@ celery = Celery(
     "uni_volunteer_scheduler",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
+)
+
+celery.conf.update(
+    redbeat_redis_url=settings.redis_url,
+    redbeat_lock_timeout=300,
+    beat_scheduler="redbeat.RedBeatScheduler",
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
 )
 
 
