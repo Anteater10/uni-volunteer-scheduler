@@ -7,41 +7,41 @@ export default function Layout() {
   const { user, isAuthed, role, logout } = useAuth();
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      <header style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <Link to="/events" style={{ fontWeight: 700, textDecoration: "none" }}>UVSE</Link>
-          <Link to="/events">Events</Link>
-          <Link to="/my-signups">My Signups</Link>
-          <Link to="/notifications">Notifications</Link>
-
-          {(role === "organizer" || role === "admin") && (
-            <Link to="/organizer">Organizer</Link>
-          )}
-          {role === "admin" && (
-            <Link to="/admin">Admin</Link>
-          )}
-        </div>
-
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {isAuthed ? (
-            <>
-              <span style={{ opacity: 0.8 }}>
-                {user?.email} <span style={{ fontSize: 12 }}>({role})</span>
-              </span>
-              <button onClick={logout}>Logout</button>
-            </>
-          ) : (
-            <>
-              <Link to="/login">Login</Link>
-              <Link to="/register">Register</Link>
-            </>
-          )}
+    <div className="min-h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-fg)]">
+      <header className="sticky top-0 z-30 h-14 border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 backdrop-blur">
+        <div className="mx-auto flex h-full max-w-screen-md items-center justify-between px-4">
+          {/* TODO(brand): logo/wordmark */}
+          <Link to="/events" className="font-semibold">
+            {/* TODO(copy): brand wordmark */}
+            Volunteer Scheduler
+          </Link>
+          <div className="flex items-center gap-3 text-sm">
+            {isAuthed ? (
+              <>
+                <span className="hidden sm:inline text-[var(--color-fg-muted)]">
+                  {/* TODO(copy) */}
+                  {user?.email} ({role})
+                </span>
+                <button onClick={logout} className="px-2 py-1">
+                  {/* TODO(copy) */}
+                  Logout
+                </button>
+              </>
+            ) : (
+              <>
+                <Link to="/login">{/* TODO(copy) */}Login</Link>
+                <Link to="/register">{/* TODO(copy) */}Register</Link>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
-      <hr style={{ margin: "16px 0" }} />
-      <Outlet />
+      <main className="flex-1 mx-auto w-full max-w-screen-md px-4 pb-20 md:pb-8">
+        <Outlet />
+      </main>
+
+      <div id="bottom-nav-slot" />
     </div>
   );
 }
