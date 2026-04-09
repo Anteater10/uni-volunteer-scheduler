@@ -66,6 +66,18 @@ def db_session(engine):
         connection.close()
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_keys():
+    """Flush per-IP/path rate-limit counters before every test."""
+    try:
+        from app.deps import redis_client
+
+        redis_client.flushdb()
+    except Exception:
+        pass
+    yield
+
+
 @pytest.fixture
 def client(db_session):
     def override_get_db():
