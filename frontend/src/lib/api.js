@@ -511,6 +511,28 @@ export const api = {
   updateModuleTemplate: (slug, data) => request(`/admin/module-templates/${slug}`, { method: "PATCH", body: data }),
   deleteModuleTemplate: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
 
+  // --- CSV Imports (Phase 5) ---
+  uploadCsvImport: (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const token = authStorage.getToken();
+    return fetch(`${API_BASE}/admin/imports`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const json = await safeReadJson(res);
+        throw new Error(extractErrorMessage(json, `Upload failed (${res.status})`));
+      }
+      return res.json();
+    });
+  },
+  getCsvImport: (importId) => request(`/admin/imports/${importId}`),
+  updateImportRow: (importId, rowIndex, data) =>
+    request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
+  commitCsvImport: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
+
   admin: {
     summary: () => adminSummary(),
     users: {

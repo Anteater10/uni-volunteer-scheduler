@@ -24,6 +24,7 @@ import UsersAdminPage from "./pages/UsersAdminPage";
 import PortalsAdminPage from "./pages/PortalsAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
 import AdminTemplatesPage from "./pages/AdminTemplatesPage";
+import AdminImportPage from "./pages/AdminImportPage";
 
 import SelfCheckInPage from "./pages/SelfCheckInPage";
 import SignupConfirmedPage from "./pages/SignupConfirmedPage";
@@ -70,6 +71,7 @@ export default function App() {
           <Route path="admin/portals" element={<PortalsAdminPage />} />
           <Route path="admin/audit-logs" element={<AuditLogsPage />} />
           <Route path="admin/templates" element={<AdminTemplatesPage />} />
+          <Route path="admin/import" element={<AdminImportPage />} />
         </Route>
 
         {/* 404 */}
