@@ -36,3 +36,10 @@
 [2026-04-08 23:59] COMPLETED phase 2 plan 03: magic-link service, GET/POST endpoints, Redis rate limiting, signup+admin wiring, 15 new tests
 [2026-04-09 00:01] COMPLETED phase 2 plan 04: 3 frontend pages + resend API + 6 Playwright e2e assertions
 [2026-04-09 00:01] COMPLETED phase 2: magic-link confirmation fully wired
+[2026-04-08 00:02] COMPLETED phase 2: magic-link confirmation — 4 plans, 61 backend tests, pending status + token + rate limit + 3 frontend pages
+[2026-04-09 00:08] COMPLETED phase 3 plan 01: SignupStatus enum extension + venue_code + MagicLinkPurpose + checked_in_at + migration 0004
+[2026-04-09 00:09] COMPLETED phase 3 plan 02: check-in service layer — transitions, FOR UPDATE, idempotency, audit log, 9 tests
+[2026-04-09 00:13] COMPLETED phase 3 plan 03: roster + check-in + resolve endpoints + merge-gate concurrent test (10/10 passed)
+[2026-04-09 00:16] COMPLETED phase 3 plan 04: organizer roster page — 5s polling, one-tap check-in, resolve modal, 4 Vitest tests
+[2026-04-09 00:18] COMPLETED phase 3 plan 05: self-check-in page + StatusIcon timeline + GET /signups enrichment, 4 Vitest tests
+[2026-04-09 00:22] COMPLETED phase 3: check-in state machine + roster fully wired
