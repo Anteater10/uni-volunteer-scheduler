@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..celery_app import send_email_notification
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_owner_or_admin
 
@@ -113,14 +114,54 @@ def update_slot(
     if new_start < event_start or new_end > event_end:
         raise HTTPException(status_code=400, detail="Slot times must be within event start_date and end_date")
 
+    # Detect time change before applying updates
+    time_changed = (
+        ("start_time" in data and data["start_time"] != slot.start_time)
+        or ("end_time" in data and data["end_time"] != slot.end_time)
+    )
+
     for field, value in data.items():
         setattr(slot, field, value)
+
+    # Collect confirmed signups before commit (needed for post-commit dispatch)
+    confirmed_signups = []
+    if time_changed:
+        # Invalidate prior reminders so new window triggers fresh ones
+        db.query(models.SentNotification).filter(
+            models.SentNotification.signup_id.in_(
+                db.query(models.Signup.id).filter(
+                    models.Signup.slot_id == slot.id,
+                    models.Signup.status == models.SignupStatus.confirmed,
+                )
+            ),
+            models.SentNotification.kind.in_(["reminder_24h", "reminder_1h"]),
+        ).delete(synchronize_session=False)
+
+        # Reset denormalized columns
+        db.query(models.Signup).filter(
+            models.Signup.slot_id == slot.id,
+            models.Signup.status == models.SignupStatus.confirmed,
+        ).update({
+            models.Signup.reminder_24h_sent_at: None,
+            models.Signup.reminder_1h_sent_at: None,
+        }, synchronize_session=False)
+
+        confirmed_signups = db.query(models.Signup).filter(
+            models.Signup.slot_id == slot.id,
+            models.Signup.status == models.SignupStatus.confirmed,
+        ).all()
 
     db.add(slot)
     db.commit()
     db.refresh(slot)
 
     log_action(db, actor, "slot_update", "Slot", str(slot.id))
+
+    # Dispatch reschedule emails after commit
+    if time_changed:
+        for s in confirmed_signups:
+            send_email_notification.delay(signup_id=str(s.id), kind="reschedule")
+
     return slot
 
 
