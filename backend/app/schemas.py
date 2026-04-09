@@ -292,6 +292,14 @@ class EventAnalytics(BaseModel):
     waitlisted_signups: int
 
 
+class PaginatedAuditLogs(BaseModel):
+    items: List[AuditLogRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class VolunteerHoursRow(BaseModel):
     user_id: UUID
     name: str

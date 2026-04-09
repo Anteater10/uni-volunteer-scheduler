@@ -673,19 +673,21 @@ def notify_event_participants(
 # =========================
 
 
-@router.get("/audit_logs", response_model=List[schemas.AuditLogRead])
-def list_audit_logs(
-    q: str | None = Query(None),
-    action: str | None = Query(None),
-    entity_type: str | None = Query(None),
-    entity_id: str | None = Query(None),
-    actor_id: str | None = Query(None),
-    start: datetime | None = Query(None),
-    end: datetime | None = Query(None),
-    limit: int = Query(1000, ge=1, le=2000),
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+def _build_audit_log_query(
+    db: Session,
+    q: str | None,
+    action: str | None,
+    entity_type: str | None,
+    entity_id: str | None,
+    actor_id: str | None,
+    user_id: str | None,
+    kind: str | None,
+    start: datetime | None,
+    end: datetime | None,
+    from_date: datetime | None,
+    to_date: datetime | None,
 ):
+    """Build a filtered audit-log query (shared by paginated + CSV endpoints)."""
     query = db.query(models.AuditLog)
 
     if action:
@@ -694,13 +696,19 @@ def list_audit_logs(
         query = query.filter(models.AuditLog.entity_type == entity_type)
     if entity_id:
         query = query.filter(models.AuditLog.entity_id == entity_id)
-    if actor_id:
-        query = query.filter(models.AuditLog.actor_id == actor_id)
-    if start:
-        query = query.filter(models.AuditLog.timestamp >= start)
-    if end:
-        query = query.filter(models.AuditLog.timestamp <= end)
-
+    effective_actor = actor_id or user_id
+    if effective_actor:
+        query = query.filter(models.AuditLog.actor_id == effective_actor)
+    if kind:
+        kinds = [k.strip() for k in kind.split(",") if k.strip()]
+        if kinds:
+            query = query.filter(models.AuditLog.action.in_(kinds))
+    effective_start = start or from_date
+    effective_end = end or to_date
+    if effective_start:
+        query = query.filter(models.AuditLog.timestamp >= effective_start)
+    if effective_end:
+        query = query.filter(models.AuditLog.timestamp <= effective_end)
     if q:
         like = f"%{q}%"
         query = query.filter(
@@ -712,11 +720,89 @@ def list_audit_logs(
                 cast(models.AuditLog.extra, String).ilike(like),
             )
         )
+    return query
 
-    logs = query.order_by(models.AuditLog.timestamp.desc()).limit(limit).all()
+
+@router.get("/audit-logs", response_model=schemas.PaginatedAuditLogs)
+@router.get("/audit_logs", response_model=schemas.PaginatedAuditLogs, include_in_schema=False)
+def list_audit_logs(
+    q: str | None = Query(None),
+    action: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    actor_id: str | None = Query(None),
+    user_id: str | None = Query(None),
+    kind: str | None = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    # Backward compat: ignore old limit param
+    limit: int | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    import math
+
+    query = _build_audit_log_query(
+        db, q, action, entity_type, entity_id, actor_id,
+        user_id, kind, start, end, from_date, to_date,
+    )
+
+    total = query.count()
+    pages = math.ceil(total / page_size) if total > 0 else 0
+    offset = (page - 1) * page_size
+
+    logs = query.order_by(models.AuditLog.timestamp.desc()).offset(offset).limit(page_size).all()
 
     log_action(db, admin_user, "admin_list_audit_logs", "AuditLog", None)
-    return logs
+    return schemas.PaginatedAuditLogs(
+        items=logs, total=total, page=page, page_size=page_size, pages=pages,
+    )
+
+
+@router.get("/audit-logs.csv")
+def export_audit_logs_csv(
+    q: str | None = Query(None),
+    action: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    actor_id: str | None = Query(None),
+    user_id: str | None = Query(None),
+    kind: str | None = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    import json as json_mod
+
+    query = _build_audit_log_query(
+        db, q, action, entity_type, entity_id, actor_id,
+        user_id, kind, start, end, from_date, to_date,
+    )
+    logs = query.order_by(models.AuditLog.timestamp.desc()).limit(10000).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["timestamp", "actor_id", "action", "entity_type", "entity_id", "extra"])
+    for log in logs:
+        writer.writerow([
+            log.timestamp.isoformat() if log.timestamp else "",
+            str(log.actor_id) if log.actor_id else "",
+            log.action,
+            log.entity_type,
+            log.entity_id or "",
+            json_mod.dumps(log.extra) if log.extra else "",
+        ])
+
+    log_action(db, admin_user, "admin_export_audit_logs_csv", "AuditLog", None)
+    headers = {"Content-Disposition": 'attachment; filename="audit-logs.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers)
 
 
 # =========================

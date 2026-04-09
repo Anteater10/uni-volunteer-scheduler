@@ -382,8 +382,7 @@ async function adminDeleteUser(userId) {
 }
 
 async function adminAuditLogs(params) {
-  // your AuditLogsPage mentions /admin/audit_logs
-  return request("/admin/audit_logs", { method: "GET", params });
+  return request("/admin/audit-logs", { method: "GET", params });
 }
 
 async function adminCancelSignup(signupId) {
