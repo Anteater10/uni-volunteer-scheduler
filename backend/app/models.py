@@ -14,9 +14,10 @@ from sqlalchemy import (
     Text,
     JSON,
     Index,
+    func,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from .database import Base
 
@@ -33,6 +34,7 @@ class UserRole(str, enum.Enum):
 
 
 class SignupStatus(str, enum.Enum):
+    pending = "pending"
     confirmed = "confirmed"
     waitlisted = "waitlisted"
     cancelled = "cancelled"
@@ -321,3 +323,26 @@ class PortalEvent(Base):
 
     portal = relationship("Portal", back_populates="events")
     event = relationship("Event", back_populates="portal_links")
+
+
+# -------------------------
+# Magic link tokens
+# -------------------------
+
+
+class MagicLinkToken(Base):
+    __tablename__ = "magic_link_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id", ondelete="CASCADE"), nullable=False)
+    email = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+
+    signup = relationship("Signup", backref=backref("magic_link_tokens", passive_deletes=True))
+
+    __table_args__ = (
+        Index("ix_magic_link_tokens_email_created_at", "email", "created_at"),
+    )
