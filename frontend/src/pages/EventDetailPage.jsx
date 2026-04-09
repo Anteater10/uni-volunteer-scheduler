@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { formatApiDateTimeLocal, toEpochMs } from "../lib/datetime";
-import { useAuth } from "../state/authContext";
+import { useAuth } from "../state/useAuth";
 import {
   PageHeader,
   Card,

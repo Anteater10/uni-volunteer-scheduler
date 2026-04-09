@@ -11,7 +11,7 @@ import {
   EmptyState,
   Button,
 } from "../components/ui";
-import { useAuth } from "../state/authContext";
+import { useAuth } from "../state/useAuth";
 import { useDocumentMeta } from "../lib/useDocumentMeta";
 
 const FILTERS = [
@@ -43,9 +43,11 @@ export default function EventsPage() {
   });
 
   const events = eventsQ.data || [];
+  // Capture "now" once at mount so render stays pure; a stale filter window by a
+  // few seconds is fine for this view.
+  const [now] = useState(() => Date.now());
 
   const filtered = useMemo(() => {
-    const now = Date.now();
     const weekMs = 7 * 24 * 60 * 60 * 1000;
     if (filter === "upcoming") {
       return events.filter((e) => toEpochMs(e.start_date) >= now);
@@ -65,7 +67,7 @@ export default function EventsPage() {
       return events.filter((e) => ids.has(e.id));
     }
     return events;
-  }, [events, filter, mySignupsQ.data]);
+  }, [events, filter, mySignupsQ.data, now]);
 
   return (
     <div>

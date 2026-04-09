@@ -8,6 +8,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 
@@ -50,10 +51,13 @@ def upgrade() -> None:
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
     )
 
-    # 2. Create csvimportstatus enum
-    csvimportstatus = sa.Enum(
+    # 2. Create csvimportstatus enum explicitly (and only once) — we reuse the
+    # same ENUM instance in the column below with create_type=False so
+    # op.create_table does not try to CREATE TYPE a second time.
+    csvimportstatus = postgresql.ENUM(
         "pending", "processing", "ready", "committed", "failed",
         name="csvimportstatus",
+        create_type=False,
     )
     csvimportstatus.create(op.get_bind(), checkfirst=True)
 
@@ -71,7 +75,7 @@ def upgrade() -> None:
         sa.Column("raw_csv_hash", sa.String(64), nullable=False),
         sa.Column(
             "status",
-            sa.Enum("pending", "processing", "ready", "committed", "failed", name="csvimportstatus", create_type=False),
+            csvimportstatus,
             nullable=False,
             server_default="pending",
         ),

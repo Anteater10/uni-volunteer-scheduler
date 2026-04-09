@@ -125,6 +125,6 @@ def test_admin_audit_logs_filter(client, db_session):
         headers=auth_headers(client, admin),
     )
     assert resp.status_code == 200, resp.text
-    logs = resp.json()
-    assert isinstance(logs, list)
-    assert any(entry["action"] == "admin_summary" for entry in logs)
+    body = resp.json()
+    assert "items" in body
+    assert any(entry["action"] == "admin_summary" for entry in body["items"])

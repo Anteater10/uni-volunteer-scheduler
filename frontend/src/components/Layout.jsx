@@ -2,7 +2,7 @@
 import React from "react";
 import { Link, Outlet } from "react-router-dom";
 import { Calendar, ListChecks, User, LayoutDashboard, Shield, ClipboardList } from "lucide-react";
-import { useAuth } from "../state/authContext";
+import { useAuth } from "../state/useAuth";
 import ToastHost from "./ui/Toast";
 import BottomNav from "./ui/BottomNav";
 

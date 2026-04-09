@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.models import CsvImport, CsvImportStatus, Event, Slot, ModuleTemplate
-from app.services.import_schemas import ImportPreview
 
 
 def create_import(db: Session, user_id: uuid.UUID, filename: str, raw_bytes: bytes) -> CsvImport:

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
-from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, CsvImportStatus
+from .models import UserRole, SignupStatus, NotificationType, PrivacyMode
 
 
 # -------------------------

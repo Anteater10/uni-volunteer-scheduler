@@ -2,7 +2,7 @@
 import React from "react";
 import { Outlet, NavLink } from "react-router-dom";
 import { PageHeader } from "../../components/ui";
-import { useAuth } from "../../state/authContext";
+import { useAuth } from "../../state/useAuth";
 
 const allNavItems = [
   // TODO(copy): nav labels

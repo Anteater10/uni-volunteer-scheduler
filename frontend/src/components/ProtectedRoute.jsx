@@ -1,7 +1,7 @@
 // src/components/ProtectedRoute.jsx
 import React from "react";
 import { Navigate, Outlet } from "react-router-dom";
-import { useAuth } from "../state/authContext";
+import { useAuth } from "../state/useAuth";
 
 export default function ProtectedRoute({ roles = null, children }) {
   const { initializing, isAuthed, role } = useAuth();

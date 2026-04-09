@@ -2,7 +2,6 @@
 import json
 import re
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session

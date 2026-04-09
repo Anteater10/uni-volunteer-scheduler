@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { useAuth } from "../state/authContext";
+import { useAuth } from "../state/useAuth";
 import { PageHeader, Card, Button, Label } from "../components/ui";
 
 export default function ProfilePage() {

@@ -862,11 +862,6 @@ def analytics_attendance_rates(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Attendance rate per event: attended / (confirmed + attended + no_show)."""
-    terminal_statuses = [
-        models.SignupStatus.confirmed,
-        models.SignupStatus.attended,
-        models.SignupStatus.no_show,
-    ]
     query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
     if from_date:
         query = query.filter(models.Event.start_date >= from_date)

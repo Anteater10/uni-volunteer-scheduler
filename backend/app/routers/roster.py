@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from ..database import get_db
-from ..deps import get_current_user, require_role
+from ..deps import require_role
 from ..models import Event, Signup, SignupStatus, Slot, UserRole
 from ..schemas import RosterResponse, RosterRow
 

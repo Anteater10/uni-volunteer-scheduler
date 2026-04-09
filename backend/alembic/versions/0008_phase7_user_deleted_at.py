@@ -1,15 +1,15 @@
 """Phase 7: add deleted_at to users for CCPA soft-delete
 
-Revision ID: 0008
-Revises: 0007
+Revision ID: 0008_phase7_user_deleted_at
+Revises: 0007_phase6_sent_notifications
 Create Date: 2026-04-09
 """
 from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers
-revision = "0008"
-down_revision = "0007"
+revision = "0008_phase7_user_deleted_at"
+down_revision = "0007_phase6_sent_notifications"
 branch_labels = None
 depends_on = None
 
