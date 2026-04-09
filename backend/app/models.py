@@ -17,7 +17,7 @@ from sqlalchemy import (
     Index,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import backref, relationship
 
 from .database import Base
@@ -47,6 +47,14 @@ class SignupStatus(str, enum.Enum):
 class MagicLinkPurpose(str, enum.Enum):
     email_confirm = "email_confirm"
     check_in = "check_in"
+
+
+class CsvImportStatus(str, enum.Enum):
+    pending = "pending"
+    processing = "processing"
+    ready = "ready"
+    committed = "committed"
+    failed = "failed"
 
 
 class NotificationType(str, enum.Enum):
@@ -374,10 +382,41 @@ class ModuleTemplate(Base):
     __tablename__ = "module_templates"
 
     slug = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
+    name = Column(String(255), nullable=False)
     prereq_slugs = Column(ARRAY(String), nullable=False, server_default="{}")
+    default_capacity = Column(Integer, nullable=False, server_default="20")
+    duration_minutes = Column(Integer, nullable=False, server_default="90")
+    materials = Column(ARRAY(String), nullable=False, server_default="{}")
+    description = Column(Text, nullable=True)
+    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+# -------------------------
+# CSV Import tracking
+# -------------------------
+
+
+class CsvImport(Base):
+    __tablename__ = "csv_imports"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    filename = Column(String(512), nullable=False)
+    raw_csv_hash = Column(String(64), nullable=False)
+    status = Column(
+        Enum(CsvImportStatus, name="csvimportstatus"),
+        default=CsvImportStatus.pending,
+        nullable=False,
+    )
+    result_payload = Column(JSONB, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    uploader = relationship("User")
 
 
 # -------------------------

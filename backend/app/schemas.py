@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 
-from .models import UserRole, SignupStatus, NotificationType, PrivacyMode
+from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, CsvImportStatus
 
 
 # -------------------------
@@ -401,3 +401,51 @@ class ModuleTimelineItem(BaseModel):
     status: str  # locked | unlocked | completed
     override_active: bool
     last_activity: Optional[datetime] = None
+
+
+# =========================
+# MODULE TEMPLATE SCHEMAS (Phase 5)
+# =========================
+class ModuleTemplateBase(BaseModel):
+    name: str
+    prereq_slugs: List[str] = []
+    default_capacity: int = 20
+    duration_minutes: int = 90
+    materials: List[str] = []
+    description: Optional[str] = None
+    metadata: dict = {}
+
+
+class ModuleTemplateCreate(ModuleTemplateBase):
+    slug: str
+
+
+class ModuleTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    prereq_slugs: Optional[List[str]] = None
+    default_capacity: Optional[int] = None
+    duration_minutes: Optional[int] = None
+    materials: Optional[List[str]] = None
+    description: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class ModuleTemplateRead(ORMBase, ModuleTemplateBase):
+    slug: str
+    deleted_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# =========================
+# CSV IMPORT SCHEMAS (Phase 5)
+# =========================
+class CsvImportRead(ORMBase):
+    id: UUID
+    uploaded_by: UUID
+    filename: str
+    status: str
+    result_payload: Optional[dict] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
