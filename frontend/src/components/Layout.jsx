@@ -1,7 +1,7 @@
 // layout.jsx
 import React from "react";
 import { Link, Outlet } from "react-router-dom";
-import { Calendar, ListChecks, User } from "lucide-react";
+import { Calendar, ListChecks, User, LayoutDashboard, Shield, ClipboardList } from "lucide-react";
 import { useAuth } from "../state/authContext";
 import ToastHost from "./ui/Toast";
 import BottomNav from "./ui/BottomNav";
@@ -15,9 +15,40 @@ const studentNavItems = [
   { to: "/profile", label: "Profile", icon: <User className="h-5 w-5" /> },
 ];
 
+const organizerNavItems = [
+  // TODO(copy)
+  { to: "/organizer", label: "Dashboard", icon: <LayoutDashboard className="h-5 w-5" /> },
+  // TODO(copy)
+  { to: "/events", label: "Events", icon: <Calendar className="h-5 w-5" /> },
+  // TODO(copy)
+  { to: "/profile", label: "Profile", icon: <User className="h-5 w-5" /> },
+];
+
+const adminNavItems = [
+  // TODO(copy)
+  { to: "/admin", label: "Admin", icon: <Shield className="h-5 w-5" /> },
+  // TODO(copy)
+  { to: "/admin/users", label: "Users", icon: <User className="h-5 w-5" /> },
+  // TODO(copy)
+  { to: "/admin/audit-logs", label: "Logs", icon: <ClipboardList className="h-5 w-5" /> },
+];
+
+function navItemsForRole(role) {
+  switch (role) {
+    case "participant":
+      return studentNavItems;
+    case "organizer":
+      return organizerNavItems;
+    case "admin":
+      return adminNavItems;
+    default:
+      return null;
+  }
+}
+
 export default function Layout() {
   const { user, isAuthed, role, logout } = useAuth();
-  const showStudentNav = isAuthed && role === "participant";
+  const navItems = isAuthed ? navItemsForRole(role) : null;
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-fg)]">
@@ -55,7 +86,7 @@ export default function Layout() {
       </main>
 
       <div id="bottom-nav-slot">
-        {showStudentNav && <BottomNav items={studentNavItems} />}
+        {navItems && <BottomNav items={navItems} />}
       </div>
       <ToastHost />
     </div>

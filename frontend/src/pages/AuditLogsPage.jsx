@@ -1,6 +1,16 @@
 // src/pages/AuditLogsPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import api from "../lib/api";
+import {
+  PageHeader,
+  Card,
+  Button,
+  Input,
+  Label,
+  FieldError,
+  EmptyState,
+  Skeleton,
+} from "../components/ui";
 
 function formatTs(ts) {
   try {
@@ -61,151 +71,136 @@ export default function AuditLogsPage() {
   }, []);
 
   return (
-    <div style={{ padding: 16, maxWidth: 1200, margin: "0 auto" }}>
-      <h1 style={{ marginBottom: 8 }}>Audit Logs (Admin)</h1>
-      <p style={{ marginTop: 0, opacity: 0.8 }}>
-        Latest entries from <code>/admin/audit_logs</code> (capped on backend).
-      </p>
+    <div className="space-y-4">
+      {/* TODO(copy) */}
+      <PageHeader title="Audit Logs" />
 
-      {err ? (
-        <div
-          style={{
-            background: "rgba(255,0,0,0.08)",
-            border: "1px solid rgba(255,0,0,0.25)",
-            padding: 12,
-            borderRadius: 10,
-            marginBottom: 12,
-            whiteSpace: "pre-wrap",
+      <Card>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            load();
           }}
+          className="space-y-3"
         >
-          {err}
-        </div>
-      ) : null}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="al-q">Search</Label>
+              <Input
+                id="al-q"
+                value={filters.q}
+                onChange={(e) => setFilters((p) => ({ ...p, q: e.target.value }))}
+                /* TODO(copy) */
+                placeholder="Search text..."
+              />
+            </div>
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="al-action">Action</Label>
+              <Input
+                id="al-action"
+                value={filters.action}
+                onChange={(e) => setFilters((p) => ({ ...p, action: e.target.value }))}
+                /* TODO(copy) */
+                placeholder="Action"
+              />
+            </div>
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="al-etype">Entity type</Label>
+              <Input
+                id="al-etype"
+                value={filters.entity_type}
+                onChange={(e) => setFilters((p) => ({ ...p, entity_type: e.target.value }))}
+                /* TODO(copy) */
+                placeholder="Entity type"
+              />
+            </div>
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="al-eid">Entity ID</Label>
+              <Input
+                id="al-eid"
+                value={filters.entity_id}
+                onChange={(e) => setFilters((p) => ({ ...p, entity_id: e.target.value }))}
+                /* TODO(copy) */
+                placeholder="Entity ID"
+              />
+            </div>
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="al-start">Start time</Label>
+              <Input
+                id="al-start"
+                type="datetime-local"
+                value={filters.start}
+                onChange={(e) => setFilters((p) => ({ ...p, start: e.target.value }))}
+              />
+            </div>
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="al-end">End time</Label>
+              <Input
+                id="al-end"
+                type="datetime-local"
+                value={filters.end}
+                onChange={(e) => setFilters((p) => ({ ...p, end: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={loading}>
+              {/* TODO(copy) */}
+              Apply
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => load()} disabled={loading}>
+              {/* TODO(copy) */}
+              Refresh
+            </Button>
+          </div>
+        </form>
+      </Card>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          load();
-        }}
-        style={{
-          display: "grid",
-          gap: 10,
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          marginBottom: 12,
-        }}
-      >
-        <input
-          value={filters.q}
-          onChange={(e) => setFilters((p) => ({ ...p, q: e.target.value }))}
-          placeholder="Search text…"
-        />
-        <input
-          value={filters.action}
-          onChange={(e) => setFilters((p) => ({ ...p, action: e.target.value }))}
-          placeholder="Action"
-        />
-        <input
-          value={filters.entity_type}
-          onChange={(e) => setFilters((p) => ({ ...p, entity_type: e.target.value }))}
-          placeholder="Entity type"
-        />
-        <input
-          value={filters.entity_id}
-          onChange={(e) => setFilters((p) => ({ ...p, entity_id: e.target.value }))}
-          placeholder="Entity ID"
-        />
-        <input
-          value={filters.actor_id}
-          onChange={(e) => setFilters((p) => ({ ...p, actor_id: e.target.value }))}
-          placeholder="Actor ID"
-        />
-        <input
-          type="datetime-local"
-          value={filters.start}
-          onChange={(e) => setFilters((p) => ({ ...p, start: e.target.value }))}
-          placeholder="Start time"
-        />
-        <input
-          type="datetime-local"
-          value={filters.end}
-          onChange={(e) => setFilters((p) => ({ ...p, end: e.target.value }))}
-          placeholder="End time"
-        />
-        <input
-          type="number"
-          min="1"
-          max="2000"
-          value={filters.limit}
-          onChange={(e) => setFilters((p) => ({ ...p, limit: e.target.value }))}
-          placeholder="Limit"
-        />
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <button type="submit" disabled={loading}>
-            Apply
-          </button>
-          <button type="button" onClick={() => load()} disabled={loading}>
-            Refresh
-          </button>
-        </div>
-      </form>
+      <FieldError>{err}</FieldError>
 
       {loading ? (
-        <div>Loading audit logs…</div>
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-24" />
+          ))}
+        </div>
+      ) : logs.length === 0 ? (
+        <EmptyState
+          /* TODO(copy) */
+          title="No audit logs"
+          /* TODO(copy) */
+          body="No logs match these filters."
+        />
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ textAlign: "left" }}>
-                <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Time</th>
-                <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Actor</th>
-                <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Action</th>
-                <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Entity</th>
-                <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Entity ID</th>
-                <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Extra</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((l) => (
-                <tr key={l.id}>
-                  <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)", whiteSpace: "nowrap" }}>
+        <div className="space-y-3">
+          {logs.map((l) => (
+            <Card key={l.id}>
+              <div className="flex flex-col gap-1">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="font-semibold">{l.action}</span>
+                  <span className="text-xs text-[var(--color-fg-muted)]">
                     {formatTs(l.timestamp)}
-                  </td>
-                  <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                    <code style={{ fontSize: 12 }}>{l.actor_id || "—"}</code>
-                  </td>
-                  <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                    <span style={{ fontWeight: 600 }}>{l.action}</span>
-                  </td>
-                  <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                    {l.entity_type}
-                  </td>
-                  <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                    <code style={{ fontSize: 12 }}>{l.entity_id || "—"}</code>
-                  </td>
-                  <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                    <pre
-                      style={{
-                        margin: 0,
-                        maxWidth: 520,
-                        overflowX: "auto",
-                        fontSize: 12,
-                        opacity: 0.9,
-                      }}
-                    >
-                      {l.extra ? JSON.stringify(l.extra, null, 2) : ""}
-                    </pre>
-                  </td>
-                </tr>
-              ))}
-              {logs.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ padding: 12, opacity: 0.8 }}>
-                    No audit logs match these filters.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+                  </span>
+                </div>
+                <p className="text-sm text-[var(--color-fg-muted)]">
+                  {/* TODO(copy) */}
+                  {l.entity_type} {l.entity_id ? `#${l.entity_id}` : ""}
+                  {l.actor_id ? ` by actor ${l.actor_id}` : ""}
+                </p>
+                {l.extra && (
+                  <pre className="text-xs mt-1 whitespace-pre-wrap text-[var(--color-fg-muted)]">
+                    {JSON.stringify(l.extra, null, 2)}
+                  </pre>
+                )}
+              </div>
+            </Card>
+          ))}
         </div>
       )}
     </div>

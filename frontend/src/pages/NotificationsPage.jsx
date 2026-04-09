@@ -1,6 +1,14 @@
+// src/pages/NotificationsPage.jsx
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import {
+  PageHeader,
+  Card,
+  Button,
+  EmptyState,
+  Skeleton,
+} from "../components/ui";
 
 export default function NotificationsPage() {
   const q = useQuery({
@@ -8,26 +16,50 @@ export default function NotificationsPage() {
     queryFn: api.notifications.my,
   });
 
-  if (q.isLoading) return <div>Loading notifications…</div>;
-  if (q.error) return <div style={{ color: "crimson" }}>Failed: {q.error.message}</div>;
-
-  const items = q.data || [];
-
   return (
-    <div>
-      <h2>Notifications</h2>
-      {items.length === 0 ? (
-        <div>No notifications yet.</div>
+    <div className="space-y-4">
+      {/* TODO(copy) */}
+      <PageHeader title="Notifications" />
+
+      {q.isPending ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-20" />
+          ))}
+        </div>
+      ) : q.error ? (
+        <EmptyState
+          /* TODO(copy) */
+          title="Couldn't load notifications"
+          /* TODO(copy) */
+          body={q.error.message}
+          action={
+            <Button onClick={() => q.refetch()}>
+              {/* TODO(copy) */}
+              Retry
+            </Button>
+          }
+        />
+      ) : (q.data || []).length === 0 ? (
+        <EmptyState
+          /* TODO(copy) */
+          title="No notifications yet"
+        />
       ) : (
-        <div style={{ display: "grid", gap: 10 }}>
-          {items.map((n) => (
-            <div key={n.id} style={{ padding: 12, border: "1px solid #3333", borderRadius: 8 }}>
-              <div style={{ fontWeight: 700 }}>{n.subject || "(no subject)"}</div>
-              <div style={{ opacity: 0.8, fontSize: 13 }}>
-                {n.type} • {new Date(n.created_at).toLocaleString()}
-              </div>
-              <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>{n.body}</pre>
-            </div>
+        <div className="space-y-3">
+          {(q.data || []).map((n) => (
+            <Card key={n.id}>
+              <h3 className="font-semibold">
+                {n.subject || "(no subject)"}
+              </h3>
+              <p className="text-xs text-[var(--color-fg-muted)]">
+                {/* TODO(copy) */}
+                {n.type} &middot; {new Date(n.created_at).toLocaleString()}
+              </p>
+              {n.body && (
+                <p className="text-sm mt-1 whitespace-pre-wrap">{n.body}</p>
+              )}
+            </Card>
           ))}
         </div>
       )}

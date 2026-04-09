@@ -1,22 +1,27 @@
-// AdmineventPage.jsx
+// AdminEventPage.jsx
 import React, { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, downloadBlob } from "../lib/api";
+import {
+  PageHeader,
+  Card,
+  Button,
+  Modal,
+  Label,
+  Input,
+  FieldError,
+  EmptyState,
+  Skeleton,
+} from "../components/ui";
+import { toast } from "../state/toast";
 
 export default function AdminEventPage() {
   const { eventId } = useParams();
-  const [privacy, setPrivacy] = useState("full");
-  const [err, setErr] = useState("");
-  const [notify, setNotify] = useState({ subject: "", body: "", include_waitlisted: false });
-  const [statusFilter, setStatusFilter] = useState({
-    confirmed: true,
-    waitlisted: true,
-    cancelled: false,
-  });
-  const [openAnswers, setOpenAnswers] = useState({});
-  const [moveTargets, setMoveTargets] = useState({});
   const qc = useQueryClient();
+  const [privacy, setPrivacy] = useState("full");
+  const [confirmExport, setConfirmExport] = useState(false);
+  const [err, setErr] = useState("");
 
   const analyticsQ = useQuery({
     queryKey: ["adminEventAnalytics", eventId],
@@ -28,311 +33,160 @@ export default function AdminEventPage() {
     queryFn: () => api.admin.eventRoster(eventId, privacy),
   });
 
-  const slotsQ = useQuery({
-    queryKey: ["slots", eventId],
-    queryFn: () => api.listSlots({ event_id: eventId }),
-  });
-
   const roster = rosterQ.data || [];
-  const slots = slotsQ.data || [];
 
-  const slotOptions = useMemo(() => {
-    if (slots.length > 0) return slots;
-    const unique = new Map();
+  const grouped = useMemo(() => {
+    const map = new Map();
     for (const r of roster) {
-      if (!unique.has(r.slot_id)) {
-        unique.set(r.slot_id, {
-          id: r.slot_id,
-          start_time: r.slot_start,
-          end_time: r.slot_end,
-        });
-      }
+      const key = r.slot_id;
+      if (!map.has(key)) map.set(key, { slot: { id: key, start: r.slot_start, end: r.slot_end }, rows: [] });
+      map.get(key).rows.push(r);
     }
-    return Array.from(unique.values());
-  }, [roster, slots]);
+    return Array.from(map.values());
+  }, [roster]);
 
-  const groupedRoster = useMemo(() => {
-    const groups = new Map();
-    for (const row of roster) {
-      if (!statusFilter[row.status]) continue;
-      if (!groups.has(row.slot_id)) groups.set(row.slot_id, []);
-      groups.get(row.slot_id).push(row);
-    }
-    return Array.from(groups.entries()).map(([slotId, rows]) => ({
-      slotId,
-      rows,
-      slotStart: rows[0]?.slot_start,
-      slotEnd: rows[0]?.slot_end,
-      slotCapacity: rows[0]?.slot_capacity,
-      slotCurrentCount: rows[0]?.slot_current_count,
-    }));
-  }, [roster, statusFilter]);
-
-  function fmtTime(iso) {
-    try {
-      return new Date(iso).toLocaleString();
-    } catch {
-      return iso;
-    }
-  }
-
-  async function exportCsv() {
+  async function doExport() {
     setErr("");
     try {
-      await downloadBlob(`/admin/events/${eventId}/export_csv`, `event_${eventId}.csv`, { auth: true });
+      await downloadBlob(
+        `/admin/events/${eventId}/export?privacy=${privacy}`,
+        `event_${eventId}_roster.csv`,
+        { auth: true },
+      );
+      setConfirmExport(false);
+      // TODO(copy)
+      toast.success("Export ready.");
     } catch (e) {
-      setErr(e.message || "Export failed");
-    }
-  }
-
-  async function sendNotify(e) {
-    e.preventDefault();
-    setErr("");
-    try {
-      await api.admin.notify(eventId, notify);
-      alert("Sent!");
-      setNotify({ subject: "", body: "", include_waitlisted: false });
-    } catch (e2) {
-      setErr(e2.message || "Notify failed");
-    }
-  }
-
-  async function runRosterAction(fn, fallback) {
-    setErr("");
-    try {
-      await fn();
-      await qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
-      await qc.invalidateQueries({ queryKey: ["slots", eventId] });
-    } catch (e) {
-      setErr(e.message || fallback);
+      setErr(e?.message || "Export failed");
     }
   }
 
   return (
-    <div style={{ display: "grid", gap: 14 }}>
-      <h2>Admin: Event</h2>
-      <div style={{ opacity: 0.8 }}>eventId: {eventId}</div>
+    <div className="space-y-4">
+      <PageHeader
+        /* TODO(copy) */
+        title="Admin — Event"
+        action={
+          <Button variant="danger" onClick={() => setConfirmExport(true)}>
+            {/* TODO(copy) */}
+            Export CSV
+          </Button>
+        }
+      />
 
-      {err && <div style={{ color: "crimson" }}>{err}</div>}
+      <Card>
+        <div>
+          {/* TODO(copy) */}
+          <Label htmlFor="privacy">Privacy</Label>
+          <select
+            id="privacy"
+            value={privacy}
+            onChange={(e) => setPrivacy(e.target.value)}
+            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+          >
+            <option value="full">full</option>
+            <option value="minimal">minimal</option>
+          </select>
+        </div>
+        <FieldError>{err}</FieldError>
+      </Card>
 
-      <section style={{ padding: 12, border: "1px solid #3333", borderRadius: 8 }}>
-        <h3>Analytics</h3>
-        {analyticsQ.isLoading ? (
-          <div>Loading…</div>
+      <section>
+        {/* TODO(copy) */}
+        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+          Analytics
+        </h2>
+        {analyticsQ.isPending ? (
+          <Skeleton className="h-24" />
         ) : analyticsQ.error ? (
-          <div style={{ color: "crimson" }}>{analyticsQ.error.message}</div>
+          <EmptyState
+            /* TODO(copy) */
+            title="Couldn't load analytics"
+            /* TODO(copy) */
+            body={analyticsQ.error.message}
+          />
         ) : (
-          <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(analyticsQ.data, null, 2)}</pre>
+          <Card>
+            <pre className="text-xs whitespace-pre-wrap">
+              {/* TODO(copy) */}
+              {JSON.stringify(analyticsQ.data, null, 2)}
+            </pre>
+          </Card>
         )}
       </section>
 
-      <section style={{ padding: 12, border: "1px solid #3333", borderRadius: 8 }}>
-        <h3>Roster</h3>
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          Privacy:
-          <select value={privacy} onChange={(e) => setPrivacy(e.target.value)}>
-            <option value="full">full</option>
-            <option value="initials">initials</option>
-            <option value="anonymous">anonymous</option>
-          </select>
-          <button type="button" onClick={exportCsv}>Export CSV</button>
-        </label>
-        <div style={{ display: "flex", gap: 12, marginTop: 10 }}>
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={statusFilter.confirmed}
-              onChange={(e) => setStatusFilter((p) => ({ ...p, confirmed: e.target.checked }))}
-            />
-            Confirmed
-          </label>
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={statusFilter.waitlisted}
-              onChange={(e) => setStatusFilter((p) => ({ ...p, waitlisted: e.target.checked }))}
-            />
-            Waitlisted
-          </label>
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={statusFilter.cancelled}
-              onChange={(e) => setStatusFilter((p) => ({ ...p, cancelled: e.target.checked }))}
-            />
-            Cancelled
-          </label>
-        </div>
-
-        {rosterQ.isLoading ? (
-          <div>Loading…</div>
+      <section>
+        {/* TODO(copy) */}
+        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+          Roster
+        </h2>
+        {rosterQ.isPending ? (
+          <div className="space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-20" />
+            ))}
+          </div>
         ) : rosterQ.error ? (
-          <div style={{ color: "crimson" }}>{rosterQ.error.message}</div>
+          <EmptyState
+            /* TODO(copy) */
+            title="Couldn't load roster"
+            /* TODO(copy) */
+            body={rosterQ.error.message}
+            action={
+              <Button onClick={() => qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] })}>
+                {/* TODO(copy) */}
+                Retry
+              </Button>
+            }
+          />
+        ) : grouped.length === 0 ? (
+          <EmptyState
+            /* TODO(copy) */
+            title="No signups yet"
+          />
         ) : (
-          <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
-            {groupedRoster.length === 0 ? (
-              <div>No signups for selected filters.</div>
-            ) : (
-              groupedRoster.map((group) => (
-                <div key={group.slotId} style={{ border: "1px solid #3333", borderRadius: 8, padding: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
-                    <div style={{ fontWeight: 600 }}>
-                      Slot: {fmtTime(group.slotStart)} → {fmtTime(group.slotEnd)}
-                    </div>
-                    <div style={{ opacity: 0.8 }}>
-                      Capacity: {group.slotCurrentCount}/{group.slotCapacity}
-                    </div>
-                  </div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {group.rows.map((row) => {
-                      const name = row.participant?.name || "Volunteer";
-                      const email = row.participant?.email;
-                      const waitlistLabel =
-                        row.status === "waitlisted" && row.waitlist_position
-                          ? ` (position #${row.waitlist_position})`
-                          : "";
-                      const targetValue = moveTargets[row.signup_id] || "";
-                      const otherSlots = slotOptions.filter((s) => String(s.id) !== String(row.slot_id));
-
-                      return (
-                        <div key={row.signup_id} style={{ border: "1px solid #3332", borderRadius: 6, padding: 8 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                            <div>
-                              <div style={{ fontWeight: 600 }}>
-                                {name}
-                                {email ? <span style={{ marginLeft: 8, opacity: 0.75 }}>{email}</span> : null}
-                              </div>
-                              <div style={{ opacity: 0.8 }}>
-                                Status: {row.status}
-                                {waitlistLabel}
-                              </div>
-                            </div>
-                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                              {row.status !== "cancelled" && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    runRosterAction(
-                                      () => api.admin.signups.cancel(row.signup_id),
-                                      "Cancel failed",
-                                    )
-                                  }
-                                >
-                                  Cancel
-                                </button>
-                              )}
-                              {row.status === "waitlisted" && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    runRosterAction(
-                                      () => api.admin.signups.promote(row.signup_id),
-                                      "Promote failed",
-                                    )
-                                  }
-                                >
-                                  Promote
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  runRosterAction(
-                                    () => api.admin.signups.resend(row.signup_id),
-                                    "Resend failed",
-                                  )
-                                }
-                              >
-                                Resend
-                              </button>
-                            </div>
-                          </div>
-
-                          <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
-                            <select
-                              value={targetValue}
-                              onChange={(e) =>
-                                setMoveTargets((p) => ({ ...p, [row.signup_id]: e.target.value }))
-                              }
-                              disabled={otherSlots.length === 0 || row.status === "cancelled"}
-                            >
-                              <option value="">Move to slot…</option>
-                              {otherSlots.map((s) => (
-                                <option key={s.id} value={s.id}>
-                                  {fmtTime(s.start_time)} → {fmtTime(s.end_time)}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              disabled={!targetValue || row.status === "cancelled"}
-                              onClick={() =>
-                                runRosterAction(
-                                  () => api.admin.signups.move(row.signup_id, targetValue),
-                                  "Move failed",
-                                )
-                              }
-                            >
-                              Move
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setOpenAnswers((p) => ({ ...p, [row.signup_id]: !p[row.signup_id] }))
-                              }
-                            >
-                              {openAnswers[row.signup_id] ? "Hide answers" : "View answers"}
-                            </button>
-                          </div>
-
-                          {openAnswers[row.signup_id] && (
-                            <div style={{ marginTop: 6, paddingLeft: 6 }}>
-                              {row.answers && Object.keys(row.answers).length > 0 ? (
-                                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                                  {Object.entries(row.answers).map(([q, a]) => (
-                                    <li key={q}>
-                                      <strong>{q}:</strong> {a}
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <div style={{ opacity: 0.7 }}>No answers.</div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))
-            )}
+          <div className="space-y-3">
+            {grouped.map(({ slot, rows }) => (
+              <Card key={slot.id}>
+                <p className="text-sm font-medium">
+                  {/* TODO(copy) */}
+                  Slot: {slot.start} → {slot.end}
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {rows.map((r) => (
+                    <li key={r.signup_id || r.id} className="text-sm flex justify-between gap-2">
+                      <span>{r.user_name || r.user_email || r.user_id}</span>
+                      <span className="text-[var(--color-fg-muted)]">{r.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            ))}
           </div>
         )}
       </section>
 
-      <section style={{ padding: 12, border: "1px solid #3333", borderRadius: 8 }}>
-        <h3>Notify Participants</h3>
-        <form onSubmit={sendNotify} style={{ display: "grid", gap: 10, maxWidth: 700 }}>
-          <label>
-            Subject
-            <input value={notify.subject} onChange={(e) => setNotify((p) => ({ ...p, subject: e.target.value }))} required />
-          </label>
-          <label>
-            Body
-            <textarea value={notify.body} onChange={(e) => setNotify((p) => ({ ...p, body: e.target.value }))} rows={5} required />
-          </label>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={notify.include_waitlisted}
-              onChange={(e) => setNotify((p) => ({ ...p, include_waitlisted: e.target.checked }))}
-            />
-            Include waitlisted
-          </label>
-          <button>Send</button>
-        </form>
-      </section>
+      <Modal
+        open={confirmExport}
+        onClose={() => setConfirmExport(false)}
+        /* TODO(copy) */
+        title="Export roster"
+      >
+        <p className="text-sm">
+          {/* TODO(copy) */}
+          Download the current roster as CSV with privacy "{privacy}"?
+        </p>
+        <div className="flex justify-end gap-2 mt-4">
+          <Button variant="ghost" onClick={() => setConfirmExport(false)}>
+            {/* TODO(copy) */}
+            Cancel
+          </Button>
+          <Button onClick={doExport}>
+            {/* TODO(copy) */}
+            Download
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
