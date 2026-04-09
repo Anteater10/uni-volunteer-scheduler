@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Literal, Dict, Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
 from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, CsvImportStatus
 
@@ -430,8 +430,15 @@ class ModuleTemplateUpdate(BaseModel):
     metadata: Optional[dict] = None
 
 
-class ModuleTemplateRead(ORMBase, ModuleTemplateBase):
+class ModuleTemplateRead(ORMBase):
     slug: str
+    name: str
+    prereq_slugs: List[str] = []
+    default_capacity: int = 20
+    duration_minutes: int = 90
+    materials: List[str] = []
+    description: Optional[str] = None
+    metadata: dict = Field(default={}, validation_alias="metadata_")
     deleted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime

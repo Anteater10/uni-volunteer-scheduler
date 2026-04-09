@@ -23,6 +23,7 @@ import AdminEventPage from "./pages/AdminEventPage";
 import UsersAdminPage from "./pages/UsersAdminPage";
 import PortalsAdminPage from "./pages/PortalsAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
+import AdminTemplatesPage from "./pages/AdminTemplatesPage";
 
 import SelfCheckInPage from "./pages/SelfCheckInPage";
 import SignupConfirmedPage from "./pages/SignupConfirmedPage";
@@ -68,6 +69,7 @@ export default function App() {
           <Route path="admin/users" element={<UsersAdminPage />} />
           <Route path="admin/portals" element={<PortalsAdminPage />} />
           <Route path="admin/audit-logs" element={<AuditLogsPage />} />
+          <Route path="admin/templates" element={<AdminTemplatesPage />} />
         </Route>
 
         {/* 404 */}

@@ -16,6 +16,8 @@ from ..deps import require_role, log_action, ensure_event_owner_or_admin
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
+from ..services import template_service
+from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -832,3 +834,46 @@ def revoke_prereq_override(
     db.commit()
     db.refresh(override)
     return override
+
+
+# =========================
+# MODULE TEMPLATE CRUD (Phase 5)
+# =========================
+
+
+@router.get("/module-templates", response_model=list[ModuleTemplateRead])
+def list_module_templates(
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return template_service.list_templates(db)
+
+
+@router.post("/module-templates", response_model=ModuleTemplateRead, status_code=201)
+def create_module_template(
+    payload: ModuleTemplateCreate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    data = payload.model_dump(exclude={"slug"})
+    return template_service.create_template(db, payload.slug, data)
+
+
+@router.patch("/module-templates/{slug}", response_model=ModuleTemplateRead)
+def update_module_template(
+    slug: str,
+    payload: ModuleTemplateUpdate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    data = payload.model_dump(exclude_unset=True)
+    return template_service.update_template(db, slug, data)
+
+
+@router.delete("/module-templates/{slug}", status_code=204)
+def delete_module_template(
+    slug: str,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    template_service.soft_delete_template(db, slug)
