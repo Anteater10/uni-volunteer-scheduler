@@ -27,6 +27,5 @@ dist/
 build/
 
 # --- AI scaffolding (never commit) ---
-.planning/
 .claude/
 .gsd/
