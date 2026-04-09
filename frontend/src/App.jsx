@@ -12,6 +12,7 @@ import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import MySignupsPage from "./pages/MySignupsPage";
 import NotificationsPage from "./pages/NotificationsPage";
+import ProfilePage from "./pages/ProfilePage";
 
 import OrganizerDashboardPage from "./pages/OrganizerDashboardPage";
 import OrganizerEventPage from "./pages/OrganizerEventPage";
@@ -41,6 +42,7 @@ export default function App() {
         <Route element={<ProtectedRoute />}>
           <Route path="my-signups" element={<MySignupsPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="profile" element={<ProfilePage />} />
         </Route>
 
         {/* Organizer/Admin */}

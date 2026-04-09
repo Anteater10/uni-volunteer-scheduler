@@ -1,6 +1,13 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../state/authContext";
+import {
+  PageHeader,
+  Label,
+  Input,
+  Button,
+  FieldError,
+} from "../components/ui";
 
 export default function RegisterPage() {
   const nav = useNavigate();
@@ -35,38 +42,83 @@ export default function RegisterPage() {
   }
 
   return (
-    <div style={{ maxWidth: 520 }}>
-      <h2>Register (Participant)</h2>
-      {err && <div style={{ color: "crimson", marginBottom: 8 }}>{err}</div>}
+    <div className="mx-auto max-w-sm w-full pt-8">
+      {/* TODO(copy) */}
+      <PageHeader title="Create account" />
 
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
-        <label>
-          Full Name
-          <input value={name} onChange={(e) => setName(e.target.value)} required />
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div>
+          {/* TODO(copy) */}
+          <Label htmlFor="reg-name">Full name</Label>
+          <Input
+            id="reg-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoComplete="name"
+            required
+          />
+        </div>
+        <div>
+          {/* TODO(copy) */}
+          <Label htmlFor="reg-email">Email</Label>
+          <Input
+            id="reg-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            required
+          />
+        </div>
+        <div>
+          {/* TODO(copy) */}
+          <Label htmlFor="reg-uniid">University ID (optional)</Label>
+          <Input
+            id="reg-uniid"
+            value={universityId}
+            onChange={(e) => setUniversityId(e.target.value)}
+          />
+        </div>
+        <div>
+          {/* TODO(copy) */}
+          <Label htmlFor="reg-password">Password</Label>
+          <Input
+            id="reg-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={notifyEmail}
+            onChange={(e) => setNotifyEmail(e.target.checked)}
+            className="h-4 w-4"
+          />
+          {/* TODO(copy) */}
+          Email me confirmations and reminders
         </label>
-
-        <label>
-          Email
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
-        </label>
-
-        <label>
-          University ID (optional)
-          <input value={universityId} onChange={(e) => setUniversityId(e.target.value)} />
-        </label>
-
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input type="checkbox" checked={notifyEmail} onChange={(e) => setNotifyEmail(e.target.checked)} />
-          Email me confirmations/reminders
-        </label>
-
-        <label>
-          Password
-          <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required />
-        </label>
-
-        <button disabled={loading}>{loading ? "Creating..." : "Create account"}</button>
+        <FieldError>{err}</FieldError>
+        <Button
+          type="submit"
+          className="w-full"
+          size="lg"
+          disabled={loading}
+        >
+          {/* TODO(copy) */}
+          {loading ? "Creating..." : "Create account"}
+        </Button>
       </form>
+
+      <div className="mt-4 text-center">
+        <Button variant="ghost" as={Link} to="/login">
+          {/* TODO(copy) */}
+          Already have an account? Sign in
+        </Button>
+      </div>
     </div>
   );
 }

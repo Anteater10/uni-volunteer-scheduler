@@ -4,6 +4,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { formatApiDateTimeLocal, toEpochMs } from "../lib/datetime";
 import { useAuth } from "../state/authContext";
+import {
+  PageHeader,
+  Card,
+  Button,
+  Modal,
+  FieldError,
+  Skeleton,
+  EmptyState,
+} from "../components/ui";
+import { toast } from "../state/toast";
+
+// 3-tap rule: slot button (1) → confirm in modal (2) → done. No navigations between taps.
 
 function isPast(endTime) {
   return toEpochMs(endTime) <= Date.now();
@@ -14,8 +26,11 @@ export default function EventDetailPage() {
   const qc = useQueryClient();
   const { isAuthed, role } = useAuth();
 
-  const [err, setErr] = useState("");
-  const [busySlot, setBusySlot] = useState(null);
+  const [pendingSignup, setPendingSignup] = useState(null);
+  const [pendingCancel, setPendingCancel] = useState(null);
+  const [signupError, setSignupError] = useState("");
+  const [cancelError, setCancelError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const eventQ = useQuery({
     queryKey: ["event", eventId],
@@ -26,89 +41,217 @@ export default function EventDetailPage() {
 
   const sortedSlots = useMemo(() => {
     const slots = event?.slots || [];
-    return [...slots].sort((a, b) => toEpochMs(a.start_time) - toEpochMs(b.start_time));
+    return [...slots].sort(
+      (a, b) => toEpochMs(a.start_time) - toEpochMs(b.start_time),
+    );
   }, [event]);
 
-  async function signup(slotId) {
-    setErr("");
-    setBusySlot(slotId);
+  async function confirmSignup() {
+    if (!pendingSignup) return;
+    setSignupError("");
+    setBusy(true);
     try {
-      await api.signups.create({ slot_id: slotId });
+      await api.signups.create({ slot_id: pendingSignup.id });
       await qc.invalidateQueries({ queryKey: ["mySignups"] });
-      alert("Signed up!");
+      await qc.invalidateQueries({ queryKey: ["event", eventId] });
+      setPendingSignup(null);
+      // TODO(copy): signup success toast
+      toast.success("You're in. See you there.");
     } catch (e) {
-      setErr(e.message || "Signup failed");
+      setSignupError(e?.message || "Signup failed");
     } finally {
-      setBusySlot(null);
+      setBusy(false);
     }
   }
 
-  if (eventQ.isLoading) return <div>Loading event…</div>;
-  if (eventQ.error) return <div style={{ color: "crimson" }}>Failed: {eventQ.error.message}</div>;
-  if (!event) return <div>Not found.</div>;
+  async function confirmCancel() {
+    if (!pendingCancel) return;
+    setCancelError("");
+    setBusy(true);
+    try {
+      await api.signups.cancel(pendingCancel.signupId);
+      await qc.invalidateQueries({ queryKey: ["mySignups"] });
+      await qc.invalidateQueries({ queryKey: ["event", eventId] });
+      setPendingCancel(null);
+      // TODO(copy): cancel success toast
+      toast.success("Signup canceled.");
+    } catch (e) {
+      setCancelError(e?.message || "Cancel failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (eventQ.isPending) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
+  if (eventQ.error) {
+    return (
+      <EmptyState
+        /* TODO(copy) */
+        title="Couldn't load event"
+        /* TODO(copy) */
+        body={eventQ.error.message}
+        action={
+          <Button onClick={() => eventQ.refetch()}>
+            {/* TODO(copy) */}
+            Retry
+          </Button>
+        }
+      />
+    );
+  }
+
+  if (!event) {
+    return (
+      <EmptyState
+        /* TODO(copy) */
+        title="Event not found"
+      />
+    );
+  }
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
+    <div className="space-y-4">
+      <PageHeader
+        title={event.title}
+        subtitle={`${event.location || "TBD"} • ${formatApiDateTimeLocal(
+          event.start_date,
+        )}`}
+      />
+
+      {event.description && (
+        <Card>
+          <p className="whitespace-pre-wrap text-sm">{event.description}</p>
+        </Card>
+      )}
+
       <div>
-        <h2 style={{ marginBottom: 4 }}>{event.title}</h2>
-        <div style={{ opacity: 0.8 }}>
-          {event.location || "TBD"} • {formatApiDateTimeLocal(event.start_date)} → {formatApiDateTimeLocal(event.end_date)}
-        </div>
-      </div>
-
-      {event.description && <p style={{ whiteSpace: "pre-wrap" }}>{event.description}</p>}
-
-      {err && <div style={{ color: "crimson" }}>{err}</div>}
-
-      <div>
-        <h3>Slots</h3>
+        {/* TODO(copy): slots heading */}
+        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+          Slots
+        </h2>
         {sortedSlots.length === 0 ? (
-          <div>No slots yet.</div>
+          /* TODO(copy) */
+          <EmptyState title="No slots yet" />
         ) : (
-          <div style={{ display: "grid", gap: 10 }}>
+          <ul className="space-y-2">
             {sortedSlots.map((s) => {
               const full = s.current_count >= s.capacity;
               const past = isPast(s.end_time);
-              const disabled = !isAuthed || role === "admin" || role === "organizer" || past;
-              const canSignup = isAuthed && role === "participant" && !past;
-
+              const canSignup =
+                isAuthed && role === "participant" && !past;
               return (
-                <div key={s.id} style={{ padding: 12, border: "1px solid #3333", borderRadius: 8 }}>
-                  <div style={{ fontWeight: 600 }}>
-                    {formatApiDateTimeLocal(s.start_time)} → {formatApiDateTimeLocal(s.end_time)}
-                  </div>
-                  <div style={{ opacity: 0.8, fontSize: 13 }}>
-                    Capacity: {s.current_count}/{s.capacity} {full ? "(Full → waitlist if you signup)" : ""}
-                    {past ? " • Past slot" : ""}
-                  </div>
-
-                  {!isAuthed && <div style={{ marginTop: 8, opacity: 0.8 }}>Login to sign up.</div>}
-
-                  {canSignup && (
-                    <button
-                      style={{ marginTop: 8 }}
-                      disabled={busySlot === s.id}
-                      onClick={() => signup(s.id)}
-                    >
-                      {busySlot === s.id ? "Submitting…" : "Sign up"}
-                    </button>
-                  )}
-
-                  {isAuthed && (role === "admin" || role === "organizer") && (
-                    <div style={{ marginTop: 8, opacity: 0.8, fontSize: 13 }}>
-                      (Organizer/Admin view: signup actions are intended for participants.)
+                <li
+                  key={s.id}
+                  className="min-h-14 rounded-xl border border-[var(--color-border)] p-3 flex items-center justify-between gap-3"
+                >
+                  <div className="text-sm">
+                    <div className="font-medium">
+                      {formatApiDateTimeLocal(s.start_time)} →{" "}
+                      {formatApiDateTimeLocal(s.end_time)}
                     </div>
+                    <div className="text-[var(--color-fg-muted)] text-xs">
+                      {s.current_count}/{s.capacity}
+                      {full ? " • full (waitlist)" : ""}
+                      {past ? " • past" : ""}
+                    </div>
+                  </div>
+                  {canSignup && (
+                    <Button
+                      onClick={() =>
+                        setPendingSignup({
+                          id: s.id,
+                          timeLabel: formatApiDateTimeLocal(s.start_time),
+                        })
+                      }
+                    >
+                      {/* TODO(copy) */}
+                      Sign up
+                    </Button>
                   )}
-                </div>
+                  {!isAuthed && (
+                    <span className="text-xs text-[var(--color-fg-muted)]">
+                      {/* TODO(copy) */}
+                      Login to sign up
+                    </span>
+                  )}
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
       </div>
 
-      <div style={{ opacity: 0.8, fontSize: 13 }}>
-        Note: event custom questions are currently organizer/admin-only in your backend, so the participant UI can’t display them yet.
-      </div>
+      <Modal
+        open={!!pendingSignup}
+        onClose={() => {
+          setPendingSignup(null);
+          setSignupError("");
+        }}
+        /* TODO(copy) */
+        title="Confirm signup"
+      >
+        <p className="text-sm">
+          {/* TODO(copy) */}
+          Confirm signup for {pendingSignup?.timeLabel}?
+        </p>
+        <FieldError>{signupError}</FieldError>
+        <div className="flex justify-end gap-2 mt-4">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setPendingSignup(null);
+              setSignupError("");
+            }}
+            disabled={busy}
+          >
+            {/* TODO(copy) */}
+            Not now
+          </Button>
+          <Button onClick={confirmSignup} disabled={busy}>
+            {/* TODO(copy) */}
+            Confirm signup
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!pendingCancel}
+        onClose={() => {
+          setPendingCancel(null);
+          setCancelError("");
+        }}
+        /* TODO(copy) */
+        title="Cancel signup"
+      >
+        <p className="text-sm">
+          {/* TODO(copy) */}
+          Cancel your signup? This can't be undone.
+        </p>
+        <FieldError>{cancelError}</FieldError>
+        <div className="flex justify-end gap-2 mt-4">
+          <Button
+            variant="ghost"
+            onClick={() => setPendingCancel(null)}
+            disabled={busy}
+          >
+            {/* TODO(copy) */}
+            Keep it
+          </Button>
+          <Button variant="danger" onClick={confirmCancel} disabled={busy}>
+            {/* TODO(copy) */}
+            Cancel signup
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -1,11 +1,23 @@
 // layout.jsx
 import React from "react";
 import { Link, Outlet } from "react-router-dom";
+import { Calendar, ListChecks, User } from "lucide-react";
 import { useAuth } from "../state/authContext";
 import ToastHost from "./ui/Toast";
+import BottomNav from "./ui/BottomNav";
+
+const studentNavItems = [
+  // TODO(copy): bottom-nav labels
+  { to: "/events", label: "Events", icon: <Calendar className="h-5 w-5" /> },
+  // TODO(copy)
+  { to: "/my-signups", label: "My Signups", icon: <ListChecks className="h-5 w-5" /> },
+  // TODO(copy)
+  { to: "/profile", label: "Profile", icon: <User className="h-5 w-5" /> },
+];
 
 export default function Layout() {
   const { user, isAuthed, role, logout } = useAuth();
+  const showStudentNav = isAuthed && role === "participant";
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-fg)]">
@@ -42,7 +54,9 @@ export default function Layout() {
         <Outlet />
       </main>
 
-      <div id="bottom-nav-slot" />
+      <div id="bottom-nav-slot">
+        {showStudentNav && <BottomNav items={studentNavItems} />}
+      </div>
       <ToastHost />
     </div>
   );
