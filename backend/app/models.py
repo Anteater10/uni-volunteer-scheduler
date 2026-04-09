@@ -36,8 +36,16 @@ class UserRole(str, enum.Enum):
 class SignupStatus(str, enum.Enum):
     pending = "pending"
     confirmed = "confirmed"
+    checked_in = "checked_in"
+    attended = "attended"
+    no_show = "no_show"
     waitlisted = "waitlisted"
     cancelled = "cancelled"
+
+
+class MagicLinkPurpose(str, enum.Enum):
+    email_confirm = "email_confirm"
+    check_in = "check_in"
 
 
 class NotificationType(str, enum.Enum):
@@ -103,6 +111,7 @@ class Event(Base):
     max_signups_per_user = Column(Integer, nullable=True)
     signup_open_at = Column(DateTime(timezone=True), nullable=True)
     signup_close_at = Column(DateTime(timezone=True), nullable=True)
+    venue_code = Column(String(4), nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -158,6 +167,7 @@ class Signup(Base):
 
     timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     reminder_sent = Column(Boolean, nullable=False, default=False, server_default="false")
+    checked_in_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="signups")
@@ -337,6 +347,11 @@ class MagicLinkToken(Base):
     token_hash = Column(String, nullable=False, unique=True, index=True)
     signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id", ondelete="CASCADE"), nullable=False)
     email = Column(String, nullable=False)
+    purpose = Column(
+        Enum(MagicLinkPurpose, name="magiclinkpurpose"),
+        nullable=False,
+        server_default="email_confirm",
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
     consumed_at = Column(DateTime(timezone=True), nullable=True)
