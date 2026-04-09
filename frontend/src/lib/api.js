@@ -391,6 +391,25 @@ async function adminResendSignup(signupId) {
   return request(`/admin/signups/${signupId}/resend`, { method: "POST" });
 }
 
+// --------------------
+// MAGIC LINK
+// --------------------
+async function resendMagicLink({ email, eventId }) {
+  const url = `${API_BASE}/auth/magic/resend`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, event_id: eventId }),
+  });
+  const json = await safeReadJson(res);
+  if (!res.ok) {
+    const err = new Error(extractErrorMessage(json, `POST /auth/magic/resend failed (${res.status})`));
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
 // Bundle API in BOTH flat + nested shapes so all your pages work
 export const api = {
   // auth
@@ -421,6 +440,9 @@ export const api = {
   cancelSignup,
   listMySignups,
   listEventSignups,
+
+  // magic link
+  resendMagicLink,
 
   // questions
   listEventQuestions,
