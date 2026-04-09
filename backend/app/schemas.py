@@ -303,8 +303,24 @@ class PaginatedAuditLogs(BaseModel):
 class VolunteerHoursRow(BaseModel):
     user_id: UUID
     name: str
-    email: EmailStr
-    total_hours: float
+    hours: float
+    events: int
+
+
+class AttendanceRateRow(BaseModel):
+    event_id: UUID
+    name: str
+    confirmed: int
+    attended: int
+    no_show: int
+    rate: float
+
+
+class NoShowRateRow(BaseModel):
+    user_id: UUID
+    name: str
+    rate: float
+    count: int
 
 
 # =========================

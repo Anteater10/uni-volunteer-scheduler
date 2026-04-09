@@ -8,7 +8,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, Response, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, cast, String
+from sqlalchemy import func, or_, cast, String, Integer
 
 from .. import models, schemas
 from ..database import get_db
@@ -803,6 +803,225 @@ def export_audit_logs_csv(
     log_action(db, admin_user, "admin_export_audit_logs_csv", "AuditLog", None)
     headers = {"Content-Disposition": 'attachment; filename="audit-logs.csv"'}
     return Response(content=output.getvalue(), media_type="text/csv", headers=headers)
+
+
+# =========================
+# AGGREGATE ANALYTICS (Phase 7)
+# =========================
+
+
+@router.get("/analytics/volunteer-hours", response_model=List[schemas.VolunteerHoursRow])
+def analytics_volunteer_hours(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Volunteer hours: sum of slot duration for attended (or confirmed fallback) signups, grouped by user."""
+    # Use 'attended' status if available, fall back to 'confirmed'
+    target_statuses = [models.SignupStatus.attended]
+    if not hasattr(models.SignupStatus, "attended"):
+        target_statuses = [models.SignupStatus.confirmed]
+
+    query = (
+        db.query(
+            models.User.id.label("user_id"),
+            models.User.name.label("name"),
+            func.sum(
+                func.extract("epoch", models.Slot.end_time - models.Slot.start_time) / 3600.0
+            ).label("hours"),
+            func.count(func.distinct(models.Event.id)).label("events"),
+        )
+        .join(models.Signup, models.Signup.user_id == models.User.id)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(models.Signup.status.in_(target_statuses))
+    )
+    if from_date:
+        query = query.filter(models.Slot.start_time >= from_date)
+    if to_date:
+        query = query.filter(models.Slot.start_time <= to_date)
+
+    rows = query.group_by(models.User.id, models.User.name).all()
+
+    log_action(db, admin_user, "admin_analytics_volunteer_hours", "Analytics", None)
+    return [
+        schemas.VolunteerHoursRow(
+            user_id=r.user_id, name=r.name,
+            hours=round(float(r.hours or 0), 2), events=int(r.events or 0),
+        )
+        for r in rows
+    ]
+
+
+@router.get("/analytics/attendance-rates", response_model=List[schemas.AttendanceRateRow])
+def analytics_attendance_rates(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Attendance rate per event: attended / (confirmed + attended + no_show)."""
+    terminal_statuses = [
+        models.SignupStatus.confirmed,
+        models.SignupStatus.attended,
+        models.SignupStatus.no_show,
+    ]
+    query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+
+    events = query.distinct().all()
+    result = []
+    for event in events:
+        slot_ids = [s.id for s in event.slots]
+        if not slot_ids:
+            continue
+        signups = (
+            db.query(models.Signup)
+            .filter(models.Signup.slot_id.in_(slot_ids))
+            .all()
+        )
+        confirmed = sum(1 for s in signups if s.status == models.SignupStatus.confirmed)
+        attended = sum(1 for s in signups if s.status == models.SignupStatus.attended)
+        no_show = sum(1 for s in signups if s.status == models.SignupStatus.no_show)
+        denom = confirmed + attended + no_show
+        rate = (attended / denom) if denom > 0 else 0.0
+
+        result.append(schemas.AttendanceRateRow(
+            event_id=event.id, name=event.title,
+            confirmed=confirmed, attended=attended, no_show=no_show,
+            rate=round(rate, 4),
+        ))
+
+    log_action(db, admin_user, "admin_analytics_attendance_rates", "Analytics", None)
+    return result
+
+
+@router.get("/analytics/no-show-rates", response_model=List[schemas.NoShowRateRow])
+def analytics_no_show_rates(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """No-show rate per user: no_show / (attended + no_show)."""
+    terminal_statuses = [models.SignupStatus.attended, models.SignupStatus.no_show]
+
+    query = (
+        db.query(
+            models.User.id.label("user_id"),
+            models.User.name.label("name"),
+            func.count(models.Signup.id).label("total"),
+            func.sum(
+                func.cast(models.Signup.status == models.SignupStatus.no_show, Integer)
+            ).label("no_show_count"),
+        )
+        .join(models.Signup, models.Signup.user_id == models.User.id)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .filter(models.Signup.status.in_(terminal_statuses))
+    )
+    if from_date:
+        query = query.filter(models.Slot.start_time >= from_date)
+    if to_date:
+        query = query.filter(models.Slot.start_time <= to_date)
+
+    rows = query.group_by(models.User.id, models.User.name).all()
+
+    log_action(db, admin_user, "admin_analytics_no_show_rates", "Analytics", None)
+    return [
+        schemas.NoShowRateRow(
+            user_id=r.user_id, name=r.name,
+            rate=round(float(r.no_show_count or 0) / float(r.total) if r.total else 0.0, 4),
+            count=int(r.no_show_count or 0),
+        )
+        for r in rows
+    ]
+
+
+@router.get("/events/{event_id}/attendance.csv")
+def export_event_attendance_csv(
+    event_id: str,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Event-level attendance CSV (admin or event owner)."""
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_owner_or_admin(event, actor)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["user_name", "email", "status", "checked_in_at", "slot_start", "slot_end"])
+
+    for slot in sorted(event.slots, key=lambda s: s.start_time):
+        for signup in slot.signups:
+            user = signup.user
+            writer.writerow([
+                user.name,
+                user.email,
+                signup.status.value,
+                signup.checked_in_at.isoformat() if signup.checked_in_at else "",
+                slot.start_time.isoformat(),
+                slot.end_time.isoformat(),
+            ])
+
+    log_action(db, actor, "admin_export_attendance_csv", "Event", str(event.id))
+    headers_resp = {"Content-Disposition": f'attachment; filename="attendance-{event_id}.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
+
+
+@router.get("/analytics/volunteer-hours.csv")
+def export_volunteer_hours_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Volunteer hours as CSV."""
+    target_statuses = [models.SignupStatus.attended]
+    if not hasattr(models.SignupStatus, "attended"):
+        target_statuses = [models.SignupStatus.confirmed]
+
+    query = (
+        db.query(
+            models.User.id.label("user_id"),
+            models.User.name.label("name"),
+            models.User.email.label("email"),
+            func.sum(
+                func.extract("epoch", models.Slot.end_time - models.Slot.start_time) / 3600.0
+            ).label("hours"),
+            func.count(func.distinct(models.Event.id)).label("events"),
+        )
+        .join(models.Signup, models.Signup.user_id == models.User.id)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(models.Signup.status.in_(target_statuses))
+    )
+    if from_date:
+        query = query.filter(models.Slot.start_time >= from_date)
+    if to_date:
+        query = query.filter(models.Slot.start_time <= to_date)
+
+    rows = query.group_by(models.User.id, models.User.name, models.User.email).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["user_id", "name", "email", "hours", "events"])
+    for r in rows:
+        writer.writerow([
+            str(r.user_id), r.name, r.email,
+            round(float(r.hours or 0), 2), int(r.events or 0),
+        ])
+
+    log_action(db, admin_user, "admin_export_volunteer_hours_csv", "Analytics", None)
+    headers_resp = {"Content-Disposition": 'attachment; filename="volunteer-hours.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
 
 
 # =========================

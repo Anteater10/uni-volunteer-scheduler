@@ -539,6 +539,10 @@ export const api = {
       create: (payload) => adminCreateUser(payload),
       update: (id, payload) => adminUpdateUser(id, payload),
       delete: (id) => adminDeleteUser(id),
+      ccpaExport: (userId, reason) =>
+        request(`/admin/users/${userId}/ccpa-export`, { method: "GET", params: { reason } }),
+      ccpaDelete: (userId, reason) =>
+        request(`/admin/users/${userId}/ccpa-delete`, { method: "POST", body: { reason } }),
     },
     auditLogs: (params) => adminAuditLogs(params),
     eventAnalytics: (eventId) => request(`/admin/events/${eventId}/analytics`, { method: "GET" }),
@@ -551,6 +555,47 @@ export const api = {
       promote: (id) => adminPromoteSignup(id),
       move: (id, targetSlotId) => adminMoveSignup(id, targetSlotId),
       resend: (id) => adminResendSignup(id),
+    },
+    analytics: {
+      volunteerHours: (params) => request("/admin/analytics/volunteer-hours", { method: "GET", params }),
+      attendanceRates: (params) => request("/admin/analytics/attendance-rates", { method: "GET", params }),
+      noShowRates: (params) => request("/admin/analytics/no-show-rates", { method: "GET", params }),
+    },
+    overrides: {
+      list: (params) => request("/admin/prereq-overrides", { method: "GET", params }),
+      create: (userId, payload) =>
+        request(`/admin/users/${userId}/prereq-overrides`, { method: "POST", body: payload }),
+      revoke: (overrideId) =>
+        request(`/admin/prereq-overrides/${overrideId}`, { method: "DELETE" }),
+    },
+    templates: {
+      list: () => request("/admin/module-templates"),
+      create: (payload) => request("/admin/module-templates", { method: "POST", body: payload }),
+      update: (slug, payload) => request(`/admin/module-templates/${slug}`, { method: "PATCH", body: payload }),
+      delete: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
+      bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/module-templates/${s}`, { method: "DELETE" }))),
+    },
+    imports: {
+      list: () => request("/admin/imports", { method: "GET" }),
+      get: (importId) => request(`/admin/imports/${importId}`),
+      upload: (file) => {
+        const formData = new FormData();
+        formData.append("file", file);
+        const token = authStorage.getToken();
+        return fetch(`${API_BASE}/admin/imports`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+        }).then(async (res) => {
+          if (!res.ok) {
+            const json = await safeReadJson(res);
+            throw new Error(extractErrorMessage(json, `Upload failed (${res.status})`));
+          }
+          return res.json();
+        });
+      },
+      commit: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
+      retry: (importId) => request(`/admin/imports/${importId}/retry`, { method: "POST" }),
     },
   },
 };
