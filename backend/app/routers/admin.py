@@ -6,7 +6,7 @@ import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, Response, HTTPException, Query
+from fastapi import APIRouter, Depends, Response, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, cast, String
 
@@ -16,8 +16,9 @@ from ..deps import require_role, log_action, ensure_event_owner_or_admin
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
-from ..services import template_service
-from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate
+from ..services import template_service, import_service
+from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate, CsvImportRead
+from ..tasks.import_csv import process_csv_import
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -877,3 +878,62 @@ def delete_module_template(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     template_service.soft_delete_template(db, slug)
+
+
+# =========================
+# CSV IMPORT PIPELINE (Phase 5)
+# =========================
+
+
+@router.post("/imports", response_model=CsvImportRead, status_code=201)
+async def upload_csv_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Upload CSV and start async import processing."""
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files accepted")
+    raw_bytes = await file.read()
+    if len(raw_bytes) > 5 * 1024 * 1024:  # 5MB limit
+        raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+    imp = import_service.create_import(db, current_user.id, file.filename, raw_bytes)
+    # Store raw CSV in result_payload for the Celery task to read
+    import_service.update_import_status(
+        db, imp.id, imp.status,
+        result_payload={"raw_csv": raw_bytes.decode("utf-8", errors="replace")}
+    )
+    process_csv_import.delay(str(imp.id))
+    return imp
+
+
+@router.get("/imports/{import_id}", response_model=CsvImportRead)
+def get_csv_import(
+    import_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Poll import status and preview."""
+    return import_service.get_import(db, import_id)
+
+
+@router.patch("/imports/{import_id}/rows/{row_index}")
+def update_import_row(
+    import_id: str,
+    row_index: int,
+    updates: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Edit a single row in the import preview before commit."""
+    return import_service.update_preview_row(db, import_id, row_index, updates)
+
+
+@router.post("/imports/{import_id}/commit")
+def commit_csv_import(
+    import_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Atomically commit all validated rows as events."""
+    return import_service.commit_import(db, import_id)
