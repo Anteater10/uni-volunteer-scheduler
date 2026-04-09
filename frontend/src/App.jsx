@@ -16,6 +16,7 @@ import ProfilePage from "./pages/ProfilePage";
 
 import OrganizerDashboardPage from "./pages/OrganizerDashboardPage";
 import OrganizerEventPage from "./pages/OrganizerEventPage";
+import OrganizerRosterPage from "./pages/OrganizerRosterPage";
 
 import AdminDashboardPage from "./pages/AdminDashboardPage";
 import AdminEventPage from "./pages/AdminEventPage";
@@ -55,6 +56,7 @@ export default function App() {
         <Route element={<ProtectedRoute roles={["organizer", "admin"]} />}>
           <Route path="organizer" element={<OrganizerDashboardPage />} />
           <Route path="organizer/events/:eventId" element={<OrganizerEventPage />} />
+          <Route path="organize/events/:eventId/roster" element={<OrganizerRosterPage />} />
         </Route>
 
         {/* Admin-only */}
