@@ -118,14 +118,24 @@ def resolve_event_endpoint(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get("/signups/{signup_id}", response_model=SignupRead)
+@router.get("/signups/{signup_id}")
 def get_signup(
     signup_id: UUID,
     db: Session = Depends(get_db),
 ):
     """Minimal GET signup endpoint for self-check-in flow (discovers event_id)."""
-    from ..models import Signup
+    from ..models import Signup, Slot, Event
     signup = db.get(Signup, signup_id)
     if not signup:
         raise HTTPException(status_code=404, detail="Signup not found")
-    return signup
+    slot = db.get(Slot, signup.slot_id)
+    event = db.get(Event, slot.event_id) if slot else None
+    data = SignupRead.model_validate(signup).model_dump()
+    if slot:
+        data["slot_start_time"] = slot.start_time
+        data["slot_end_time"] = slot.end_time
+    if event:
+        data["event_title"] = event.title
+        data["event_location"] = event.location
+        data["event_id"] = str(event.id)
+    return data

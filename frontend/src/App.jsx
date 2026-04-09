@@ -24,6 +24,7 @@ import UsersAdminPage from "./pages/UsersAdminPage";
 import PortalsAdminPage from "./pages/PortalsAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
 
+import SelfCheckInPage from "./pages/SelfCheckInPage";
 import SignupConfirmedPage from "./pages/SignupConfirmedPage";
 import SignupConfirmFailedPage from "./pages/SignupConfirmFailedPage";
 import SignupConfirmPendingPage from "./pages/SignupConfirmPendingPage";
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="events" element={<EventsPage />} />
         <Route path="events/:eventId" element={<EventDetailPage />} />
         <Route path="portals/:slug" element={<PortalPage />} />
+        <Route path="check-in/:signupId" element={<SelfCheckInPage />} />
         <Route path="signup/confirmed" element={<SignupConfirmedPage />} />
         <Route path="signup/confirm-failed" element={<SignupConfirmFailedPage />} />
         <Route path="signup/confirm-pending" element={<SignupConfirmPendingPage />} />

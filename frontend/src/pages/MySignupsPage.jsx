@@ -13,6 +13,7 @@ import {
   FieldError,
 } from "../components/ui";
 import { toast } from "../state/toast";
+import StatusIcon from "../components/StatusIcon";
 
 export default function MySignupsPage() {
   const qc = useQueryClient();
@@ -98,7 +99,8 @@ export default function MySignupsPage() {
           {timeLabel}
           {s.event_location ? ` • ${s.event_location}` : ""}
         </p>
-        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+        <p className="text-xs text-[var(--color-fg-muted)] mt-1 flex items-center gap-1">
+          <StatusIcon status={s.status} className="h-4 w-4 inline-block" />
           {/* TODO(copy): status label */}
           Status: {s.status}
           {s.status === "waitlisted" && s.waitlist_position
