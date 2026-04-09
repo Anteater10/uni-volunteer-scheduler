@@ -17,6 +17,7 @@ from sendgrid.helpers.mail import Mail
 from .config import settings
 from .database import SessionLocal
 from . import models
+from .emails import BUILDERS
 
 # Celery app configured to use Redis (broker + result backend)
 celery = Celery(
@@ -82,23 +83,20 @@ def send_email_notification(
     """
     db: Session = SessionLocal()
     try:
-        # Resolve user + content from signup_id when kind is provided
-        if kind == "reminder_24h" and signup_id is not None:
+        # Resolve user + content from signup_id when kind is provided.
+        # All transactional templates live in app.emails.BUILDERS — this
+        # task is purely a dispatch + persistence shim.
+        if kind is not None and signup_id is not None:
+            builder = BUILDERS.get(kind)
+            if builder is None:
+                raise ValueError(f"Unknown notification kind: {kind}")
             signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
             if not signup:
                 return
-            slot = signup.slot
-            event = slot.event
+            payload = builder(signup)
             user = signup.user
-            subject = f"Reminder: volunteer slot for '{event.title}'"
-            body = (
-                f"Hi {user.name},\n\n"
-                f"This is a reminder for your volunteer slot:\n"
-                f"- Event: {event.title}\n"
-                f"- When: {slot.start_time} to {slot.end_time}\n"
-                f"- Where: {event.location or 'TBD'}\n\n"
-                "Thank you for volunteering!"
-            )
+            subject = payload["subject"]
+            body = payload["body"]
         else:
             if user_id is None:
                 return

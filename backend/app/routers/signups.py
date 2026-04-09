@@ -326,7 +326,6 @@ def cancel_signup(
             break
         slot.current_count += 1
         promoted_signups.append(promoted)
-    promoted_user_ids: List[str] = [str(p.user_id) for p in promoted_signups]
 
     # Audit log before commit
     log_action(db, current_user, "signup_cancel", "Signup", str(signup.id))
@@ -334,35 +333,11 @@ def cancel_signup(
     db.commit()
     db.refresh(signup)
 
-    # Emails after commit
-    subject = f"Your signup for '{event.title}' was cancelled"
-    body = (
-        f"Hi {current_user.name},\n\n"
-        f"Your signup for the following volunteer slot has been cancelled:\n"
-        f"- Event: {event.title}\n"
-        f"- When: {slot.start_time} to {slot.end_time}\n"
-        f"- Where: {event.location or 'TBD'}\n\n"
-        "If this is a mistake, you can sign up again if slots are available."
-    )
-    send_email_notification.delay(str(current_user.id), subject, body)
+    # Emails after commit — dispatched via app.emails.BUILDERS by kind.
+    send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
-    if promoted_user_ids:
-        promoted_users = (
-            db.query(models.User)
-            .filter(models.User.id.in_(promoted_user_ids))
-            .all()
-        )
-        for u in promoted_users:
-            subject2 = f"You have a spot for '{event.title}'"
-            body2 = (
-                f"Hi {u.name},\n\n"
-                f"You have been moved from the waitlist to confirmed for:\n"
-                f"- Event: {event.title}\n"
-                f"- When: {slot.start_time} to {slot.end_time}\n"
-                f"- Where: {event.location or 'TBD'}\n\n"
-                "We look forward to seeing you there!"
-            )
-            send_email_notification.delay(str(u.id), subject2, body2)
+    for promoted in promoted_signups:
+        send_email_notification.delay(signup_id=str(promoted.id), kind="confirmation")
 
     return signup
 
