@@ -342,3 +342,33 @@ class PortalRead(ORMBase, PortalBase):
 # ✅ FIX: PortalRead already includes ORMBase, so DON'T inherit ORMBase again.
 class PortalDetail(PortalRead):
     events: List[EventRead] = []
+
+
+# =========================
+# ROSTER / CHECK-IN (Phase 3)
+# =========================
+class RosterRow(BaseModel):
+    signup_id: UUID
+    student_name: str
+    status: SignupStatus
+    slot_time: datetime
+    checked_in_at: datetime | None = None
+
+
+class RosterResponse(BaseModel):
+    event_id: UUID
+    event_name: str
+    venue_code: str | None = None
+    total: int
+    checked_in_count: int
+    rows: List[RosterRow]
+
+
+class SelfCheckInRequest(BaseModel):
+    signup_id: UUID
+    venue_code: str
+
+
+class ResolveEventRequest(BaseModel):
+    attended: List[UUID] = []
+    no_show: List[UUID] = []
