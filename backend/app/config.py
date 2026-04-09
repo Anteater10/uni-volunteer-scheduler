@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = 60
     rate_limit_max_requests: int = 100
 
+    # Magic-link confirmation
+    magic_link_ttl_minutes: int = 15
+    magic_link_max_per_email_per_hour: int = 5
+    magic_link_max_per_ip_per_hour: int = 20
+    frontend_base_url: str = "http://localhost:5173"
+    backend_base_url: str = "http://localhost:8000"
+
     # CORS
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 

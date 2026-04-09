@@ -6,6 +6,8 @@ Single source of truth for:
 from sqlalchemy.orm import Session
 
 from . import models
+from .config import settings
+from .magic_link_service import dispatch_email
 
 # NOTE: current_count is defensively updated by the caller; do not touch here.
 
@@ -22,6 +24,9 @@ def promote_waitlist_fifo(db: Session, slot_id) -> models.Signup | None:
       - Already holding a FOR UPDATE lock on the parent Slot row
       - Incrementing slot.current_count after a successful promotion
       - Enqueueing any confirmation email
+
+    Phase 2: promoted signups go to 'pending' (not 'confirmed') so the
+    promoted user must still verify email via magic link.
     """
     next_up = (
         db.query(models.Signup)
@@ -35,6 +40,19 @@ def promote_waitlist_fifo(db: Session, slot_id) -> models.Signup | None:
     )
     if not next_up:
         return None
-    next_up.status = models.SignupStatus.confirmed
+    # Phase 2: promoted → pending (must confirm via magic link)
+    next_up.status = SignupStatus.pending
     db.flush()
+
+    # Dispatch magic-link confirmation email for promoted signup
+    slot = db.query(models.Slot).filter_by(id=slot_id).first()
+    if slot:
+        event = db.query(models.Event).filter_by(id=slot.event_id).first()
+        if event:
+            dispatch_email(db, next_up, event, settings.backend_base_url)
+
     return next_up
+
+
+# Convenience alias for imports
+SignupStatus = models.SignupStatus

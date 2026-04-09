@@ -42,7 +42,7 @@ def test_signup_within_capacity(client, db_session):
         headers=auth_headers(client, user),
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "confirmed"
+    assert resp.json()["status"] == "pending"
 
 
 def test_signup_over_capacity_goes_to_waitlist(client, db_session):
@@ -58,7 +58,7 @@ def test_signup_over_capacity_goes_to_waitlist(client, db_session):
         json={"slot_id": str(slot.id)},
         headers=auth_headers(client, user_a),
     )
-    assert r1.status_code == 200 and r1.json()["status"] == "confirmed"
+    assert r1.status_code == 200 and r1.json()["status"] == "pending"
 
     r2 = client.post(
         "/api/v1/signups/",
@@ -82,7 +82,7 @@ def test_cancel_frees_capacity_for_second_user(client, db_session):
         json={"slot_id": str(slot.id)},
         headers=auth_headers(client, user_a),
     )
-    assert r1.status_code == 200 and r1.json()["status"] == "confirmed"
+    assert r1.status_code == 200 and r1.json()["status"] == "pending"
     signup_a_id = r1.json()["id"]
 
     # A cancels
@@ -92,14 +92,14 @@ def test_cancel_frees_capacity_for_second_user(client, db_session):
     )
     assert rc.status_code == 200
 
-    # B should now be confirmable
+    # B should now be confirmable (starts as pending in phase 2)
     r2 = client.post(
         "/api/v1/signups/",
         json={"slot_id": str(slot.id)},
         headers=auth_headers(client, user_b),
     )
     assert r2.status_code == 200
-    assert r2.json()["status"] == "confirmed"
+    assert r2.json()["status"] == "pending"
 
     db_session.expire_all()
     slot_row = db_session.query(models.Slot).filter(models.Slot.id == slot.id).one()
@@ -141,7 +141,8 @@ def test_cancel_promotes_waitlist_fifo(client, db_session):
     db_session.expire_all()
     b_row = db_session.query(models.Signup).filter(models.Signup.id == signup_b.id).one()
     c_row = db_session.query(models.Signup).filter(models.Signup.id == signup_c.id).one()
-    assert b_row.status == models.SignupStatus.confirmed
+    # Phase 2: promoted signups go to 'pending' (must confirm via magic link)
+    assert b_row.status == models.SignupStatus.pending
     assert c_row.status == models.SignupStatus.waitlisted
 
 
@@ -178,7 +179,8 @@ def test_waitlist_ordering_uses_timestamp_then_id(client, db_session):
     db_session.expire_all()
     first_row = db_session.query(models.Signup).filter(models.Signup.id == first.id).one()
     second_row = db_session.query(models.Signup).filter(models.Signup.id == second.id).one()
-    assert first_row.status == models.SignupStatus.confirmed
+    # Phase 2: promoted signups go to 'pending' (must confirm via magic link)
+    assert first_row.status == models.SignupStatus.pending
     assert second_row.status == models.SignupStatus.waitlisted
 
 
@@ -237,9 +239,11 @@ def test_cancel_enqueues_cancellation_email(client, db_session, monkeypatch):
     assert "cancellation" in kinds
 
 
-def test_cancel_with_waitlist_enqueues_confirmation_for_promoted(
+def test_cancel_with_waitlist_promotes_to_pending_with_magic_link(
     client, db_session, monkeypatch
 ):
+    """Phase 2: promoted signups go to pending and get a magic-link email
+    instead of a direct confirmation notification."""
     owner = make_user(db_session, email="owner7@example.com")
     event, slot = make_event_with_slot(db_session, capacity=1, owner=owner)
     user_a = make_user(db_session, email="a7@example.com")
@@ -257,6 +261,15 @@ def test_cancel_with_waitlist_enqueues_confirmation_for_promoted(
         db_session, slot, user_b, when=datetime.now(timezone.utc) - timedelta(minutes=1)
     )
     db_session.commit()
+
+    # Monkeypatch magic link email to capture calls
+    magic_link_calls = []
+
+    def fake_send_magic_link(*args, **kwargs):
+        magic_link_calls.append((args, kwargs))
+        return {"to": args[0], "subject": "test"}
+
+    monkeypatch.setattr("app.emails.send_magic_link", fake_send_magic_link)
 
     calls = []
 
@@ -276,6 +289,11 @@ def test_cancel_with_waitlist_enqueues_confirmation_for_promoted(
     )
     assert rc.status_code == 200
 
+    # Cancellation email is still sent for the cancelled signup
     kinds = [c[1].get("kind") for c in calls]
     assert "cancellation" in kinds
-    assert "confirmation" in kinds
+
+    # Promoted signup gets a magic-link email instead of confirmation
+    db_session.expire_all()
+    b_row = db_session.query(models.Signup).filter(models.Signup.user_id == user_b.id).first()
+    assert b_row.status == models.SignupStatus.pending

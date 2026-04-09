@@ -8,7 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import settings
 from .database import get_db
-from .routers import auth, users, events, slots, signups, notifications, admin, portals
+from .routers import auth, users, events, slots, signups, notifications, admin, portals, magic
 
 app = FastAPI(title="University Volunteer Scheduler API")
 
@@ -81,3 +81,4 @@ app.include_router(signups.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(portals.router, prefix="/api/v1")
+app.include_router(magic.router, prefix="/api/v1")

@@ -20,11 +20,14 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
+    """Count signups holding a slot: both confirmed AND pending (phase 2)."""
     return (
         db.query(func.count(models.Signup.id))
         .filter(
             models.Signup.slot_id == slot_id,
-            models.Signup.status == models.SignupStatus.confirmed,
+            models.Signup.status.in_(
+                [models.SignupStatus.confirmed, models.SignupStatus.pending]
+            ),
         )
         .scalar()
         or 0
@@ -349,7 +352,8 @@ def admin_cancel_signup(
     previous_status = signup.status
     signup.status = models.SignupStatus.cancelled
 
-    if previous_status == models.SignupStatus.confirmed and slot.current_count > 0:
+    # Phase 2: both confirmed and pending signups hold capacity
+    if previous_status in (models.SignupStatus.confirmed, models.SignupStatus.pending) and slot.current_count > 0:
         slot.current_count -= 1
 
     promoted_user_ids = _promote_waitlist_fifo(db, slot)

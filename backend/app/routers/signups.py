@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session, aliased
 
 from .. import models, schemas
 from ..celery_app import send_email_notification
+from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, log_action
+from ..magic_link_service import dispatch_email
 from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/signups", tags=["signups"])
@@ -23,11 +25,14 @@ def _ensure_signup_window(event: models.Event) -> None:
 
 
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
+    """Count signups holding a slot: both confirmed AND pending (phase 2)."""
     return (
         db.query(func.count(models.Signup.id))
         .filter(
             models.Signup.slot_id == slot_id,
-            models.Signup.status == models.SignupStatus.confirmed,
+            models.Signup.status.in_(
+                [models.SignupStatus.confirmed, models.SignupStatus.pending]
+            ),
         )
         .scalar()
         or 0
@@ -83,7 +88,7 @@ def create_signup(
                 models.Signup.user_id == current_user.id,
                 models.Slot.event_id == event.id,
                 models.Signup.status.in_(
-                    [models.SignupStatus.confirmed, models.SignupStatus.waitlisted]
+                    [models.SignupStatus.pending, models.SignupStatus.confirmed, models.SignupStatus.waitlisted]
                 ),
             )
             .scalar()
@@ -110,8 +115,9 @@ def create_signup(
         raise HTTPException(status_code=400, detail="Already signed up for this slot")
 
     # Capacity check under lock (confirmed-only counter)
+    # Phase 2: non-waitlisted signups start as 'pending' until magic-link confirmed
     if slot.current_count < slot.capacity:
-        status = models.SignupStatus.confirmed
+        status = models.SignupStatus.pending
         slot.current_count += 1
     else:
         status = models.SignupStatus.waitlisted
@@ -153,18 +159,14 @@ def create_signup(
     db.commit()
     db.refresh(signup)
 
-    # Transactional email (async)
-    subject = f"Your signup for '{event.title}'"
-    if status == models.SignupStatus.confirmed:
-        body = (
-            f"Hi {current_user.name},\n\n"
-            f"You are confirmed for this volunteer slot:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {slot.start_time} to {slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "Thank you for volunteering!"
-        )
+    # Transactional email
+    if status == models.SignupStatus.pending:
+        # Phase 2: send magic-link confirmation email
+        dispatch_email(db, signup, event, settings.backend_base_url)
+        db.commit()
     else:
+        # Waitlisted: send waitlist notification
+        subject = f"Your signup for '{event.title}'"
         body = (
             f"Hi {current_user.name},\n\n"
             f"You have been added to the waitlist for:\n"
@@ -173,8 +175,7 @@ def create_signup(
             f"- Where: {event.location or 'TBD'}\n\n"
             "We will email you automatically if a spot opens up."
         )
-
-    send_email_notification.delay(str(current_user.id), subject, body)
+        send_email_notification.delay(str(current_user.id), subject, body)
 
     return signup
 
@@ -313,8 +314,8 @@ def cancel_signup(
     # Mark cancelled
     signup.status = models.SignupStatus.cancelled
 
-    # If this was confirmed, free a spot
-    if previous_status == models.SignupStatus.confirmed and slot.current_count > 0:
+    # If this was confirmed or pending, free a spot (both hold capacity)
+    if previous_status in (models.SignupStatus.confirmed, models.SignupStatus.pending) and slot.current_count > 0:
         slot.current_count -= 1
 
     # Auto-promote from waitlist FIFO until capacity is full
@@ -336,8 +337,8 @@ def cancel_signup(
     # Emails after commit — dispatched via app.emails.BUILDERS by kind.
     send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
-    for promoted in promoted_signups:
-        send_email_notification.delay(signup_id=str(promoted.id), kind="confirmation")
+    # Phase 2: promoted signups get magic-link email from promote_waitlist_fifo
+    # instead of direct confirmation notification (they go to 'pending' first)
 
     return signup
 
