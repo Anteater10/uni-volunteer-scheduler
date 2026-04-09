@@ -18,13 +18,16 @@ import OrganizerDashboardPage from "./pages/OrganizerDashboardPage";
 import OrganizerEventPage from "./pages/OrganizerEventPage";
 import OrganizerRosterPage from "./pages/OrganizerRosterPage";
 
-import AdminDashboardPage from "./pages/AdminDashboardPage";
+import AdminLayout from "./pages/admin/AdminLayout";
+import OverviewSection from "./pages/admin/OverviewSection";
 import AdminEventPage from "./pages/AdminEventPage";
 import UsersAdminPage from "./pages/UsersAdminPage";
 import PortalsAdminPage from "./pages/PortalsAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
-import AdminTemplatesPage from "./pages/AdminTemplatesPage";
-import AdminImportPage from "./pages/AdminImportPage";
+import ExportsSection from "./pages/admin/ExportsSection";
+import OverridesSection from "./pages/admin/OverridesSection";
+import TemplatesSection from "./pages/admin/TemplatesSection";
+import ImportsSection from "./pages/admin/ImportsSection";
 
 import SelfCheckInPage from "./pages/SelfCheckInPage";
 import SignupConfirmedPage from "./pages/SignupConfirmedPage";
@@ -63,15 +66,19 @@ export default function App() {
           <Route path="organize/events/:eventId/roster" element={<OrganizerRosterPage />} />
         </Route>
 
-        {/* Admin-only */}
-        <Route element={<ProtectedRoute roles={["admin"]} />}>
-          <Route path="admin" element={<AdminDashboardPage />} />
-          <Route path="admin/events/:eventId" element={<AdminEventPage />} />
-          <Route path="admin/users" element={<UsersAdminPage />} />
-          <Route path="admin/portals" element={<PortalsAdminPage />} />
-          <Route path="admin/audit-logs" element={<AuditLogsPage />} />
-          <Route path="admin/templates" element={<AdminTemplatesPage />} />
-          <Route path="admin/import" element={<AdminImportPage />} />
+        {/* Admin/Organizer — nested under AdminLayout */}
+        <Route element={<ProtectedRoute roles={["admin", "organizer"]} />}>
+          <Route path="admin" element={<AdminLayout />}>
+            <Route index element={<OverviewSection />} />
+            <Route path="events/:eventId" element={<AdminEventPage />} />
+            <Route path="users" element={<UsersAdminPage />} />
+            <Route path="portals" element={<PortalsAdminPage />} />
+            <Route path="audit-logs" element={<AuditLogsPage />} />
+            <Route path="templates" element={<TemplatesSection />} />
+            <Route path="imports" element={<ImportsSection />} />
+            <Route path="overrides" element={<OverridesSection />} />
+            <Route path="exports" element={<ExportsSection />} />
+          </Route>
         </Route>
 
         {/* 404 */}
