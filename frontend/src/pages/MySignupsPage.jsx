@@ -14,6 +14,7 @@ import {
 } from "../components/ui";
 import { toast } from "../state/toast";
 import StatusIcon from "../components/StatusIcon";
+import ModuleTimeline from "../components/ModuleTimeline";
 
 export default function MySignupsPage() {
   const qc = useQueryClient();
@@ -24,6 +25,12 @@ export default function MySignupsPage() {
   const signupsQ = useQuery({
     queryKey: ["mySignups"],
     queryFn: api.signups.my,
+  });
+
+  // Phase 4: module timeline
+  const timelineQ = useQuery({
+    queryKey: ["module-timeline"],
+    queryFn: () => api.moduleTimeline(),
   });
 
   const signups = signupsQ.data || [];
@@ -201,6 +208,17 @@ export default function MySignupsPage() {
               </div>
             )}
           </section>
+
+          {/* Phase 4: Module Progress Timeline */}
+          {timelineQ.data && timelineQ.data.length > 0 && (
+            <section>
+              {/* TODO(copy) */}
+              <h2 className="text-sm font-medium text-[var(--color-fg-muted)] mt-6 mb-2 uppercase tracking-wide">
+                Module Progress
+              </h2>
+              <ModuleTimeline modules={timelineQ.data} />
+            </section>
+          )}
         </>
       )}
 

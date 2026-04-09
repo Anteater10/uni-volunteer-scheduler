@@ -355,6 +355,13 @@ async function detachEventFromPortal(portalId, eventId) {
 }
 
 // --------------------
+// MODULE TIMELINE (Phase 4)
+// --------------------
+async function getModuleTimeline() {
+  return request("/users/me/module-timeline", { method: "GET" });
+}
+
+// --------------------
 // ADMIN
 // --------------------
 async function adminSummary() {
@@ -450,6 +457,9 @@ export const api = {
 
   // magic link
   resendMagicLink,
+
+  // module timeline
+  moduleTimeline: () => getModuleTimeline(),
 
   // questions
   listEventQuestions,
