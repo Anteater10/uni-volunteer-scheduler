@@ -2,6 +2,7 @@
 import React from "react";
 import { Link, Outlet } from "react-router-dom";
 import { useAuth } from "../state/authContext";
+import ToastHost from "./ui/Toast";
 
 export default function Layout() {
   const { user, isAuthed, role, logout } = useAuth();
@@ -42,6 +43,7 @@ export default function Layout() {
       </main>
 
       <div id="bottom-nav-slot" />
+      <ToastHost />
     </div>
   );
 }
