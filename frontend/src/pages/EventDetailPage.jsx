@@ -13,6 +13,7 @@ import {
   Skeleton,
   EmptyState,
 } from "../components/ui";
+import PrereqWarningModal from "../components/PrereqWarningModal";
 import { toast } from "../state/toast";
 import { useDocumentMeta } from "../lib/useDocumentMeta";
 
@@ -32,6 +33,11 @@ export default function EventDetailPage() {
   const [signupError, setSignupError] = useState("");
   const [cancelError, setCancelError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Phase 4: prereq warning modal state
+  const [showPrereqModal, setShowPrereqModal] = useState(false);
+  const [prereqWarning, setPrereqWarning] = useState({ missing: [], nextSlot: null });
+  const [prereqSlotId, setPrereqSlotId] = useState(null);
 
   const eventQ = useQuery({
     queryKey: ["event", eventId],
@@ -67,7 +73,40 @@ export default function EventDetailPage() {
       // TODO(copy): signup success toast
       toast.success("You're in. See you there.");
     } catch (e) {
+      // Phase 4: detect PREREQ_MISSING 422 response
+      const respData = e?.response?.data;
+      if (e?.status === 422 && respData?.code === "PREREQ_MISSING") {
+        setPrereqWarning({
+          missing: respData.missing || [],
+          nextSlot: respData.next_slot || null,
+        });
+        setPrereqSlotId(pendingSignup.id);
+        setPendingSignup(null);
+        setShowPrereqModal(true);
+      } else {
+        setSignupError(e?.message || "Signup failed");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSignUpAnyway() {
+    if (!prereqSlotId) return;
+    setBusy(true);
+    try {
+      await api.signups.create(
+        { slot_id: prereqSlotId },
+        { acknowledgePrereqOverride: true },
+      );
+      await qc.invalidateQueries({ queryKey: ["mySignups"] });
+      await qc.invalidateQueries({ queryKey: ["event", eventId] });
+      setShowPrereqModal(false);
+      setPrereqSlotId(null);
+      toast.success("You're in. See you there.");
+    } catch (e) {
       setSignupError(e?.message || "Signup failed");
+      setShowPrereqModal(false);
     } finally {
       setBusy(false);
     }
@@ -262,6 +301,18 @@ export default function EventDetailPage() {
           </Button>
         </div>
       </Modal>
+
+      <PrereqWarningModal
+        open={showPrereqModal}
+        onClose={() => {
+          setShowPrereqModal(false);
+          setPrereqSlotId(null);
+        }}
+        missing={prereqWarning.missing}
+        nextSlot={prereqWarning.nextSlot}
+        onSignUpAnyway={handleSignUpAnyway}
+        isSubmitting={busy}
+      />
     </div>
   );
 }

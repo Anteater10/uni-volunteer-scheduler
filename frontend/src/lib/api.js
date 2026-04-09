@@ -137,7 +137,10 @@ async function request(path, { method = "GET", params, body, auth = true, header
 
   if (!res.ok) {
     const fallback = `${method} ${path} failed (${res.status})`;
-    throw new Error(extractErrorMessage(json, fallback));
+    const err = new Error(extractErrorMessage(json, fallback));
+    err.status = res.status;
+    err.response = { status: res.status, data: json };
+    throw err;
   }
 
   return json;
@@ -275,8 +278,12 @@ async function generateSlots(eventId, payload) {
 // --------------------
 // SIGNUPS
 // --------------------
-async function createSignup(payload) {
-  return request("/signups/", { method: "POST", body: payload });
+async function createSignup(payload, { acknowledgePrereqOverride } = {}) {
+  const params = {};
+  if (acknowledgePrereqOverride) {
+    params.acknowledge_prereq_override = "true";
+  }
+  return request("/signups/", { method: "POST", body: payload, params });
 }
 
 // Backend uses POST cancel (not DELETE) in your FastAPI design
@@ -478,7 +485,7 @@ export const api = {
     clone: (id) => cloneEvent(id),
   },
   signups: {
-    create: (payload) => createSignup(payload),
+    create: (payload, opts) => createSignup(payload, opts),
     cancel: (id) => cancelSignup(id),
     my: (params) => listMySignups(params),
   },
