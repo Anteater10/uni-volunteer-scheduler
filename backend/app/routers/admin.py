@@ -11,18 +11,12 @@ from sqlalchemy import func, or_, cast, String
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, log_action
+from ..deps import require_role, log_action, ensure_event_owner_or_admin
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-
-def _ensure_event_owner_or_admin(event: models.Event, actor: models.User):
-    # ✅ If organizer, must own the event. Admin can access anything.
-    if actor.role != models.UserRole.admin and event.owner_id != actor.id:
-        raise HTTPException(status_code=403, detail="Not allowed for this event")
 
 
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
@@ -119,7 +113,7 @@ def event_analytics(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     total_slots = len(event.slots)
     total_capacity = sum(s.capacity for s in event.slots)
@@ -177,7 +171,7 @@ def event_roster(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     rows = []
     slots_sorted = sorted(event.slots, key=lambda s: s.start_time)
@@ -242,7 +236,7 @@ def export_event_csv(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     questions = event.questions
     question_headers = [q.prompt for q in questions]
@@ -341,7 +335,7 @@ def admin_cancel_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     actual_confirmed = _confirmed_count_for_slot(db, slot.id)
     if slot.current_count != actual_confirmed:
@@ -427,7 +421,7 @@ def admin_promote_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     if signup.status != models.SignupStatus.waitlisted:
         raise HTTPException(status_code=400, detail="Only waitlisted signups can be promoted")
@@ -505,7 +499,7 @@ def admin_move_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     source_confirmed = _confirmed_count_for_slot(db, source_slot.id)
     target_confirmed = _confirmed_count_for_slot(db, target_slot.id)
@@ -580,7 +574,7 @@ def admin_resend_signup_email(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     user = signup.user
     if signup.status == models.SignupStatus.confirmed:
@@ -640,7 +634,7 @@ def notify_event_participants(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     recipients = set()
 

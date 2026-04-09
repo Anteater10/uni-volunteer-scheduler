@@ -8,15 +8,9 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, log_action
+from ..deps import require_role, log_action, ensure_event_owner_or_admin
 
 router = APIRouter(prefix="/slots", tags=["slots"])
-
-
-def _ensure_event_owner_or_admin(event: models.Event, actor: models.User):
-    # ✅ Organizer can only modify their own events; admin can modify any
-    if actor.role != models.UserRole.admin and event.owner_id != actor.id:
-        raise HTTPException(status_code=403, detail="Not allowed to modify this event")
 
 
 def _normalize_dt(dt: datetime) -> datetime:
@@ -59,7 +53,7 @@ def create_slot(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership check
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     start_time = _normalize_dt(slot_in.start_time)
     end_time = _normalize_dt(slot_in.end_time)
@@ -100,9 +94,9 @@ def update_slot(
     event = slot.event
 
     # ✅ ownership check
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
-    data = slot_in.dict(exclude_unset=True)
+    data = slot_in.model_dump(exclude_unset=True)
     if "start_time" in data and data["start_time"] is not None:
         data["start_time"] = _normalize_dt(data["start_time"])
     if "end_time" in data and data["end_time"] is not None:
@@ -143,7 +137,7 @@ def delete_slot(
     event = slot.event
 
     # ✅ ownership check
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     existing_signups = (
         db.query(models.Signup)

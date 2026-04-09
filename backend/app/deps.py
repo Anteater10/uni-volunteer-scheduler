@@ -135,6 +135,21 @@ def get_current_user(
 # Role-based access helper
 # -------------------------
 
+def ensure_event_owner_or_admin(event: models.Event, user: models.User) -> None:
+    """Canonical event ownership check.
+
+    Admin can access any event; organizers must own the event. All
+    routers import this from app.deps — do not redefine locally.
+    """
+    if user.role == models.UserRole.admin:
+        return
+    if event.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed for this event",
+        )
+
+
 def require_role(*roles: models.UserRole):
     def dependency(current_user: models.User = Depends(get_current_user)):
         if current_user.role not in roles:
