@@ -87,6 +87,8 @@ class User(Base):
     university_id = Column(String(64), nullable=True)
     notify_email = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    # Added in Phase 7 for CCPA soft-delete
+    deleted_at = Column(DateTime(timezone=True), nullable=True, default=None)
 
     # Relationships
     events = relationship("Event", back_populates="owner")

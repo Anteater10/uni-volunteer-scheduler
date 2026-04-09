@@ -323,6 +323,10 @@ class NoShowRateRow(BaseModel):
     count: int
 
 
+class CcpaDeleteRequest(BaseModel):
+    reason: str = Field(..., min_length=5)
+
+
 # =========================
 # ORGANIZER BROADCAST
 # =========================

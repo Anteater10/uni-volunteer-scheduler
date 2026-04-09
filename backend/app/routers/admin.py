@@ -1058,6 +1058,118 @@ def admin_delete_user(
 
 
 # =========================
+# CCPA COMPLIANCE (Phase 7)
+# =========================
+
+
+@router.get("/users/{user_id}/ccpa-export")
+def ccpa_export(
+    user_id: str,
+    reason: str = Query(..., min_length=5),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """CCPA data access request: export all user data as JSON."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Collect signups with slot/event info
+    signups_data = []
+    for signup in user.signups:
+        slot = signup.slot
+        event = slot.event if slot else None
+        signups_data.append({
+            "signup_id": str(signup.id),
+            "status": signup.status.value,
+            "timestamp": signup.timestamp.isoformat() if signup.timestamp else None,
+            "slot_start": slot.start_time.isoformat() if slot else None,
+            "slot_end": slot.end_time.isoformat() if slot else None,
+            "event_title": event.title if event else None,
+            "event_id": str(event.id) if event else None,
+        })
+
+    # Audit logs where user is actor
+    audit_logs_data = []
+    for log in db.query(models.AuditLog).filter(models.AuditLog.actor_id == user.id).all():
+        audit_logs_data.append({
+            "id": str(log.id),
+            "action": log.action,
+            "entity_type": log.entity_type,
+            "entity_id": log.entity_id,
+            "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+        })
+
+    # Notifications
+    notifications_data = []
+    for notif in user.notifications:
+        notifications_data.append({
+            "id": str(notif.id),
+            "type": notif.type.value,
+            "subject": notif.subject,
+            "delivery_method": notif.delivery_method,
+            "created_at": notif.created_at.isoformat() if notif.created_at else None,
+        })
+
+    log_action(
+        db, admin_user, "ccpa_export", "User", str(user.id),
+        extra={"reason": reason},
+    )
+    db.commit()
+
+    return {
+        "user": {
+            "id": str(user.id),
+            "name": user.name,
+            "email": user.email,
+            "university_id": user.university_id,
+            "role": user.role.value,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        },
+        "signups": signups_data,
+        "audit_logs": audit_logs_data,
+        "notifications": notifications_data,
+    }
+
+
+@router.post("/users/{user_id}/ccpa-delete")
+def ccpa_delete(
+    user_id: str,
+    payload: schemas.CcpaDeleteRequest,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """CCPA deletion request: soft-delete + anonymize PII. Preserves signups for analytics."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="User already deleted")
+
+    if str(user.id) == str(admin_user.id):
+        raise HTTPException(status_code=400, detail="Admin cannot CCPA-delete their own account")
+
+    # Preserve truncated email for audit trail
+    original_email_hint = user.email[:3] + "***" if user.email else "***"
+
+    # Anonymize PII
+    user.name = "[deleted]"
+    user.email = f"deleted-{uuid_mod.uuid4()}@example.invalid"
+    user.university_id = None
+    user.hashed_password = "DELETED"
+    user.deleted_at = datetime.now(timezone.utc)
+
+    log_action(
+        db, admin_user, "ccpa_delete", "User", str(user.id),
+        extra={"reason": payload.reason, "original_email_hint": original_email_hint},
+    )
+    db.commit()
+
+    return {"status": "deleted", "user_id": str(user.id)}
+
+
+# =========================
 # PREREQ OVERRIDE MANAGEMENT (Phase 4)
 # =========================
 
