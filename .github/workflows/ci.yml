@@ -7,6 +7,9 @@ on:
     branches: ["main"]
 
 jobs:
+  # -------------------------------------------------------------------
+  # Original Phase 0 backend job (kept intact — do not rewrite)
+  # -------------------------------------------------------------------
   backend-ci:
     runs-on: ubuntu-latest
 
@@ -49,3 +52,202 @@ jobs:
         run: |
           cd backend
           pytest
+
+  # -------------------------------------------------------------------
+  # Phase 0 Plan 07: backend + frontend + E2E + critical-path coverage
+  # -------------------------------------------------------------------
+  phase0-backend-tests:
+    name: phase0 backend tests + coverage
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: uni_volunteer
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/uni_volunteer
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: test-secret
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRES_MINUTES: 60
+      REFRESH_TOKEN_EXPIRES_DAYS: 14
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install backend deps
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: alembic upgrade head
+        run: |
+          cd backend
+          alembic upgrade head
+
+      - name: pytest with JSON coverage
+        run: |
+          cd backend
+          pytest --cov=app --cov-report=json --cov-report=term
+
+      - name: Critical-path coverage gate (>= 0.90 for signup_service.py, routers/signups.py, celery_app.py)
+        run: |
+          cd backend
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("coverage.json"))
+          files = data.get("files", {})
+          # Resolve by suffix so relative/absolute paths both match.
+          def cov_for(suffix):
+              for path, info in files.items():
+                  if path.endswith(suffix):
+                      return info["summary"]["percent_covered"] / 100.0
+              return None
+          targets = {
+              "app/signup_service.py": 0.90,
+              "app/routers/signups.py": 0.90,
+              "app/celery_app.py": 0.90,
+          }
+          failed = []
+          for suffix, floor in targets.items():
+              pct = cov_for(suffix)
+              if pct is None:
+                  failed.append(f"{suffix}: NOT FOUND in coverage.json")
+                  continue
+              print(f"{suffix}: {pct:.3f} (floor {floor})")
+              if pct < floor:
+                  failed.append(f"{suffix}: {pct:.3f} < {floor}")
+          if failed:
+              print("CRITICAL PATH COVERAGE FAILED:")
+              for f in failed:
+                  print("  -", f)
+              sys.exit(1)
+          PY
+
+  phase0-frontend-tests:
+    name: phase0 frontend vitest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: |
+          cd frontend
+          npm ci
+
+      - name: npm run test (vitest)
+        run: |
+          cd frontend
+          npm run test -- --run
+
+  phase0-e2e-tests:
+    name: phase0 playwright e2e
+    needs: [phase0-backend-tests, phase0-frontend-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Prepare backend .env for docker-compose
+        run: |
+          cat > backend/.env <<EOF
+          DATABASE_URL=postgresql://postgres:postgres@db:5432/uni_volunteer
+          REDIS_URL=redis://redis:6379/0
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          JWT_SECRET=test-secret
+          JWT_ALGORITHM=HS256
+          ACCESS_TOKEN_EXPIRES_MINUTES=60
+          REFRESH_TOKEN_EXPIRES_DAYS=14
+          SEED_ADMIN_EMAIL=admin@e2e.test
+          SEED_ADMIN_PASSWORD=Admin!2345
+          EOF
+
+      - name: docker compose up
+        run: |
+          docker compose up -d db redis
+          docker compose run --rm migrate
+          docker compose up -d backend celery_worker celery_beat
+          # wait for backend
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:8000/api/v1/healthz >/dev/null 2>&1 \
+               || curl -fsS http://localhost:8000/docs >/dev/null 2>&1; then
+              echo "backend up"; break
+            fi
+            sleep 2
+          done
+
+      - name: Install root playwright deps + browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Install frontend + start dev server
+        run: |
+          cd frontend
+          npm ci
+          (npm run dev -- --host 0.0.0.0 --port 5173 &)
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:5173 >/dev/null 2>&1; then
+              echo "frontend up"; break
+            fi
+            sleep 2
+          done
+
+      - name: Run playwright tests
+        env:
+          E2E_BASE_URL: http://localhost:5173
+          E2E_BACKEND_URL: http://localhost:8000
+        run: |
+          npx playwright test
+
+      - name: Upload playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+
+      - name: Tear down docker compose
+        if: always()
+        run: docker compose down -v
