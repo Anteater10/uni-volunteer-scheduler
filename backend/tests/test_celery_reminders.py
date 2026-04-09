@@ -1,12 +1,15 @@
-"""Celery schedule_reminders idempotency + window tests (Plan 06 / Task 3).
+"""Celery send_reminders_24h / send_reminders_1h idempotency + window tests.
 
-The canonical assertion from CONTEXT.md: running schedule_reminders twice
-against the same signup must produce exactly one reminder email.
+The canonical assertion from phase 6 CONTEXT.md: running send_reminders_24h
+twice against the same signup must produce exactly one reminder email.
 
-Idempotency is enforced by the ``reminder_sent`` boolean guard set by
-Plan 04. We call the task function directly (in-process) rather than
-dispatching through Celery — freezegun pins ``datetime.now`` inside the
-task body itself.
+Idempotency is enforced by:
+  1. sent_notifications INSERT ON CONFLICT DO NOTHING (DB-level dedup)
+  2. reminder_24h_sent_at / reminder_1h_sent_at denormalized columns
+  3. SELECT FOR UPDATE SKIP LOCKED
+
+We call the task function directly (in-process) rather than dispatching
+through Celery — freezegun pins ``datetime.now`` inside the task body.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -15,7 +18,7 @@ from freezegun import freeze_time
 
 from app import celery_app as celery_mod
 from app import models
-from app.celery_app import schedule_reminders, send_email_notification
+from app.celery_app import send_reminders_24h, send_reminders_1h, send_email_notification
 from tests.fixtures.factories import SignupFactory
 from tests.fixtures.helpers import _bind_factories, make_event_with_slot, make_user
 
@@ -61,11 +64,11 @@ def _seed_confirmed_signup(db_session, *, start_time, reminder_sent=False, email
     return s
 
 
-def test_schedule_reminders_sends_one_email_per_signup(
+def test_send_reminders_24h_sends_one_email_per_signup(
     client, db_session, monkeypatch, patch_session_local
 ):
     now = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
-    start = now + timedelta(hours=24, minutes=2)
+    start = now + timedelta(hours=24)
 
     _seed_confirmed_signup(db_session, start_time=start, email_tag="1")
     _seed_confirmed_signup(db_session, start_time=start, email_tag="2")
@@ -85,24 +88,24 @@ def test_schedule_reminders_sends_one_email_per_signup(
     monkeypatch.setattr(send_email_notification, "delay", fake_delay)
 
     with freeze_time(now):
-        schedule_reminders.apply().get()
+        send_reminders_24h.apply().get()
 
     assert len(calls) == 3
-    # reminder_sent flag flipped
+    # reminder_24h_sent_at set
     rows = (
         db_session.query(models.Signup)
         .filter(models.Signup.status == models.SignupStatus.confirmed)
         .all()
     )
-    assert all(r.reminder_sent is True for r in rows)
+    assert all(r.reminder_24h_sent_at is not None for r in rows)
 
 
-def test_schedule_reminders_is_idempotent(
+def test_send_reminders_24h_is_idempotent(
     client, db_session, monkeypatch, patch_session_local
 ):
-    """Running schedule_reminders twice → exactly one email per signup."""
+    """Running send_reminders_24h twice -> exactly one email per signup."""
     now = datetime(2030, 2, 1, 12, 0, tzinfo=timezone.utc)
-    start = now + timedelta(hours=24, minutes=2)
+    start = now + timedelta(hours=24)
 
     _seed_confirmed_signup(db_session, start_time=start, email_tag="a")
     _seed_confirmed_signup(db_session, start_time=start, email_tag="b")
@@ -117,22 +120,24 @@ def test_schedule_reminders_is_idempotent(
     )
 
     with freeze_time(now):
-        schedule_reminders.apply().get()
-        schedule_reminders.apply().get()
+        send_reminders_24h.apply().get()
+        send_reminders_24h.apply().get()
 
-    # Idempotent: 3 signups × 1 reminder each, NOT 6.
+    # Idempotent: 3 signups x 1 reminder each, NOT 6.
     assert len(calls) == 3
 
 
-def test_schedule_reminders_ignores_already_sent(
+def test_send_reminders_24h_ignores_already_sent(
     client, db_session, monkeypatch, patch_session_local
 ):
     now = datetime(2030, 3, 1, 12, 0, tzinfo=timezone.utc)
-    start = now + timedelta(hours=24, minutes=2)
+    start = now + timedelta(hours=24)
 
-    _seed_confirmed_signup(
+    s = _seed_confirmed_signup(
         db_session, start_time=start, reminder_sent=True, email_tag="already"
     )
+    # Mark as already sent via the new column
+    s.reminder_24h_sent_at = now
     db_session.commit()
 
     calls = []
@@ -143,16 +148,16 @@ def test_schedule_reminders_ignores_already_sent(
     )
 
     with freeze_time(now):
-        schedule_reminders.apply().get()
+        send_reminders_24h.apply().get()
 
     assert calls == []
 
 
-def test_schedule_reminders_respects_window(
+def test_send_reminders_24h_respects_window(
     client, db_session, monkeypatch, patch_session_local
 ):
     now = datetime(2030, 4, 1, 12, 0, tzinfo=timezone.utc)
-    # Outside the [now+24h, now+24h+5min] window: both 23h and 48h away.
+    # Outside the [now+23h45m, now+24h15m] window: both 23h and 48h away.
     _seed_confirmed_signup(db_session, start_time=now + timedelta(hours=23), email_tag="early")
     _seed_confirmed_signup(db_session, start_time=now + timedelta(hours=48), email_tag="late")
     db_session.commit()
@@ -165,6 +170,6 @@ def test_schedule_reminders_respects_window(
     )
 
     with freeze_time(now):
-        schedule_reminders.apply().get()
+        send_reminders_24h.apply().get()
 
     assert calls == []

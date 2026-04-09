@@ -6,10 +6,13 @@
 # TODO(phase0-infra): Update docker-compose.yml beat service command to add
 #   -S redbeat.RedBeatScheduler flag — tracked as a Plan 07 CI concern.
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from celery import Celery
 from celery.schedules import crontab
+from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -18,6 +21,8 @@ from .config import settings
 from .database import SessionLocal
 from . import models
 from .emails import BUILDERS
+
+logger = logging.getLogger(__name__)
 
 # Celery app configured to use Redis (broker + result backend)
 celery = Celery(
@@ -35,8 +40,36 @@ celery.conf.update(
 )
 
 
-def _send_email_via_sendgrid(to_email: str, subject: str, body: str) -> None:
-    """Send an email via SendGrid if API key + from address are configured."""
+def _dedup_insert(db: Session, signup_id, kind: str) -> bool:
+    """Insert into sent_notifications; return True if row was inserted (first sender wins)."""
+    stmt = pg_insert(models.SentNotification).values(
+        signup_id=signup_id, kind=kind
+    ).on_conflict_do_nothing(index_elements=["signup_id", "kind"])
+    result = db.execute(stmt)
+    return result.rowcount == 1
+
+
+def _check_daily_send_limit(db: Session) -> bool:
+    """Check if daily send limit is approaching. Returns False if limit exceeded."""
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    count = db.query(func.count(models.SentNotification.id)).filter(
+        models.SentNotification.sent_at >= today_start
+    ).scalar() or 0
+
+    limit = settings.resend_daily_limit
+    if count >= limit:
+        logger.error("Resend daily limit reached (%d/%d). Skipping further sends.", count, limit)
+        return False
+    if count >= int(limit * 0.8):
+        logger.warning("Resend daily usage at %d%% (%d/%d).", int(count / limit * 100), count, limit)
+    return True
+
+
+def _send_email_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+    """Send an email via SendGrid if API key + from address are configured.
+
+    # TODO(resend): swap SendGrid client for Resend SDK
+    """
     if not settings.sendgrid_api_key or not settings.email_from_address:
         return
 
@@ -46,6 +79,8 @@ def _send_email_via_sendgrid(to_email: str, subject: str, body: str) -> None:
         subject=subject,
         plain_text_content=body,
     )
+    if html_body:
+        message.html_content = html_body
     try:
         sg = SendGridAPIClient(settings.sendgrid_api_key)
         sg.send(message)
@@ -76,16 +111,20 @@ def send_email_notification(
     Call patterns:
       - Transactional (signups router, weekly digest):
           send_email_notification.delay(user_id, subject, body)
-      - Reminder (schedule_reminders):
+      - Reminder / cancellation / reschedule (deduped):
           send_email_notification.delay(signup_id=signup.id, kind="reminder_24h")
 
-    The scheduler owns the reminder_sent flag; this task only sends + logs.
+    When ``kind`` is provided, the task uses sent_notifications dedup:
+    INSERT ON CONFLICT DO NOTHING before sending. If the insert returns
+    0 rows, the email was already sent by another worker.
     """
     db: Session = SessionLocal()
     try:
+        # Daily send limit circuit breaker
+        if not _check_daily_send_limit(db):
+            return
+
         # Resolve user + content from signup_id when kind is provided.
-        # All transactional templates live in app.emails.BUILDERS — this
-        # task is purely a dispatch + persistence shim.
         if kind is not None and signup_id is not None:
             builder = BUILDERS.get(kind)
             if builder is None:
@@ -93,20 +132,27 @@ def send_email_notification(
             signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
             if not signup:
                 return
+
+            # Dedup: insert before send
+            if not _dedup_insert(db, signup.id, kind):
+                return  # Already sent by another worker
+
             payload = builder(signup)
             user = signup.user
             subject = payload["subject"]
-            body = payload["body"]
+            body = payload.get("text_body") or payload.get("body", "")
+            html_body = payload.get("html_body")
         else:
             if user_id is None:
                 return
             user = db.query(models.User).filter(models.User.id == user_id).first()
             if not user:
                 return
+            html_body = None
 
         # 1) Send real email (if configured)
         if user.notify_email:
-            _send_email_via_sendgrid(user.email, subject, body)
+            _send_email_via_sendgrid(user.email, subject, body, html_body=html_body)
 
         # 2) Log notification in DB
         notif = models.Notification(
@@ -131,29 +177,26 @@ def send_email_notification(
     retry_jitter=True,
     max_retries=3,
 )
-def schedule_reminders(self) -> None:
+def send_reminders_24h(self) -> None:
     """Periodic task: send 24h reminders for upcoming confirmed signups.
 
-    Idempotency contract: Running this task twice against the same signup
-    produces at most one reminder email thanks to the ``reminder_sent`` flag
-    and SELECT FOR UPDATE SKIP LOCKED.  First-write-wins: whichever beat
-    process claims a row and commits ``reminder_sent=True`` first wins; the
-    second sees the flag already set and skips the row.
+    Uses sent_notifications INSERT ON CONFLICT DO NOTHING for exactly-once
+    delivery, even under concurrent beat fires. The 30-minute window
+    [now+23h45m, now+24h15m] ensures signups are not missed if beat is
+    slightly delayed.
     """
     db: Session = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
-        window_start = now + timedelta(hours=24)
-        window_end = window_start + timedelta(minutes=5)
+        window_start = now + timedelta(hours=23, minutes=45)
+        window_end = now + timedelta(hours=24, minutes=15)
 
-        # SELECT FOR UPDATE SKIP LOCKED ensures at most one beat worker
-        # claims each signup under concurrent beat processes (T-00-16).
         signups = (
             db.query(models.Signup)
             .join(models.Slot)
             .filter(
                 models.Signup.status == models.SignupStatus.confirmed,
-                models.Signup.reminder_sent == False,  # noqa: E712
+                models.Signup.reminder_24h_sent_at.is_(None),
                 models.Slot.start_time.between(window_start, window_end),
             )
             .with_for_update(skip_locked=True)
@@ -161,10 +204,54 @@ def schedule_reminders(self) -> None:
         )
 
         for s in signups:
-            send_email_notification.delay(signup_id=str(s.id), kind="reminder_24h")
-            s.reminder_sent = True
+            if _dedup_insert(db, s.id, "reminder_24h"):
+                send_email_notification.delay(signup_id=str(s.id), kind="reminder_24h")
+                s.reminder_24h_sent_at = now
 
-        # Commit flag updates before returning so a second run sees reminder_sent=True.
+        db.commit()
+    finally:
+        db.close()
+
+
+@celery.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+)
+def send_reminders_1h(self) -> None:
+    """Periodic task: send 1h reminders for upcoming confirmed signups.
+
+    Same dedup pattern as send_reminders_24h. Respects Event.reminder_1h_enabled
+    toggle. Window: [now+45m, now+75m].
+    """
+    db: Session = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        window_start = now + timedelta(minutes=45)
+        window_end = now + timedelta(minutes=75)
+
+        signups = (
+            db.query(models.Signup)
+            .join(models.Slot)
+            .join(models.Event)
+            .filter(
+                models.Signup.status == models.SignupStatus.confirmed,
+                models.Signup.reminder_1h_sent_at.is_(None),
+                models.Slot.start_time.between(window_start, window_end),
+                models.Event.reminder_1h_enabled == True,  # noqa: E712
+            )
+            .with_for_update(skip_locked=True)
+            .all()
+        )
+
+        for s in signups:
+            if _dedup_insert(db, s.id, "reminder_1h"):
+                send_email_notification.delay(signup_id=str(s.id), kind="reminder_1h")
+                s.reminder_1h_sent_at = now
+
         db.commit()
     finally:
         db.close()
@@ -213,9 +300,13 @@ def weekly_digest() -> None:
 # -------------------------
 
 celery.conf.beat_schedule = {
-    "schedule-reminders-every-5-minutes": {
-        "task": "app.celery_app.schedule_reminders",
-        "schedule": 300.0,  # every 5 minutes
+    "send-reminders-24h-every-5-minutes": {
+        "task": "app.celery_app.send_reminders_24h",
+        "schedule": 300.0,
+    },
+    "send-reminders-1h-every-5-minutes": {
+        "task": "app.celery_app.send_reminders_1h",
+        "schedule": 300.0,
     },
     "weekly-digest-every-monday-8am": {
         "task": "app.celery_app.weekly_digest",

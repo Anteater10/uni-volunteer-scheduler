@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     frontend_base_url: str = "http://localhost:5173"
     backend_base_url: str = "http://localhost:8000"
 
+    # --- Phase 6: Resend monitoring ---
+    resend_daily_limit: int = 100  # free-tier limit; 80% warning threshold
+
     # --- Phase 5: LLM CSV Import ---
     openai_api_key: str = ""  # TODO(secret): real key in local .env only
     openai_model: str = "gpt-4o-mini"

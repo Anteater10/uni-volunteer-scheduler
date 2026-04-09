@@ -69,10 +69,46 @@ def send_reminder_24h(signup: models.Signup) -> dict:
     return {"to": user.email, "subject": subject, "body": body}
 
 
+def send_reminder_1h(signup: models.Signup) -> dict:
+    user = signup.user
+    slot = signup.slot
+    event = slot.event
+    # TODO(copy): subject line
+    subject = f"Starting soon: volunteer slot for '{event.title}'"
+    body = (
+        f"Hi {user.name},\n\n"
+        f"Your volunteer slot starts in about 1 hour:\n"
+        f"- Event: {event.title}\n"
+        f"- When: {_fmt_when(slot)}\n"
+        f"- Where: {event.location or 'TBD'}\n\n"
+        "See you there!"
+    )
+    return {"to": user.email, "subject": subject, "body": body}
+
+
+def send_reschedule(signup: models.Signup) -> dict:
+    user = signup.user
+    slot = signup.slot
+    event = slot.event
+    # TODO(copy): subject line
+    subject = f"Schedule change: '{event.title}'"
+    body = (
+        f"Hi {user.name},\n\n"
+        f"The time for your volunteer slot has changed:\n"
+        f"- Event: {event.title}\n"
+        f"- New time: {_fmt_when(slot)}\n"
+        f"- Where: {event.location or 'TBD'}\n\n"
+        "If you can no longer attend, please cancel your signup."
+    )
+    return {"to": user.email, "subject": subject, "body": body}
+
+
 BUILDERS = {
     "confirmation": send_confirmation,
     "cancellation": send_cancellation,
     "reminder_24h": send_reminder_24h,
+    "reminder_1h": send_reminder_1h,
+    "reschedule": send_reschedule,
 }
 
 
