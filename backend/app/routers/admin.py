@@ -1315,6 +1315,20 @@ def delete_module_template(
 # =========================
 
 
+@router.get("/imports", response_model=List[CsvImportRead])
+def list_csv_imports(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """List all CSV imports, most recent first."""
+    return (
+        db.query(models.CsvImport)
+        .order_by(models.CsvImport.created_at.desc())
+        .limit(100)
+        .all()
+    )
+
+
 @router.post("/imports", response_model=CsvImportRead, status_code=201)
 async def upload_csv_import(
     file: UploadFile = File(...),
