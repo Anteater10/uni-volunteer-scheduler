@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     frontend_base_url: str = "http://localhost:5173"
     backend_base_url: str = "http://localhost:8000"
 
+    # --- Phase 5: LLM CSV Import ---
+    openai_api_key: str = ""  # TODO(secret): real key in local .env only
+    openai_model: str = "gpt-4o-mini"
+    import_cost_ceiling: float = 5.0  # refuse imports estimated > $5
+
     # CORS
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 
