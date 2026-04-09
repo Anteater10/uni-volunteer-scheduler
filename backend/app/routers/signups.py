@@ -9,6 +9,7 @@ from .. import models, schemas
 from ..celery_app import send_email_notification
 from ..database import get_db
 from ..deps import get_current_user, log_action
+from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/signups", tags=["signups"])
 
@@ -317,24 +318,15 @@ def cancel_signup(
         slot.current_count -= 1
 
     # Auto-promote from waitlist FIFO until capacity is full
-    promoted_user_ids: List[str] = []
+    # Canonical promotion path: app.signup_service.promote_waitlist_fifo
+    promoted_signups: List[models.Signup] = []
     while slot.current_count < slot.capacity:
-        waitlisted = (
-            db.query(models.Signup)
-            .filter(
-                models.Signup.slot_id == slot.id,
-                models.Signup.status == models.SignupStatus.waitlisted,
-            )
-            .order_by(models.Signup.timestamp.asc())
-            .with_for_update()
-            .first()
-        )
-        if not waitlisted:
+        promoted = promote_waitlist_fifo(db, slot.id)
+        if promoted is None:
             break
-
-        waitlisted.status = models.SignupStatus.confirmed
         slot.current_count += 1
-        promoted_user_ids.append(str(waitlisted.user_id))
+        promoted_signups.append(promoted)
+    promoted_user_ids: List[str] = [str(p.user_id) for p in promoted_signups]
 
     # Audit log before commit
     log_action(db, current_user, "signup_cancel", "Signup", str(signup.id))

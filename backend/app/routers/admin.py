@@ -14,6 +14,7 @@ from ..database import get_db
 from ..deps import require_role, log_action
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
+from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -37,23 +38,19 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
 
 
 def _promote_waitlist_fifo(db: Session, slot: models.Slot) -> List[str]:
+    """Admin-side wrapper around the canonical promote_waitlist_fifo.
+
+    Loops until capacity is full, delegating each promotion to the single
+    source of truth in app.signup_service. Caller is responsible for
+    already holding a FOR UPDATE lock on the slot row.
+    """
     promoted_user_ids: List[str] = []
     while slot.current_count < slot.capacity:
-        waitlisted = (
-            db.query(models.Signup)
-            .filter(
-                models.Signup.slot_id == slot.id,
-                models.Signup.status == models.SignupStatus.waitlisted,
-            )
-            .order_by(models.Signup.timestamp.asc(), models.Signup.id.asc())
-            .with_for_update()
-            .first()
-        )
-        if not waitlisted:
+        promoted = promote_waitlist_fifo(db, slot.id)
+        if promoted is None:
             break
-        waitlisted.status = models.SignupStatus.confirmed
         slot.current_count += 1
-        promoted_user_ids.append(str(waitlisted.user_id))
+        promoted_user_ids.append(str(promoted.user_id))
     return promoted_user_ids
 
 
