@@ -1174,6 +1174,19 @@ def ccpa_delete(
 # =========================
 
 
+@router.get("/prereq-overrides", response_model=List[schemas.PrereqOverrideRead])
+def list_prereq_overrides(
+    user_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Admin-only: list all prereq overrides, optionally filtered by user_id."""
+    query = db.query(models.PrereqOverride)
+    if user_id:
+        query = query.filter(models.PrereqOverride.user_id == user_id)
+    return query.order_by(models.PrereqOverride.created_at.desc()).all()
+
+
 @router.post("/users/{user_id}/prereq-overrides", response_model=schemas.PrereqOverrideRead)
 def create_prereq_override(
     user_id: str,
