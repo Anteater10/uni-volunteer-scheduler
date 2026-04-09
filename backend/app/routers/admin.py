@@ -17,7 +17,7 @@ from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
 from ..services import template_service, import_service
-from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate, CsvImportRead
+from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate, CsvImportRead, SentNotificationRead
 from ..tasks.import_csv import process_csv_import
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -937,3 +937,24 @@ def commit_csv_import(
 ):
     """Atomically commit all validated rows as events."""
     return import_service.commit_import(db, import_id)
+
+
+# =========================
+# NOTIFICATIONS MONITORING (Phase 6)
+# =========================
+
+
+@router.get("/notifications/recent", response_model=List[SentNotificationRead])
+def recent_notifications(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Return last 100 sent notifications for admin/organizer monitoring."""
+    return (
+        db.query(models.SentNotification)
+        .order_by(models.SentNotification.sent_at.desc())
+        .limit(100)
+        .all()
+    )

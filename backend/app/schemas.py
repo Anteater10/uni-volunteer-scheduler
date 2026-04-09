@@ -447,6 +447,17 @@ class ModuleTemplateRead(ORMBase):
 # =========================
 # CSV IMPORT SCHEMAS (Phase 5)
 # =========================
+# =========================
+# SENT NOTIFICATION SCHEMAS (Phase 6)
+# =========================
+class SentNotificationRead(ORMBase):
+    id: UUID
+    signup_id: UUID
+    kind: str
+    sent_at: datetime
+    provider_id: Optional[str] = None
+
+
 class CsvImportRead(ORMBase):
     id: UUID
     uploaded_by: UUID
