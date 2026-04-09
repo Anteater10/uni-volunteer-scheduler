@@ -4,6 +4,7 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     String,
     DateTime,
@@ -16,7 +17,7 @@ from sqlalchemy import (
     Index,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import backref, relationship
 
 from .database import Base
@@ -112,6 +113,7 @@ class Event(Base):
     signup_open_at = Column(DateTime(timezone=True), nullable=True)
     signup_close_at = Column(DateTime(timezone=True), nullable=True)
     venue_code = Column(String(4), nullable=True)
+    module_slug = Column(String, ForeignKey("module_templates.slug"), nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -360,4 +362,40 @@ class MagicLinkToken(Base):
 
     __table_args__ = (
         Index("ix_magic_link_tokens_email_created_at", "email", "created_at"),
+    )
+
+
+# -------------------------
+# Module templates (stub — phase 5 will extend)
+# -------------------------
+
+
+class ModuleTemplate(Base):
+    __tablename__ = "module_templates"
+
+    slug = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    prereq_slugs = Column(ARRAY(String), nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+# -------------------------
+# Prereq overrides (admin audit-trailed)
+# -------------------------
+
+
+class PrereqOverride(Base):
+    __tablename__ = "prereq_overrides"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    module_slug = Column(String, ForeignKey("module_templates.slug"), nullable=False)
+    reason = Column(String, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("length(reason) >= 10", name="prereq_overrides_reason_min_len"),
     )
