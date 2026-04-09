@@ -43,3 +43,10 @@
 [2026-04-09 00:16] COMPLETED phase 3 plan 04: organizer roster page — 5s polling, one-tap check-in, resolve modal, 4 Vitest tests
 [2026-04-09 00:18] COMPLETED phase 3 plan 05: self-check-in page + StatusIcon timeline + GET /signups enrichment, 4 Vitest tests
 [2026-04-09 00:22] COMPLETED phase 3: check-in state machine + roster fully wired
+[2026-04-08 00:23] COMPLETED phase 3: check-in state machine + roster — 5 plans, 107 backend tests, merge-gate concurrent test passes, organizer roster + self-check-in + timeline icons
+[2026-04-08 00:30] COMPLETED phase 4 plan 01: module_templates stub + prereq_overrides + Event.module_slug FK + migration 0005 + 6 tests
+[2026-04-08 00:35] COMPLETED phase 4 plan 02: prereq check service + find_next_orientation_slot + 9 unit tests
+[2026-04-08 00:42] COMPLETED phase 4 plan 03: POST /signups 422 PREREQ_MISSING + admin override create/revoke + 14 integration tests
+[2026-04-08 00:48] COMPLETED phase 4 plan 04: PrereqWarningModal + EventDetailPage 422 interception + 5 Vitest tests
+[2026-04-08 00:52] COMPLETED phase 4 plan 05: GET /me/module-timeline + ModuleTimeline component + 6 backend + 4 frontend tests
+[2026-04-08 00:53] COMPLETED phase 4: prereq enforcement fully wired — 5 plans, 142 backend tests (67% cov), 21 frontend tests, all builds green
