@@ -12,6 +12,22 @@ TEST_DATABASE_URL = os.environ.get(
 )
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _celery_eager_mode():
+    """Run Celery tasks synchronously in tests — no broker required.
+
+    .delay() calls from router code still work but execute in-process
+    and any send_email failures are swallowed (sendgrid key is unset).
+    """
+    from app.celery_app import celery
+
+    celery.conf.task_always_eager = True
+    celery.conf.task_eager_propagates = False
+    celery.conf.broker_url = "memory://"
+    celery.conf.result_backend = "cache+memory://"
+    yield
+
+
 @pytest.fixture(scope="session")
 def engine():
     eng = create_engine(TEST_DATABASE_URL, future=True)
