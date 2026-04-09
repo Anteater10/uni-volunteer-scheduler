@@ -13,16 +13,14 @@ You are Claude Code running **unattended on a headless Hetzner server** as user 
 4. **Never push secrets.** If you generate `.env` files, add them to `.gitignore` — do not commit.
 5. **Never delete Hung's existing work.** If a file conflict comes up during a GSD phase, stop and log it.
 
-## No Frontend Visual Work
+## Frontend Visual Work — Authorized with Placeholders (updated 2026-04-08)
 
-You are headless — no browser, no visual verification. Rules:
-- If a phase / plan is purely backend / infra / migrations / tests / API work → **run it**
-- If a phase touches `frontend/` directories for visual/UX/styling/layout work → **STOP**, append a note to `.planning/remote-run.log`:
-  ```
-  [YYYY-MM-DD HH:MM] PAUSED at phase <N>: frontend visual work — awaiting laptop verification
-  ```
-  Then exit the autonomous run cleanly.
-- API contract / schema work that happens to touch `frontend/` for type definitions **is fine** — use your judgment.
+**Override:** Hung has authorized frontend-visual work for this run. Proceed on phases that touch frontend.
+- For brand colors, logos, identity, imagery, or copy tone: **use clearly-marked placeholders** (e.g. `/* TODO(brand): replace */`, `bg-slate-900` as neutral stand-in, `Lorem` copy). Hung will replace these tomorrow on the laptop.
+- For layout, spacing, responsive breakpoints, touch targets, Tailwind class structure, component composition: **make your best call** — those are reviewable in a diff.
+- Do **not** pause just because a phase touches `frontend/`. Pause only if you hit an ambiguous decision that can't be resolved by "use a neutral placeholder and move on" (e.g. a structural choice that would be costly to undo).
+- Mark any placeholder you leave with a `TODO(brand)` or `TODO(copy)` comment so Hung can grep for them.
+- API contract / schema work that touches `frontend/` for type definitions is fine as before.
 
 ## Verification Gates
 
