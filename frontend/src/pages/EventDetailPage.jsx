@@ -14,6 +14,7 @@ import {
   EmptyState,
 } from "../components/ui";
 import { toast } from "../state/toast";
+import { useDocumentMeta } from "../lib/useDocumentMeta";
 
 // 3-tap rule: slot button (1) → confirm in modal (2) → done. No navigations between taps.
 
@@ -38,6 +39,14 @@ export default function EventDetailPage() {
   });
 
   const event = eventQ.data;
+
+  useDocumentMeta({
+    title: event
+      ? `${event.title} — Volunteer Scheduler` // TODO(copy)
+      : "Event — Volunteer Scheduler", // TODO(copy)
+    description: event?.description ?? "Volunteer shift details and signup.", // TODO(copy)
+    ogType: "article",
+  });
 
   const sortedSlots = useMemo(() => {
     const slots = event?.slots || [];
@@ -166,6 +175,7 @@ export default function EventDetailPage() {
                   </div>
                   {canSignup && (
                     <Button
+                      data-testid="slot-signup-button"
                       onClick={() =>
                         setPendingSignup({
                           id: s.id,
@@ -216,7 +226,7 @@ export default function EventDetailPage() {
             {/* TODO(copy) */}
             Not now
           </Button>
-          <Button onClick={confirmSignup} disabled={busy}>
+          <Button data-testid="confirm-signup-button" onClick={confirmSignup} disabled={busy}>
             {/* TODO(copy) */}
             Confirm signup
           </Button>

@@ -169,6 +169,8 @@ jobs:
           cd frontend
           npm run test -- --run
 
+  # Phase 1: a11y.spec.js is a hard merge gate — any axe-core violation fails the PR.
+  # signup-three-tap.spec.js enforces the ≤ 3-tap signup flow invariant.
   phase0-e2e-tests:
     name: phase0 playwright e2e
     needs: [phase0-backend-tests, phase0-frontend-tests]

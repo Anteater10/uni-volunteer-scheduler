@@ -12,6 +12,7 @@ import {
   Button,
 } from "../components/ui";
 import { useAuth } from "../state/authContext";
+import { useDocumentMeta } from "../lib/useDocumentMeta";
 
 const FILTERS = [
   { value: "upcoming", label: "Upcoming" }, // TODO(copy)
@@ -22,6 +23,13 @@ const FILTERS = [
 export default function EventsPage() {
   const { isAuthed } = useAuth();
   const [filter, setFilter] = useState("upcoming");
+
+  useDocumentMeta({
+    title: "Events — Volunteer Scheduler", // TODO(copy)
+    description:
+      "Browse upcoming volunteer shifts and sign up in three taps.", // TODO(copy)
+    ogType: "website",
+  });
 
   const eventsQ = useQuery({
     queryKey: ["events"],
