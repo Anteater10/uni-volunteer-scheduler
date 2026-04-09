@@ -2,7 +2,8 @@
 
 import csv
 import io
-from datetime import datetime, timedelta
+import uuid as uuid_mod
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, Response, HTTPException, Query
@@ -746,3 +747,88 @@ def admin_delete_user(
 
     log_action(db, admin_user, "admin_delete_user", "User", str(user.id))
     return
+
+
+# =========================
+# PREREQ OVERRIDE MANAGEMENT (Phase 4)
+# =========================
+
+
+@router.post("/users/{user_id}/prereq-overrides", response_model=schemas.PrereqOverrideRead)
+def create_prereq_override(
+    user_id: str,
+    payload: schemas.PrereqOverrideCreate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Admin-only: create a prereq override for a user on a module."""
+    if len(payload.reason) < 10:
+        raise HTTPException(status_code=400, detail="Reason must be at least 10 characters")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    template = db.get(models.ModuleTemplate, payload.module_slug)
+    if not template:
+        raise HTTPException(status_code=404, detail="Module template not found")
+
+    override = models.PrereqOverride(
+        id=uuid_mod.uuid4(),
+        user_id=user.id,
+        module_slug=payload.module_slug,
+        reason=payload.reason,
+        created_by=admin_user.id,
+    )
+    db.add(override)
+    db.flush()
+
+    log_action(
+        db,
+        admin_user,
+        "prereq_override_admin_create",
+        "PrereqOverride",
+        str(override.id),
+        extra={
+            "override_id": str(override.id),
+            "user_id": str(user.id),
+            "module_slug": payload.module_slug,
+            "reason": payload.reason,
+        },
+    )
+
+    db.commit()
+    db.refresh(override)
+    return override
+
+
+@router.delete("/prereq-overrides/{override_id}", status_code=200, response_model=schemas.PrereqOverrideRead)
+def revoke_prereq_override(
+    override_id: str,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Admin-only: soft-revoke a prereq override by setting revoked_at."""
+    override = db.query(models.PrereqOverride).filter(
+        models.PrereqOverride.id == override_id
+    ).first()
+    if not override:
+        raise HTTPException(status_code=404, detail="Prereq override not found")
+
+    if override.revoked_at is not None:
+        raise HTTPException(status_code=409, detail="Override already revoked")
+
+    override.revoked_at = datetime.now(timezone.utc)
+
+    log_action(
+        db,
+        admin_user,
+        "prereq_override_admin_revoke",
+        "PrereqOverride",
+        str(override.id),
+        extra={"override_id": str(override.id)},
+    )
+
+    db.commit()
+    db.refresh(override)
+    return override

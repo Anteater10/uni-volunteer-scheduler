@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, aliased
 
@@ -11,6 +12,7 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, log_action
 from ..magic_link_service import dispatch_email
+from ..services.prereqs import check_missing_prereqs, find_next_orientation_slot
 from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/signups", tags=["signups"])
@@ -42,6 +44,7 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
 @router.post("/", response_model=schemas.SignupRead)
 def create_signup(
     signup_in: schemas.SignupCreate,
+    acknowledge_prereq_override: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -78,6 +81,22 @@ def create_signup(
         raise HTTPException(status_code=400, detail="Cannot sign up for past slots")
 
     _ensure_signup_window(event)
+
+    # Phase 4: prereq enforcement (soft warn)
+    if event.module_slug:
+        missing = check_missing_prereqs(db, current_user.id, event.module_slug)
+        if missing and not acknowledge_prereq_override:
+            next_slot = find_next_orientation_slot(db)
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": "PREREQ_MISSING",
+                    "code": "PREREQ_MISSING",
+                    "detail": "Missing prerequisites",
+                    "missing": missing,
+                    "next_slot": next_slot,
+                },
+            )
 
     # Enforce max signups per user for this event, if configured
     if event.max_signups_per_user is not None:
@@ -155,6 +174,19 @@ def create_signup(
 
     # Audit log (must be before commit)
     log_action(db, current_user, "signup_create", "Signup", str(signup.id))
+
+    # Phase 4: if prereqs were missing but user acknowledged, log the self-override
+    if event.module_slug and acknowledge_prereq_override:
+        override_missing = check_missing_prereqs(db, current_user.id, event.module_slug)
+        if override_missing:
+            log_action(
+                db,
+                current_user,
+                "prereq_override_self",
+                "Signup",
+                str(signup.id),
+                extra={"signup_id": str(signup.id), "missing_prereqs": override_missing},
+            )
 
     db.commit()
     db.refresh(signup)

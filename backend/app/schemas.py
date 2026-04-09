@@ -372,3 +372,32 @@ class SelfCheckInRequest(BaseModel):
 class ResolveEventRequest(BaseModel):
     attended: List[UUID] = []
     no_show: List[UUID] = []
+
+
+# =========================
+# PREREQ OVERRIDE SCHEMAS (Phase 4)
+# =========================
+class PrereqOverrideCreate(BaseModel):
+    module_slug: str
+    reason: str
+
+
+class PrereqOverrideRead(ORMBase):
+    id: UUID
+    user_id: UUID
+    module_slug: str
+    reason: str
+    created_by: UUID
+    created_at: datetime
+    revoked_at: Optional[datetime] = None
+
+
+# =========================
+# MODULE TIMELINE (Phase 4)
+# =========================
+class ModuleTimelineItem(BaseModel):
+    slug: str
+    name: str
+    status: str  # locked | unlocked | completed
+    override_active: bool
+    last_activity: Optional[datetime] = None
