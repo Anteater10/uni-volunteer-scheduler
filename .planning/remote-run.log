@@ -50,3 +50,13 @@
 [2026-04-08 00:48] COMPLETED phase 4 plan 04: PrereqWarningModal + EventDetailPage 422 interception + 5 Vitest tests
 [2026-04-08 00:52] COMPLETED phase 4 plan 05: GET /me/module-timeline + ModuleTimeline component + 6 backend + 4 frontend tests
 [2026-04-08 00:53] COMPLETED phase 4: prereq enforcement fully wired — 5 plans, 142 backend tests (67% cov), 21 frontend tests, all builds green
+[2026-04-08 00:38] COMPLETED phase 4: prereq enforcement — 5 plans, 142 backend tests, module_templates stub + overrides + soft-warn modal + timeline
+[2026-04-08 01:10] STARTED phase 5: event template system + LLM-normalized CSV import (plans 01-06, plan 07 BLOCKED)
+[2026-04-08 01:15] COMPLETED phase 5 plan 01: extend module_templates schema (capacity, duration, materials, metadata, soft delete) + csv_imports table + migration 0006 + 4 model tests
+[2026-04-08 01:18] COMPLETED phase 5 plan 02: openai + instructor deps, openai_api_key/openai_model/import_cost_ceiling config, corpus directory
+[2026-04-08 01:25] COMPLETED phase 5 plan 03: template_service CRUD + /admin/module-templates endpoints + AdminTemplatesPage + 8 integration tests
+[2026-04-08 01:32] COMPLETED phase 5 plan 04: stage-2 deterministic validator (0.85 threshold, collision detection, new slug proposals) + corpus logger + 9 unit tests
+[2026-04-08 01:40] COMPLETED phase 5 plan 05: import_service + Celery task (stage-1 stub) + POST/GET/PATCH/POST endpoints + atomic commit/rollback + 5 integration tests
+[2026-04-08 01:48] COMPLETED phase 5 plan 06: ImportUploadForm (drag-and-drop) + ImportPreviewTable (amber/red/green rows, inline edit, disabled commit) + AdminImportPage (2s polling, commit flow)
+[2026-04-08 01:48] SKIPPED phase 5 plan 07: BLOCKED on real CSV sample from Hung
+[2026-04-08 01:50] COMPLETED phase 5: 6/7 plans executed, 168 backend tests (69% cov), frontend builds clean; plan 07 (stage-1 LLM prompt + eval dataset) BLOCKED on real Sci Trek CSV
