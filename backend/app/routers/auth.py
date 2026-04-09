@@ -97,14 +97,20 @@ def _consume_refresh_token(db: Session, raw: str) -> models.User:
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
+            detail={
+                "code": "AUTH_REFRESH_INVALID",
+                "detail": "Invalid or expired refresh token",
+            },
             headers={"WWW-Authenticate": "Bearer"},
         )
     user = db.query(models.User).filter(models.User.id == rt.user_id).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail={
+                "code": "AUTH_REFRESH_INVALID",
+                "detail": "User not found",
+            },
             headers={"WWW-Authenticate": "Bearer"},
         )
     # Delete (rotate) the consumed token so it cannot be replayed
