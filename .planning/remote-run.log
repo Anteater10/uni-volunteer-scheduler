@@ -60,3 +60,12 @@
 [2026-04-08 01:48] COMPLETED phase 5 plan 06: ImportUploadForm (drag-and-drop) + ImportPreviewTable (amber/red/green rows, inline edit, disabled commit) + AdminImportPage (2s polling, commit flow)
 [2026-04-08 01:48] SKIPPED phase 5 plan 07: BLOCKED on real CSV sample from Hung
 [2026-04-08 01:50] COMPLETED phase 5: 6/7 plans executed, 168 backend tests (69% cov), frontend builds clean; plan 07 (stage-1 LLM prompt + eval dataset) BLOCKED on real Sci Trek CSV
+[2026-04-08 00:54] COMPLETED phase 5 (6/7): template CRUD + stage-2 validator + import pipeline + preview UI — 168 backend tests
+[2026-04-08 00:54] SKIPPED phase 5 plan 07: BLOCKED on real CSV sample from Hung (stage-1 LLM prompt + eval dataset)
+[2026-04-09 01:01] COMPLETED phase 6 plan 01: sent_notifications dedup table + reminder columns + Alembic migration 0007
+[2026-04-09 01:04] COMPLETED phase 6 plan 02: idempotent 24h+1h reminder tasks with sent_notifications dedup + daily limit monitoring
+[2026-04-09 01:05] COMPLETED phase 6 plan 03: cancellation + reschedule emails with dedup, slot time change invalidates reminders
+[2026-04-09 01:07] COMPLETED phase 6 plan 04: WCAG HTML email templates (5 templates, html.escape, 4.5:1 contrast, TODO(brand)/TODO(copy))
+[2026-04-09 01:07] COMPLETED phase 6 plan 05: GET /admin/notifications/recent + SentNotificationRead schema + daily limit monitoring
+[2026-04-09 01:09] COMPLETED phase 6 plan 06: 6 idempotency + integration tests (dedup, toggle, reschedule invalidation, daily limit, cancellation dedup)
+[2026-04-09 01:09] COMPLETED phase 6: notifications pipeline production-reliable
