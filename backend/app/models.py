@@ -122,6 +122,7 @@ class Event(Base):
     signup_close_at = Column(DateTime(timezone=True), nullable=True)
     venue_code = Column(String(4), nullable=True)
     module_slug = Column(String, ForeignKey("module_templates.slug"), nullable=True)
+    reminder_1h_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -177,12 +178,15 @@ class Signup(Base):
 
     timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     reminder_sent = Column(Boolean, nullable=False, default=False, server_default="false")
+    reminder_24h_sent_at = Column(DateTime(timezone=True), nullable=True)
+    reminder_1h_sent_at = Column(DateTime(timezone=True), nullable=True)
     checked_in_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="signups")
     slot = relationship("Slot", back_populates="signups")
     answers = relationship("CustomAnswer", back_populates="signup", cascade="all, delete-orphan")
+    sent_notifications = relationship("SentNotification", back_populates="signup", cascade="all, delete-orphan")
 
 
 # -------------------------
@@ -422,6 +426,28 @@ class CsvImport(Base):
 # -------------------------
 # Prereq overrides (admin audit-trailed)
 # -------------------------
+
+
+class SentNotification(Base):
+    """Dedup table for exactly-once email delivery.
+
+    The UNIQUE(signup_id, kind) constraint is the dedup key: Celery tasks
+    INSERT ... ON CONFLICT DO NOTHING before calling the email provider.
+    If the insert returns 0 rows, the email was already sent.
+    """
+    __tablename__ = "sent_notifications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id"), nullable=False)
+    kind = Column(String(32), nullable=False)  # magic_link|reminder_24h|reminder_1h|cancellation|reschedule
+    sent_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    provider_id = Column(String(255), nullable=True)  # Resend message id
+
+    __table_args__ = (
+        Index("uq_sent_notifications_signup_kind", "signup_id", "kind", unique=True),
+    )
+
+    signup = relationship("Signup", back_populates="sent_notifications")
 
 
 class PrereqOverride(Base):
