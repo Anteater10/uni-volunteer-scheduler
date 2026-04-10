@@ -40,7 +40,8 @@ function formatDate(isoString) {
 
 function formatTime(isoString) {
   if (!isoString) return "";
-  const d = new Date(isoString.includes("Z") || isoString.includes("+") ? isoString : `${isoString}Z`);
+  // Do not append Z — treat as local time (the backend stores event times in local school TZ)
+  const d = new Date(isoString);
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
