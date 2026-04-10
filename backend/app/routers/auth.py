@@ -141,43 +141,6 @@ if settings.oidc_client_id and settings.oidc_client_secret and settings.oidc_iss
 # Routes
 # -------------------------
 
-@router.post("/register", response_model=schemas.UserRead)
-def register(
-    user_in: schemas.UserCreate,
-    db: Session = Depends(get_db),
-    _: None = Depends(rate_limit(20, 60)),
-):
-    existing = db.query(models.User).filter(models.User.email == user_in.email).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    settings_row = db.query(models.SiteSettings).first()
-    if settings_row and settings_row.allowed_email_domain:
-        allowed_domain = settings_row.allowed_email_domain.lower().strip()
-        email_lower = user_in.email.lower().strip()
-        if not email_lower.endswith(f"@{allowed_domain}"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Email domain not allowed. Use your {allowed_domain} address.",
-            )
-
-    user = models.User(
-        name=user_in.name,
-        email=user_in.email,
-        role=models.UserRole.participant,  # force participant
-        university_id=user_in.university_id,
-        notify_email=user_in.notify_email,
-        hashed_password=hash_password(user_in.password),
-    )
-    db.add(user)
-    db.flush()  # get user.id for audit log
-
-    log_action(db, user, "user_register", "User", str(user.id))
-
-    db.commit()
-    db.refresh(user)
-    return user
-
 
 @router.post("/token", response_model=schemas.Token)
 def login(
