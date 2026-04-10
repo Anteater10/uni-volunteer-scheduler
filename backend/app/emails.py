@@ -53,12 +53,14 @@ def _fmt_when(slot: models.Slot) -> str:
 
 
 def send_confirmation(signup: models.Signup) -> dict:
-    user = signup.user
+    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
+    v = signup.volunteer
     slot = signup.slot
     event = slot.event
+    vol_name = f"{v.first_name} {v.last_name}"
     subject = f"Your signup for '{event.title}'"
     text_body = (
-        f"Hi {user.name},\n\n"
+        f"Hi {vol_name},\n\n"
         f"You are confirmed for this volunteer slot:\n"
         f"- Event: {event.title}\n"
         f"- When: {_fmt_when(slot)}\n"
@@ -67,21 +69,23 @@ def send_confirmation(signup: models.Signup) -> dict:
     )
     html_body = _render_html(
         "confirmation.html",
-        user_name=user.name,
+        user_name=vol_name,
         event_title=event.title,
         slot_when=_fmt_when(slot),
         event_location=event.location or "TBD",
     )
-    return {"to": user.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
 def send_cancellation(signup: models.Signup) -> dict:
-    user = signup.user
+    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
+    v = signup.volunteer
     slot = signup.slot
     event = slot.event
+    vol_name = f"{v.first_name} {v.last_name}"
     subject = f"Your signup for '{event.title}' was cancelled"
     text_body = (
-        f"Hi {user.name},\n\n"
+        f"Hi {vol_name},\n\n"
         f"Your signup for the following volunteer slot has been cancelled:\n"
         f"- Event: {event.title}\n"
         f"- When: {_fmt_when(slot)}\n"
@@ -90,21 +94,23 @@ def send_cancellation(signup: models.Signup) -> dict:
     )
     html_body = _render_html(
         "cancellation.html",
-        user_name=user.name,
+        user_name=vol_name,
         event_title=event.title,
         slot_when=_fmt_when(slot),
         event_location=event.location or "TBD",
     )
-    return {"to": user.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
 def send_reminder_24h(signup: models.Signup) -> dict:
-    user = signup.user
+    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
+    v = signup.volunteer
     slot = signup.slot
     event = slot.event
+    vol_name = f"{v.first_name} {v.last_name}"
     subject = f"Reminder: volunteer slot for '{event.title}'"
     text_body = (
-        f"Hi {user.name},\n\n"
+        f"Hi {vol_name},\n\n"
         f"This is a reminder for your volunteer slot:\n"
         f"- Event: {event.title}\n"
         f"- When: {_fmt_when(slot)}\n"
@@ -113,23 +119,25 @@ def send_reminder_24h(signup: models.Signup) -> dict:
     )
     html_body = _render_html(
         "reminder.html",
-        user_name=user.name,
+        user_name=vol_name,
         event_title=event.title,
         slot_when=_fmt_when(slot),
         event_location=event.location or "TBD",
         lead_time="24 hours",
     )
-    return {"to": user.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
 def send_reminder_1h(signup: models.Signup) -> dict:
-    user = signup.user
+    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
+    v = signup.volunteer
     slot = signup.slot
     event = slot.event
+    vol_name = f"{v.first_name} {v.last_name}"
     # TODO(copy): subject line
     subject = f"Starting soon: volunteer slot for '{event.title}'"
     text_body = (
-        f"Hi {user.name},\n\n"
+        f"Hi {vol_name},\n\n"
         f"Your volunteer slot starts in about 1 hour:\n"
         f"- Event: {event.title}\n"
         f"- When: {_fmt_when(slot)}\n"
@@ -138,23 +146,25 @@ def send_reminder_1h(signup: models.Signup) -> dict:
     )
     html_body = _render_html(
         "reminder.html",
-        user_name=user.name,
+        user_name=vol_name,
         event_title=event.title,
         slot_when=_fmt_when(slot),
         event_location=event.location or "TBD",
         lead_time="1 hour",
     )
-    return {"to": user.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
 def send_reschedule(signup: models.Signup) -> dict:
-    user = signup.user
+    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
+    v = signup.volunteer
     slot = signup.slot
     event = slot.event
+    vol_name = f"{v.first_name} {v.last_name}"
     # TODO(copy): subject line
     subject = f"Schedule change: '{event.title}'"
     text_body = (
-        f"Hi {user.name},\n\n"
+        f"Hi {vol_name},\n\n"
         f"The time for your volunteer slot has changed:\n"
         f"- Event: {event.title}\n"
         f"- New time: {_fmt_when(slot)}\n"
@@ -163,12 +173,12 @@ def send_reschedule(signup: models.Signup) -> dict:
     )
     html_body = _render_html(
         "reschedule.html",
-        user_name=user.name,
+        user_name=vol_name,
         event_title=event.title,
         slot_when=_fmt_when(slot),
         event_location=event.location or "TBD",
     )
-    return {"to": user.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
 BUILDERS = {

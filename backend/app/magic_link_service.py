@@ -97,7 +97,8 @@ def check_rate_limit(redis_client, email: str, ip: str) -> bool:
 
 def dispatch_email(db: Session, signup: Signup, event, base_url: str) -> None:
     """Issue a token and send the magic-link email. Idempotent within a 60s window."""
-    email = signup.user.email if signup.user else None
+    # Phase 09: signup.user removed; use signup.volunteer
+    email = signup.volunteer.email if signup.volunteer else None
     if not email:
         return
 
