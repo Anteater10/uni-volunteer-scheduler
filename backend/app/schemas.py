@@ -555,6 +555,12 @@ class PublicEventRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CurrentWeekRead(BaseModel):
+    quarter: str
+    year: int
+    week_number: int
+
+
 class OrientationStatusRead(BaseModel):
     has_attended_orientation: bool
     last_attended_at: Optional[datetime] = None

@@ -155,3 +155,53 @@ class TestGetPublicEvent:
         assert resp.status_code == 200
         data = resp.json()
         assert data["slots"] == []
+
+
+class TestCurrentWeek:
+    """Tests for GET /api/v1/public/current-week."""
+
+    VALID_QUARTERS = {"winter", "spring", "summer", "fall"}
+
+    def test_returns_200_with_required_keys(self, client, db_session):
+        resp = client.get("/api/v1/public/current-week")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert "quarter" in data
+        assert "year" in data
+        assert "week_number" in data
+
+    def test_quarter_is_valid_enum_value(self, client, db_session):
+        resp = client.get("/api/v1/public/current-week")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["quarter"] in self.VALID_QUARTERS
+
+    def test_week_number_in_range(self, client, db_session):
+        resp = client.get("/api/v1/public/current-week")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert 1 <= data["week_number"] <= 11
+
+    def test_year_matches_current_calendar_year(self, client, db_session):
+        from datetime import date
+        resp = client.get("/api/v1/public/current-week")
+        assert resp.status_code == 200
+        data = resp.json()
+        # year in response should be recent (within ±1 of real calendar year)
+        current_year = date.today().year
+        assert abs(data["year"] - current_year) <= 1
+
+    def test_spring_2026_date_returns_correct_quarter(self, client, db_session):
+        """A date known to fall in spring 2026 must return quarter=spring, year=2026."""
+        import unittest.mock as mock
+        from datetime import date
+        # 2026-04-15 is safely within spring 2026 (started 2026-03-30)
+        with mock.patch("app.routers.public.events.date") as mock_date:
+            mock_date.today.return_value = date(2026, 4, 15)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            resp = client.get("/api/v1/public/current-week")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["quarter"] == "spring"
+        assert data["year"] == 2026
+        assert 1 <= data["week_number"] <= 11

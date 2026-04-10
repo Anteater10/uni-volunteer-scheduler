@@ -2,7 +2,9 @@
 
 GET /public/events  — list events filtered by quarter, year, week_number; optional school
 GET /public/events/{event_id}  — single event detail with slots + filled counts
+GET /public/current-week  — returns the current UCSB quarter, year, and week_number
 """
+from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +15,53 @@ from ...database import get_db
 from ...deps import rate_limit
 
 router = APIRouter(prefix="/public", tags=["public"])
+
+# UCSB quarter start dates for supported years.
+# week_number = ((today - start_date).days // 7) + 1, clamped to 1-11.
+QUARTER_START_DATES: dict[tuple[int, str], date] = {
+    (2026, "winter"): date(2026, 1, 5),
+    (2026, "spring"): date(2026, 3, 30),
+    (2026, "summer"): date(2026, 6, 22),
+    (2026, "fall"):   date(2026, 9, 21),
+    (2027, "winter"): date(2027, 1, 4),
+}
+
+
+@router.get(
+    "/current-week",
+    response_model=schemas.CurrentWeekRead,
+    dependencies=[Depends(rate_limit(max_requests=60, window_seconds=60))],
+)
+def current_week() -> schemas.CurrentWeekRead:
+    """Return the current UCSB quarter, year, and week_number based on today's date.
+
+    Uses hardcoded QUARTER_START_DATES for 2026-2027. Week numbers are clamped
+    to 1-11 (UCSB quarters are exactly 11 teaching weeks).
+    """
+    today = date.today()
+    # Find the latest quarter start that is <= today
+    best: tuple[int, str] | None = None
+    best_start: date | None = None
+    for (year, quarter), start in QUARTER_START_DATES.items():
+        if start <= today:
+            if best_start is None or start > best_start:
+                best = (year, quarter)
+                best_start = start
+
+    if best is None:
+        # today is before all known quarters — return the earliest known quarter week 1
+        first_key = min(QUARTER_START_DATES.keys(), key=lambda k: QUARTER_START_DATES[k])
+        first_start = QUARTER_START_DATES[first_key]
+        return schemas.CurrentWeekRead(
+            quarter=first_key[1],
+            year=first_key[0],
+            week_number=1,
+        )
+
+    year, quarter = best
+    week_number = ((today - best_start).days // 7) + 1
+    week_number = max(1, min(11, week_number))
+    return schemas.CurrentWeekRead(quarter=quarter, year=year, week_number=week_number)
 
 
 def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEventRead:
