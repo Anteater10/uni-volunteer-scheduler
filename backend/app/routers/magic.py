@@ -68,12 +68,13 @@ def resend_magic_link(
             detail="Too many requests. Please wait a few minutes and try again.",
             headers={"Retry-After": "3600"},
         )
-    # Find a pending signup for this email + event
+    # Phase 09: signup.user removed — find by volunteer email
+    from ..models import Volunteer
     signup = (
         db.query(Signup)
-        .join(Signup.user)
+        .join(Volunteer, Volunteer.id == Signup.volunteer_id)
         .filter(
-            Signup.user.has(email=payload.email.lower()),
+            Volunteer.email == payload.email.lower(),
             Signup.slot.has(event_id=payload.event_id),
             Signup.status == SignupStatus.pending,
         )

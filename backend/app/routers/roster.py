@@ -36,11 +36,13 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
     rows = []
     for s in signups:
         slot = db.get(Slot, s.slot_id)
-        user = s.user
+        # Phase 09: signup.user removed; use signup.volunteer
+        v = s.volunteer
+        vol_name = f"{v.first_name} {v.last_name}" if v else "Unknown"
         rows.append(
             RosterRow(
                 signup_id=s.id,
-                student_name=user.name if user else "Unknown",
+                student_name=vol_name,
                 status=s.status,
                 slot_time=slot.start_time if slot else s.timestamp,
                 checked_in_at=s.checked_in_at,
