@@ -779,14 +779,45 @@ def analytics_volunteer_hours(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Volunteer hours grouped by volunteer. Phase 12 will reimplement with Volunteer model."""
-    # Phase 12: reimplement using Volunteer model (signups.user_id removed in Phase 08)
-    # Stub returns 501 so tests can discover this needs reimplementation.
-    # TODO Phase 12: join Signup->Volunteer instead of Signup->User
-    raise HTTPException(
-        status_code=501,
-        detail="retired: Phase 12 will reimplement analytics with volunteer-keyed signups"
+    """Volunteer hours grouped by volunteer, joining Signup -> Slot -> Event."""
+    query = (
+        db.query(models.Signup, models.Slot, models.Event, models.Volunteer)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        .filter(models.Signup.status == models.SignupStatus.attended)
     )
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+
+    rows = query.all()
+
+    # Aggregate by volunteer_id
+    from collections import defaultdict
+    vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
+    for signup, slot, event, volunteer in rows:
+        key = volunteer.id
+        duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
+        vol_hours[key]["hours"] += duration_hours
+        vol_hours[key]["event_ids"].add(event.id)
+        vol_hours[key]["volunteer"] = volunteer
+
+    result = []
+    for vol_id, data in vol_hours.items():
+        v = data["volunteer"]
+        result.append(schemas.VolunteerHoursRow(
+            volunteer_id=v.id,
+            volunteer_name=f"{v.first_name} {v.last_name}",
+            email=v.email,
+            hours=round(data["hours"], 2),
+            events=len(data["event_ids"]),
+        ))
+
+    log_action(db, admin_user, "admin_analytics_volunteer_hours", "Analytics", None)
+    db.commit()
+    return result
 
 
 @router.get("/analytics/attendance-rates", response_model=List[schemas.AttendanceRateRow])
@@ -837,12 +868,52 @@ def analytics_no_show_rates(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """No-show rate per volunteer. Phase 12 will reimplement with Volunteer model."""
-    # Phase 12: reimplement using Volunteer model (signups.user_id removed in Phase 08)
-    raise HTTPException(
-        status_code=501,
-        detail="retired: Phase 12 will reimplement analytics with volunteer-keyed signups"
+    """No-show rate per volunteer, joining Signup -> Slot -> Event."""
+    query = (
+        db.query(models.Signup, models.Volunteer)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        .filter(models.Signup.status.in_([
+            models.SignupStatus.attended,
+            models.SignupStatus.no_show,
+        ]))
     )
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+
+    rows = query.all()
+
+    from collections import defaultdict
+    vol_counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
+    for signup, volunteer in rows:
+        key = volunteer.id
+        if signup.status == models.SignupStatus.attended:
+            vol_counts[key]["attended"] += 1
+        elif signup.status == models.SignupStatus.no_show:
+            vol_counts[key]["no_show"] += 1
+        vol_counts[key]["volunteer"] = volunteer
+
+    result = []
+    for vol_id, data in vol_counts.items():
+        attended = data["attended"]
+        no_show = data["no_show"]
+        denom = attended + no_show
+        if denom == 0:
+            continue
+        v = data["volunteer"]
+        result.append(schemas.NoShowRateRow(
+            volunteer_id=v.id,
+            volunteer_name=f"{v.first_name} {v.last_name}",
+            rate=round(no_show / denom, 4),
+            count=no_show,
+        ))
+
+    log_action(db, admin_user, "admin_analytics_no_show_rates", "Analytics", None)
+    db.commit()
+    return result
 
 
 @router.get("/events/{event_id}/attendance.csv")
@@ -888,12 +959,46 @@ def export_volunteer_hours_csv(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Volunteer hours as CSV. Phase 12 will reimplement with Volunteer model."""
-    # Phase 12: reimplement using Volunteer model (signups.user_id removed in Phase 08)
-    raise HTTPException(
-        status_code=501,
-        detail="retired: Phase 12 will reimplement analytics with volunteer-keyed signups"
+    """Volunteer hours as CSV, joining Signup -> Slot -> Event -> Volunteer."""
+    query = (
+        db.query(models.Signup, models.Slot, models.Event, models.Volunteer)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        .filter(models.Signup.status == models.SignupStatus.attended)
     )
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+
+    rows = query.all()
+
+    from collections import defaultdict
+    vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
+    for signup, slot, event, volunteer in rows:
+        key = volunteer.id
+        duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
+        vol_hours[key]["hours"] += duration_hours
+        vol_hours[key]["event_ids"].add(event.id)
+        vol_hours[key]["volunteer"] = volunteer
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["volunteer_name", "email", "hours", "events"])
+    for vol_id, data in vol_hours.items():
+        v = data["volunteer"]
+        writer.writerow([
+            f"{v.first_name} {v.last_name}",
+            v.email,
+            round(data["hours"], 2),
+            len(data["event_ids"]),
+        ])
+
+    log_action(db, admin_user, "admin_analytics_volunteer_hours_csv", "Analytics", None)
+    db.commit()
+    headers_resp = {"Content-Disposition": 'attachment; filename="volunteer-hours.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
 
 
 # =========================
@@ -946,10 +1051,17 @@ def ccpa_export(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Phase 09: signups now keyed to Volunteer, not User — user.signups relationship removed
-    # Phase 12: link User<->Volunteer for CCPA export
-    # For now, return empty signups array; the user data itself (name, email) is still exported.
-    signups_data = []  # Phase 12: populate via Volunteer->Signup linkage
+    # Link User to Volunteer by matching email address, then collect their signups.
+    vol = db.query(models.Volunteer).filter(models.Volunteer.email == user.email).first()
+    signups_data = []
+    if vol:
+        for s in db.query(models.Signup).filter(models.Signup.volunteer_id == vol.id).all():
+            signups_data.append({
+                "id": str(s.id),
+                "slot_id": str(s.slot_id),
+                "status": s.status.value,
+                "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+            })
 
     # Audit logs where user is actor
     audit_logs_data = []

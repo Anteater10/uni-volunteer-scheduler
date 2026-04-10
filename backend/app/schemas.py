@@ -302,8 +302,9 @@ class PaginatedAuditLogs(BaseModel):
 
 
 class VolunteerHoursRow(BaseModel):
-    user_id: UUID
-    name: str
+    volunteer_id: UUID
+    volunteer_name: str
+    email: str
     hours: float
     events: int
 
@@ -318,8 +319,8 @@ class AttendanceRateRow(BaseModel):
 
 
 class NoShowRateRow(BaseModel):
-    user_id: UUID
-    name: str
+    volunteer_id: UUID
+    volunteer_name: str
     rate: float
     count: int
 
