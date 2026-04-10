@@ -37,31 +37,6 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
     )
 
 
-# Phase 09 (D-10): old auth'd POST /signups/ endpoint DELETED.
-# Public signup is now at POST /api/v1/public/signups — see routers/public/signups.py.
-# This removal was planned in Phase 09 as part of the account-less pivot (v1.1).
-
-
-@router.get("/my", response_model=List[schemas.SignupRead])
-def my_signups(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    # Phase 09: signups now keyed to Volunteer, not User.
-    # Phase 12: link User<->Volunteer for self-service signup listing.
-    # For now, return empty list — volunteer self-service is via /public/signups/manage?token=...
-    return []  # Phase 12: implement via User<->Volunteer linkage
-
-
-@router.get("/my/upcoming", response_model=List[schemas.SignupRead])
-def my_upcoming_signups(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    # Phase 09: signups now keyed to Volunteer, not User.
-    # Phase 12: link User<->Volunteer for self-service upcoming signup listing.
-    return []  # Phase 12: implement via User<->Volunteer linkage
-
 
 @router.post("/{signup_id}/cancel", response_model=schemas.SignupRead)
 def cancel_signup(
