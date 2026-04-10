@@ -7,8 +7,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 
 import EventsPage from "./pages/EventsPage"; // kept on disk — Phase 12 removes it
 import EventsBrowsePage from "./pages/public/EventsBrowsePage";
-// TODO(plan-10-03): replace EventDetailPage import below with pages/public/EventDetailPage once Plan 03 ships
-import EventDetailPage from "./pages/EventDetailPage";
+import EventDetailPage from "./pages/public/EventDetailPage";
 import PortalPage from "./pages/PortalPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
