@@ -1,4 +1,6 @@
 # backend/app/main.py
+import logging
+import os
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,7 +15,15 @@ from .routers.public import events as public_events
 from .routers.public import signups as public_signups
 from .routers.public import orientation as public_orientation
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="University Volunteer Scheduler API")
+
+if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+    logger.warning(
+        "EXPOSE_TOKENS_FOR_TESTING is ON — confirm tokens will be returned in signup "
+        "responses. DO NOT use in production."
+    )
 
 
 @app.exception_handler(StarletteHTTPException)

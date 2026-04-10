@@ -8,7 +8,9 @@ Handles the full create-signup flow:
 5. Enqueue confirmation email via Celery
 
 Returns PublicSignupResponse with volunteer_id, signup_ids, magic_link_sent=True.
+When EXPOSE_TOKENS_FOR_TESTING=1, also returns confirm_token (dev/test only).
 """
+import os
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
@@ -101,9 +103,12 @@ def create_public_signup(
         event_id=str(event_id),
     )
 
-    db.commit()
-    return PublicSignupResponse(
+    response_kwargs: dict = dict(
         volunteer_id=volunteer.id,
         signup_ids=[s.id for s in signups],
         magic_link_sent=True,
     )
+    if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+        response_kwargs["confirm_token"] = raw_token
+    db.commit()
+    return PublicSignupResponse(**response_kwargs)

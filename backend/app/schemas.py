@@ -502,6 +502,7 @@ class PublicSignupResponse(BaseModel):
     volunteer_id: UUID
     signup_ids: List[UUID]
     magic_link_sent: bool
+    confirm_token: str | None = None
 
 
 class PublicSlotRead(BaseModel):
