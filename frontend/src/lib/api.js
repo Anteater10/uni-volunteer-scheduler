@@ -206,11 +206,6 @@ async function login(email, password) {
   return json;
 }
 
-// Backend: POST /api/v1/auth/register (public)
-async function register(payload) {
-  return request("/auth/register", { method: "POST", auth: false, body: payload });
-}
-
 function logout() {
   authStorage.clearAll();
 }
@@ -278,23 +273,6 @@ async function generateSlots(eventId, payload) {
 // --------------------
 // SIGNUPS
 // --------------------
-async function createSignup(payload, { acknowledgePrereqOverride } = {}) {
-  const params = {};
-  if (acknowledgePrereqOverride) {
-    params.acknowledge_prereq_override = "true";
-  }
-  return request("/signups/", { method: "POST", body: payload, params });
-}
-
-// Backend uses POST cancel (not DELETE) in your FastAPI design
-async function cancelSignup(signupId) {
-  return request(`/signups/${signupId}/cancel`, { method: "POST" });
-}
-
-async function listMySignups(params) {
-  return request("/signups/my", { method: "GET", params });
-}
-
 // TODO(phase0): no backend endpoint at /events/{id}/signups — tracked in API-AUDIT.md.
 // Admin/organizer callers should use api.admin.eventRoster(eventId) instead.
 // A public endpoint will be added in Plan 05 or 06.
@@ -352,13 +330,6 @@ async function attachEventToPortal(portalId, eventId) {
 }
 async function detachEventFromPortal(portalId, eventId) {
   return request(`/portals/${portalId}/events/${eventId}`, { method: "DELETE" });
-}
-
-// --------------------
-// MODULE TIMELINE (Phase 4)
-// --------------------
-async function getModuleTimeline() {
-  return request("/users/me/module-timeline", { method: "GET" });
 }
 
 // --------------------
@@ -456,7 +427,6 @@ async function resendMagicLink({ email, eventId }) {
 export const api = {
   // auth
   login,
-  register,
   logout,
 
   // users
@@ -478,16 +448,10 @@ export const api = {
   generateSlots,
 
   // signups
-  createSignup,
-  cancelSignup,
-  listMySignups,
   listEventSignups,
 
   // magic link
   resendMagicLink,
-
-  // module timeline
-  moduleTimeline: () => getModuleTimeline(),
 
   // questions
   listEventQuestions,
@@ -521,11 +485,6 @@ export const api = {
     update: (id, payload) => updateEvent(id, payload),
     delete: (id) => deleteEvent(id),
     clone: (id) => cloneEvent(id),
-  },
-  signups: {
-    create: (payload, opts) => createSignup(payload, opts),
-    cancel: (id) => cancelSignup(id),
-    my: (params) => listMySignups(params),
   },
   notifications: {
     my: (params) => listMyNotifications(params),
@@ -601,13 +560,6 @@ export const api = {
       volunteerHours: (params) => request("/admin/analytics/volunteer-hours", { method: "GET", params }),
       attendanceRates: (params) => request("/admin/analytics/attendance-rates", { method: "GET", params }),
       noShowRates: (params) => request("/admin/analytics/no-show-rates", { method: "GET", params }),
-    },
-    overrides: {
-      list: (params) => request("/admin/prereq-overrides", { method: "GET", params }),
-      create: (userId, payload) =>
-        request(`/admin/users/${userId}/prereq-overrides`, { method: "POST", body: payload }),
-      revoke: (overrideId) =>
-        request(`/admin/prereq-overrides/${overrideId}`, { method: "DELETE" }),
     },
     templates: {
       list: () => request("/admin/module-templates"),
