@@ -6,16 +6,19 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     CheckConstraint,
     Column,
+    Date,
     String,
     DateTime,
     Boolean,
     ForeignKey,
     Integer,
-    Enum,
+    Enum as SqlEnum,
     Text,
     JSON,
     Index,
+    UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import backref, relationship
@@ -45,8 +48,10 @@ class SignupStatus(str, enum.Enum):
 
 
 class MagicLinkPurpose(str, enum.Enum):
-    email_confirm = "email_confirm"
-    check_in = "check_in"
+    email_confirm = "email_confirm"   # legacy, kept for Postgres compatibility
+    check_in = "check_in"             # legacy
+    SIGNUP_CONFIRM = "signup_confirm"  # NEW Phase 08
+    SIGNUP_MANAGE = "signup_manage"    # NEW Phase 08
 
 
 class CsvImportStatus(str, enum.Enum):
@@ -68,6 +73,41 @@ class PrivacyMode(str, enum.Enum):
     anonymous = "anonymous"
 
 
+class Quarter(str, enum.Enum):
+    WINTER = "winter"
+    SPRING = "spring"
+    SUMMER = "summer"
+    FALL = "fall"
+
+
+class SlotType(str, enum.Enum):
+    ORIENTATION = "orientation"
+    PERIOD = "period"
+
+
+# -------------------------
+# Volunteer table (Phase 08 — v1.1 account-less pivot)
+# -------------------------
+
+
+class Volunteer(Base):
+    __tablename__ = "volunteers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True,
+                server_default=text("gen_random_uuid()"))
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    first_name = Column(String(100), nullable=False)
+    last_name = Column(String(100), nullable=False)
+    phone_e164 = Column(String(20), nullable=True)
+    created_at = Column(DateTime(timezone=True),
+                        server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True),
+                        server_default=func.now(), nullable=False,
+                        onupdate=func.now())
+
+    signups = relationship("Signup", back_populates="volunteer")
+
+
 # -------------------------
 # User table
 # -------------------------
@@ -82,7 +122,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
 
     # ✅ lock enum name to match Alembic migration
-    role = Column(Enum(UserRole, name="userrole"), default=UserRole.participant, nullable=False)
+    role = Column(SqlEnum(UserRole, name="userrole"), default=UserRole.participant, nullable=False)
 
     university_id = Column(String(64), nullable=True)
     notify_email = Column(Boolean, default=True)
@@ -92,7 +132,7 @@ class User(Base):
 
     # Relationships
     events = relationship("Event", back_populates="owner")
-    signups = relationship("Signup", back_populates="user")
+    # signups relationship removed in Phase 08 — Signup now keyed to Volunteer, not User
     notifications = relationship("Notification", back_populates="user")
     refresh_tokens = relationship("RefreshToken", back_populates="user")
     audit_logs = relationship("AuditLog", back_populates="actor")
@@ -123,10 +163,17 @@ class Event(Base):
     signup_open_at = Column(DateTime(timezone=True), nullable=True)
     signup_close_at = Column(DateTime(timezone=True), nullable=True)
     venue_code = Column(String(4), nullable=True)
-    module_slug = Column(String, ForeignKey("module_templates.slug"), nullable=True)
+    # Phase 08: module_slug FK to module_templates dropped (D-07); column stays as plain String
+    module_slug = Column(String, nullable=True)
     reminder_1h_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Phase 08: new structured columns (R08-02)
+    quarter = Column(SqlEnum(Quarter, name="quarter"), nullable=True)
+    year = Column(Integer, nullable=True)
+    week_number = Column(Integer, nullable=True)
+    school = Column(String(255), nullable=True)
 
     # Relationships
     owner = relationship("User", back_populates="events")
@@ -152,6 +199,11 @@ class Slot(Base):
     capacity = Column(Integer, nullable=False, default=1)
     current_count = Column(Integer, nullable=False, default=0)
 
+    # Phase 08: new columns (R08-03, D-02)
+    slot_type = Column(SqlEnum(SlotType, name="slottype"), nullable=False)
+    date = Column(Date, nullable=False, server_default=text("CURRENT_DATE"))
+    location = Column(String(255), nullable=True)
+
     __table_args__ = (Index("ix_slots_start_time", "start_time"),)
 
     # Relationships
@@ -168,12 +220,17 @@ class Signup(Base):
     __tablename__ = "signups"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    # Phase 08: user_id replaced with volunteer_id (D-01, D-06)
+    volunteer_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("volunteers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     slot_id = Column(UUID(as_uuid=True), ForeignKey("slots.id"), nullable=False)
 
     # ✅ lock enum name to match Alembic migration
     status = Column(
-        Enum(SignupStatus, name="signupstatus"),
+        SqlEnum(SignupStatus, name="signupstatus"),
         default=SignupStatus.confirmed,
         nullable=False,
     )
@@ -184,8 +241,12 @@ class Signup(Base):
     reminder_1h_sent_at = Column(DateTime(timezone=True), nullable=True)
     checked_in_at = Column(DateTime(timezone=True), nullable=True)
 
+    __table_args__ = (
+        UniqueConstraint("volunteer_id", "slot_id", name="uq_signups_volunteer_id_slot_id"),
+    )
+
     # Relationships
-    user = relationship("User", back_populates="signups")
+    volunteer = relationship("Volunteer", back_populates="signups")
     slot = relationship("Slot", back_populates="signups")
     answers = relationship("CustomAnswer", back_populates="signup", cascade="all, delete-orphan")
     sent_notifications = relationship("SentNotification", back_populates="signup", cascade="all, delete-orphan")
@@ -245,7 +306,7 @@ class Notification(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
     # ✅ lock enum name to match Alembic migration
-    type = Column(Enum(NotificationType, name="notificationtype"), nullable=False)
+    type = Column(SqlEnum(NotificationType, name="notificationtype"), nullable=False)
 
     subject = Column(String(255), nullable=True)
     body = Column(Text, nullable=False)
@@ -307,7 +368,7 @@ class SiteSettings(Base):
 
     # ✅ lock enum name to match Alembic migration
     default_privacy_mode = Column(
-        Enum(PrivacyMode, name="privacymode"),
+        SqlEnum(PrivacyMode, name="privacymode"),
         default=PrivacyMode.full,
     )
 
@@ -364,13 +425,21 @@ class MagicLinkToken(Base):
     signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id", ondelete="CASCADE"), nullable=False)
     email = Column(String, nullable=False)
     purpose = Column(
-        Enum(MagicLinkPurpose, name="magiclinkpurpose"),
+        SqlEnum(MagicLinkPurpose, name="magiclinkpurpose"),
         nullable=False,
         server_default="email_confirm",
     )
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
     consumed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Phase 08: new volunteer_id FK (D-03)
+    volunteer_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("volunteers.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    volunteer = relationship("Volunteer")
 
     signup = relationship("Signup", backref=backref("magic_link_tokens", passive_deletes=True))
 
@@ -380,7 +449,7 @@ class MagicLinkToken(Base):
 
 
 # -------------------------
-# Module templates (stub — phase 5 will extend)
+# Module templates
 # -------------------------
 
 
@@ -389,7 +458,7 @@ class ModuleTemplate(Base):
 
     slug = Column(String, primary_key=True)
     name = Column(String(255), nullable=False)
-    prereq_slugs = Column(ARRAY(String), nullable=False, server_default="{}")
+    # Phase 08: prereq_slugs column dropped (D-05)
     default_capacity = Column(Integer, nullable=False, server_default="20")
     duration_minutes = Column(Integer, nullable=False, server_default="90")
     materials = Column(ARRAY(String), nullable=False, server_default="{}")
@@ -413,7 +482,7 @@ class CsvImport(Base):
     filename = Column(String(512), nullable=False)
     raw_csv_hash = Column(String(64), nullable=False)
     status = Column(
-        Enum(CsvImportStatus, name="csvimportstatus"),
+        SqlEnum(CsvImportStatus, name="csvimportstatus"),
         default=CsvImportStatus.pending,
         nullable=False,
     )
@@ -426,7 +495,7 @@ class CsvImport(Base):
 
 
 # -------------------------
-# Prereq overrides (admin audit-trailed)
+# Sent Notifications (dedup table for exactly-once email delivery)
 # -------------------------
 
 
@@ -451,18 +520,6 @@ class SentNotification(Base):
 
     signup = relationship("Signup", back_populates="sent_notifications")
 
-
-class PrereqOverride(Base):
-    __tablename__ = "prereq_overrides"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    module_slug = Column(String, ForeignKey("module_templates.slug"), nullable=False)
-    reason = Column(String, nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    revoked_at = Column(DateTime(timezone=True), nullable=True)
-
-    __table_args__ = (
-        CheckConstraint("length(reason) >= 10", name="prereq_overrides_reason_min_len"),
-    )
+# Phase 08: PrereqOverride model REMOVED (D-05).
+# The prereq_overrides table was dropped in migration 0009.
+# Router/service cleanup is Phase 12 scope.
