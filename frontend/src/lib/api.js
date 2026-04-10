@@ -405,6 +405,26 @@ async function adminResendSignup(signupId) {
 }
 
 // --------------------
+// PUBLIC (unauthenticated) — phase 10
+// IMPORTANT: do NOT log or persist volunteer email/phone anywhere in these helpers.
+// --------------------
+async function publicGetCurrentWeek() {
+  return request("/public/current-week", { method: "GET", auth: false });
+}
+async function publicListEvents(params) {
+  return request("/public/events", { method: "GET", auth: false, params });
+}
+async function publicGetEvent(eventId) {
+  return request(`/public/events/${eventId}`, { method: "GET", auth: false });
+}
+async function publicCreateSignup(body) {
+  return request("/public/signups", { method: "POST", auth: false, body });
+}
+async function publicOrientationStatus(email) {
+  return request("/public/orientation-status", { method: "GET", auth: false, params: { email } });
+}
+
+// --------------------
 // MAGIC LINK
 // --------------------
 async function resendMagicLink({ email, eventId }) {
@@ -504,6 +524,15 @@ export const api = {
   portals: {
     getBySlug: (slug) => getPortalBySlug(slug),
   },
+  // public (unauthenticated) — phase 10
+  public: {
+    getCurrentWeek: () => publicGetCurrentWeek(),
+    listEvents: (params) => publicListEvents(params),
+    getEvent: (id) => publicGetEvent(id),
+    createSignup: (body) => publicCreateSignup(body),
+    orientationStatus: (email) => publicOrientationStatus(email),
+  },
+
   // --- Module Templates (Phase 5) ---
   getModuleTemplates: () => request("/admin/module-templates"),
   createModuleTemplate: (data) => request("/admin/module-templates", { method: "POST", body: data }),
