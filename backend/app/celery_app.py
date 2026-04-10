@@ -304,6 +304,50 @@ def weekly_digest() -> None:
         db.close()
 
 
+@celery.task(name="app.send_signup_confirmation_email")
+def send_signup_confirmation_email(
+    volunteer_id: str,
+    signup_ids: list,
+    token: str,
+    event_id: str,
+) -> None:
+    """Send the signup confirmation email for a public signup batch.
+
+    Per D-11: no Notification row created (dedup kind pattern doesn't fit
+    one-off confirmation emails). Celery logger only.
+    """
+    from uuid import UUID
+    from .emails import build_signup_confirmation_email
+
+    db: Session = SessionLocal()
+    try:
+        volunteer = db.get(models.Volunteer, UUID(volunteer_id))
+        signups = db.query(models.Signup).filter(
+            models.Signup.id.in_([UUID(sid) for sid in signup_ids])
+        ).all()
+        event = db.get(models.Event, UUID(event_id))
+        if not volunteer or not signups or not event:
+            logger.warning(
+                "send_signup_confirmation_email: missing entity, skipping "
+                "volunteer_id=%s event_id=%s", volunteer_id, event_id
+            )
+            return
+        subject, html = build_signup_confirmation_email(volunteer, signups, token, event)
+        _send_email_via_sendgrid(to_email=volunteer.email, subject=subject, body="", html_body=html)
+        logger.info(
+            "signup_confirmation_email_sent volunteer_id=%s event_id=%s signup_count=%d",
+            volunteer_id, event_id, len(signups),
+        )
+        # Debug-only token echo so scripts/smoke_phase09.sh can grep the token
+        # out of celery worker logs in dev mode. Gated on settings.debug so
+        # production logs never leak raw tokens.
+        if getattr(settings, "debug", False):
+            logger.debug("signup_confirmation_token_preview token=%s", token)
+        # NO Notification row per D-11
+    finally:
+        db.close()
+
+
 # -------------------------
 # Celery beat schedule
 # -------------------------
