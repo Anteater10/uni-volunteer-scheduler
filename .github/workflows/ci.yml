@@ -169,10 +169,9 @@ jobs:
           cd frontend
           npm run test -- --run
 
-  # Phase 1: a11y.spec.js is a hard merge gate — any axe-core violation fails the PR.
-  # signup-three-tap.spec.js enforces the ≤ 3-tap signup flow invariant.
-  phase0-e2e-tests:
-    name: phase0 playwright e2e
+  # v1.1 E2E: full public volunteer flow, orientation modal, organizer check-in, admin smoke.
+  e2e-tests:
+    name: playwright e2e
     needs: [phase0-backend-tests, phase0-frontend-tests]
     runs-on: ubuntu-latest
     steps:
@@ -200,6 +199,7 @@ jobs:
           REFRESH_TOKEN_EXPIRES_DAYS=14
           SEED_ADMIN_EMAIL=admin@e2e.test
           SEED_ADMIN_PASSWORD=Admin!2345
+          EXPOSE_TOKENS_FOR_TESTING=1
           EOF
 
       - name: docker compose up
@@ -237,6 +237,7 @@ jobs:
         env:
           E2E_BASE_URL: http://localhost:5173
           E2E_BACKEND_URL: http://localhost:8000
+          EXPOSE_TOKENS_FOR_TESTING: "1"
         run: |
           npx playwright test
 
