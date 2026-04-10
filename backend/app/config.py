@@ -34,6 +34,30 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = 60
     rate_limit_max_requests: int = 100
 
+    # Magic-link confirmation
+    magic_link_ttl_minutes: int = 15
+    magic_link_max_per_email_per_hour: int = 5
+    magic_link_max_per_ip_per_hour: int = 20
+    frontend_base_url: str = "http://localhost:5173"
+    frontend_url: str = "http://localhost:5173"  # alias for Phase 09 public signup emails
+    backend_base_url: str = "http://localhost:8000"
+    debug: bool = False  # Phase 09: if True, debug-logs raw signup tokens in Celery (dev only)
+
+    # --- Phase 6: Resend monitoring ---
+    resend_daily_limit: int = 100  # free-tier limit; 80% warning threshold
+
+    # --- Phase 5: LLM CSV Import ---
+    openai_api_key: str = ""  # TODO(secret): real key in local .env only
+    openai_model: str = "gpt-4o-mini"
+    import_cost_ceiling: float = 5.0  # refuse imports estimated > $5
+
+    # CORS
+    cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
     # Pydantic v2 settings config
     model_config = SettingsConfigDict(
         env_file=".env",

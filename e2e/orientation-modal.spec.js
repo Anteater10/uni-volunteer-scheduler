@@ -1,0 +1,111 @@
+// e2e/orientation-modal.spec.js
+//
+// Tests orientation warning modal behavior:
+//   Test A: Modal fires when volunteer picks period-only slot + no orientation history
+//   Test B: Modal skipped when volunteer has prior attended orientation
+//
+// From OrientationWarningModal.jsx:
+//   title: "Have you completed orientation?"
+//   Yes button: "Yes, I have completed orientation"
+//   No button: "No — show me orientation slots"
+
+import { test, expect } from '@playwright/test';
+import { getSeed, ephemeralEmail, VOLUNTEER_IDENTITY } from './fixtures.js';
+
+async function fillIdentityForm(page, email) {
+  await page.locator('#first_name').fill(VOLUNTEER_IDENTITY.first_name);
+  await page.locator('#last_name').fill(VOLUNTEER_IDENTITY.last_name);
+  await page.locator('#email').fill(email);
+  await page.locator('#phone').fill(VOLUNTEER_IDENTITY.phone);
+}
+
+test.describe('orientation modal', () => {
+  test('Test A: modal fires when period-only + no orientation history', async ({ page }) => {
+    const seed = getSeed();
+    expect(seed.event_id, 'E2E seed required').toBeTruthy();
+
+    await page.goto(`/events/${seed.event_id}`);
+
+    // Select ONLY the period slot (not orientation)
+    const periodCards = page.locator('section').filter({ hasText: /period slots/i }).locator('li');
+    await expect(periodCards.first()).toBeVisible();
+    await periodCards.first().click();
+
+    // Identity form appears
+    await expect(page.getByText('Your information')).toBeVisible();
+
+    // Fill with fresh email (no orientation history)
+    const email = ephemeralEmail('modal-a');
+    await fillIdentityForm(page, email);
+
+    // Submit form
+    await page.getByRole('button', { name: /sign up/i }).click();
+
+    // The orientation modal MUST fire because:
+    // - Only period slot selected (no orientation slot)
+    // - Email has no prior orientation history
+    await expect(
+      page.getByText('Have you completed orientation?')
+    ).toBeVisible({ timeout: 8000 });
+
+    // Click "Yes, I have completed orientation"
+    await page.getByRole('button', { name: /yes, i have completed orientation/i }).click();
+
+    // Signup should proceed — success response (API call happens after modal confirm)
+    // Wait for the POST /public/signups to complete
+    await expect(page.getByText(/check your email|success|sign.?up.*received/i)).toBeVisible({
+      timeout: 10000,
+    });
+  });
+
+  test('Test B: modal skipped when volunteer has attended orientation', async ({ page }) => {
+    const seed = getSeed();
+    expect(seed.event_id, 'E2E seed required').toBeTruthy();
+    expect(
+      seed.attended_volunteer_email,
+      'attended_volunteer_email required in seed JSON'
+    ).toBeTruthy();
+
+    await page.goto(`/events/${seed.event_id}`);
+
+    // Select ONLY the period slot
+    const periodCards = page.locator('section').filter({ hasText: /period slots/i }).locator('li');
+    await expect(periodCards.first()).toBeVisible();
+    await periodCards.first().click();
+
+    // Identity form appears
+    await expect(page.getByText('Your information')).toBeVisible();
+
+    // Fill with the seeded "has attended orientation" email
+    // The backend's GET /public/orientation-status?email= will return {has_attended_orientation: true}
+    // causing the modal to be skipped
+    await page.locator('#first_name').fill('Attended');
+    await page.locator('#last_name').fill('Volunteer');
+    await page.locator('#email').fill(seed.attended_volunteer_email);
+    await page.locator('#phone').fill('805-555-0100');
+
+    // Submit — use fresh ephemeral email so orientation API is called first
+    // (The orientation-status check happens before the signup POST)
+    // We need to watch for the orientation-status API call to confirm the check happened
+    const [orientResp] = await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes('/orientation-status') && resp.request().method() === 'GET'
+      ),
+      page.getByRole('button', { name: /sign up/i }).click(),
+    ]);
+
+    // The orientation-status response must say has_attended_orientation: true
+    const orientBody = await orientResp.json();
+    expect(
+      orientBody.has_attended_orientation,
+      'attended volunteer should have has_attended_orientation=true'
+    ).toBe(true);
+
+    // Orientation modal must NOT appear (suppressed because has_attended_orientation=true)
+    await page.waitForTimeout(500);
+    await expect(
+      page.getByText('Have you completed orientation?')
+    ).not.toBeVisible();
+  });
+});

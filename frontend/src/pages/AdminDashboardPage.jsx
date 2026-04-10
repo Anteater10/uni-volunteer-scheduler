@@ -3,45 +3,111 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import {
+  PageHeader,
+  Card,
+  Button,
+  Skeleton,
+  EmptyState,
+} from "../components/ui";
+
+function Stat({ label, value }) {
+  return (
+    <Card className="!p-3">
+      {/* TODO(copy) */}
+      <p className="text-xs text-[var(--color-fg-muted)]">{label}</p>
+      <p className="text-2xl font-bold">{value ?? "—"}</p>
+    </Card>
+  );
+}
 
 export default function AdminDashboardPage() {
   const q = useQuery({ queryKey: ["adminSummary"], queryFn: api.admin.summary });
 
-  if (q.isLoading) return <div>Loading admin summary…</div>;
-  if (q.error) return <div style={{ color: "crimson" }}>Failed: {q.error.message}</div>;
-
-  const s = q.data;
-
   return (
-    <div style={{ display: "grid", gap: 14 }}>
-      <h2>Admin</h2>
+    <div className="space-y-4">
+      {/* TODO(copy) */}
+      <PageHeader title="Admin" />
 
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        <Stat label="Users" value={s.total_users} />
-        <Stat label="Events" value={s.total_events} />
-        <Stat label="Slots" value={s.total_slots} />
-        <Stat label="Signups" value={s.total_signups} />
-        <Stat label="Signups (7d)" value={s.signups_last_7d} />
+      {q.isPending ? (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-20" />
+          ))}
+        </div>
+      ) : q.error ? (
+        <EmptyState
+          /* TODO(copy) */
+          title="Couldn't load summary"
+          /* TODO(copy) */
+          body={q.error.message}
+          action={
+            <Button onClick={() => q.refetch()}>
+              {/* TODO(copy) */}
+              Retry
+            </Button>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <Stat label="Users" value={q.data?.total_users} />
+          <Stat label="Events" value={q.data?.total_events} />
+          <Stat label="Slots" value={q.data?.total_slots} />
+          <Stat label="Signups" value={q.data?.total_signups} />
+          <Stat label="Signups (7d)" value={q.data?.signups_last_7d} />
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Card>
+          <h3 className="font-semibold">
+            {/* TODO(copy) */}
+            Users
+          </h3>
+          <p className="text-sm text-[var(--color-fg-muted)] mt-1">
+            {/* TODO(copy) */}
+            Manage accounts and roles.
+          </p>
+          <div className="mt-3">
+            <Button variant="secondary" as={Link} to="/admin/users">
+              {/* TODO(copy) */}
+              Manage users
+            </Button>
+          </div>
+        </Card>
+        <Card>
+          <h3 className="font-semibold">
+            {/* TODO(copy) */}
+            Portals
+          </h3>
+          <p className="text-sm text-[var(--color-fg-muted)] mt-1">
+            {/* TODO(copy) */}
+            Branded landing pages.
+          </p>
+          <div className="mt-3">
+            <Button variant="secondary" as={Link} to="/admin/portals">
+              {/* TODO(copy) */}
+              Manage portals
+            </Button>
+          </div>
+        </Card>
+        <Card>
+          <h3 className="font-semibold">
+            {/* TODO(copy) */}
+            Audit logs
+          </h3>
+          <p className="text-sm text-[var(--color-fg-muted)] mt-1">
+            {/* TODO(copy) */}
+            Trail of admin actions.
+          </p>
+          <div className="mt-3">
+            <Button variant="secondary" as={Link} to="/admin/audit-logs">
+              {/* TODO(copy) */}
+              View logs
+            </Button>
+          </div>
+        </Card>
       </div>
-
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <Link to="/admin/users">Manage Users</Link>
-        <Link to="/admin/portals">Manage Portals</Link>
-        <Link to="/admin/audit-logs">Audit Logs</Link>
-      </div>
-
-      <div style={{ opacity: 0.8 }}>
-        To view per-event analytics/roster/export/notify: open any event ID and go to <code>/admin/events/&lt;eventId&gt;</code>
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }) {
-  return (
-    <div style={{ padding: 12, border: "1px solid #3333", borderRadius: 8, minWidth: 140 }}>
-      <div style={{ opacity: 0.8, fontSize: 12 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 800 }}>{value}</div>
     </div>
   );
 }

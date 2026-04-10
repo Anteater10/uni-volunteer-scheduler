@@ -1,11 +1,12 @@
 # backend/app/schemas.py
-from datetime import datetime, timezone
+import datetime as _dt
+from datetime import date as DateType, datetime, timezone
 from typing import Optional, List, Literal, Dict, Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
-from .models import UserRole, SignupStatus, NotificationType, PrivacyMode
+from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType
 
 
 # -------------------------
@@ -85,12 +86,17 @@ class SlotBase(BaseModel):
 
 
 class SlotCreate(SlotBase):
-    pass
+    slot_type: SlotType = SlotType.PERIOD
+    date: Optional[DateType] = None
+    location: Optional[str] = None
 
 
 class SlotRead(ORMBase, SlotBase):
     id: UUID
     current_count: int
+    slot_type: Optional[SlotType] = None
+    date: Optional[DateType] = None
+    location: Optional[str] = None
 
 
 class SlotUpdate(BaseModel):
@@ -139,6 +145,11 @@ class EventBase(BaseModel):
 
 
 class EventCreate(EventBase):
+    quarter: Optional[str] = None
+    year: Optional[int] = None
+    week_number: Optional[int] = None
+    school: Optional[str] = None
+    module_slug: Optional[str] = None
     slots: Optional[List[SlotCreate]] = None
 
 
@@ -218,7 +229,8 @@ class SignupCreate(SignupBase):
 
 class SignupRead(ORMBase):
     id: UUID
-    user_id: UUID
+    # Phase 09: user_id replaced by volunteer_id (D-01, D-06)
+    volunteer_id: UUID
     slot_id: UUID
     status: SignupStatus
     timestamp: datetime
@@ -292,11 +304,40 @@ class EventAnalytics(BaseModel):
     waitlisted_signups: int
 
 
+class PaginatedAuditLogs(BaseModel):
+    items: List[AuditLogRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class VolunteerHoursRow(BaseModel):
-    user_id: UUID
+    volunteer_id: UUID
+    volunteer_name: str
+    email: str
+    hours: float
+    events: int
+
+
+class AttendanceRateRow(BaseModel):
+    event_id: UUID
     name: str
-    email: EmailStr
-    total_hours: float
+    confirmed: int
+    attended: int
+    no_show: int
+    rate: float
+
+
+class NoShowRateRow(BaseModel):
+    volunteer_id: UUID
+    volunteer_name: str
+    rate: float
+    count: int
+
+
+class CcpaDeleteRequest(BaseModel):
+    reason: str = Field(..., min_length=5)
 
 
 # =========================
@@ -342,3 +383,183 @@ class PortalRead(ORMBase, PortalBase):
 # ✅ FIX: PortalRead already includes ORMBase, so DON'T inherit ORMBase again.
 class PortalDetail(PortalRead):
     events: List[EventRead] = []
+
+
+# =========================
+# ROSTER / CHECK-IN (Phase 3)
+# =========================
+class RosterRow(BaseModel):
+    signup_id: UUID
+    student_name: str
+    status: SignupStatus
+    slot_time: datetime
+    checked_in_at: datetime | None = None
+
+
+class RosterResponse(BaseModel):
+    event_id: UUID
+    event_name: str
+    venue_code: str | None = None
+    total: int
+    checked_in_count: int
+    rows: List[RosterRow]
+
+
+class SelfCheckInRequest(BaseModel):
+    signup_id: UUID
+    venue_code: str
+
+
+class ResolveEventRequest(BaseModel):
+    attended: List[UUID] = []
+    no_show: List[UUID] = []
+
+
+
+# =========================
+# MODULE TEMPLATE SCHEMAS (Phase 5)
+# =========================
+class ModuleTemplateBase(BaseModel):
+    name: str
+    # Phase 08 (D-05): prerequisite slugs field removed
+    default_capacity: int = 20
+    duration_minutes: int = 90
+    materials: List[str] = []
+    description: Optional[str] = None
+    metadata: dict = {}
+
+
+class ModuleTemplateCreate(ModuleTemplateBase):
+    slug: str
+
+
+class ModuleTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    # Phase 08 (D-05): prerequisite slugs field removed
+    default_capacity: Optional[int] = None
+    duration_minutes: Optional[int] = None
+    materials: Optional[List[str]] = None
+    description: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class ModuleTemplateRead(ORMBase):
+    slug: str
+    name: str
+    # Phase 08 (D-05): prerequisite slugs field removed
+    default_capacity: int = 20
+    duration_minutes: int = 90
+    materials: List[str] = []
+    description: Optional[str] = None
+    metadata: dict = Field(default={}, validation_alias="metadata_")
+    deleted_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# =========================
+# CSV IMPORT SCHEMAS (Phase 5)
+# =========================
+# =========================
+# SENT NOTIFICATION SCHEMAS (Phase 6)
+# =========================
+class SentNotificationRead(ORMBase):
+    id: UUID
+    signup_id: UUID
+    kind: str
+    sent_at: datetime
+    provider_id: Optional[str] = None
+
+
+class CsvImportRead(ORMBase):
+    id: UUID
+    uploaded_by: UUID
+    filename: str
+    status: str
+    result_payload: Optional[dict] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# =========================
+# PHASE 09: PUBLIC SIGNUP SCHEMAS
+# =========================
+from datetime import date  # noqa: E402 (local import to avoid circular)
+
+
+class VolunteerCreate(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    phone: str = Field(min_length=7, max_length=20)
+
+
+class VolunteerRead(BaseModel):
+    id: UUID
+    email: EmailStr
+    first_name: str
+    last_name: str
+    phone_e164: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicSignupCreate(VolunteerCreate):
+    slot_ids: List[UUID] = Field(min_length=1, max_length=20)
+
+
+class PublicSignupResponse(BaseModel):
+    volunteer_id: UUID
+    signup_ids: List[UUID]
+    magic_link_sent: bool
+    confirm_token: str | None = None
+
+
+class PublicSlotRead(BaseModel):
+    id: UUID
+    slot_type: SlotType
+    date: DateType
+    start_time: datetime
+    end_time: datetime
+    location: Optional[str] = None
+    capacity: int
+    filled: int  # = slot.current_count
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicEventRead(BaseModel):
+    id: UUID
+    title: str
+    quarter: Optional[Quarter] = None
+    year: Optional[int] = None
+    week_number: Optional[int] = None
+    school: Optional[str] = None
+    module_slug: Optional[str] = None
+    start_date: datetime  # Event.start_date is DateTime not Date in model
+    end_date: datetime
+    slots: List[PublicSlotRead] = []
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CurrentWeekRead(BaseModel):
+    quarter: str
+    year: int
+    week_number: int
+
+
+class OrientationStatusRead(BaseModel):
+    has_attended_orientation: bool
+    last_attended_at: Optional[datetime] = None
+
+
+class TokenedSignupRead(BaseModel):
+    signup_id: UUID
+    status: SignupStatus
+    slot: PublicSlotRead
+
+
+class TokenedManageRead(BaseModel):
+    volunteer_id: UUID
+    event_id: UUID
+    signups: List[TokenedSignupRead]

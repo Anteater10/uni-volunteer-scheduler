@@ -1,15 +1,12 @@
 # backend/app/deps.py
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
-import uuid
 
 import redis
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -35,17 +32,24 @@ pwd_context = CryptContext(
 # -------------------------
 
 redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-limiter = Limiter(key_func=get_remote_address)
 
 
 def rate_limit(max_requests: int | None = None, window_seconds: int | None = None):
     """
     Simple per-IP + path rate limit using Redis.
+
+    When EXPOSE_TOKENS_FOR_TESTING=1 is set (E2E test environment), the rate
+    limit is bypassed so parallel Playwright tests don't trigger 429 errors.
     """
+    import os as _os
     max_req = max_requests or settings.rate_limit_max_requests
     window = window_seconds or settings.rate_limit_window_seconds
 
     async def dependency(request: Request):
+        # Bypass rate limiting in E2E test environments
+        if _os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+            return
+
         key = f"rate:{request.client.host}:{request.url.path}"
         current = redis_client.get(key)
         if current is None:
@@ -88,7 +92,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(
+    expire = datetime.now(timezone.utc) + timedelta(
         minutes=expires_minutes or settings.access_token_expires_minutes
     )
     to_encode.update({"exp": expire})
@@ -138,6 +142,21 @@ def get_current_user(
 # Role-based access helper
 # -------------------------
 
+def ensure_event_owner_or_admin(event: models.Event, user: models.User) -> None:
+    """Canonical event ownership check.
+
+    Admin can access any event; organizers must own the event. All
+    routers import this from app.deps — do not redefine locally.
+    """
+    if user.role == models.UserRole.admin:
+        return
+    if event.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed for this event",
+        )
+
+
 def require_role(*roles: models.UserRole):
     def dependency(current_user: models.User = Depends(get_current_user)):
         if current_user.role not in roles:
@@ -157,35 +176,43 @@ def create_refresh_token(db: Session, user: models.User) -> str:
     """
     Create a refresh token row, but do NOT commit here.
     Caller controls transaction boundaries.
+    Stores a SHA-256 hex digest in token_hash; returns the raw token to the caller.
     """
-    token = str(uuid.uuid4())
-    expires = datetime.utcnow() + timedelta(days=settings.refresh_token_expires_days)
+    import hashlib
+    import secrets
+    raw_token = secrets.token_urlsafe(48)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expires_days)
     rt = models.RefreshToken(
         user_id=user.id,
-        token=token,
+        token_hash=token_hash,
         expires_at=expires,
     )
     db.add(rt)
     db.flush()
-    return token
+    return raw_token
 
 
 def revoke_refresh_token(db: Session, token: str) -> None:
     """
     Mark a token revoked, but do NOT commit here.
     """
-    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token == token).first()
+    import hashlib
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == token_hash).first()
     if rt and rt.revoked_at is None:
-        rt.revoked_at = datetime.utcnow()
+        rt.revoked_at = datetime.now(timezone.utc)
         db.add(rt)
 
 
 def verify_refresh_token(db: Session, token: str) -> models.User:
-    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token == token).first()
+    import hashlib
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == token_hash).first()
     if (
         rt is None
         or rt.revoked_at is not None
-        or rt.expires_at < datetime.utcnow()
+        or rt.expires_at < datetime.now(timezone.utc)
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -2,34 +2,39 @@
 
 import csv
 import io
-from datetime import datetime, timedelta
+import logging
+import uuid as uuid_mod
+from datetime import datetime, timedelta, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, Response, HTTPException, Query
+from fastapi import APIRouter, Depends, Response, HTTPException, Query, UploadFile, File
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, cast, String
+from sqlalchemy import func, or_, cast, String, Integer
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, log_action
+from ..deps import require_role, log_action, ensure_event_owner_or_admin
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
+from ..signup_service import promote_waitlist_fifo
+from ..services import template_service, import_service
+from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate, CsvImportRead, SentNotificationRead
+from ..tasks.import_csv import process_csv_import
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-def _ensure_event_owner_or_admin(event: models.Event, actor: models.User):
-    # ✅ If organizer, must own the event. Admin can access anything.
-    if actor.role != models.UserRole.admin and event.owner_id != actor.id:
-        raise HTTPException(status_code=403, detail="Not allowed for this event")
-
-
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
+    """Count signups holding a slot: both confirmed AND pending (phase 2)."""
     return (
         db.query(func.count(models.Signup.id))
         .filter(
             models.Signup.slot_id == slot_id,
-            models.Signup.status == models.SignupStatus.confirmed,
+            models.Signup.status.in_(
+                [models.SignupStatus.confirmed, models.SignupStatus.pending]
+            ),
         )
         .scalar()
         or 0
@@ -37,24 +42,22 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
 
 
 def _promote_waitlist_fifo(db: Session, slot: models.Slot) -> List[str]:
-    promoted_user_ids: List[str] = []
+    """Admin-side wrapper around the canonical promote_waitlist_fifo.
+
+    Loops until capacity is full, delegating each promotion to the single
+    source of truth in app.signup_service. Caller is responsible for
+    already holding a FOR UPDATE lock on the slot row.
+    Returns list of promoted signup IDs (Phase 09: volunteer_id replaces user_id).
+    """
+    promoted_ids: List[str] = []
     while slot.current_count < slot.capacity:
-        waitlisted = (
-            db.query(models.Signup)
-            .filter(
-                models.Signup.slot_id == slot.id,
-                models.Signup.status == models.SignupStatus.waitlisted,
-            )
-            .order_by(models.Signup.timestamp.asc(), models.Signup.id.asc())
-            .with_for_update()
-            .first()
-        )
-        if not waitlisted:
+        promoted = promote_waitlist_fifo(db, slot.id)
+        if promoted is None:
             break
-        waitlisted.status = models.SignupStatus.confirmed
         slot.current_count += 1
-        promoted_user_ids.append(str(waitlisted.user_id))
-    return promoted_user_ids
+        # Phase 09: return volunteer_id (user_id removed from Signup in Phase 08)
+        promoted_ids.append(str(promoted.volunteer_id))
+    return promoted_ids
 
 
 def _participant_payload(user: models.User, privacy: PrivacyMode) -> dict:
@@ -67,6 +70,22 @@ def _participant_payload(user: models.User, privacy: PrivacyMode) -> dict:
     if privacy == PrivacyMode.initials:
         parts = user.name.split()
         display_name = "".join(p[0].upper() for p in parts if p)
+        return {"name": display_name, "email": None, "university_id": None}
+    return {"name": "Volunteer", "email": None, "university_id": None}
+
+
+def _volunteer_participant_payload(v: models.Volunteer, privacy: PrivacyMode) -> dict:
+    """Phase 09 variant of _participant_payload for Volunteer rows (no university_id)."""
+    # Phase 12: reconcile user/volunteer participant payload shape
+    vol_name = f"{v.first_name} {v.last_name}"
+    if privacy == PrivacyMode.full:
+        return {
+            "name": vol_name,
+            "email": v.email,
+            "university_id": None,  # volunteers have no university_id
+        }
+    if privacy == PrivacyMode.initials:
+        display_name = "".join(p[0].upper() for p in vol_name.split() if p)
         return {"name": display_name, "email": None, "university_id": None}
     return {"name": "Volunteer", "email": None, "university_id": None}
 
@@ -122,7 +141,7 @@ def event_analytics(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     total_slots = len(event.slots)
     total_capacity = sum(s.capacity for s in event.slots)
@@ -180,7 +199,7 @@ def event_roster(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     rows = []
     slots_sorted = sorted(event.slots, key=lambda s: s.start_time)
@@ -204,7 +223,8 @@ def event_roster(
         )
 
         for signup in signups_sorted:
-            user = signup.user
+            # Phase 09: signup.user removed; use signup.volunteer
+            v = signup.volunteer
             answers = {ans.question.prompt: ans.value for ans in signup.answers}
 
             rows.append(
@@ -215,8 +235,8 @@ def event_roster(
                     "slot_capacity": slot.capacity,
                     "slot_current_count": slot.current_count,
                     "signup_id": str(signup.id),
-                    "user_id": str(user.id),
-                    "participant": _participant_payload(user, privacy),
+                    "volunteer_id": str(v.id) if v else None,
+                    "participant": _volunteer_participant_payload(v, privacy) if v else {},
                     "status": signup.status.value,
                     "waitlist_position": waitlist_positions.get(signup.id),
                     "answers": answers,
@@ -245,7 +265,7 @@ def export_event_csv(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     questions = event.questions
     question_headers = [q.prompt for q in questions]
@@ -282,7 +302,8 @@ def export_event_csv(
         )
 
         for signup in signups_sorted:
-            user = signup.user
+            # Phase 09: signup.user removed; use signup.volunteer
+            v = signup.volunteer
             answers_by_q = {a.question_id: a.value for a in signup.answers}
 
             row = [
@@ -291,8 +312,8 @@ def export_event_csv(
                 slot.end_time.isoformat(),
                 slot.capacity,
                 slot.current_count,
-                user.name,
-                user.email,
+                f"{v.first_name} {v.last_name}" if v else "",
+                v.email if v else "",
                 signup.status.value,
                 waitlist_positions.get(signup.id),
             ]
@@ -344,7 +365,7 @@ def admin_cancel_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     actual_confirmed = _confirmed_count_for_slot(db, slot.id)
     if slot.current_count != actual_confirmed:
@@ -358,7 +379,8 @@ def admin_cancel_signup(
     previous_status = signup.status
     signup.status = models.SignupStatus.cancelled
 
-    if previous_status == models.SignupStatus.confirmed and slot.current_count > 0:
+    # Phase 2: both confirmed and pending signups hold capacity
+    if previous_status in (models.SignupStatus.confirmed, models.SignupStatus.pending) and slot.current_count > 0:
         slot.current_count -= 1
 
     promoted_user_ids = _promote_waitlist_fifo(db, slot)
@@ -367,35 +389,20 @@ def admin_cancel_signup(
     db.commit()
     db.refresh(signup)
 
-    user = signup.user
-    subject = f"Your signup for '{event.title}' was cancelled"
-    body = (
-        f"Hi {user.name},\n\n"
-        f"Your signup for the following volunteer slot has been cancelled:\n"
-        f"- Event: {event.title}\n"
-        f"- When: {slot.start_time} to {slot.end_time}\n"
-        f"- Where: {event.location or 'TBD'}\n\n"
-        "If this is a mistake, you can sign up again if slots are available."
-    )
-    send_email_notification.delay(str(user.id), subject, body)
+    # Phase 09: signup.user removed; send notification via kind-based task
+    # The cancellation email is dispatched via the deduped kind pipeline (volunteer-backed).
+    send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
+    # Phase 12: waitlist promotion emails (promoted_user_ids is empty for volunteer-based signups)
+    # since promote_waitlist_fifo returns Signup, not user_ids. _promote_waitlist_fifo
+    # internal variable name kept as promoted_user_ids but contains signup.volunteer_ids.
     if promoted_user_ids:
-        promoted_users = (
-            db.query(models.User)
-            .filter(models.User.id.in_(promoted_user_ids))
-            .all()
+        # Phase 12: send promotion emails to promoted volunteers
+        # For now, log only — full email dispatch deferred to Phase 12 admin rewrite
+        logger.info(
+            "admin_cancel_signup: %d signups promoted from waitlist; email dispatch deferred to Phase 12",
+            len(promoted_user_ids),
         )
-        for u in promoted_users:
-            subject2 = f"You have a spot for '{event.title}'"
-            body2 = (
-                f"Hi {u.name},\n\n"
-                f"You have been moved from the waitlist to confirmed for:\n"
-                f"- Event: {event.title}\n"
-                f"- When: {slot.start_time} to {slot.end_time}\n"
-                f"- Where: {event.location or 'TBD'}\n\n"
-                "We look forward to seeing you there!"
-            )
-            send_email_notification.delay(str(u.id), subject2, body2)
 
     return signup
 
@@ -430,7 +437,7 @@ def admin_promote_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     if signup.status != models.SignupStatus.waitlisted:
         raise HTTPException(status_code=400, detail="Only waitlisted signups can be promoted")
@@ -449,17 +456,9 @@ def admin_promote_signup(
     db.commit()
     db.refresh(signup)
 
-    user = signup.user
-    subject = f"You have a spot for '{event.title}'"
-    body = (
-        f"Hi {user.name},\n\n"
-        f"You have been moved from the waitlist to confirmed for:\n"
-        f"- Event: {event.title}\n"
-        f"- When: {slot.start_time} to {slot.end_time}\n"
-        f"- Where: {event.location or 'TBD'}\n\n"
-        "We look forward to seeing you there!"
-    )
-    send_email_notification.delay(str(user.id), subject, body)
+    # Phase 09: signup.user removed; use volunteer-backed email pipeline
+    # Phase 12: full admin promotion email deferred
+    send_email_notification.delay(signup_id=str(signup.id), kind="confirmation")
 
     return signup
 
@@ -508,7 +507,7 @@ def admin_move_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     source_confirmed = _confirmed_count_for_slot(db, source_slot.id)
     target_confirmed = _confirmed_count_for_slot(db, target_slot.id)
@@ -537,28 +536,9 @@ def admin_move_signup(
     db.commit()
     db.refresh(signup)
 
-    user = signup.user
-    if new_status == models.SignupStatus.confirmed:
-        subject = f"Your signup for '{event.title}' was moved"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"Your volunteer slot has been moved to:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {target_slot.start_time} to {target_slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "We look forward to seeing you there!"
-        )
-    else:
-        subject = f"Your signup for '{event.title}' was moved to the waitlist"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"Your signup was moved to a different slot and you are currently waitlisted:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {target_slot.start_time} to {target_slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "We will email you automatically if a spot opens up."
-        )
-    send_email_notification.delay(str(user.id), subject, body)
+    # Phase 09: signup.user removed; use kind-based pipeline for reschedule
+    # Phase 12: full move email deferred
+    send_email_notification.delay(signup_id=str(signup.id), kind="reschedule")
 
     return signup
 
@@ -583,41 +563,18 @@ def admin_resend_signup_email(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
-    user = signup.user
+    # Phase 09: signup.user removed; use kind-based pipeline
+    # Phase 12: full resend logic deferred
     if signup.status == models.SignupStatus.confirmed:
-        subject = f"Your signup for '{event.title}'"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"You are confirmed for this volunteer slot:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {slot.start_time} to {slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "Thank you for volunteering!"
-        )
+        send_email_notification.delay(signup_id=str(signup.id), kind="confirmation")
     elif signup.status == models.SignupStatus.waitlisted:
-        subject = f"Your waitlist status for '{event.title}'"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"You are currently waitlisted for:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {slot.start_time} to {slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "We will email you automatically if a spot opens up."
-        )
+        # No standard kind for waitlisted resend — log only for now
+        # Phase 12: implement waitlist resend email
+        logger.info("admin_resend_signup_email: waitlisted signup %s — no email sent (Phase 12)", signup.id)
     else:
-        subject = f"Your signup for '{event.title}' is cancelled"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"Your signup for the following volunteer slot is cancelled:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {slot.start_time} to {slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "If this is a mistake, you can sign up again if slots are available."
-        )
-
-    send_email_notification.delay(str(user.id), subject, body)
+        send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
     log_action(db, actor, "admin_signup_resend", "Signup", str(signup.id))
     db.commit()
@@ -643,19 +600,23 @@ def notify_event_participants(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
-    recipients = set()
+    # Phase 09: signup.user removed; collect volunteers
+    recipient_volunteers: set = set()
 
     for slot in event.slots:
         for signup in slot.signups:
-            if signup.status == models.SignupStatus.confirmed:
-                recipients.add(signup.user)
-            elif payload.include_waitlisted and signup.status == models.SignupStatus.waitlisted:
-                recipients.add(signup.user)
+            if signup.status == models.SignupStatus.confirmed and signup.volunteer:
+                recipient_volunteers.add(signup.volunteer)
+            elif payload.include_waitlisted and signup.status == models.SignupStatus.waitlisted and signup.volunteer:
+                recipient_volunteers.add(signup.volunteer)
 
-    for user in recipients:
-        send_email_notification.delay(str(user.id), payload.subject, payload.body)
+    for v in recipient_volunteers:
+        # Phase 09: direct send to volunteer email (no user_id available)
+        # Phase 12: use send_email_notification with volunteer support
+        from ..celery_app import _send_email_via_sendgrid
+        _send_email_via_sendgrid(v.email, payload.subject, payload.body)
 
     log_action(
         db,
@@ -674,19 +635,21 @@ def notify_event_participants(
 # =========================
 
 
-@router.get("/audit_logs", response_model=List[schemas.AuditLogRead])
-def list_audit_logs(
-    q: str | None = Query(None),
-    action: str | None = Query(None),
-    entity_type: str | None = Query(None),
-    entity_id: str | None = Query(None),
-    actor_id: str | None = Query(None),
-    start: datetime | None = Query(None),
-    end: datetime | None = Query(None),
-    limit: int = Query(1000, ge=1, le=2000),
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+def _build_audit_log_query(
+    db: Session,
+    q: str | None,
+    action: str | None,
+    entity_type: str | None,
+    entity_id: str | None,
+    actor_id: str | None,
+    user_id: str | None,
+    kind: str | None,
+    start: datetime | None,
+    end: datetime | None,
+    from_date: datetime | None,
+    to_date: datetime | None,
 ):
+    """Build a filtered audit-log query (shared by paginated + CSV endpoints)."""
     query = db.query(models.AuditLog)
 
     if action:
@@ -695,13 +658,19 @@ def list_audit_logs(
         query = query.filter(models.AuditLog.entity_type == entity_type)
     if entity_id:
         query = query.filter(models.AuditLog.entity_id == entity_id)
-    if actor_id:
-        query = query.filter(models.AuditLog.actor_id == actor_id)
-    if start:
-        query = query.filter(models.AuditLog.timestamp >= start)
-    if end:
-        query = query.filter(models.AuditLog.timestamp <= end)
-
+    effective_actor = actor_id or user_id
+    if effective_actor:
+        query = query.filter(models.AuditLog.actor_id == effective_actor)
+    if kind:
+        kinds = [k.strip() for k in kind.split(",") if k.strip()]
+        if kinds:
+            query = query.filter(models.AuditLog.action.in_(kinds))
+    effective_start = start or from_date
+    effective_end = end or to_date
+    if effective_start:
+        query = query.filter(models.AuditLog.timestamp >= effective_start)
+    if effective_end:
+        query = query.filter(models.AuditLog.timestamp <= effective_end)
     if q:
         like = f"%{q}%"
         query = query.filter(
@@ -713,11 +682,323 @@ def list_audit_logs(
                 cast(models.AuditLog.extra, String).ilike(like),
             )
         )
+    return query
 
-    logs = query.order_by(models.AuditLog.timestamp.desc()).limit(limit).all()
+
+@router.get("/audit-logs", response_model=schemas.PaginatedAuditLogs)
+@router.get("/audit_logs", response_model=schemas.PaginatedAuditLogs, include_in_schema=False)
+def list_audit_logs(
+    q: str | None = Query(None),
+    action: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    actor_id: str | None = Query(None),
+    user_id: str | None = Query(None),
+    kind: str | None = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    # Backward compat: ignore old limit param
+    limit: int | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    import math
+
+    query = _build_audit_log_query(
+        db, q, action, entity_type, entity_id, actor_id,
+        user_id, kind, start, end, from_date, to_date,
+    )
+
+    total = query.count()
+    pages = math.ceil(total / page_size) if total > 0 else 0
+    offset = (page - 1) * page_size
+
+    logs = query.order_by(models.AuditLog.timestamp.desc()).offset(offset).limit(page_size).all()
 
     log_action(db, admin_user, "admin_list_audit_logs", "AuditLog", None)
-    return logs
+    return schemas.PaginatedAuditLogs(
+        items=logs, total=total, page=page, page_size=page_size, pages=pages,
+    )
+
+
+@router.get("/audit-logs.csv")
+def export_audit_logs_csv(
+    q: str | None = Query(None),
+    action: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    actor_id: str | None = Query(None),
+    user_id: str | None = Query(None),
+    kind: str | None = Query(None),
+    start: datetime | None = Query(None),
+    end: datetime | None = Query(None),
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    import json as json_mod
+
+    query = _build_audit_log_query(
+        db, q, action, entity_type, entity_id, actor_id,
+        user_id, kind, start, end, from_date, to_date,
+    )
+    logs = query.order_by(models.AuditLog.timestamp.desc()).limit(10000).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["timestamp", "actor_id", "action", "entity_type", "entity_id", "extra"])
+    for log in logs:
+        writer.writerow([
+            log.timestamp.isoformat() if log.timestamp else "",
+            str(log.actor_id) if log.actor_id else "",
+            log.action,
+            log.entity_type,
+            log.entity_id or "",
+            json_mod.dumps(log.extra) if log.extra else "",
+        ])
+
+    log_action(db, admin_user, "admin_export_audit_logs_csv", "AuditLog", None)
+    headers = {"Content-Disposition": 'attachment; filename="audit-logs.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers)
+
+
+# =========================
+# AGGREGATE ANALYTICS (Phase 7)
+# =========================
+
+
+@router.get("/analytics/volunteer-hours", response_model=List[schemas.VolunteerHoursRow])
+def analytics_volunteer_hours(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Volunteer hours grouped by volunteer, joining Signup -> Slot -> Event."""
+    query = (
+        db.query(models.Signup, models.Slot, models.Event, models.Volunteer)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        .filter(models.Signup.status == models.SignupStatus.attended)
+    )
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+
+    rows = query.all()
+
+    # Aggregate by volunteer_id
+    from collections import defaultdict
+    vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
+    for signup, slot, event, volunteer in rows:
+        key = volunteer.id
+        duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
+        vol_hours[key]["hours"] += duration_hours
+        vol_hours[key]["event_ids"].add(event.id)
+        vol_hours[key]["volunteer"] = volunteer
+
+    result = []
+    for vol_id, data in vol_hours.items():
+        v = data["volunteer"]
+        result.append(schemas.VolunteerHoursRow(
+            volunteer_id=v.id,
+            volunteer_name=f"{v.first_name} {v.last_name}",
+            email=v.email,
+            hours=round(data["hours"], 2),
+            events=len(data["event_ids"]),
+        ))
+
+    log_action(db, admin_user, "admin_analytics_volunteer_hours", "Analytics", None)
+    db.commit()
+    return result
+
+
+@router.get("/analytics/attendance-rates", response_model=List[schemas.AttendanceRateRow])
+def analytics_attendance_rates(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Attendance rate per event: attended / (confirmed + attended + no_show)."""
+    query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+
+    events = query.distinct().all()
+    result = []
+    for event in events:
+        slot_ids = [s.id for s in event.slots]
+        if not slot_ids:
+            continue
+        signups = (
+            db.query(models.Signup)
+            .filter(models.Signup.slot_id.in_(slot_ids))
+            .all()
+        )
+        confirmed = sum(1 for s in signups if s.status == models.SignupStatus.confirmed)
+        attended = sum(1 for s in signups if s.status == models.SignupStatus.attended)
+        no_show = sum(1 for s in signups if s.status == models.SignupStatus.no_show)
+        denom = confirmed + attended + no_show
+        rate = (attended / denom) if denom > 0 else 0.0
+
+        result.append(schemas.AttendanceRateRow(
+            event_id=event.id, name=event.title,
+            confirmed=confirmed, attended=attended, no_show=no_show,
+            rate=round(rate, 4),
+        ))
+
+    log_action(db, admin_user, "admin_analytics_attendance_rates", "Analytics", None)
+    return result
+
+
+@router.get("/analytics/no-show-rates", response_model=List[schemas.NoShowRateRow])
+def analytics_no_show_rates(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """No-show rate per volunteer, joining Signup -> Slot -> Event."""
+    query = (
+        db.query(models.Signup, models.Volunteer)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        .filter(models.Signup.status.in_([
+            models.SignupStatus.attended,
+            models.SignupStatus.no_show,
+        ]))
+    )
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+
+    rows = query.all()
+
+    from collections import defaultdict
+    vol_counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
+    for signup, volunteer in rows:
+        key = volunteer.id
+        if signup.status == models.SignupStatus.attended:
+            vol_counts[key]["attended"] += 1
+        elif signup.status == models.SignupStatus.no_show:
+            vol_counts[key]["no_show"] += 1
+        vol_counts[key]["volunteer"] = volunteer
+
+    result = []
+    for vol_id, data in vol_counts.items():
+        attended = data["attended"]
+        no_show = data["no_show"]
+        denom = attended + no_show
+        if denom == 0:
+            continue
+        v = data["volunteer"]
+        result.append(schemas.NoShowRateRow(
+            volunteer_id=v.id,
+            volunteer_name=f"{v.first_name} {v.last_name}",
+            rate=round(no_show / denom, 4),
+            count=no_show,
+        ))
+
+    log_action(db, admin_user, "admin_analytics_no_show_rates", "Analytics", None)
+    db.commit()
+    return result
+
+
+@router.get("/events/{event_id}/attendance.csv")
+def export_event_attendance_csv(
+    event_id: str,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Event-level attendance CSV (admin or event owner)."""
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_owner_or_admin(event, actor)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["user_name", "email", "status", "checked_in_at", "slot_start", "slot_end"])
+
+    for slot in sorted(event.slots, key=lambda s: s.start_time):
+        for signup in slot.signups:
+            # Phase 09: signup.user removed; use signup.volunteer
+            v = signup.volunteer
+            writer.writerow([
+                f"{v.first_name} {v.last_name}" if v else "",
+                v.email if v else "",
+                signup.status.value,
+                signup.checked_in_at.isoformat() if signup.checked_in_at else "",
+                slot.start_time.isoformat(),
+                slot.end_time.isoformat(),
+            ])
+
+    log_action(db, actor, "admin_export_attendance_csv", "Event", str(event.id))
+    headers_resp = {"Content-Disposition": f'attachment; filename="attendance-{event_id}.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
+
+
+@router.get("/analytics/volunteer-hours.csv")
+def export_volunteer_hours_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Volunteer hours as CSV, joining Signup -> Slot -> Event -> Volunteer."""
+    query = (
+        db.query(models.Signup, models.Slot, models.Event, models.Volunteer)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        .filter(models.Signup.status == models.SignupStatus.attended)
+    )
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+
+    rows = query.all()
+
+    from collections import defaultdict
+    vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
+    for signup, slot, event, volunteer in rows:
+        key = volunteer.id
+        duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
+        vol_hours[key]["hours"] += duration_hours
+        vol_hours[key]["event_ids"].add(event.id)
+        vol_hours[key]["volunteer"] = volunteer
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["volunteer_name", "email", "hours", "events"])
+    for vol_id, data in vol_hours.items():
+        v = data["volunteer"]
+        writer.writerow([
+            f"{v.first_name} {v.last_name}",
+            v.email,
+            round(data["hours"], 2),
+            len(data["event_ids"]),
+        ])
+
+    log_action(db, admin_user, "admin_analytics_volunteer_hours_csv", "Analytics", None)
+    db.commit()
+    headers_resp = {"Content-Disposition": 'attachment; filename="volunteer-hours.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
 
 
 # =========================
@@ -742,12 +1023,258 @@ def admin_delete_user(
     if owned_events:
         raise HTTPException(status_code=400, detail="User owns events; reassign or delete events first")
 
-    existing_signups = db.query(models.Signup.id).filter(models.Signup.user_id == user.id).first()
-    if existing_signups:
-        raise HTTPException(status_code=400, detail="User has signups; cancel them before deletion")
+    # Phase 09: signups now keyed to Volunteer, not User — no user_id on Signup
+    # Phase 12: check volunteer signups before deletion when user<->volunteer link exists
+    # For now, skip the signup check — admin delete of User rows is safe
 
     db.delete(user)
     db.commit()
 
     log_action(db, admin_user, "admin_delete_user", "User", str(user.id))
     return
+
+
+# =========================
+# CCPA COMPLIANCE (Phase 7)
+# =========================
+
+
+@router.get("/users/{user_id}/ccpa-export")
+def ccpa_export(
+    user_id: str,
+    reason: str = Query(..., min_length=5),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """CCPA data access request: export all user data as JSON."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Link User to Volunteer by matching email address, then collect their signups.
+    vol = db.query(models.Volunteer).filter(models.Volunteer.email == user.email).first()
+    signups_data = []
+    if vol:
+        for s in db.query(models.Signup).filter(models.Signup.volunteer_id == vol.id).all():
+            signups_data.append({
+                "id": str(s.id),
+                "slot_id": str(s.slot_id),
+                "status": s.status.value,
+                "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+            })
+
+    # Audit logs where user is actor
+    audit_logs_data = []
+    for log in db.query(models.AuditLog).filter(models.AuditLog.actor_id == user.id).all():
+        audit_logs_data.append({
+            "id": str(log.id),
+            "action": log.action,
+            "entity_type": log.entity_type,
+            "entity_id": log.entity_id,
+            "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+        })
+
+    # Notifications
+    notifications_data = []
+    for notif in user.notifications:
+        notifications_data.append({
+            "id": str(notif.id),
+            "type": notif.type.value,
+            "subject": notif.subject,
+            "delivery_method": notif.delivery_method,
+            "created_at": notif.created_at.isoformat() if notif.created_at else None,
+        })
+
+    log_action(
+        db, admin_user, "ccpa_export", "User", str(user.id),
+        extra={"reason": reason},
+    )
+    db.commit()
+
+    return {
+        "user": {
+            "id": str(user.id),
+            "name": user.name,
+            "email": user.email,
+            "university_id": user.university_id,
+            "role": user.role.value,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        },
+        "signups": signups_data,
+        "audit_logs": audit_logs_data,
+        "notifications": notifications_data,
+    }
+
+
+@router.post("/users/{user_id}/ccpa-delete")
+def ccpa_delete(
+    user_id: str,
+    payload: schemas.CcpaDeleteRequest,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """CCPA deletion request: soft-delete + anonymize PII. Preserves signups for analytics."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.deleted_at is not None:
+        raise HTTPException(status_code=409, detail="User already deleted")
+
+    if str(user.id) == str(admin_user.id):
+        raise HTTPException(status_code=400, detail="Admin cannot CCPA-delete their own account")
+
+    # Preserve truncated email for audit trail
+    original_email_hint = user.email[:3] + "***" if user.email else "***"
+
+    # Anonymize PII
+    user.name = "[deleted]"
+    user.email = f"deleted-{uuid_mod.uuid4()}@example.invalid"
+    user.university_id = None
+    user.hashed_password = "DELETED"
+    user.deleted_at = datetime.now(timezone.utc)
+
+    log_action(
+        db, admin_user, "ccpa_delete", "User", str(user.id),
+        extra={"reason": payload.reason, "original_email_hint": original_email_hint},
+    )
+    db.commit()
+
+    return {"status": "deleted", "user_id": str(user.id)}
+
+
+# =========================
+# MODULE TEMPLATE CRUD (Phase 5)
+# =========================
+
+
+@router.get("/module-templates", response_model=list[ModuleTemplateRead])
+def list_module_templates(
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return template_service.list_templates(db)
+
+
+@router.post("/module-templates", response_model=ModuleTemplateRead, status_code=201)
+def create_module_template(
+    payload: ModuleTemplateCreate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    data = payload.model_dump(exclude={"slug"})
+    return template_service.create_template(db, payload.slug, data)
+
+
+@router.patch("/module-templates/{slug}", response_model=ModuleTemplateRead)
+def update_module_template(
+    slug: str,
+    payload: ModuleTemplateUpdate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    data = payload.model_dump(exclude_unset=True)
+    return template_service.update_template(db, slug, data)
+
+
+@router.delete("/module-templates/{slug}", status_code=204)
+def delete_module_template(
+    slug: str,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    template_service.soft_delete_template(db, slug)
+
+
+# =========================
+# CSV IMPORT PIPELINE (Phase 5)
+# =========================
+
+
+@router.get("/imports", response_model=List[CsvImportRead])
+def list_csv_imports(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """List all CSV imports, most recent first."""
+    return (
+        db.query(models.CsvImport)
+        .order_by(models.CsvImport.created_at.desc())
+        .limit(100)
+        .all()
+    )
+
+
+@router.post("/imports", response_model=CsvImportRead, status_code=201)
+async def upload_csv_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Upload CSV and start async import processing."""
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files accepted")
+    raw_bytes = await file.read()
+    if len(raw_bytes) > 5 * 1024 * 1024:  # 5MB limit
+        raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+    imp = import_service.create_import(db, current_user.id, file.filename, raw_bytes)
+    # Store raw CSV in result_payload for the Celery task to read
+    import_service.update_import_status(
+        db, imp.id, imp.status,
+        result_payload={"raw_csv": raw_bytes.decode("utf-8", errors="replace")}
+    )
+    process_csv_import.delay(str(imp.id))
+    return imp
+
+
+@router.get("/imports/{import_id}", response_model=CsvImportRead)
+def get_csv_import(
+    import_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Poll import status and preview."""
+    return import_service.get_import(db, import_id)
+
+
+@router.patch("/imports/{import_id}/rows/{row_index}")
+def update_import_row(
+    import_id: str,
+    row_index: int,
+    updates: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Edit a single row in the import preview before commit."""
+    return import_service.update_preview_row(db, import_id, row_index, updates)
+
+
+@router.post("/imports/{import_id}/commit")
+def commit_csv_import(
+    import_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Atomically commit all validated rows as events."""
+    return import_service.commit_import(db, import_id)
+
+
+# =========================
+# NOTIFICATIONS MONITORING (Phase 6)
+# =========================
+
+
+@router.get("/notifications/recent", response_model=List[SentNotificationRead])
+def recent_notifications(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Return last 100 sent notifications for admin/organizer monitoring."""
+    return (
+        db.query(models.SentNotification)
+        .order_by(models.SentNotification.sent_at.desc())
+        .limit(100)
+        .all()
+    )

@@ -7,23 +7,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..celery_app import send_email_notification
 from ..database import get_db
-from ..deps import require_role, log_action
+from ..deps import require_role, log_action, ensure_event_owner_or_admin
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
 
-def _ensure_event_owner_or_admin(event: models.Event, actor: models.User):
-    # ✅ Organizer can only modify their own events; admin can modify any
-    if actor.role != models.UserRole.admin and event.owner_id != actor.id:
-        raise HTTPException(status_code=403, detail="Not allowed to modify this event")
-
-
-def _to_naive_utc(dt: datetime) -> datetime:
-    """Normalize datetimes so comparisons are safe across aware/naive values."""
+def _normalize_dt(dt: datetime) -> datetime:
+    """Return an aware datetime in UTC. Naive datetimes are assumed to be UTC."""
     if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 @router.get("", response_model=List[schemas.SlotRead], include_in_schema=False)
@@ -59,12 +54,12 @@ def create_slot(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership check
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
-    start_time = _to_naive_utc(slot_in.start_time)
-    end_time = _to_naive_utc(slot_in.end_time)
-    event_start = _to_naive_utc(event.start_date)
-    event_end = _to_naive_utc(event.end_date)
+    start_time = _normalize_dt(slot_in.start_time)
+    end_time = _normalize_dt(slot_in.end_time)
+    event_start = _normalize_dt(event.start_date)
+    event_end = _normalize_dt(event.end_date)
 
     if end_time <= start_time:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
@@ -77,6 +72,9 @@ def create_slot(
         start_time=start_time,
         end_time=end_time,
         capacity=slot_in.capacity,
+        slot_type=slot_in.slot_type,
+        date=slot_in.date or start_time.date(),
+        location=slot_in.location,
     )
     db.add(slot)
     db.commit()
@@ -100,18 +98,18 @@ def update_slot(
     event = slot.event
 
     # ✅ ownership check
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
-    data = slot_in.dict(exclude_unset=True)
+    data = slot_in.model_dump(exclude_unset=True)
     if "start_time" in data and data["start_time"] is not None:
-        data["start_time"] = _to_naive_utc(data["start_time"])
+        data["start_time"] = _normalize_dt(data["start_time"])
     if "end_time" in data and data["end_time"] is not None:
-        data["end_time"] = _to_naive_utc(data["end_time"])
+        data["end_time"] = _normalize_dt(data["end_time"])
 
     new_start = data.get("start_time", slot.start_time)
     new_end = data.get("end_time", slot.end_time)
-    event_start = _to_naive_utc(event.start_date)
-    event_end = _to_naive_utc(event.end_date)
+    event_start = _normalize_dt(event.start_date)
+    event_end = _normalize_dt(event.end_date)
 
     if new_end <= new_start:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
@@ -119,14 +117,54 @@ def update_slot(
     if new_start < event_start or new_end > event_end:
         raise HTTPException(status_code=400, detail="Slot times must be within event start_date and end_date")
 
+    # Detect time change before applying updates
+    time_changed = (
+        ("start_time" in data and data["start_time"] != slot.start_time)
+        or ("end_time" in data and data["end_time"] != slot.end_time)
+    )
+
     for field, value in data.items():
         setattr(slot, field, value)
+
+    # Collect confirmed signups before commit (needed for post-commit dispatch)
+    confirmed_signups = []
+    if time_changed:
+        # Invalidate prior reminders so new window triggers fresh ones
+        db.query(models.SentNotification).filter(
+            models.SentNotification.signup_id.in_(
+                db.query(models.Signup.id).filter(
+                    models.Signup.slot_id == slot.id,
+                    models.Signup.status == models.SignupStatus.confirmed,
+                )
+            ),
+            models.SentNotification.kind.in_(["reminder_24h", "reminder_1h"]),
+        ).delete(synchronize_session=False)
+
+        # Reset denormalized columns
+        db.query(models.Signup).filter(
+            models.Signup.slot_id == slot.id,
+            models.Signup.status == models.SignupStatus.confirmed,
+        ).update({
+            models.Signup.reminder_24h_sent_at: None,
+            models.Signup.reminder_1h_sent_at: None,
+        }, synchronize_session=False)
+
+        confirmed_signups = db.query(models.Signup).filter(
+            models.Signup.slot_id == slot.id,
+            models.Signup.status == models.SignupStatus.confirmed,
+        ).all()
 
     db.add(slot)
     db.commit()
     db.refresh(slot)
 
     log_action(db, actor, "slot_update", "Slot", str(slot.id))
+
+    # Dispatch reschedule emails after commit
+    if time_changed:
+        for s in confirmed_signups:
+            send_email_notification.delay(signup_id=str(s.id), kind="reschedule")
+
     return slot
 
 
@@ -143,7 +181,7 @@ def delete_slot(
     event = slot.event
 
     # ✅ ownership check
-    _ensure_event_owner_or_admin(event, actor)
+    ensure_event_owner_or_admin(event, actor)
 
     existing_signups = (
         db.query(models.Signup)

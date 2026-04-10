@@ -1,0 +1,63 @@
+Phase 09 — Public Signup Backend Verification
+==============================================
+Date: 2026-04-10
+Branch: gsd/phase-0-backend-completion
+Test suite: backend pytest
+
+VERIFICATION GATES
+------------------
+
+[PASS] pytest suite: 188 passed, 12 skipped, 0 failed
+
+[PASS] Public endpoints registered:
+  POST   /api/v1/public/signups
+  POST   /api/v1/public/signups/confirm
+  GET    /api/v1/public/signups/manage
+  DELETE /api/v1/public/signups/{signup_id}
+  GET    /api/v1/public/events
+  GET    /api/v1/public/events/{event_id}
+  GET    /api/v1/public/orientation-status
+
+[PASS] Task 09: 74 previously-skipped tests un-skipped (VolunteerFactory added,
+       SignupFactory rewired to volunteer_id, SignupRead schema updated)
+
+[PASS] Task 10: 28 new public endpoint integration tests (test_public_events.py,
+       test_public_orientation.py, test_public_signups.py) — all pass
+
+[PASS] Task 11: expire_pending_signups Celery task implemented and tested (8 tests)
+       - Hard-deletes pending signups with expired SIGNUP_CONFIRM tokens
+       - Decrements slot.current_count per deleted signup
+       - Scheduled daily at 3am UTC via beat_schedule
+       - Notification model: ck_notifications_recipient_xor CHECK constraint added
+
+[PASS] Task 12: test_phase09_smoke.py full-flow integration test passes (1 test)
+
+[PASS] Task 13: scripts/smoke_phase09.sh created
+
+DECISIONS LOCKED (D-01 through D-13)
+--------------------------------------
+D-01: signups.volunteer_id FK (no user_id) — ENFORCED
+D-02: volunteers upsert on email — ENFORCED
+D-03: pending signup + SIGNUP_CONFIRM token on create — ENFORCED
+D-04: XOR constraint on notifications (user_id XOR volunteer_id) — ENFORCED in model + migration
+D-05: analytics endpoints stub 501 (Phase 12) — SKIPPED tests reflect this
+D-06: SignupRead.volunteer_id (not user_id) — FIXED in schemas.py
+D-07: phone_e164 stored via phonenumbers library — ENFORCED in volunteer_service
+D-08: orientation-status returns same shape for unknown vs known email — ENFORCED
+D-09: SIGNUP_MANAGE token issued on confirm — ENFORCED in magic_link_service
+D-10: old POST /api/v1/signups/ deleted — ENFORCED, 8 tests skipped with reason
+D-11: no Notification row for volunteer-backed signups — ENFORCED in celery_app
+D-12: rate limiting on public endpoints via Redis — migration 0010 in place
+D-13: 14-day SIGNUP_CONFIRM token TTL — ENFORCED in expire_pending_signups task
+
+KNOWN SKIPPED TESTS (all intentional)
+--------------------------------------
+test_signups.py (8): D-10 — old signup endpoint deleted; Phase 12 rewrite
+test_admin.py::test_admin_cancel_signup_promotes_waitlist: D-10
+test_admin_phase7.py (3): D-05 analytics stubs, ccpa stub, D-10
+
+DEFERRED TO PHASE 12
+---------------------
+- Admin analytics (volunteer hours, CCPA export)
+- Re-enable 8 test_signups.py tests with public flow
+- Notification rows for volunteer-backed emails (D-11 deferred)
