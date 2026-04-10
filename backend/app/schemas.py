@@ -402,9 +402,8 @@ class ResolveEventRequest(BaseModel):
     no_show: List[UUID] = []
 
 
-# =========================
-# PREREQ OVERRIDE SCHEMAS (Phase 4)
-# =========================
+# Phase 08 (D-05): Override table dropped in migration 0009.
+# Stub schemas kept here to prevent router import failure until Phase 12 cleans up admin.py.
 class PrereqOverrideCreate(BaseModel):
     module_slug: str
     reason: str
@@ -418,7 +417,6 @@ class PrereqOverrideRead(ORMBase):
     created_by: UUID
     created_at: datetime
     revoked_at: Optional[datetime] = None
-
 
 # =========================
 # MODULE TIMELINE (Phase 4)
@@ -436,7 +434,7 @@ class ModuleTimelineItem(BaseModel):
 # =========================
 class ModuleTemplateBase(BaseModel):
     name: str
-    prereq_slugs: List[str] = []
+    # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
     materials: List[str] = []
@@ -450,7 +448,7 @@ class ModuleTemplateCreate(ModuleTemplateBase):
 
 class ModuleTemplateUpdate(BaseModel):
     name: Optional[str] = None
-    prereq_slugs: Optional[List[str]] = None
+    # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: Optional[int] = None
     duration_minutes: Optional[int] = None
     materials: Optional[List[str]] = None
@@ -461,7 +459,7 @@ class ModuleTemplateUpdate(BaseModel):
 class ModuleTemplateRead(ORMBase):
     slug: str
     name: str
-    prereq_slugs: List[str] = []
+    # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
     materials: List[str] = []
