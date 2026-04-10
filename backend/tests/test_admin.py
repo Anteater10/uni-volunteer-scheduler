@@ -63,27 +63,27 @@ def test_admin_delete_user(client, db_session):
     assert gone is None
 
 
-@pytest.mark.skip(reason="Phase 09 (D-10): old POST /api/v1/signups/ endpoint deleted; test requires rewrite for public signup flow in Phase 12")
 def test_admin_cancel_signup_promotes_waitlist(client, db_session):
-    """Same canonical assertion as test_signups — proves admin path uses promote_waitlist_fifo."""
+    """Admin cancel path uses promote_waitlist_fifo — B waitlisted, A cancelled, B promoted."""
     admin = _make_admin(db_session, email="admin_pf@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
-
-    user_a = make_user(db_session, email="aA@example.com")
-    user_b = make_user(db_session, email="bA@example.com")
-    db_session.commit()
-
-    # A confirmed via API
-    r_a = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_a),
-    )
-    signup_a_id = r_a.json()["id"]
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
 
     _bind_factories(db_session)
+    from tests.fixtures.factories import VolunteerFactory
+    vol_a = VolunteerFactory(email="vol_a_pf@example.com")
+    vol_b = VolunteerFactory(email="vol_b_pf@example.com")
+
+    # A gets the one confirmed slot
+    a_signup = SignupFactory(
+        volunteer=vol_a,
+        slot=slot,
+        status=models.SignupStatus.confirmed,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    slot.current_count = 1
+    # B is waitlisted
     b_signup = SignupFactory(
-        user=user_b,
+        volunteer=vol_b,
         slot=slot,
         status=models.SignupStatus.waitlisted,
         timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
@@ -92,7 +92,7 @@ def test_admin_cancel_signup_promotes_waitlist(client, db_session):
 
     # Admin cancels A
     rc = client.post(
-        f"/api/v1/admin/signups/{signup_a_id}/cancel",
+        f"/api/v1/admin/signups/{a_signup.id}/cancel",
         headers=auth_headers(client, admin),
     )
     assert rc.status_code == 200, rc.text

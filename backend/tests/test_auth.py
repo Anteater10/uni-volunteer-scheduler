@@ -14,7 +14,8 @@ from app import models
 from tests.fixtures.helpers import make_user
 
 
-def test_register_returns_user_record(client, db_session):
+def test_register_endpoint_removed(client):
+    """POST /auth/register is retired in v1.1 — must return 404."""
     resp = client.post(
         "/api/v1/auth/register",
         json={
@@ -25,17 +26,7 @@ def test_register_returns_user_record(client, db_session):
             "notify_email": True,
         },
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["email"] == "alice@example.com"
-    # Register returns the user record; access/refresh flow is via /auth/token.
-    user = (
-        db_session.query(models.User)
-        .filter(models.User.email == "alice@example.com")
-        .first()
-    )
-    assert user is not None
-    assert user.role == models.UserRole.participant
+    assert resp.status_code == 404, f"Expected 404 (route removed), got {resp.status_code}: {resp.text}"
 
 
 def test_login_happy_path_returns_access_and_refresh_token(client, db_session):

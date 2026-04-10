@@ -7,7 +7,9 @@ import pytest
 from datetime import datetime, timedelta, timezone
 
 from app import models
+from tests.fixtures.factories import SignupFactory, VolunteerFactory
 from tests.fixtures.helpers import (
+    _bind_factories,
     auth_headers,
     make_event_with_slot,
     make_user,
@@ -132,10 +134,18 @@ def test_audit_logs_csv_export(client, db_session):
 
 
 @pytest.mark.integration
-@pytest.mark.skip(reason="Phase 09 (D-05): analytics_volunteer_hours stubbed 501; Phase 12 will implement")
 def test_analytics_volunteer_hours_shape(client, db_session):
-    """Volunteer hours endpoint returns list of objects with expected fields."""
+    """Volunteer hours endpoint returns list with volunteer-keyed fields."""
     admin = _make_admin(db_session, email="a_vhours@example.com")
+    _bind_factories(db_session)
+    # Seed an attended signup so we get at least one row back
+    _, slot = make_event_with_slot(db_session, capacity=5, owner=admin)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol,
+        slot=slot,
+        status=models.SignupStatus.attended,
+    )
     db_session.commit()
     headers = auth_headers(client, admin)
 
@@ -143,7 +153,13 @@ def test_analytics_volunteer_hours_shape(client, db_session):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
-    # May be empty — that's fine, just verify the shape of the endpoint response
+    assert len(data) >= 1
+    row = data[0]
+    assert "volunteer_id" in row
+    assert "volunteer_name" in row
+    assert "email" in row
+    assert "hours" in row
+    assert "events" in row
 
 
 @pytest.mark.integration
@@ -160,11 +176,15 @@ def test_analytics_attendance_rates_shape(client, db_session):
 
 
 @pytest.mark.integration
-@pytest.mark.skip(reason="Phase 09: ccpa_export returns signups=[] stub; Phase 12 will implement signups via Volunteer FK")
 def test_ccpa_export_returns_user_data(client, db_session):
-    """CCPA export returns all user data sections."""
+    """CCPA export returns all user data sections including signups via Volunteer email match."""
     admin = _make_admin(db_session, email="a_ccpaexp@example.com")
     target = make_user(db_session, email="target_ccpa@example.com", name="Jane Doe")
+    _bind_factories(db_session)
+    # Create a Volunteer with the same email as target so CCPA can link signups
+    vol = VolunteerFactory(email="target_ccpa@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=5, owner=admin)
+    SignupFactory(volunteer=vol, slot=slot, status=models.SignupStatus.confirmed)
     db_session.commit()
 
     headers = auth_headers(client, admin)
@@ -180,6 +200,11 @@ def test_ccpa_export_returns_user_data(client, db_session):
     assert "notifications" in data
     assert data["user"]["name"] == "Jane Doe"
     assert data["user"]["email"] == "target_ccpa@example.com"
+    # signups should be non-empty — volunteer email matches user email
+    assert len(data["signups"]) >= 1
+    signup_row = data["signups"][0]
+    assert "id" in signup_row
+    assert "status" in signup_row
 
 
 @pytest.mark.integration
@@ -213,25 +238,22 @@ def test_ccpa_delete_anonymizes_pii(client, db_session):
 
 
 @pytest.mark.integration
-@pytest.mark.skip(reason="Phase 09 (D-10): old POST /api/v1/signups/ deleted; test requires public signup flow rewrite in Phase 12")
 def test_ccpa_delete_preserves_signups(client, db_session):
-    """CCPA delete preserves signup rows for analytics integrity."""
+    """CCPA delete preserves signup rows for analytics integrity.
+
+    Signups are keyed to Volunteer (not User), so deleting/anonymizing the User
+    account must not cascade to the Volunteer's signup rows.
+    """
     admin = _make_admin(db_session, email="a_ccpakeep@example.com")
     target = make_user(db_session, email="keep_signups@example.com", name="Keep User")
-    event, slot = make_event_with_slot(db_session, capacity=5, owner=admin)
+    _bind_factories(db_session)
+    # Create a Volunteer + Signup; link by shared email so CCPA can find them
+    vol = VolunteerFactory(email="keep_signups@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=5, owner=admin)
+    signup = SignupFactory(volunteer=vol, slot=slot, status=models.SignupStatus.confirmed)
+    signup_id = signup.id
     db_session.commit()
 
-    # Create a signup for the target user
-    target_headers = auth_headers(client, target)
-    signup_resp = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=target_headers,
-    )
-    assert signup_resp.status_code in (200, 201), signup_resp.text
-    signup_id = signup_resp.json()["id"]
-
-    # Now CCPA delete
     admin_headers = auth_headers(client, admin)
     resp = client.post(
         f"/api/v1/admin/users/{target.id}/ccpa-delete",
@@ -240,8 +262,8 @@ def test_ccpa_delete_preserves_signups(client, db_session):
     )
     assert resp.status_code == 200
 
-    # Verify signup still exists
+    # Verify signup still exists — Volunteer is independent of User
     db_session.expire_all()
-    signup = db_session.query(models.Signup).filter(models.Signup.id == signup_id).first()
-    assert signup is not None, "Signup should be preserved after CCPA delete"
-    assert str(signup.user_id) == str(target.id)
+    signup_row = db_session.query(models.Signup).filter(models.Signup.id == signup_id).first()
+    assert signup_row is not None, "Signup should be preserved after CCPA delete"
+    assert signup_row.volunteer_id == vol.id

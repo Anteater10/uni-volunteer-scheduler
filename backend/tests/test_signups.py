@@ -1,21 +1,17 @@
-"""Signup router + waitlist/cancel integration tests (Plan 06 / Task 2).
+"""Signup cancel + waitlist promotion integration tests.
 
-Locks:
-- capacity / waitlist behavior
-- cancel frees capacity and is reusable by a second user
-- promote_waitlist_fifo canonical ordering (timestamp, id)
-- cancel emails via app.emails BUILDERS
+Tests the admin cancel path (POST /api/v1/admin/signups/{id}/cancel) with
+volunteer-keyed signups created via VolunteerFactory + SignupFactory.
 
-Phase 08 (D-06): signup router still references Signup.user_id; Phase 09 will fix.
+Phase 12 rewrite: old tests exercised POST /api/v1/signups/ (deleted in Phase 09).
+New tests exercise the surviving admin cancel + promote_waitlist_fifo flow.
 """
 import pytest
-pytestmark = pytest.mark.skip(reason="Phase 09 (D-10): old POST /api/v1/signups/ endpoint deleted (account-less pivot). Rewrite for public signup flow in Phase 12.")
-
 from datetime import datetime, timedelta, timezone
 
 from app import models
 from app.celery_app import send_email_notification
-from tests.fixtures.factories import SignupFactory
+from tests.fixtures.factories import SignupFactory, VolunteerFactory
 from tests.fixtures.helpers import (
     _bind_factories,
     auth_headers,
@@ -24,10 +20,29 @@ from tests.fixtures.helpers import (
 )
 
 
-def _seed_waitlisted(db_session, slot, user, *, when=None):
+def _make_admin(db_session, email="admin_sig@example.com"):
+    return make_user(db_session, email=email, role=models.UserRole.admin)
+
+
+def _seed_confirmed(db_session, slot, vol):
+    """Create a confirmed signup for vol on slot (holds one capacity slot)."""
     _bind_factories(db_session)
     signup = SignupFactory(
-        user=user,
+        volunteer=vol,
+        slot=slot,
+        status=models.SignupStatus.confirmed,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    slot.current_count = slot.current_count + 1
+    db_session.flush()
+    return signup
+
+
+def _seed_waitlisted(db_session, slot, vol, *, when=None):
+    """Create a waitlisted signup for vol on slot."""
+    _bind_factories(db_session)
+    signup = SignupFactory(
+        volunteer=vol,
         slot=slot,
         status=models.SignupStatus.waitlisted,
         timestamp=when or datetime.now(timezone.utc),
@@ -36,250 +51,136 @@ def _seed_waitlisted(db_session, slot, user, *, when=None):
     return signup
 
 
-def test_signup_within_capacity(client, db_session):
-    user = make_user(db_session, email="p1@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=2, owner=user)
+def test_admin_cancel_changes_status_to_cancelled(client, db_session):
+    """Admin cancel changes the signup status to cancelled."""
+    admin = _make_admin(db_session, email="admin_s1@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=2, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_s1@example.com")
+    signup = _seed_confirmed(db_session, slot, vol)
     db_session.commit()
 
-    resp = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user),
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "pending"
-
-
-def test_signup_over_capacity_goes_to_waitlist(client, db_session):
-    owner = make_user(db_session, email="owner1@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=1, owner=owner)
-
-    user_a = make_user(db_session, email="a1@example.com")
-    user_b = make_user(db_session, email="b1@example.com")
-    db_session.commit()
-
-    r1 = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_a),
-    )
-    assert r1.status_code == 200 and r1.json()["status"] == "pending"
-
-    r2 = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_b),
-    )
-    assert r2.status_code == 200 and r2.json()["status"] == "waitlisted"
-
-
-def test_cancel_frees_capacity_for_second_user(client, db_session):
-    """Canonical cancel→reusable-capacity assertion at the API layer."""
-    owner = make_user(db_session, email="owner2@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=1, owner=owner)
-
-    user_a = make_user(db_session, email="a2@example.com")
-    user_b = make_user(db_session, email="b2@example.com")
-    db_session.commit()
-
-    r1 = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_a),
-    )
-    assert r1.status_code == 200 and r1.json()["status"] == "pending"
-    signup_a_id = r1.json()["id"]
-
-    # A cancels
+    headers = auth_headers(client, admin)
     rc = client.post(
-        f"/api/v1/signups/{signup_a_id}/cancel",
-        headers=auth_headers(client, user_a),
+        f"/api/v1/admin/signups/{signup.id}/cancel",
+        headers=headers,
     )
-    assert rc.status_code == 200
+    assert rc.status_code == 200, rc.text
+    assert rc.json()["status"] == "cancelled"
 
-    # B should now be confirmable (starts as pending in phase 2)
-    r2 = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_b),
-    )
-    assert r2.status_code == 200
-    assert r2.json()["status"] == "pending"
+
+def test_admin_cancel_decrements_current_count(client, db_session):
+    """Admin cancel frees a capacity slot on the slot row."""
+    admin = _make_admin(db_session, email="admin_s2@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=2, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_s2@example.com")
+    _seed_confirmed(db_session, slot, vol)
+    db_session.commit()
+
+    count_before = slot.current_count
+    headers = auth_headers(client, admin)
+    signup = db_session.query(models.Signup).filter(
+        models.Signup.volunteer_id == vol.id,
+        models.Signup.slot_id == slot.id,
+    ).first()
+    client.post(f"/api/v1/admin/signups/{signup.id}/cancel", headers=headers)
 
     db_session.expire_all()
     slot_row = db_session.query(models.Slot).filter(models.Slot.id == slot.id).one()
-    assert slot_row.current_count == 1
+    assert slot_row.current_count == count_before - 1
 
 
-def test_cancel_promotes_waitlist_fifo(client, db_session):
-    """A confirmed, B (older) and C (newer) waitlisted; A cancels → B confirmed."""
-    owner = make_user(db_session, email="owner3@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=1, owner=owner)
+def test_admin_cancel_promotes_oldest_waitlisted_fifo(client, db_session):
+    """Cancel confirmed signup promotes oldest waitlisted volunteer (FIFO)."""
+    admin = _make_admin(db_session, email="admin_s3@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
 
-    user_a = make_user(db_session, email="a3@example.com")
-    user_b = make_user(db_session, email="b3@example.com")
-    user_c = make_user(db_session, email="c3@example.com")
-    db_session.commit()
+    vol_a = VolunteerFactory(email="v_s3a@example.com")
+    vol_b = VolunteerFactory(email="v_s3b@example.com")
+    vol_c = VolunteerFactory(email="v_s3c@example.com")
 
-    # A confirmed via API
-    r_a = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_a),
-    )
-    signup_a_id = r_a.json()["id"]
-
-    # B waitlisted (older timestamp)
+    signup_a = _seed_confirmed(db_session, slot, vol_a)
+    # B waitlisted first (older)
     older = datetime.now(timezone.utc) - timedelta(minutes=10)
-    signup_b = _seed_waitlisted(db_session, slot, user_b, when=older)
-    # C waitlisted (newer timestamp)
+    signup_b = _seed_waitlisted(db_session, slot, vol_b, when=older)
+    # C waitlisted second (newer)
     newer = datetime.now(timezone.utc) - timedelta(minutes=1)
-    signup_c = _seed_waitlisted(db_session, slot, user_c, when=newer)
+    signup_c = _seed_waitlisted(db_session, slot, vol_c, when=newer)
     db_session.commit()
 
-    rc = client.post(
-        f"/api/v1/signups/{signup_a_id}/cancel",
-        headers=auth_headers(client, user_a),
-    )
-    assert rc.status_code == 200
+    headers = auth_headers(client, admin)
+    rc = client.post(f"/api/v1/admin/signups/{signup_a.id}/cancel", headers=headers)
+    assert rc.status_code == 200, rc.text
 
     db_session.expire_all()
     b_row = db_session.query(models.Signup).filter(models.Signup.id == signup_b.id).one()
     c_row = db_session.query(models.Signup).filter(models.Signup.id == signup_c.id).one()
-    # Phase 2: promoted signups go to 'pending' (must confirm via magic link)
+    # B was older — gets promoted to pending (Phase 2: magic-link confirm)
     assert b_row.status == models.SignupStatus.pending
+    # C stays waitlisted
     assert c_row.status == models.SignupStatus.waitlisted
 
 
-def test_waitlist_ordering_uses_timestamp_then_id(client, db_session):
-    """With identical timestamps, lower signup.id promotes first."""
-    owner = make_user(db_session, email="owner4@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=1, owner=owner)
+def test_admin_cancel_promotes_by_id_tiebreaker(client, db_session):
+    """With identical timestamps, lower signup.id gets promoted first."""
+    admin = _make_admin(db_session, email="admin_s4@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
 
-    user_a = make_user(db_session, email="a4@example.com")
-    user_b = make_user(db_session, email="b4@example.com")
-    user_c = make_user(db_session, email="c4@example.com")
-    db_session.commit()
+    vol_a = VolunteerFactory(email="v_s4a@example.com")
+    vol_b = VolunteerFactory(email="v_s4b@example.com")
+    vol_c = VolunteerFactory(email="v_s4c@example.com")
 
-    # A confirmed via API (eats the one slot)
-    r_a = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_a),
-    )
-    signup_a_id = r_a.json()["id"]
-
+    signup_a = _seed_confirmed(db_session, slot, vol_a)
     same_ts = datetime.now(timezone.utc) - timedelta(minutes=5)
-    sb = _seed_waitlisted(db_session, slot, user_b, when=same_ts)
-    sc = _seed_waitlisted(db_session, slot, user_c, when=same_ts)
+    signup_b = _seed_waitlisted(db_session, slot, vol_b, when=same_ts)
+    signup_c = _seed_waitlisted(db_session, slot, vol_c, when=same_ts)
     db_session.commit()
 
-    first, second = (sb, sc) if str(sb.id) < str(sc.id) else (sc, sb)
+    first, second = (signup_b, signup_c) if str(signup_b.id) < str(signup_c.id) else (signup_c, signup_b)
 
-    client.post(
-        f"/api/v1/signups/{signup_a_id}/cancel",
-        headers=auth_headers(client, user_a),
-    )
+    headers = auth_headers(client, admin)
+    client.post(f"/api/v1/admin/signups/{signup_a.id}/cancel", headers=headers)
 
     db_session.expire_all()
     first_row = db_session.query(models.Signup).filter(models.Signup.id == first.id).one()
     second_row = db_session.query(models.Signup).filter(models.Signup.id == second.id).one()
-    # Phase 2: promoted signups go to 'pending' (must confirm via magic link)
     assert first_row.status == models.SignupStatus.pending
     assert second_row.status == models.SignupStatus.waitlisted
 
 
-def test_cannot_cancel_other_users_signup(client, db_session):
-    owner = make_user(db_session, email="owner5@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=2, owner=owner)
-    user_a = make_user(db_session, email="a5@example.com")
-    user_b = make_user(db_session, email="b5@example.com")
+def test_admin_cancel_already_cancelled_is_idempotent(client, db_session):
+    """Cancelling an already-cancelled signup returns 200 without error."""
+    admin = _make_admin(db_session, email="admin_s5@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=2, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_s5@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.cancelled,
+    )
     db_session.commit()
 
-    r_a = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_a),
-    )
-    signup_a_id = r_a.json()["id"]
-
-    resp = client.post(
-        f"/api/v1/signups/{signup_a_id}/cancel",
-        headers=auth_headers(client, user_b),
-    )
-    assert resp.status_code == 403
+    headers = auth_headers(client, admin)
+    rc = client.post(f"/api/v1/admin/signups/{signup.id}/cancel", headers=headers)
+    assert rc.status_code == 200, rc.text
+    assert rc.json()["status"] == "cancelled"
 
 
-def test_cancel_enqueues_cancellation_email(client, db_session, monkeypatch):
-    owner = make_user(db_session, email="owner6@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=1, owner=owner)
-    user_a = make_user(db_session, email="a6@example.com")
+def test_admin_cancel_enqueues_cancellation_email(client, db_session, monkeypatch):
+    """Admin cancel enqueues a cancellation email notification via Celery."""
+    admin = _make_admin(db_session, email="admin_s6@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_s6@example.com")
+    signup = _seed_confirmed(db_session, slot, vol)
     db_session.commit()
-
-    r_a = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_a),
-    )
-    signup_a_id = r_a.json()["id"]
 
     calls = []
 
     def fake_delay(*args, **kwargs):
-        calls.append((args, kwargs))
-
-        class _R:  # result stand-in
-            id = "fake"
-
-        return _R()
-
-    monkeypatch.setattr(send_email_notification, "delay", fake_delay)
-
-    rc = client.post(
-        f"/api/v1/signups/{signup_a_id}/cancel",
-        headers=auth_headers(client, user_a),
-    )
-    assert rc.status_code == 200
-    kinds = [c[1].get("kind") for c in calls]
-    assert "cancellation" in kinds
-
-
-def test_cancel_with_waitlist_promotes_to_pending_with_magic_link(
-    client, db_session, monkeypatch
-):
-    """Phase 2: promoted signups go to pending and get a magic-link email
-    instead of a direct confirmation notification."""
-    owner = make_user(db_session, email="owner7@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=1, owner=owner)
-    user_a = make_user(db_session, email="a7@example.com")
-    user_b = make_user(db_session, email="b7@example.com")
-    db_session.commit()
-
-    r_a = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=auth_headers(client, user_a),
-    )
-    signup_a_id = r_a.json()["id"]
-
-    _seed_waitlisted(
-        db_session, slot, user_b, when=datetime.now(timezone.utc) - timedelta(minutes=1)
-    )
-    db_session.commit()
-
-    # Monkeypatch magic link email to capture calls
-    magic_link_calls = []
-
-    def fake_send_magic_link(*args, **kwargs):
-        magic_link_calls.append((args, kwargs))
-        return {"to": args[0], "subject": "test"}
-
-    monkeypatch.setattr("app.emails.send_magic_link", fake_send_magic_link)
-
-    calls = []
-
-    def fake_delay(*args, **kwargs):
-        calls.append((args, kwargs))
+        calls.append(kwargs)
 
         class _R:
             id = "fake"
@@ -288,17 +189,35 @@ def test_cancel_with_waitlist_promotes_to_pending_with_magic_link(
 
     monkeypatch.setattr(send_email_notification, "delay", fake_delay)
 
-    rc = client.post(
-        f"/api/v1/signups/{signup_a_id}/cancel",
-        headers=auth_headers(client, user_a),
-    )
-    assert rc.status_code == 200
+    headers = auth_headers(client, admin)
+    rc = client.post(f"/api/v1/admin/signups/{signup.id}/cancel", headers=headers)
+    assert rc.status_code == 200, rc.text
 
-    # Cancellation email is still sent for the cancelled signup
-    kinds = [c[1].get("kind") for c in calls]
+    kinds = [c.get("kind") for c in calls]
     assert "cancellation" in kinds
 
-    # Promoted signup gets a magic-link email instead of confirmation
-    db_session.expire_all()
-    b_row = db_session.query(models.Signup).filter(models.Signup.user_id == user_b.id).first()
-    assert b_row.status == models.SignupStatus.pending
+
+def test_cancel_via_signups_router_requires_admin_or_organizer(client, db_session):
+    """POST /signups/{id}/cancel returns 403 for participant-role user."""
+    participant = make_user(db_session, email="p_cancel@example.com")
+    admin = _make_admin(db_session, email="admin_s7@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=2, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_s7@example.com")
+    signup = _seed_confirmed(db_session, slot, vol)
+    db_session.commit()
+
+    headers = auth_headers(client, participant)
+    rc = client.post(f"/api/v1/signups/{signup.id}/cancel", headers=headers)
+    assert rc.status_code == 403
+
+
+def test_cancel_not_found_returns_404(client, db_session):
+    """Cancel a non-existent signup returns 404."""
+    admin = _make_admin(db_session, email="admin_s8@example.com")
+    db_session.commit()
+
+    import uuid
+    headers = auth_headers(client, admin)
+    rc = client.post(f"/api/v1/admin/signups/{uuid.uuid4()}/cancel", headers=headers)
+    assert rc.status_code == 404
