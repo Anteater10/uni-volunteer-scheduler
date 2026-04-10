@@ -1,0 +1,174 @@
+=== \d volunteers ===
+                            Table "public.volunteers"
+   Column   |           Type           | Collation | Nullable |      Default      
+------------+--------------------------+-----------+----------+-------------------
+ id         | uuid                     |           | not null | gen_random_uuid()
+ email      | character varying(255)   |           | not null | 
+ first_name | character varying(100)   |           | not null | 
+ last_name  | character varying(100)   |           | not null | 
+ phone_e164 | character varying(20)    |           |          | 
+ created_at | timestamp with time zone |           | not null | now()
+ updated_at | timestamp with time zone |           | not null | now()
+Indexes:
+    "volunteers_pkey" PRIMARY KEY, btree (id)
+    "ix_volunteers_email" btree (email)
+    "uq_volunteers_email" UNIQUE CONSTRAINT, btree (email)
+Referenced by:
+    TABLE "magic_link_tokens" CONSTRAINT "fk_magic_link_tokens_volunteer_id" FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE CASCADE
+    TABLE "signups" CONSTRAINT "fk_signups_volunteer_id" FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE RESTRICT
+
+
+=== \d events ===
+                              Table "public.events"
+        Column        |           Type           | Collation | Nullable | Default 
+----------------------+--------------------------+-----------+----------+---------
+ id                   | uuid                     |           | not null | 
+ owner_id             | uuid                     |           | not null | 
+ title                | character varying(255)   |           | not null | 
+ description          | text                     |           |          | 
+ location             | character varying(255)   |           |          | 
+ visibility           | character varying(32)    |           |          | 
+ branding_id          | character varying(64)    |           |          | 
+ start_date           | timestamp with time zone |           | not null | 
+ end_date             | timestamp with time zone |           | not null | 
+ max_signups_per_user | integer                  |           |          | 
+ signup_open_at       | timestamp with time zone |           |          | 
+ signup_close_at      | timestamp with time zone |           |          | 
+ created_at           | timestamp with time zone |           |          | 
+ venue_code           | character varying(4)     |           |          | 
+ module_slug          | character varying        |           |          | 
+ reminder_1h_enabled  | boolean                  |           | not null | true
+ quarter              | quarter                  |           |          | 
+ year                 | integer                  |           |          | 
+ week_number          | integer                  |           |          | 
+ school               | character varying(255)   |           |          | 
+Indexes:
+    "events_pkey" PRIMARY KEY, btree (id)
+Foreign-key constraints:
+    "events_owner_id_fkey" FOREIGN KEY (owner_id) REFERENCES users(id)
+Referenced by:
+    TABLE "custom_questions" CONSTRAINT "custom_questions_event_id_fkey" FOREIGN KEY (event_id) REFERENCES events(id)
+    TABLE "portal_events" CONSTRAINT "portal_events_event_id_fkey" FOREIGN KEY (event_id) REFERENCES events(id)
+    TABLE "slots" CONSTRAINT "slots_event_id_fkey" FOREIGN KEY (event_id) REFERENCES events(id)
+
+
+=== \d slots ===
+                                 Table "public.slots"
+    Column     |           Type           | Collation | Nullable |      Default       
+---------------+--------------------------+-----------+----------+--------------------
+ id            | uuid                     |           | not null | 
+ event_id      | uuid                     |           | not null | 
+ start_time    | timestamp with time zone |           | not null | 
+ end_time      | timestamp with time zone |           | not null | 
+ capacity      | integer                  |           | not null | 
+ current_count | integer                  |           | not null | 
+ slot_type     | slottype                 |           | not null | 'period'::slottype
+ date          | date                     |           | not null | CURRENT_DATE
+ location      | character varying(255)   |           |          | 
+Indexes:
+    "slots_pkey" PRIMARY KEY, btree (id)
+    "ix_slots_start_time" btree (start_time)
+Foreign-key constraints:
+    "slots_event_id_fkey" FOREIGN KEY (event_id) REFERENCES events(id)
+Referenced by:
+    TABLE "signups" CONSTRAINT "signups_slot_id_fkey" FOREIGN KEY (slot_id) REFERENCES slots(id)
+
+
+=== \d signups ===
+                              Table "public.signups"
+        Column        |           Type           | Collation | Nullable | Default 
+----------------------+--------------------------+-----------+----------+---------
+ id                   | uuid                     |           | not null | 
+ slot_id              | uuid                     |           | not null | 
+ status               | signupstatus             |           | not null | 
+ timestamp            | timestamp with time zone |           |          | 
+ reminder_sent        | boolean                  |           | not null | false
+ checked_in_at        | timestamp with time zone |           |          | 
+ reminder_24h_sent_at | timestamp with time zone |           |          | 
+ reminder_1h_sent_at  | timestamp with time zone |           |          | 
+ volunteer_id         | uuid                     |           | not null | 
+Indexes:
+    "signups_pkey" PRIMARY KEY, btree (id)
+    "uq_signups_volunteer_id_slot_id" UNIQUE CONSTRAINT, btree (volunteer_id, slot_id)
+Foreign-key constraints:
+    "fk_signups_volunteer_id" FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE RESTRICT
+    "signups_slot_id_fkey" FOREIGN KEY (slot_id) REFERENCES slots(id)
+Referenced by:
+    TABLE "custom_answers" CONSTRAINT "custom_answers_signup_id_fkey" FOREIGN KEY (signup_id) REFERENCES signups(id)
+    TABLE "magic_link_tokens" CONSTRAINT "magic_link_tokens_signup_id_fkey" FOREIGN KEY (signup_id) REFERENCES signups(id) ON DELETE CASCADE
+    TABLE "sent_notifications" CONSTRAINT "sent_notifications_signup_id_fkey" FOREIGN KEY (signup_id) REFERENCES signups(id)
+
+
+=== \d magic_link_tokens ===
+                                  Table "public.magic_link_tokens"
+    Column    |           Type           | Collation | Nullable |              Default              
+--------------+--------------------------+-----------+----------+-----------------------------------
+ id           | uuid                     |           | not null | 
+ token_hash   | text                     |           | not null | 
+ signup_id    | uuid                     |           | not null | 
+ email        | text                     |           | not null | 
+ created_at   | timestamp with time zone |           | not null | now()
+ expires_at   | timestamp with time zone |           | not null | 
+ consumed_at  | timestamp with time zone |           |          | 
+ purpose      | magiclinkpurpose         |           | not null | 'email_confirm'::magiclinkpurpose
+ volunteer_id | uuid                     |           |          | 
+Indexes:
+    "magic_link_tokens_pkey" PRIMARY KEY, btree (id)
+    "ix_magic_link_tokens_email_created_at" btree (email, created_at DESC)
+    "magic_link_tokens_token_hash_key" UNIQUE CONSTRAINT, btree (token_hash)
+Foreign-key constraints:
+    "fk_magic_link_tokens_volunteer_id" FOREIGN KEY (volunteer_id) REFERENCES volunteers(id) ON DELETE CASCADE
+    "magic_link_tokens_signup_id_fkey" FOREIGN KEY (signup_id) REFERENCES signups(id) ON DELETE CASCADE
+
+
+=== \dT+ magiclinkpurpose ===
+                                                List of data types
+ Schema |       Name       |  Internal name   | Size |    Elements    |  Owner   | Access privileges | Description 
+--------+------------------+------------------+------+----------------+----------+-------------------+-------------
+ public | magiclinkpurpose | magiclinkpurpose | 4    | email_confirm +| postgres |                   | 
+        |                  |                  |      | check_in      +|          |                   | 
+        |                  |                  |      | signup_confirm+|          |                   | 
+        |                  |                  |      | signup_manage  |          |                   | 
+(1 row)
+
+
+=== \dT+ quarter ===
+                                       List of data types
+ Schema |  Name   | Internal name | Size | Elements |  Owner   | Access privileges | Description 
+--------+---------+---------------+------+----------+----------+-------------------+-------------
+ public | quarter | quarter       | 4    | winter  +| postgres |                   | 
+        |         |               |      | spring  +|          |                   | 
+        |         |               |      | summer  +|          |                   | 
+        |         |               |      | fall     |          |                   | 
+(1 row)
+
+
+=== \dT+ slottype ===
+                                         List of data types
+ Schema |   Name   | Internal name | Size |  Elements   |  Owner   | Access privileges | Description 
+--------+----------+---------------+------+-------------+----------+-------------------+-------------
+ public | slottype | slottype      | 4    | orientation+| postgres |                   | 
+        |          |               |      | period      |          |                   | 
+(1 row)
+
+
+=== \d module_templates ===
+                                Table "public.module_templates"
+      Column      |           Type           | Collation | Nullable |          Default          
+------------------+--------------------------+-----------+----------+---------------------------
+ slug             | character varying        |           | not null | 
+ name             | character varying        |           | not null | 
+ created_at       | timestamp with time zone |           | not null | now()
+ updated_at       | timestamp with time zone |           | not null | now()
+ default_capacity | integer                  |           | not null | 20
+ duration_minutes | integer                  |           | not null | 90
+ materials        | character varying[]      |           | not null | '{}'::character varying[]
+ description      | text                     |           |          | 
+ metadata         | jsonb                    |           | not null | '{}'::jsonb
+ deleted_at       | timestamp with time zone |           |          | 
+Indexes:
+    "module_templates_pkey" PRIMARY KEY, btree (slug)
+
+
+=== \d prereq_overrides (should fail) ===
+Did not find any relation named "prereq_overrides".
