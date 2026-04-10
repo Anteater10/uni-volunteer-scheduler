@@ -72,6 +72,9 @@ def create_slot(
         start_time=start_time,
         end_time=end_time,
         capacity=slot_in.capacity,
+        slot_type=slot_in.slot_type,
+        date=slot_in.date or start_time.date(),
+        location=slot_in.location,
     )
     db.add(slot)
     db.commit()

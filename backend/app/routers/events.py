@@ -75,6 +75,11 @@ def create_event(
         max_signups_per_user=event_in.max_signups_per_user,
         signup_open_at=signup_open_at,
         signup_close_at=signup_close_at,
+        quarter=event_in.quarter,
+        year=event_in.year,
+        week_number=event_in.week_number,
+        school=event_in.school,
+        module_slug=event_in.module_slug,
     )
     db.add(event)
     db.flush()
@@ -87,6 +92,9 @@ def create_event(
                 start_time=s.start_time,
                 end_time=s.end_time,
                 capacity=s.capacity,
+                slot_type=s.slot_type,
+                date=s.date or s.start_time.date(),
+                location=s.location,
             )
             db.add(slot)
 

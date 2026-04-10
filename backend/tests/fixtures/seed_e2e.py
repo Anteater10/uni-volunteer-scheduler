@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Idempotent E2E seed script.
+Idempotent E2E seed script for v1.1 (account-less volunteer model).
 
 Called from Playwright globalSetup. Makes HTTP calls against a running
-backend (no direct DB / no SQLAlchemy dependency_overrides — per
-00-RESEARCH.md Pitfall 6) and prints a JSON blob on stdout with the
-created IDs for the Playwright specs to consume.
+backend (no direct DB / no SQLAlchemy dependency_overrides) and prints a
+JSON blob on stdout with the created IDs for the Playwright specs to consume.
 
 Usage:
-    BACKEND_URL=http://localhost:8000 python backend/tests/fixtures/seed_e2e.py
+    BACKEND_URL=http://localhost:8000 EXPOSE_TOKENS_FOR_TESTING=1 \\
+        python backend/tests/fixtures/seed_e2e.py
 
 Credentials are dev-only and hard-coded (T-00-27 accepted).
 """
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 
 import urllib.request
 import urllib.error
@@ -29,10 +29,20 @@ API = f"{BACKEND_URL}/api/v1"
 
 ADMIN = {"name": "E2E Admin", "email": "admin@e2e.test", "password": "Admin!2345"}
 ORGANIZER = {"name": "E2E Organizer", "email": "organizer@e2e.test", "password": "Organizer!2345"}
-STUDENT = {"name": "E2E Student", "email": "student@e2e.test", "password": "Student!2345"}
 
-PORTAL_NAME = "E2E Portal"
-PORTAL_SLUG = "e2e-portal"
+ATTENDED_VOL = {
+    "first_name": "Attended",
+    "last_name": "Volunteer",
+    "email": "attended-vol@e2e.test",
+    "phone": "8055550100",
+}
+SEEDED_VOL = {
+    "first_name": "Seeded",
+    "last_name": "Pending",
+    "email": "seeded-pending@e2e.test",
+    "phone": "8055550101",
+}
+
 EVENT_TITLE = "E2E Seed Event"
 
 
@@ -76,21 +86,8 @@ def _login(email: str, password: str) -> str:
     return body["access_token"]
 
 
-def _register_participant(email: str, password: str, name: str) -> None:
-    status, body = _req("POST", "/auth/register", json_body={
-        "name": name, "email": email, "password": password,
-        "notify_email": True,
-    })
-    if status == 200:
-        return
-    # idempotency: already-registered is fine
-    if status == 400 and isinstance(body, dict) and "already" in str(body).lower():
-        return
-    raise RuntimeError(f"register failed for {email}: {status} {body}")
-
-
 def _admin_upsert_user(admin_token: str, email: str, password: str, name: str, role: str) -> None:
-    # check list and skip if already present
+    """Create user if not already present (idempotent)."""
     s, users = _req("GET", "/users/", token=admin_token)
     if s == 200 and isinstance(users, list):
         for u in users:
@@ -100,122 +97,252 @@ def _admin_upsert_user(admin_token: str, email: str, password: str, name: str, r
         "name": name, "email": email, "password": password,
         "role": role, "notify_email": True,
     })
-    if s == 200:
+    if s in (200, 201):
         return
     if s == 400 and isinstance(body, dict) and "exists" in str(body).lower():
         return
     raise RuntimeError(f"admin create {email} ({role}) failed: {s} {body}")
 
 
-def _get_or_create_portal(admin_token: str) -> str:
-    # check existing by slug
-    s, body = _req("GET", f"/portals/{PORTAL_SLUG}")
-    if s == 200 and isinstance(body, dict):
-        return body.get("slug", PORTAL_SLUG)
-    s, body = _req("POST", "/portals/", token=admin_token, json_body={
-        "name": PORTAL_NAME,
-        "description": "E2E seed portal",
-        "visibility": "public",
-    })
-    if s != 200:
-        raise RuntimeError(f"portal create failed: {s} {body}")
-    return body.get("slug", PORTAL_SLUG)
+def _get_current_week() -> dict:
+    """Return {quarter, year, week_number} from the backend."""
+    s, body = _req("GET", "/public/current-week")
+    if s != 200 or not isinstance(body, dict):
+        raise RuntimeError(f"current-week failed: {s} {body}")
+    return body
 
 
-def _get_or_create_event(organizer_token: str) -> tuple[str, list[str]]:
-    # List events, find our seed by title
-    s, events = _req("GET", "/events/", token=organizer_token)
-    seed_event = None
+def _get_or_create_event(admin_token: str, quarter: str, year: int, week_number: int) -> dict:
+    """Find existing seed event or create a new one. Returns event dict."""
+    s, events = _req(
+        "GET",
+        f"/public/events?quarter={quarter}&year={year}&week_number={week_number}",
+    )
     if s == 200 and isinstance(events, list):
         for ev in events:
             if ev.get("title") == EVENT_TITLE:
-                seed_event = ev
-                break
+                print(f"[seed] reusing existing event {ev['id']}", file=sys.stderr)
+                return ev
 
-    now = datetime.now(timezone.utc)
-    start = (now + timedelta(hours=25)).replace(microsecond=0)
-    end = (now + timedelta(hours=30)).replace(microsecond=0)
+    # Create new event in the current quarter/week
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    day_after = today + timedelta(days=2)
 
-    if seed_event is None:
-        # Create event with 3 slots capacity 2 each
-        slots = []
-        for i in range(3):
-            s_start = start + timedelta(minutes=30 * i)
-            s_end = s_start + timedelta(minutes=25)
-            slots.append({
-                "start_time": s_start.isoformat(),
-                "end_time": s_end.isoformat(),
-                "capacity": 2,
-            })
-        payload = {
-            "title": EVENT_TITLE,
-            "description": "E2E seed event",
-            "location": "E2E Hall",
-            "visibility": "public",
-            "start_date": start.isoformat(),
-            "end_date": end.isoformat(),
-            "max_signups_per_user": 5,
-            "slots": slots,
-        }
-        s, body = _req("POST", "/events/", token=organizer_token, json_body=payload)
-        if s != 200:
-            raise RuntimeError(f"event create failed: {s} {body}")
-        seed_event = body
+    orientation_start = datetime(
+        tomorrow.year, tomorrow.month, tomorrow.day, 9, 0, tzinfo=timezone.utc
+    )
+    orientation_end = datetime(
+        tomorrow.year, tomorrow.month, tomorrow.day, 10, 0, tzinfo=timezone.utc
+    )
+    period_start = datetime(
+        tomorrow.year, tomorrow.month, tomorrow.day, 10, 30, tzinfo=timezone.utc
+    )
+    period_end = datetime(
+        tomorrow.year, tomorrow.month, tomorrow.day, 12, 0, tzinfo=timezone.utc
+    )
+    event_start = orientation_start
+    event_end = datetime(
+        day_after.year, day_after.month, day_after.day, 18, 0, tzinfo=timezone.utc
+    )
 
-    event_id = seed_event["id"]
-    # Fetch slots for the event
-    s, slot_rows = _req("GET", f"/slots/?event_id={event_id}", token=organizer_token)
-    if s != 200 or not isinstance(slot_rows, list):
-        raise RuntimeError(f"slot list failed: {s} {slot_rows}")
-    slot_ids = [row["id"] for row in slot_rows]
+    payload = {
+        "title": EVENT_TITLE,
+        "description": "E2E seed event — safe to delete",
+        "location": "E2E Hall",
+        "visibility": "public",
+        "start_date": event_start.isoformat(),
+        "end_date": event_end.isoformat(),
+        "quarter": quarter,
+        "year": year,
+        "week_number": week_number,
+        "module_slug": "e2e-test",
+        "school": "E2E High School",
+        "slots": [
+            {
+                "slot_type": "orientation",
+                "start_time": orientation_start.isoformat(),
+                "end_time": orientation_end.isoformat(),
+                "capacity": 20,
+                "location": "E2E Hall Room A",
+            },
+            {
+                "slot_type": "period",
+                "start_time": period_start.isoformat(),
+                "end_time": period_end.isoformat(),
+                "capacity": 20,
+                "location": "E2E Hall Room B",
+            },
+        ],
+    }
+    s, body = _req("POST", "/events/", token=admin_token, json_body=payload)
+    if s not in (200, 201):
+        raise RuntimeError(f"event create failed: {s} {body}")
+    print(f"[seed] created new event {body['id']}", file=sys.stderr)
+    return body
 
-    # Ensure event is attached to portal (idempotent)
-    s, body = _req("POST", f"/portals/{PORTAL_SLUG}/events/{event_id}", token=organizer_token)
-    # 200/201 ok; 400/409 "already attached" ok; 404 means portals route differs — try alt
-    if s not in (200, 201, 204, 400, 409):
-        # non-fatal — attach path may differ; log but continue
-        print(f"warn: portal attach returned {s} {body}", file=sys.stderr)
 
-    return event_id, slot_ids
+def _get_slots(admin_token: str, event_id: str) -> tuple[str, str]:
+    """Return (orientation_slot_id, period_slot_id) for the event."""
+    s, slots = _req("GET", f"/slots/?event_id={event_id}", token=admin_token)
+    if s != 200 or not isinstance(slots, list):
+        raise RuntimeError(f"slot list failed: {s} {slots}")
+
+    orientation_id = None
+    period_id = None
+    for slot in slots:
+        st = slot.get("slot_type")
+        if st == "orientation" and orientation_id is None:
+            orientation_id = slot["id"]
+        elif st == "period" and period_id is None:
+            period_id = slot["id"]
+
+    if not orientation_id:
+        raise RuntimeError(f"No orientation slot found for event {event_id}. slots: {slots}")
+    if not period_id:
+        raise RuntimeError(f"No period slot found for event {event_id}. slots: {slots}")
+
+    return orientation_id, period_id
+
+
+def _signup_volunteer(vol: dict, slot_ids: list) -> tuple[int, dict | str]:
+    """Call POST /public/signups and return (status_code, body)."""
+    return _req("POST", "/public/signups", json_body={
+        "first_name": vol["first_name"],
+        "last_name": vol["last_name"],
+        "email": vol["email"],
+        "phone": vol["phone"],
+        "slot_ids": slot_ids,
+    })
+
+
+def _ensure_attended_volunteer(
+    admin_token: str,
+    organizer_token: str,
+    orientation_slot_id: str,
+) -> None:
+    """Create attended-vol@e2e.test with an attended orientation signup.
+
+    Idempotent: If 409 (already signed up), tries to check-in existing signup.
+    """
+    s, body = _signup_volunteer(ATTENDED_VOL, [orientation_slot_id])
+    if s in (200, 201):
+        signup_id = body["signup_ids"][0]
+        # Check in the signup to create attended status
+        cs, cb = _req("POST", f"/signups/{signup_id}/check-in", token=organizer_token)
+        if cs not in (200, 201):
+            print(f"[seed] warn: check-in for attended vol returned {cs} {cb}", file=sys.stderr)
+        else:
+            print(f"[seed] attended volunteer checked in: signup {signup_id}", file=sys.stderr)
+    elif s == 409:
+        print(f"[seed] attended volunteer already signed up — checking for existing signup",
+              file=sys.stderr)
+        # Find existing signup and check it in
+        sv, sv_body = _req("GET", f"/slots/{orientation_slot_id}", token=admin_token)
+        # Try to find signups for this slot
+        ss, signups = _req("GET", f"/signups/?slot_id={orientation_slot_id}", token=admin_token)
+        if ss == 200 and isinstance(signups, list):
+            for su in signups:
+                if su.get("status") in ("attended", "checked_in"):
+                    print(f"[seed] attended volunteer already has attended status", file=sys.stderr)
+                    return
+                # Check in the first non-cancelled signup
+                if su.get("status") not in ("cancelled",):
+                    cs, _ = _req("POST", f"/signups/{su['id']}/check-in", token=organizer_token)
+                    if cs in (200, 201):
+                        print(f"[seed] checked in existing signup {su['id']}", file=sys.stderr)
+                        return
+    else:
+        print(f"[seed] warn: attended volunteer signup returned {s} {body}", file=sys.stderr)
+
+
+def _create_seeded_pending(period_slot_id: str) -> str | None:
+    """Create seeded-pending@e2e.test with a period slot signup and return the confirm token.
+
+    Returns None if EXPOSE_TOKENS_FOR_TESTING is not set or signup fails.
+    Idempotent: if 409 (already signed up), returns None (token unavailable).
+    """
+    s, body = _signup_volunteer(SEEDED_VOL, [period_slot_id])
+    if s in (200, 201):
+        token = body.get("confirm_token")
+        if token:
+            print(f"[seed] seeded pending volunteer created, token obtained", file=sys.stderr)
+        else:
+            print(
+                "[seed] warn: confirm_token absent — EXPOSE_TOKENS_FOR_TESTING must be set on backend",
+                file=sys.stderr,
+            )
+        return token
+    elif s == 409:
+        print(
+            f"[seed] seeded pending volunteer already signed up — confirm_token unavailable this run",
+            file=sys.stderr,
+        )
+        return None
+    else:
+        print(f"[seed] warn: seeded pending signup returned {s} {body}", file=sys.stderr)
+        return None
 
 
 def main() -> int:
-    # 1. Register participant via public endpoint (idempotent)
-    _register_participant(STUDENT["email"], STUDENT["password"], STUDENT["name"])
-
-    # 2. Admin must exist already (seed_admin baked into docker-compose migrate step).
-    #    Prefer that admin; if the CI admin uses different creds, fall back to registering
-    #    via a dev-only path. For the Hetzner dev stack we assume SEED_ADMIN_EMAIL matches.
+    # 1. Log in as admin (must already exist from seed_admin.py / migrate step)
     admin_email = os.environ.get("SEED_ADMIN_EMAIL", ADMIN["email"])
     admin_password = os.environ.get("SEED_ADMIN_PASSWORD", ADMIN["password"])
     try:
         admin_token = _login(admin_email, admin_password)
     except Exception as e:
         print(f"fatal: cannot log in as admin {admin_email}: {e}", file=sys.stderr)
-        print("Ensure the backend seed_admin step ran with SEED_ADMIN_EMAIL=admin@e2e.test "
-              "SEED_ADMIN_PASSWORD=Admin!2345, or export those vars before running seed_e2e.py",
-              file=sys.stderr)
+        print(
+            "Ensure the backend seed_admin step ran with SEED_ADMIN_EMAIL=admin@e2e.test "
+            "SEED_ADMIN_PASSWORD=Admin!2345, or export those vars before running seed_e2e.py",
+            file=sys.stderr,
+        )
         return 2
 
-    # 3. Ensure organizer + student exist via admin (idempotent, sets correct role)
-    _admin_upsert_user(admin_token, ORGANIZER["email"], ORGANIZER["password"], ORGANIZER["name"], "organizer")
-    _admin_upsert_user(admin_token, STUDENT["email"], STUDENT["password"], STUDENT["name"], "participant")
-
-    # 4. Portal
-    portal_slug = _get_or_create_portal(admin_token)
-
-    # 5. Event + slots (as organizer)
+    # 2. Ensure organizer user exists (idempotent)
+    _admin_upsert_user(
+        admin_token, ORGANIZER["email"], ORGANIZER["password"], ORGANIZER["name"], "organizer"
+    )
     organizer_token = _login(ORGANIZER["email"], ORGANIZER["password"])
-    event_id, slot_ids = _get_or_create_event(organizer_token)
+
+    # 3. Get current week (so event is in the browseable range)
+    week = _get_current_week()
+    quarter = week["quarter"]
+    year = week["year"]
+    week_number = week["week_number"]
+    print(f"[seed] current week: {quarter} {year} week {week_number}", file=sys.stderr)
+
+    # 4. Get or create seed event
+    event = _get_or_create_event(admin_token, quarter, year, week_number)
+    event_id = event["id"]
+    event_title = event.get("title", EVENT_TITLE)
+
+    # 5. Identify orientation and period slots
+    orientation_slot_id, period_slot_id = _get_slots(admin_token, event_id)
+    print(
+        f"[seed] slots: orientation={orientation_slot_id} period={period_slot_id}",
+        file=sys.stderr,
+    )
+
+    # 6. Ensure "attended orientation" volunteer (idempotent)
+    _ensure_attended_volunteer(admin_token, organizer_token, orientation_slot_id)
+
+    # 7. Create "seeded pending" volunteer with a fresh confirm_token
+    confirm_token = _create_seeded_pending(period_slot_id)
 
     out = {
         "event_id": event_id,
-        "slot_ids": slot_ids,
-        "portal_slug": portal_slug,
-        "admin_email": admin_email,
+        "event_title": event_title,
+        "orientation_slot_id": orientation_slot_id,
+        "period_slot_id": period_slot_id,
+        "quarter": quarter,
+        "year": year,
+        "week_number": week_number,
+        "confirm_token": confirm_token,
+        "seeded_volunteer_email": SEEDED_VOL["email"],
+        "attended_volunteer_email": ATTENDED_VOL["email"],
         "organizer_email": ORGANIZER["email"],
-        "student_email": STUDENT["email"],
-        "event_title": EVENT_TITLE,
+        "admin_email": admin_email,
     }
     print(json.dumps(out))
     return 0

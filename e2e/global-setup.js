@@ -20,7 +20,7 @@ export default async function globalSetup() {
   try {
     const data = JSON.parse(last);
     process.env.E2E_SEED = JSON.stringify(data);
-    console.log('[e2e] seed ok:', data.event_title, 'slots:', data.slot_ids?.length);
+    console.log('[e2e] seed ok:', data.event_title, 'event:', data.event_id);
   } catch (e) {
     throw new Error(`E2E seed produced invalid JSON: ${last}`);
   }

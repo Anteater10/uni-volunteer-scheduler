@@ -1,5 +1,6 @@
 # backend/app/schemas.py
-from datetime import datetime, timezone
+import datetime as _dt
+from datetime import date as DateType, datetime, timezone
 from typing import Optional, List, Literal, Dict, Any
 from uuid import UUID
 
@@ -85,12 +86,17 @@ class SlotBase(BaseModel):
 
 
 class SlotCreate(SlotBase):
-    pass
+    slot_type: SlotType = SlotType.PERIOD
+    date: Optional[DateType] = None
+    location: Optional[str] = None
 
 
 class SlotRead(ORMBase, SlotBase):
     id: UUID
     current_count: int
+    slot_type: Optional[SlotType] = None
+    date: Optional[DateType] = None
+    location: Optional[str] = None
 
 
 class SlotUpdate(BaseModel):
@@ -139,6 +145,11 @@ class EventBase(BaseModel):
 
 
 class EventCreate(EventBase):
+    quarter: Optional[str] = None
+    year: Optional[int] = None
+    week_number: Optional[int] = None
+    school: Optional[str] = None
+    module_slug: Optional[str] = None
     slots: Optional[List[SlotCreate]] = None
 
 
@@ -508,7 +519,7 @@ class PublicSignupResponse(BaseModel):
 class PublicSlotRead(BaseModel):
     id: UUID
     slot_type: SlotType
-    date: date
+    date: DateType
     start_time: datetime
     end_time: datetime
     location: Optional[str] = None
