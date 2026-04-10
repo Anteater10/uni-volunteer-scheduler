@@ -168,4 +168,10 @@ def downgrade() -> None:
     op.drop_table('site_settings')
     op.drop_index(op.f('ix_portals_slug'), table_name='portals')
     op.drop_table('portals')
+    # Phase 08 fix: explicitly drop enum types that create_table() created implicitly.
+    # Without these, downgrade→upgrade round-trips fail with DuplicateObject.
+    sa.Enum(name="signupstatus").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="userrole").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="notificationtype").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="privacymode").drop(op.get_bind(), checkfirst=True)
     # ### end Alembic commands ###
