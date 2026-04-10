@@ -22,7 +22,7 @@ from datetime import datetime, timezone, timedelta, date as date_type
 
 import pytest
 
-from app.models import Event, MagicLinkToken, Quarter, Signup, SignupStatus, Slot, SlotType, Volunteer
+from app.models import AuditLog, Event, MagicLinkToken, Quarter, Signup, SignupStatus, Slot, SlotType, Volunteer
 from tests.fixtures.helpers import make_user
 
 
@@ -381,3 +381,45 @@ class TestCancelSignup:
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["cancelled"] is True
+
+    def test_cancel_creates_audit_log_entry(self, client, db_session, monkeypatch):
+        """Cancelling a signup must create an AuditLog row with action='signup_cancelled'
+        and volunteer email in extra (T-11-02 mitigation / ROADMAP success criterion 5)."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        with _TokenCapture(monkeypatch) as cap:
+            r1 = client.post(
+                "/api/v1/public/signups",
+                json=_signup_payload(slot.id, email="audit_log11@example.com"),
+            )
+        assert r1.status_code == 201
+
+        if cap.last_token is None:
+            pytest.skip("Token capture failed")
+
+        signup_id = r1.json()["signup_ids"][0]
+        token = cap.last_token
+
+        resp = client.delete(
+            f"/api/v1/public/signups/{signup_id}",
+            params={"token": token},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cancelled"] is True
+
+        # Verify AuditLog row was created
+        log_entry = (
+            db_session.query(AuditLog)
+            .filter(AuditLog.action == "signup_cancelled")
+            .filter(AuditLog.entity_id == signup_id)
+            .first()
+        )
+        assert log_entry is not None, "AuditLog entry for signup_cancelled not found"
+        assert log_entry.extra is not None
+        assert log_entry.extra.get("volunteer_email") == "audit_log11@example.com"

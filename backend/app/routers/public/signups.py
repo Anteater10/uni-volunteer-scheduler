@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from ... import models, schemas
 from ...database import get_db
-from ...deps import rate_limit
+from ...deps import log_action, rate_limit
 from ...magic_link_service import (
     ConsumeResult,
     MagicLinkPurpose,
@@ -166,5 +166,10 @@ def cancel_signup(
     slot = db.get(Slot, signup.slot_id)
     if slot:
         slot.current_count = max(0, slot.current_count - 1)
+    log_action(
+        db, actor=None, action="signup_cancelled",
+        entity_type="signup", entity_id=str(signup_id),
+        extra={"volunteer_email": token_row.volunteer.email, "signup_id": str(signup_id)},
+    )
     db.commit()
     return {"cancelled": True, "signup_id": str(signup_id)}

@@ -423,6 +423,15 @@ async function publicCreateSignup(body) {
 async function publicOrientationStatus(email) {
   return request("/public/orientation-status", { method: "GET", auth: false, params: { email } });
 }
+async function publicConfirmSignup(token) {
+  return request("/public/signups/confirm", { method: "POST", auth: false, params: { token } });
+}
+async function publicGetManageSignups(token) {
+  return request("/public/signups/manage", { method: "GET", auth: false, params: { token } });
+}
+async function publicCancelSignup(signupId, token) {
+  return request(`/public/signups/${signupId}`, { method: "DELETE", auth: false, params: { token } });
+}
 
 // --------------------
 // MAGIC LINK
@@ -531,6 +540,9 @@ export const api = {
     getEvent: (id) => publicGetEvent(id),
     createSignup: (body) => publicCreateSignup(body),
     orientationStatus: (email) => publicOrientationStatus(email),
+    confirmSignup: (token) => publicConfirmSignup(token),
+    getManageSignups: (token) => publicGetManageSignups(token),
+    cancelSignup: (signupId, token) => publicCancelSignup(signupId, token),
   },
 
   // --- Module Templates (Phase 5) ---
