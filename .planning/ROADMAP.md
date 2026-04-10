@@ -17,7 +17,7 @@ Phase numbering continues from v1.0 (which ended at 07); v1.1 starts at 08.
 
 - [ ] **Phase 08: Schema realignment migration** — new `volunteers` table, structured `events` columns, `slot_type` enum, rewire `signups` + `magic_link_tokens` FKs, retire prereq tables, fix enum downgrades across all migrations.
 - [ ] **Phase 09: Public signup backend** — volunteer upsert-by-email, signup create/confirm/list endpoints, magic-link issue for `signup_confirm` + `signup_manage` purposes, orientation-attendance DB check.
-- [ ] **Phase 10: Public events-by-week browse + signup form** — loginless weekly browse page, signup form with identity fields, orientation soft-warning modal wired to the backend check.
+- [x] **Phase 10: Public events-by-week browse + signup form** — loginless weekly browse page, signup form with identity fields, orientation soft-warning modal wired to the backend check. (completed 2026-04-10)
 - [ ] **Phase 11: Magic-link manage-my-signup flow** — token-gated page listing a volunteer's signups for an event, per-row cancel + batch cancel, cancel endpoints on the backend.
 - [ ] **Phase 12: Retirement pass** — delete student Register/Login/MySignups pages, Phase 4 prereq enforcement router + UI, Phase 7 override UI; update nav, permissions, and tests.
 - [ ] **Phase 13: E2E seed + Playwright coverage** — `backend/scripts/seed_e2e.py`, Playwright suite covering browse → signup → confirm → manage, organizer check-in still green.
@@ -103,12 +103,12 @@ Plans:
 3. The orientation modal fires in the period-only + no-prior-attendance case and is skipped when the DB reports prior attendance.
 4. Clicking No in the modal returns to slot selection with orientation slots highlighted.
 5. No path in the public flow requires login.
-**Plans:** 3/4 plans executed
+**Plans:** 5/4 plans complete
 Plans:
 - [x] 10-01-PLAN.md — Backend current-week endpoint + frontend API helpers + week navigation utility
 - [x] 10-02-PLAN.md — Events browse page with week navigation + route wiring
 - [x] 10-03-PLAN.md — Event detail page with signup form, orientation modal, success card
-- [ ] 10-04-PLAN.md — Final route wiring, build verification, visual smoke test
+- [x] 10-04-PLAN.md — Final route wiring, build verification, visual smoke test
 
 **UI hint:** yes
 **Touches (v1.0 surviving code):** Phase 01 Tailwind component library, `frontend/src/lib/api.js`, public page skeletons (rewritten, not reused).
@@ -184,7 +184,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 08. Schema realignment migration | 0/1 | Not started | - |
 | 09. Public signup backend | 0/? | Not started | - |
-| 10. Public events-by-week browse + signup form | 3/4 | In Progress|  |
+| 10. Public events-by-week browse + signup form | 5/4 | Complete   | 2026-04-10 |
 | 11. Magic-link manage-my-signup | 0/? | Not started | - |
 | 12. Retirement pass | 0/? | Not started | - |
 | 13. E2E seed + Playwright coverage | 0/? | Not started | - |
