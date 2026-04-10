@@ -1032,54 +1032,6 @@ def ccpa_delete(
 
 
 # =========================
-# PREREQ OVERRIDE MANAGEMENT (Phase 4)
-# =========================
-
-
-@router.get("/prereq-overrides", response_model=List[schemas.PrereqOverrideRead])
-def list_prereq_overrides(
-    user_id: str | None = Query(None),
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
-):
-    """Admin-only: prereq-override endpoints retired in Phase 08. Phase 12 will reimplement."""
-    # Phase 12: see 09-SUMMARY deviation notes — PrereqOverride model deleted in Phase 08
-    raise HTTPException(
-        status_code=501,
-        detail="retired: Phase 12 will reimplement prereq-override management"
-    )
-
-
-@router.post("/users/{user_id}/prereq-overrides", response_model=schemas.PrereqOverrideRead)
-def create_prereq_override(
-    user_id: str,
-    payload: schemas.PrereqOverrideCreate,
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
-):
-    """Admin-only: prereq-override endpoints retired in Phase 08. Phase 12 will reimplement."""
-    # Phase 12: see 09-SUMMARY deviation notes — PrereqOverride model deleted in Phase 08
-    raise HTTPException(
-        status_code=501,
-        detail="retired: Phase 12 will reimplement prereq-override management"
-    )
-
-
-@router.delete("/prereq-overrides/{override_id}", status_code=200, response_model=schemas.PrereqOverrideRead)
-def revoke_prereq_override(
-    override_id: str,
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
-):
-    """Admin-only: prereq-override endpoints retired in Phase 08. Phase 12 will reimplement."""
-    # Phase 12: see 09-SUMMARY deviation notes — PrereqOverride model deleted in Phase 08
-    raise HTTPException(
-        status_code=501,
-        detail="retired: Phase 12 will reimplement prereq-override management"
-    )
-
-
-# =========================
 # MODULE TEMPLATE CRUD (Phase 5)
 # =========================
 

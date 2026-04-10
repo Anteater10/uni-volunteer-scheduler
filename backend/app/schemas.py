@@ -403,32 +403,6 @@ class ResolveEventRequest(BaseModel):
     no_show: List[UUID] = []
 
 
-# Phase 08 (D-05): Override table dropped in migration 0009.
-# Stub schemas kept here to prevent router import failure until Phase 12 cleans up admin.py.
-class PrereqOverrideCreate(BaseModel):
-    module_slug: str
-    reason: str
-
-
-class PrereqOverrideRead(ORMBase):
-    id: UUID
-    user_id: UUID
-    module_slug: str
-    reason: str
-    created_by: UUID
-    created_at: datetime
-    revoked_at: Optional[datetime] = None
-
-# =========================
-# MODULE TIMELINE (Phase 4)
-# =========================
-class ModuleTimelineItem(BaseModel):
-    slug: str
-    name: str
-    status: str  # locked | unlocked | completed
-    override_active: bool
-    last_activity: Optional[datetime] = None
-
 
 # =========================
 # MODULE TEMPLATE SCHEMAS (Phase 5)
