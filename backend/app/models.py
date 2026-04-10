@@ -321,6 +321,13 @@ class Notification(Base):
     delivered_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    __table_args__ = (
+        CheckConstraint(
+            "(user_id IS NOT NULL AND volunteer_id IS NULL) OR (user_id IS NULL AND volunteer_id IS NOT NULL)",
+            name="ck_notifications_recipient_xor",
+        ),
+    )
+
     user = relationship("User", back_populates="notifications")
     volunteer = relationship("Volunteer")
 

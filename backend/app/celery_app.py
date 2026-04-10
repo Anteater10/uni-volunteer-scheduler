@@ -348,6 +348,53 @@ def send_signup_confirmation_email(
         db.close()
 
 
+@celery.task(name="app.celery_app.expire_pending_signups")
+def expire_pending_signups() -> None:
+    """Daily cleanup: hard-delete pending signups whose SIGNUP_CONFIRM token has expired.
+
+    Criteria:
+      - Signup.status == pending
+      - Has a MagicLinkToken with purpose == SIGNUP_CONFIRM
+      - That token's expires_at < now (UTC)
+
+    Side effects:
+      - slot.current_count decremented for each deleted signup
+      - MagicLinkToken cascade-deleted with the signup (ondelete=CASCADE)
+
+    Logs: expired_pending_signups_cleaned count=N
+    """
+    db: Session = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+
+        # Find pending signups that have an expired SIGNUP_CONFIRM token
+        rows = (
+            db.query(models.Signup, models.Slot)
+            .join(models.Slot, models.Signup.slot_id == models.Slot.id)
+            .join(
+                models.MagicLinkToken,
+                models.MagicLinkToken.signup_id == models.Signup.id,
+            )
+            .filter(
+                models.Signup.status == models.SignupStatus.pending,
+                models.MagicLinkToken.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+                models.MagicLinkToken.expires_at < now,
+            )
+            .all()
+        )
+
+        count = 0
+        for signup, slot in rows:
+            slot.current_count = max(0, slot.current_count - 1)
+            db.delete(signup)
+            count += 1
+
+        db.commit()
+        logger.info("expired_pending_signups_cleaned count=%d", count)
+    finally:
+        db.close()
+
+
 # -------------------------
 # Celery beat schedule
 # -------------------------
@@ -364,5 +411,9 @@ celery.conf.beat_schedule = {
     "weekly-digest-every-monday-8am": {
         "task": "app.celery_app.weekly_digest",
         "schedule": crontab(hour=8, minute=0, day_of_week="monday"),
+    },
+    "expire-pending-signups-daily-3am": {
+        "task": "app.celery_app.expire_pending_signups",
+        "schedule": crontab(hour=3, minute=0),
     },
 }
