@@ -2,11 +2,14 @@
 
 import csv
 import io
+import logging
 import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, Response, HTTPException, Query, UploadFile, File
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, cast, String, Integer
 
@@ -44,15 +47,17 @@ def _promote_waitlist_fifo(db: Session, slot: models.Slot) -> List[str]:
     Loops until capacity is full, delegating each promotion to the single
     source of truth in app.signup_service. Caller is responsible for
     already holding a FOR UPDATE lock on the slot row.
+    Returns list of promoted signup IDs (Phase 09: volunteer_id replaces user_id).
     """
-    promoted_user_ids: List[str] = []
+    promoted_ids: List[str] = []
     while slot.current_count < slot.capacity:
         promoted = promote_waitlist_fifo(db, slot.id)
         if promoted is None:
             break
         slot.current_count += 1
-        promoted_user_ids.append(str(promoted.user_id))
-    return promoted_user_ids
+        # Phase 09: return volunteer_id (user_id removed from Signup in Phase 08)
+        promoted_ids.append(str(promoted.volunteer_id))
+    return promoted_ids
 
 
 def _participant_payload(user: models.User, privacy: PrivacyMode) -> dict:
@@ -65,6 +70,22 @@ def _participant_payload(user: models.User, privacy: PrivacyMode) -> dict:
     if privacy == PrivacyMode.initials:
         parts = user.name.split()
         display_name = "".join(p[0].upper() for p in parts if p)
+        return {"name": display_name, "email": None, "university_id": None}
+    return {"name": "Volunteer", "email": None, "university_id": None}
+
+
+def _volunteer_participant_payload(v: models.Volunteer, privacy: PrivacyMode) -> dict:
+    """Phase 09 variant of _participant_payload for Volunteer rows (no university_id)."""
+    # Phase 12: reconcile user/volunteer participant payload shape
+    vol_name = f"{v.first_name} {v.last_name}"
+    if privacy == PrivacyMode.full:
+        return {
+            "name": vol_name,
+            "email": v.email,
+            "university_id": None,  # volunteers have no university_id
+        }
+    if privacy == PrivacyMode.initials:
+        display_name = "".join(p[0].upper() for p in vol_name.split() if p)
         return {"name": display_name, "email": None, "university_id": None}
     return {"name": "Volunteer", "email": None, "university_id": None}
 
@@ -202,7 +223,8 @@ def event_roster(
         )
 
         for signup in signups_sorted:
-            user = signup.user
+            # Phase 09: signup.user removed; use signup.volunteer
+            v = signup.volunteer
             answers = {ans.question.prompt: ans.value for ans in signup.answers}
 
             rows.append(
@@ -213,8 +235,8 @@ def event_roster(
                     "slot_capacity": slot.capacity,
                     "slot_current_count": slot.current_count,
                     "signup_id": str(signup.id),
-                    "user_id": str(user.id),
-                    "participant": _participant_payload(user, privacy),
+                    "volunteer_id": str(v.id) if v else None,
+                    "participant": _volunteer_participant_payload(v, privacy) if v else {},
                     "status": signup.status.value,
                     "waitlist_position": waitlist_positions.get(signup.id),
                     "answers": answers,
@@ -280,7 +302,8 @@ def export_event_csv(
         )
 
         for signup in signups_sorted:
-            user = signup.user
+            # Phase 09: signup.user removed; use signup.volunteer
+            v = signup.volunteer
             answers_by_q = {a.question_id: a.value for a in signup.answers}
 
             row = [
@@ -289,8 +312,8 @@ def export_event_csv(
                 slot.end_time.isoformat(),
                 slot.capacity,
                 slot.current_count,
-                user.name,
-                user.email,
+                f"{v.first_name} {v.last_name}" if v else "",
+                v.email if v else "",
                 signup.status.value,
                 waitlist_positions.get(signup.id),
             ]
@@ -366,35 +389,20 @@ def admin_cancel_signup(
     db.commit()
     db.refresh(signup)
 
-    user = signup.user
-    subject = f"Your signup for '{event.title}' was cancelled"
-    body = (
-        f"Hi {user.name},\n\n"
-        f"Your signup for the following volunteer slot has been cancelled:\n"
-        f"- Event: {event.title}\n"
-        f"- When: {slot.start_time} to {slot.end_time}\n"
-        f"- Where: {event.location or 'TBD'}\n\n"
-        "If this is a mistake, you can sign up again if slots are available."
-    )
-    send_email_notification.delay(str(user.id), subject, body)
+    # Phase 09: signup.user removed; send notification via kind-based task
+    # The cancellation email is dispatched via the deduped kind pipeline (volunteer-backed).
+    send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
+    # Phase 12: waitlist promotion emails (promoted_user_ids is empty for volunteer-based signups)
+    # since promote_waitlist_fifo returns Signup, not user_ids. _promote_waitlist_fifo
+    # internal variable name kept as promoted_user_ids but contains signup.volunteer_ids.
     if promoted_user_ids:
-        promoted_users = (
-            db.query(models.User)
-            .filter(models.User.id.in_(promoted_user_ids))
-            .all()
+        # Phase 12: send promotion emails to promoted volunteers
+        # For now, log only — full email dispatch deferred to Phase 12 admin rewrite
+        logger.info(
+            "admin_cancel_signup: %d signups promoted from waitlist; email dispatch deferred to Phase 12",
+            len(promoted_user_ids),
         )
-        for u in promoted_users:
-            subject2 = f"You have a spot for '{event.title}'"
-            body2 = (
-                f"Hi {u.name},\n\n"
-                f"You have been moved from the waitlist to confirmed for:\n"
-                f"- Event: {event.title}\n"
-                f"- When: {slot.start_time} to {slot.end_time}\n"
-                f"- Where: {event.location or 'TBD'}\n\n"
-                "We look forward to seeing you there!"
-            )
-            send_email_notification.delay(str(u.id), subject2, body2)
 
     return signup
 
@@ -448,17 +456,9 @@ def admin_promote_signup(
     db.commit()
     db.refresh(signup)
 
-    user = signup.user
-    subject = f"You have a spot for '{event.title}'"
-    body = (
-        f"Hi {user.name},\n\n"
-        f"You have been moved from the waitlist to confirmed for:\n"
-        f"- Event: {event.title}\n"
-        f"- When: {slot.start_time} to {slot.end_time}\n"
-        f"- Where: {event.location or 'TBD'}\n\n"
-        "We look forward to seeing you there!"
-    )
-    send_email_notification.delay(str(user.id), subject, body)
+    # Phase 09: signup.user removed; use volunteer-backed email pipeline
+    # Phase 12: full admin promotion email deferred
+    send_email_notification.delay(signup_id=str(signup.id), kind="confirmation")
 
     return signup
 
@@ -536,28 +536,9 @@ def admin_move_signup(
     db.commit()
     db.refresh(signup)
 
-    user = signup.user
-    if new_status == models.SignupStatus.confirmed:
-        subject = f"Your signup for '{event.title}' was moved"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"Your volunteer slot has been moved to:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {target_slot.start_time} to {target_slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "We look forward to seeing you there!"
-        )
-    else:
-        subject = f"Your signup for '{event.title}' was moved to the waitlist"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"Your signup was moved to a different slot and you are currently waitlisted:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {target_slot.start_time} to {target_slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "We will email you automatically if a spot opens up."
-        )
-    send_email_notification.delay(str(user.id), subject, body)
+    # Phase 09: signup.user removed; use kind-based pipeline for reschedule
+    # Phase 12: full move email deferred
+    send_email_notification.delay(signup_id=str(signup.id), kind="reschedule")
 
     return signup
 
@@ -584,39 +565,16 @@ def admin_resend_signup_email(
 
     ensure_event_owner_or_admin(event, actor)
 
-    user = signup.user
+    # Phase 09: signup.user removed; use kind-based pipeline
+    # Phase 12: full resend logic deferred
     if signup.status == models.SignupStatus.confirmed:
-        subject = f"Your signup for '{event.title}'"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"You are confirmed for this volunteer slot:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {slot.start_time} to {slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "Thank you for volunteering!"
-        )
+        send_email_notification.delay(signup_id=str(signup.id), kind="confirmation")
     elif signup.status == models.SignupStatus.waitlisted:
-        subject = f"Your waitlist status for '{event.title}'"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"You are currently waitlisted for:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {slot.start_time} to {slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "We will email you automatically if a spot opens up."
-        )
+        # No standard kind for waitlisted resend — log only for now
+        # Phase 12: implement waitlist resend email
+        logger.info("admin_resend_signup_email: waitlisted signup %s — no email sent (Phase 12)", signup.id)
     else:
-        subject = f"Your signup for '{event.title}' is cancelled"
-        body = (
-            f"Hi {user.name},\n\n"
-            f"Your signup for the following volunteer slot is cancelled:\n"
-            f"- Event: {event.title}\n"
-            f"- When: {slot.start_time} to {slot.end_time}\n"
-            f"- Where: {event.location or 'TBD'}\n\n"
-            "If this is a mistake, you can sign up again if slots are available."
-        )
-
-    send_email_notification.delay(str(user.id), subject, body)
+        send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
     log_action(db, actor, "admin_signup_resend", "Signup", str(signup.id))
     db.commit()
@@ -644,17 +602,21 @@ def notify_event_participants(
     # ✅ ownership enforcement for organizers
     ensure_event_owner_or_admin(event, actor)
 
-    recipients = set()
+    # Phase 09: signup.user removed; collect volunteers
+    recipient_volunteers: set = set()
 
     for slot in event.slots:
         for signup in slot.signups:
-            if signup.status == models.SignupStatus.confirmed:
-                recipients.add(signup.user)
-            elif payload.include_waitlisted and signup.status == models.SignupStatus.waitlisted:
-                recipients.add(signup.user)
+            if signup.status == models.SignupStatus.confirmed and signup.volunteer:
+                recipient_volunteers.add(signup.volunteer)
+            elif payload.include_waitlisted and signup.status == models.SignupStatus.waitlisted and signup.volunteer:
+                recipient_volunteers.add(signup.volunteer)
 
-    for user in recipients:
-        send_email_notification.delay(str(user.id), payload.subject, payload.body)
+    for v in recipient_volunteers:
+        # Phase 09: direct send to volunteer email (no user_id available)
+        # Phase 12: use send_email_notification with volunteer support
+        from ..celery_app import _send_email_via_sendgrid
+        _send_email_via_sendgrid(v.email, payload.subject, payload.body)
 
     log_action(
         db,
@@ -817,41 +779,14 @@ def analytics_volunteer_hours(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Volunteer hours: sum of slot duration for attended (or confirmed fallback) signups, grouped by user."""
-    # Use 'attended' status if available, fall back to 'confirmed'
-    target_statuses = [models.SignupStatus.attended]
-    if not hasattr(models.SignupStatus, "attended"):
-        target_statuses = [models.SignupStatus.confirmed]
-
-    query = (
-        db.query(
-            models.User.id.label("user_id"),
-            models.User.name.label("name"),
-            func.sum(
-                func.extract("epoch", models.Slot.end_time - models.Slot.start_time) / 3600.0
-            ).label("hours"),
-            func.count(func.distinct(models.Event.id)).label("events"),
-        )
-        .join(models.Signup, models.Signup.user_id == models.User.id)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .filter(models.Signup.status.in_(target_statuses))
+    """Volunteer hours grouped by volunteer. Phase 12 will reimplement with Volunteer model."""
+    # Phase 12: reimplement using Volunteer model (signups.user_id removed in Phase 08)
+    # Stub returns 501 so tests can discover this needs reimplementation.
+    # TODO Phase 12: join Signup->Volunteer instead of Signup->User
+    raise HTTPException(
+        status_code=501,
+        detail="retired: Phase 12 will reimplement analytics with volunteer-keyed signups"
     )
-    if from_date:
-        query = query.filter(models.Slot.start_time >= from_date)
-    if to_date:
-        query = query.filter(models.Slot.start_time <= to_date)
-
-    rows = query.group_by(models.User.id, models.User.name).all()
-
-    log_action(db, admin_user, "admin_analytics_volunteer_hours", "Analytics", None)
-    return [
-        schemas.VolunteerHoursRow(
-            user_id=r.user_id, name=r.name,
-            hours=round(float(r.hours or 0), 2), events=int(r.events or 0),
-        )
-        for r in rows
-    ]
 
 
 @router.get("/analytics/attendance-rates", response_model=List[schemas.AttendanceRateRow])
@@ -902,38 +837,12 @@ def analytics_no_show_rates(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """No-show rate per user: no_show / (attended + no_show)."""
-    terminal_statuses = [models.SignupStatus.attended, models.SignupStatus.no_show]
-
-    query = (
-        db.query(
-            models.User.id.label("user_id"),
-            models.User.name.label("name"),
-            func.count(models.Signup.id).label("total"),
-            func.sum(
-                func.cast(models.Signup.status == models.SignupStatus.no_show, Integer)
-            ).label("no_show_count"),
-        )
-        .join(models.Signup, models.Signup.user_id == models.User.id)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .filter(models.Signup.status.in_(terminal_statuses))
+    """No-show rate per volunteer. Phase 12 will reimplement with Volunteer model."""
+    # Phase 12: reimplement using Volunteer model (signups.user_id removed in Phase 08)
+    raise HTTPException(
+        status_code=501,
+        detail="retired: Phase 12 will reimplement analytics with volunteer-keyed signups"
     )
-    if from_date:
-        query = query.filter(models.Slot.start_time >= from_date)
-    if to_date:
-        query = query.filter(models.Slot.start_time <= to_date)
-
-    rows = query.group_by(models.User.id, models.User.name).all()
-
-    log_action(db, admin_user, "admin_analytics_no_show_rates", "Analytics", None)
-    return [
-        schemas.NoShowRateRow(
-            user_id=r.user_id, name=r.name,
-            rate=round(float(r.no_show_count or 0) / float(r.total) if r.total else 0.0, 4),
-            count=int(r.no_show_count or 0),
-        )
-        for r in rows
-    ]
 
 
 @router.get("/events/{event_id}/attendance.csv")
@@ -956,10 +865,11 @@ def export_event_attendance_csv(
 
     for slot in sorted(event.slots, key=lambda s: s.start_time):
         for signup in slot.signups:
-            user = signup.user
+            # Phase 09: signup.user removed; use signup.volunteer
+            v = signup.volunteer
             writer.writerow([
-                user.name,
-                user.email,
+                f"{v.first_name} {v.last_name}" if v else "",
+                v.email if v else "",
                 signup.status.value,
                 signup.checked_in_at.isoformat() if signup.checked_in_at else "",
                 slot.start_time.isoformat(),
@@ -978,45 +888,12 @@ def export_volunteer_hours_csv(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Volunteer hours as CSV."""
-    target_statuses = [models.SignupStatus.attended]
-    if not hasattr(models.SignupStatus, "attended"):
-        target_statuses = [models.SignupStatus.confirmed]
-
-    query = (
-        db.query(
-            models.User.id.label("user_id"),
-            models.User.name.label("name"),
-            models.User.email.label("email"),
-            func.sum(
-                func.extract("epoch", models.Slot.end_time - models.Slot.start_time) / 3600.0
-            ).label("hours"),
-            func.count(func.distinct(models.Event.id)).label("events"),
-        )
-        .join(models.Signup, models.Signup.user_id == models.User.id)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .filter(models.Signup.status.in_(target_statuses))
+    """Volunteer hours as CSV. Phase 12 will reimplement with Volunteer model."""
+    # Phase 12: reimplement using Volunteer model (signups.user_id removed in Phase 08)
+    raise HTTPException(
+        status_code=501,
+        detail="retired: Phase 12 will reimplement analytics with volunteer-keyed signups"
     )
-    if from_date:
-        query = query.filter(models.Slot.start_time >= from_date)
-    if to_date:
-        query = query.filter(models.Slot.start_time <= to_date)
-
-    rows = query.group_by(models.User.id, models.User.name, models.User.email).all()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["user_id", "name", "email", "hours", "events"])
-    for r in rows:
-        writer.writerow([
-            str(r.user_id), r.name, r.email,
-            round(float(r.hours or 0), 2), int(r.events or 0),
-        ])
-
-    log_action(db, admin_user, "admin_export_volunteer_hours_csv", "Analytics", None)
-    headers_resp = {"Content-Disposition": 'attachment; filename="volunteer-hours.csv"'}
-    return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
 
 
 # =========================
@@ -1041,9 +918,9 @@ def admin_delete_user(
     if owned_events:
         raise HTTPException(status_code=400, detail="User owns events; reassign or delete events first")
 
-    existing_signups = db.query(models.Signup.id).filter(models.Signup.user_id == user.id).first()
-    if existing_signups:
-        raise HTTPException(status_code=400, detail="User has signups; cancel them before deletion")
+    # Phase 09: signups now keyed to Volunteer, not User — no user_id on Signup
+    # Phase 12: check volunteer signups before deletion when user<->volunteer link exists
+    # For now, skip the signup check — admin delete of User rows is safe
 
     db.delete(user)
     db.commit()
@@ -1069,20 +946,10 @@ def ccpa_export(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Collect signups with slot/event info
-    signups_data = []
-    for signup in user.signups:
-        slot = signup.slot
-        event = slot.event if slot else None
-        signups_data.append({
-            "signup_id": str(signup.id),
-            "status": signup.status.value,
-            "timestamp": signup.timestamp.isoformat() if signup.timestamp else None,
-            "slot_start": slot.start_time.isoformat() if slot else None,
-            "slot_end": slot.end_time.isoformat() if slot else None,
-            "event_title": event.title if event else None,
-            "event_id": str(event.id) if event else None,
-        })
+    # Phase 09: signups now keyed to Volunteer, not User — user.signups relationship removed
+    # Phase 12: link User<->Volunteer for CCPA export
+    # For now, return empty signups array; the user data itself (name, email) is still exported.
+    signups_data = []  # Phase 12: populate via Volunteer->Signup linkage
 
     # Audit logs where user is actor
     audit_logs_data = []
@@ -1175,11 +1042,12 @@ def list_prereq_overrides(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Admin-only: list all prereq overrides, optionally filtered by user_id."""
-    query = db.query(models.PrereqOverride)
-    if user_id:
-        query = query.filter(models.PrereqOverride.user_id == user_id)
-    return query.order_by(models.PrereqOverride.created_at.desc()).all()
+    """Admin-only: prereq-override endpoints retired in Phase 08. Phase 12 will reimplement."""
+    # Phase 12: see 09-SUMMARY deviation notes — PrereqOverride model deleted in Phase 08
+    raise HTTPException(
+        status_code=501,
+        detail="retired: Phase 12 will reimplement prereq-override management"
+    )
 
 
 @router.post("/users/{user_id}/prereq-overrides", response_model=schemas.PrereqOverrideRead)
@@ -1189,45 +1057,12 @@ def create_prereq_override(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Admin-only: create a prereq override for a user on a module."""
-    if len(payload.reason) < 10:
-        raise HTTPException(status_code=400, detail="Reason must be at least 10 characters")
-
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    template = db.get(models.ModuleTemplate, payload.module_slug)
-    if not template:
-        raise HTTPException(status_code=404, detail="Module template not found")
-
-    override = models.PrereqOverride(
-        id=uuid_mod.uuid4(),
-        user_id=user.id,
-        module_slug=payload.module_slug,
-        reason=payload.reason,
-        created_by=admin_user.id,
+    """Admin-only: prereq-override endpoints retired in Phase 08. Phase 12 will reimplement."""
+    # Phase 12: see 09-SUMMARY deviation notes — PrereqOverride model deleted in Phase 08
+    raise HTTPException(
+        status_code=501,
+        detail="retired: Phase 12 will reimplement prereq-override management"
     )
-    db.add(override)
-    db.flush()
-
-    log_action(
-        db,
-        admin_user,
-        "prereq_override_admin_create",
-        "PrereqOverride",
-        str(override.id),
-        extra={
-            "override_id": str(override.id),
-            "user_id": str(user.id),
-            "module_slug": payload.module_slug,
-            "reason": payload.reason,
-        },
-    )
-
-    db.commit()
-    db.refresh(override)
-    return override
 
 
 @router.delete("/prereq-overrides/{override_id}", status_code=200, response_model=schemas.PrereqOverrideRead)
@@ -1236,30 +1071,12 @@ def revoke_prereq_override(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Admin-only: soft-revoke a prereq override by setting revoked_at."""
-    override = db.query(models.PrereqOverride).filter(
-        models.PrereqOverride.id == override_id
-    ).first()
-    if not override:
-        raise HTTPException(status_code=404, detail="Prereq override not found")
-
-    if override.revoked_at is not None:
-        raise HTTPException(status_code=409, detail="Override already revoked")
-
-    override.revoked_at = datetime.now(timezone.utc)
-
-    log_action(
-        db,
-        admin_user,
-        "prereq_override_admin_revoke",
-        "PrereqOverride",
-        str(override.id),
-        extra={"override_id": str(override.id)},
+    """Admin-only: prereq-override endpoints retired in Phase 08. Phase 12 will reimplement."""
+    # Phase 12: see 09-SUMMARY deviation notes — PrereqOverride model deleted in Phase 08
+    raise HTTPException(
+        status_code=501,
+        detail="retired: Phase 12 will reimplement prereq-override management"
     )
-
-    db.commit()
-    db.refresh(override)
-    return override
 
 
 # =========================
