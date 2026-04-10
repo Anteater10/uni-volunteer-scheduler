@@ -24,6 +24,7 @@ if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
         "EXPOSE_TOKENS_FOR_TESTING is ON — confirm tokens will be returned in signup "
         "responses. DO NOT use in production."
     )
+    from .routers.test_helpers import router as test_helpers_router
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -101,3 +102,7 @@ app.include_router(check_in.router, prefix="/api/v1")
 app.include_router(public_events.router, prefix="/api/v1")
 app.include_router(public_signups.router, prefix="/api/v1")
 app.include_router(public_orientation.router, prefix="/api/v1")
+
+# Test helpers — only included when EXPOSE_TOKENS_FOR_TESTING=1
+if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+    app.include_router(test_helpers_router)

@@ -181,7 +181,7 @@ test.describe.serial('public volunteer flow', () => {
 
     // Empty state when all signups cancelled
     await expect(
-      page.getByText(/no upcoming signups/i)
+      page.getByText(/no upcoming signups/i).first()
     ).toBeVisible({ timeout: 8000 });
   });
 });

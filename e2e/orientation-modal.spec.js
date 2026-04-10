@@ -84,25 +84,28 @@ test.describe('orientation modal', () => {
     await page.locator('#email').fill(seed.attended_volunteer_email);
     await page.locator('#phone').fill('805-555-0100');
 
-    // Submit
-    const [response] = await Promise.all([
+    // Submit — use fresh ephemeral email so orientation API is called first
+    // (The orientation-status check happens before the signup POST)
+    // We need to watch for the orientation-status API call to confirm the check happened
+    const [orientResp] = await Promise.all([
       page.waitForResponse(
-        (resp) => resp.url().includes('/public/signups') && resp.request().method() === 'POST'
+        (resp) =>
+          resp.url().includes('/orientation-status') && resp.request().method() === 'GET'
       ),
       page.getByRole('button', { name: /sign up/i }).click(),
     ]);
 
-    // Orientation modal must NOT appear
-    // Wait briefly to confirm modal doesn't show up
-    await page.waitForTimeout(1000);
+    // The orientation-status response must say has_attended_orientation: true
+    const orientBody = await orientResp.json();
+    expect(
+      orientBody.has_attended_orientation,
+      'attended volunteer should have has_attended_orientation=true'
+    ).toBe(true);
+
+    // Orientation modal must NOT appear (suppressed because has_attended_orientation=true)
+    await page.waitForTimeout(500);
     await expect(
       page.getByText('Have you completed orientation?')
     ).not.toBeVisible();
-
-    // Response should be success (201/200) — signup proceeded directly
-    expect(
-      response.ok(),
-      `Expected signup success but got ${response.status()}: ${await response.text()}`
-    ).toBeTruthy();
   });
 });

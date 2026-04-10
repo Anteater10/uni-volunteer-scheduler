@@ -37,11 +37,19 @@ redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
 def rate_limit(max_requests: int | None = None, window_seconds: int | None = None):
     """
     Simple per-IP + path rate limit using Redis.
+
+    When EXPOSE_TOKENS_FOR_TESTING=1 is set (E2E test environment), the rate
+    limit is bypassed so parallel Playwright tests don't trigger 429 errors.
     """
+    import os as _os
     max_req = max_requests or settings.rate_limit_max_requests
     window = window_seconds or settings.rate_limit_window_seconds
 
     async def dependency(request: Request):
+        # Bypass rate limiting in E2E test environments
+        if _os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+            return
+
         key = f"rate:{request.client.host}:{request.url.path}"
         current = redis_client.get(key)
         if current is None:

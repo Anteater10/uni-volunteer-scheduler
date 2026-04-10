@@ -75,8 +75,8 @@ test('organizer can view roster and check in a signup', async ({ page }) => {
   await page.goto(`/organize/events/${seed.event_id}/roster`);
 
   // Step 4: Roster loaded with our signup row
-  // OrganizerRosterPage shows "X of Y checked in" header
-  await expect(page.getByText(/checked in/i)).toBeVisible({ timeout: 10000 });
+  // OrganizerRosterPage shows "X of Y checked in" header — use .first() to avoid strict violation
+  await expect(page.getByText(/checked in/i).first()).toBeVisible({ timeout: 10000 });
 
   // The roster must contain a row for our signup
   // Rows are <button> elements containing student_name and a status chip
@@ -88,7 +88,8 @@ test('organizer can view roster and check in a signup', async ({ page }) => {
   await rosterRow.click();
 
   // After optimistic update, the row status should change to "checked in"
+  // Use the status chip specifically — <span> with text "checked in" in a button row
   await expect(
-    page.getByText(/checked in/i, { exact: false })
+    page.locator('ul li button span').filter({ hasText: /^checked in$/i }).first()
   ).toBeVisible({ timeout: 8000 });
 });

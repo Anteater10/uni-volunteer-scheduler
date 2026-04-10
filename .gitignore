@@ -26,6 +26,11 @@ node_modules/
 dist/
 build/
 
+# --- playwright ---
+test-results/
+playwright-report/
+backend/.coverage
+
 # --- AI scaffolding (never commit) ---
 .claude/
 .gsd/

@@ -27,19 +27,19 @@ import urllib.parse
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000").rstrip("/")
 API = f"{BACKEND_URL}/api/v1"
 
-ADMIN = {"name": "E2E Admin", "email": "admin@e2e.test", "password": "Admin!2345"}
-ORGANIZER = {"name": "E2E Organizer", "email": "organizer@e2e.test", "password": "Organizer!2345"}
+ADMIN = {"name": "E2E Admin", "email": "admin@e2e.example.com", "password": "Admin!2345"}
+ORGANIZER = {"name": "E2E Organizer", "email": "organizer@e2e.example.com", "password": "Organizer!2345"}
 
 ATTENDED_VOL = {
     "first_name": "Attended",
     "last_name": "Volunteer",
-    "email": "attended-vol@e2e.test",
+    "email": "attended-vol@e2e.example.com",
     "phone": "8055550100",
 }
 SEEDED_VOL = {
     "first_name": "Seeded",
     "last_name": "Pending",
-    "email": "seeded-pending@e2e.test",
+    "email": "seeded-pending@e2e.example.com",
     "phone": "8055550101",
 }
 
@@ -163,14 +163,14 @@ def _get_or_create_event(admin_token: str, quarter: str, year: int, week_number:
                 "slot_type": "orientation",
                 "start_time": orientation_start.isoformat(),
                 "end_time": orientation_end.isoformat(),
-                "capacity": 20,
+                "capacity": 200,
                 "location": "E2E Hall Room A",
             },
             {
                 "slot_type": "period",
                 "start_time": period_start.isoformat(),
                 "end_time": period_end.isoformat(),
-                "capacity": 20,
+                "capacity": 200,
                 "location": "E2E Hall Room B",
             },
         ],
@@ -180,6 +180,20 @@ def _get_or_create_event(admin_token: str, quarter: str, year: int, week_number:
         raise RuntimeError(f"event create failed: {s} {body}")
     print(f"[seed] created new event {body['id']}", file=sys.stderr)
     return body
+
+
+def _ensure_slot_capacity(admin_token: str, slot_id: str, min_capacity: int = 200) -> None:
+    """Ensure a slot has at least min_capacity to prevent test exhaustion."""
+    s, slot = _req("GET", f"/slots/{slot_id}", token=admin_token)
+    if s != 200 or not isinstance(slot, dict):
+        return
+    if (slot.get("capacity") or 0) < min_capacity:
+        ps, pb = _req("PATCH", f"/slots/{slot_id}", token=admin_token,
+                      json_body={"capacity": min_capacity})
+        if ps not in (200, 201):
+            print(f"[seed] warn: slot capacity update returned {ps} {pb}", file=sys.stderr)
+        else:
+            print(f"[seed] slot {slot_id} capacity set to {min_capacity}", file=sys.stderr)
 
 
 def _get_slots(admin_token: str, event_id: str) -> tuple[str, str]:
@@ -216,52 +230,188 @@ def _signup_volunteer(vol: dict, slot_ids: list) -> tuple[int, dict | str]:
     })
 
 
+def _cleanup_cancelled_signups(*emails: str) -> None:
+    """Delete cancelled signups for given emails via test helper endpoint.
+
+    This works around the UNIQUE(volunteer_id, slot_id) constraint so the seed
+    can recreate signups from scratch. Only available when EXPOSE_TOKENS_FOR_TESTING=1.
+    """
+    email_str = ",".join(emails)
+    url = f"{BACKEND_URL}/api/v1/test/seed-cleanup?emails={urllib.parse.quote(email_str)}"
+    req = urllib.request.Request(url, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"[seed] cleaned up cancelled signups for {email_str}", file=sys.stderr)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"[seed] warn: seed-cleanup returned {e.code} {body}", file=sys.stderr)
+
+
+def _reset_event_signups(event_id: str, keep_emails: list[str]) -> None:
+    """Cancel all non-essential signups for the event to free slot capacity.
+
+    Prevents test slot exhaustion from repeated Playwright runs. Keeps only
+    the named seed-volunteer signups (attended and seeded-pending).
+    """
+    keep_str = ",".join(keep_emails)
+    url = (
+        f"{BACKEND_URL}/api/v1/test/event-signups-cleanup"
+        f"?event_id={event_id}&keep_emails={urllib.parse.quote(keep_str)}"
+    )
+    req = urllib.request.Request(url, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            print(
+                f"[seed] cleared test signups for event {event_id} (kept: {keep_str})",
+                file=sys.stderr,
+            )
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"[seed] warn: event-signups-cleanup returned {e.code} {body}", file=sys.stderr)
+
+
+def _find_signup_in_roster(
+    token: str,
+    event_id: str,
+    student_name: str,
+    slot_time_contains: str | None = None,
+) -> dict | None:
+    """Find a roster row by student_name (and optionally slot_time substring).
+
+    Returns the first matching row dict, or None.
+    """
+    rs, roster = _req("GET", f"/events/{event_id}/roster", token=token)
+    if rs != 200 or not isinstance(roster, dict):
+        return None
+    for row in roster.get("rows", []):
+        if row.get("student_name") == student_name:
+            if slot_time_contains is None or slot_time_contains in (row.get("slot_time") or ""):
+                return row
+    return None
+
+
+def _cancel_signup(signup_id: str, organizer_token: str) -> None:
+    """Cancel a signup via organizer cancel endpoint."""
+    cs, cb = _req("POST", f"/signups/{signup_id}/cancel", token=organizer_token)
+    if cs not in (200, 201, 204):
+        print(f"[seed] warn: cancel signup {signup_id} returned {cs} {cb}", file=sys.stderr)
+    else:
+        print(f"[seed] cancelled signup {signup_id}", file=sys.stderr)
+
+
 def _ensure_attended_volunteer(
     admin_token: str,
     organizer_token: str,
+    event_id: str,
     orientation_slot_id: str,
 ) -> None:
-    """Create attended-vol@e2e.test with an attended orientation signup.
+    """Create attended-vol@e2e.example.com with a checked_in orientation signup.
 
-    Idempotent: If 409 (already signed up), tries to check-in existing signup.
+    Flow: public signup (pending) -> confirm via token -> organizer check-in (checked_in).
+    The orientation_service counts both 'attended' and 'checked_in' as having attended.
+
+    Idempotent strategy:
+    1. Check roster — if already checked_in/attended, done.
+    2. If pending/confirmed, advance to checked_in.
+    3. If cancelled (or no signup), clean up cancelled rows first, then create fresh.
     """
+    row = _find_signup_in_roster(admin_token, event_id, "Attended Volunteer")
+    if row is not None:
+        status = row.get("status")
+        signup_id = row["signup_id"]
+
+        if status in ("checked_in", "attended"):
+            print(
+                f"[seed] attended volunteer already has status {status} — skipping",
+                file=sys.stderr,
+            )
+            return
+
+        if status == "confirmed":
+            # Skip straight to check-in
+            cs, cb = _req("POST", f"/signups/{signup_id}/check-in", token=organizer_token)
+            if cs not in (200, 201):
+                print(
+                    f"[seed] warn: check-in for already-confirmed vol returned {cs} {cb}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"[seed] attended volunteer (confirmed) checked in: signup {signup_id}",
+                    file=sys.stderr,
+                )
+            return
+
+        if status == "pending":
+            # Need to confirm first via admin, then check-in.
+            # No raw token available — use admin promote if waitlisted, else resend.
+            # Simplest: resend confirmation email gives no raw token. Instead,
+            # cancel this pending signup, clean up (delete cancelled row), and recreate.
+            _cancel_signup(signup_id, organizer_token)
+            status = "cancelled"
+            # Fall through to cancelled handling below
+
+        if status == "cancelled":
+            # Delete the cancelled row so UNIQUE constraint allows re-signup
+            _cleanup_cancelled_signups(ATTENDED_VOL["email"])
+
+    # Always clean up any residual cancelled rows before re-signing up.
+    # (No-op when there are none — UNIQUE(volunteer_id, slot_id) blocks re-signup.)
+    if row is None:
+        _cleanup_cancelled_signups(ATTENDED_VOL["email"])
+
+    # No existing signup (or just cleaned up) — create fresh
     s, body = _signup_volunteer(ATTENDED_VOL, [orientation_slot_id])
-    if s in (200, 201):
-        signup_id = body["signup_ids"][0]
-        # Check in the signup to create attended status
-        cs, cb = _req("POST", f"/signups/{signup_id}/check-in", token=organizer_token)
-        if cs not in (200, 201):
-            print(f"[seed] warn: check-in for attended vol returned {cs} {cb}", file=sys.stderr)
-        else:
-            print(f"[seed] attended volunteer checked in: signup {signup_id}", file=sys.stderr)
-    elif s == 409:
-        print(f"[seed] attended volunteer already signed up — checking for existing signup",
-              file=sys.stderr)
-        # Find existing signup and check it in
-        sv, sv_body = _req("GET", f"/slots/{orientation_slot_id}", token=admin_token)
-        # Try to find signups for this slot
-        ss, signups = _req("GET", f"/signups/?slot_id={orientation_slot_id}", token=admin_token)
-        if ss == 200 and isinstance(signups, list):
-            for su in signups:
-                if su.get("status") in ("attended", "checked_in"):
-                    print(f"[seed] attended volunteer already has attended status", file=sys.stderr)
-                    return
-                # Check in the first non-cancelled signup
-                if su.get("status") not in ("cancelled",):
-                    cs, _ = _req("POST", f"/signups/{su['id']}/check-in", token=organizer_token)
-                    if cs in (200, 201):
-                        print(f"[seed] checked in existing signup {su['id']}", file=sys.stderr)
-                        return
-    else:
+    if s not in (200, 201):
         print(f"[seed] warn: attended volunteer signup returned {s} {body}", file=sys.stderr)
+        return
+
+    signup_id = body["signup_ids"][0]
+
+    # Step 1: Confirm the signup (pending -> confirmed) so check-in can proceed
+    raw_token = body.get("confirm_token")
+    if raw_token:
+        cs, cb = _req("POST", f"/public/signups/confirm?token={raw_token}")
+        if cs not in (200, 201, 204):
+            print(f"[seed] warn: confirm for attended vol returned {cs} {cb}", file=sys.stderr)
+        else:
+            print(f"[seed] attended volunteer signup confirmed", file=sys.stderr)
+    else:
+        print(
+            "[seed] warn: no confirm_token — EXPOSE_TOKENS_FOR_TESTING must be set",
+            file=sys.stderr,
+        )
+
+    # Step 2: Check in (confirmed -> checked_in)
+    cs, cb = _req("POST", f"/signups/{signup_id}/check-in", token=organizer_token)
+    if cs not in (200, 201):
+        print(f"[seed] warn: check-in for attended vol returned {cs} {cb}", file=sys.stderr)
+    else:
+        print(f"[seed] attended volunteer checked in: signup {signup_id}", file=sys.stderr)
 
 
-def _create_seeded_pending(period_slot_id: str) -> str | None:
-    """Create seeded-pending@e2e.test with a period slot signup and return the confirm token.
+def _create_seeded_pending(
+    organizer_token: str,
+    event_id: str,
+    period_slot_id: str,
+) -> str | None:
+    """Create seeded-pending@e2e.example.com with a period slot signup and return the confirm token.
 
-    Returns None if EXPOSE_TOKENS_FOR_TESTING is not set or signup fails.
-    Idempotent: if 409 (already signed up), returns None (token unavailable).
+    Returns the raw confirm_token if EXPOSE_TOKENS_FOR_TESTING is set, else None.
+    Idempotent: cancels any existing active signup, cleans up cancelled rows, and
+    recreates fresh so Playwright always gets a usable token.
     """
+    row = _find_signup_in_roster(organizer_token, event_id, "Seeded Pending")
+    if row is not None:
+        status = row.get("status")
+        if status not in ("cancelled",):
+            # Cancel the existing signup so we can recreate fresh
+            _cancel_signup(row["signup_id"], organizer_token)
+
+    # Always clean up any cancelled rows before re-signing up.
+    # The UNIQUE(volunteer_id, slot_id) constraint blocks re-signup even for cancelled rows.
+    _cleanup_cancelled_signups(SEEDED_VOL["email"])
+
     s, body = _signup_volunteer(SEEDED_VOL, [period_slot_id])
     if s in (200, 201):
         token = body.get("confirm_token")
@@ -273,12 +423,6 @@ def _create_seeded_pending(period_slot_id: str) -> str | None:
                 file=sys.stderr,
             )
         return token
-    elif s == 409:
-        print(
-            f"[seed] seeded pending volunteer already signed up — confirm_token unavailable this run",
-            file=sys.stderr,
-        )
-        return None
     else:
         print(f"[seed] warn: seeded pending signup returned {s} {body}", file=sys.stderr)
         return None
@@ -293,7 +437,7 @@ def main() -> int:
     except Exception as e:
         print(f"fatal: cannot log in as admin {admin_email}: {e}", file=sys.stderr)
         print(
-            "Ensure the backend seed_admin step ran with SEED_ADMIN_EMAIL=admin@e2e.test "
+            "Ensure the backend seed_admin step ran with SEED_ADMIN_EMAIL=admin@e2e.example.com "
             "SEED_ADMIN_PASSWORD=Admin!2345, or export those vars before running seed_e2e.py",
             file=sys.stderr,
         )
@@ -323,12 +467,21 @@ def main() -> int:
         f"[seed] slots: orientation={orientation_slot_id} period={period_slot_id}",
         file=sys.stderr,
     )
+    _ensure_slot_capacity(admin_token, orientation_slot_id)
+    _ensure_slot_capacity(admin_token, period_slot_id)
+
+    # 5b. Reset extra test signups so slots never fill up from repeated Playwright runs.
+    # Keeps only the two named seed volunteers; cancels everything else.
+    _reset_event_signups(
+        event_id,
+        keep_emails=[ATTENDED_VOL["email"], SEEDED_VOL["email"]],
+    )
 
     # 6. Ensure "attended orientation" volunteer (idempotent)
-    _ensure_attended_volunteer(admin_token, organizer_token, orientation_slot_id)
+    _ensure_attended_volunteer(admin_token, organizer_token, event_id, orientation_slot_id)
 
     # 7. Create "seeded pending" volunteer with a fresh confirm_token
-    confirm_token = _create_seeded_pending(period_slot_id)
+    confirm_token = _create_seeded_pending(organizer_token, event_id, period_slot_id)
 
     out = {
         "event_id": event_id,
