@@ -303,7 +303,14 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    # CHECK constraint enforces exactly one of user_id/volunteer_id set (migration 0010)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    volunteer_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("volunteers.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     # ✅ lock enum name to match Alembic migration
     type = Column(SqlEnum(NotificationType, name="notificationtype"), nullable=False)
@@ -315,6 +322,7 @@ class Notification(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="notifications")
+    volunteer = relationship("Volunteer")
 
 
 # -------------------------
