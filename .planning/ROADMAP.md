@@ -20,7 +20,7 @@ Phase numbering continues from v1.0 (which ended at 07); v1.1 starts at 08.
 - [x] **Phase 10: Public events-by-week browse + signup form** — loginless weekly browse page, signup form with identity fields, orientation soft-warning modal wired to the backend check. (completed 2026-04-10)
 - [ ] **Phase 11: Magic-link manage-my-signup flow** — token-gated page listing a volunteer's signups for an event, per-row cancel + batch cancel, cancel endpoints on the backend.
 - [x] **Phase 12: Retirement pass** — delete student Register/Login/MySignups pages, Phase 4 prereq enforcement router + UI, Phase 7 override UI; update nav, permissions, and tests. (completed 2026-04-10)
-- [ ] **Phase 13: E2E seed + Playwright coverage** — `backend/scripts/seed_e2e.py`, Playwright suite covering browse → signup → confirm → manage, organizer check-in still green.
+- [x] **Phase 13: E2E seed + Playwright coverage** — `backend/scripts/seed_e2e.py`, Playwright suite covering browse → signup → confirm → manage, organizer check-in still green. (completed 2026-04-10)
 
 ## Dependency Graph
 
@@ -84,7 +84,7 @@ Plans:
 5. Phone numbers round-trip as E.164; malformed phones return a 422 with a clear error body.
 **Plans:** 1 plan
 Plans:
-- [ ] 13-01-PLAN.md — Backend token exposure, seed rewrite, 4 Playwright specs (public-signup, orientation-modal, organizer-check-in, admin-smoke), CI wiring
+- [x] 13-01-PLAN.md — Backend token exposure, seed rewrite, 4 Playwright specs (public-signup, orientation-modal, organizer-check-in, admin-smoke), CI wiring
 **Touches (v1.0 surviving code):** magic-link service (v1.0 Phase 02), notifications pipeline (Phase 06), signup status state machine (Phase 03), existing `events`/`slots` routers.
 
 ### Phase 10: Public events-by-week browse + signup form
@@ -184,7 +184,7 @@ Plans:
 3. CI runs the Playwright suite on PRs and fails loudly on regression.
 4. The public signup → confirm → manage → cancel flow is covered by at least one passing E2E.
 5. The organizer check-in flow from v1.0 Phase 03 still has at least one passing E2E after the retirement pass.
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
 - [ ] 13-01-PLAN.md — Backend token exposure, seed rewrite, 4 Playwright specs (public-signup, orientation-modal, organizer-check-in, admin-smoke), CI wiring
 **UI hint:** yes
@@ -199,7 +199,7 @@ Plans:
 | 10. Public events-by-week browse + signup form | 5/4 | Complete   | 2026-04-10 |
 | 11. Magic-link manage-my-signup | 0/1 | Not started | - |
 | 12. Retirement pass | 3/3 | Complete   | 2026-04-10 |
-| 13. E2E seed + Playwright coverage | 0/? | Not started | - |
+| 13. E2E seed + Playwright coverage | 1/1 | Complete   | 2026-04-10 |
 
 ## Coverage
 
