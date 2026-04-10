@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../state/useAuth";
 import {
   PageHeader,
@@ -34,8 +34,7 @@ export default function LoginPage() {
 
   return (
     <div className="mx-auto max-w-sm w-full pt-8">
-      {/* TODO(copy) */}
-      <PageHeader title="Sign in" />
+      <PageHeader title="Organizer / Admin Login" />
 
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
@@ -74,12 +73,6 @@ export default function LoginPage() {
         </Button>
       </form>
 
-      <div className="mt-4 text-center">
-        <Button variant="ghost" as={Link} to="/register">
-          {/* TODO(copy) */}
-          Create an account
-        </Button>
-      </div>
     </div>
   );
 }

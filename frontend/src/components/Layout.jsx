@@ -1,19 +1,10 @@
 // layout.jsx
 import React from "react";
 import { Link, Outlet } from "react-router-dom";
-import { Calendar, ListChecks, User, LayoutDashboard, Shield, ClipboardList } from "lucide-react";
+import { Calendar, User, LayoutDashboard, Shield, ClipboardList } from "lucide-react";
 import { useAuth } from "../state/useAuth";
 import ToastHost from "./ui/Toast";
 import BottomNav from "./ui/BottomNav";
-
-const studentNavItems = [
-  // TODO(copy): bottom-nav labels
-  { to: "/events", label: "Events", icon: <Calendar className="h-5 w-5" /> },
-  // TODO(copy)
-  { to: "/my-signups", label: "My Signups", icon: <ListChecks className="h-5 w-5" /> },
-  // TODO(copy)
-  { to: "/profile", label: "Profile", icon: <User className="h-5 w-5" /> },
-];
 
 const organizerNavItems = [
   // TODO(copy)
@@ -35,8 +26,6 @@ const adminNavItems = [
 
 function navItemsForRole(role) {
   switch (role) {
-    case "participant":
-      return studentNavItems;
     case "organizer":
       return organizerNavItems;
     case "admin":
@@ -72,10 +61,7 @@ export default function Layout() {
                 </button>
               </>
             ) : (
-              <>
-                <Link to="/login">{/* TODO(copy) */}Login</Link>
-                <Link to="/register">{/* TODO(copy) */}Register</Link>
-              </>
+              <Link to="/login">{/* TODO(copy) */}Login</Link>
             )}
           </div>
         </div>
