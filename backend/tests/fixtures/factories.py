@@ -20,6 +20,7 @@ from app.models import (
     Signup,
     SignupStatus,
     Slot,
+    SlotType,
     User,
     UserRole,
 )
@@ -86,6 +87,8 @@ class SlotFactory(SQLAlchemyModelFactory):
     end_time = factory.LazyFunction(lambda: datetime.utcnow() + timedelta(days=1, hours=2))
     capacity = 10
     current_count = 0
+    # Phase 08: new NOT NULL column (D-02); default to period so existing tests continue to work
+    slot_type = SlotType.PERIOD
 
 
 class SignupFactory(SQLAlchemyModelFactory):

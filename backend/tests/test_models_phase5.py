@@ -7,7 +7,8 @@ def test_module_template_columns():
     """ModuleTemplate has all required columns."""
     cols = {c.name for c in ModuleTemplate.__table__.columns}
     expected = {
-        "slug", "name", "prereq_slugs", "default_capacity", "duration_minutes",
+        # Phase 08 (D-05): prerequisite slugs column dropped in migration 0009
+        "slug", "name", "default_capacity", "duration_minutes",
         "materials", "description", "metadata", "deleted_at", "created_at", "updated_at",
     }
     assert expected.issubset(cols), f"Missing columns: {expected - cols}"

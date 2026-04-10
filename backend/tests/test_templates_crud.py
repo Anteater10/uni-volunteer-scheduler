@@ -16,7 +16,7 @@ def _seed_templates(db_session):
     ]:
         existing = db_session.query(models.ModuleTemplate).filter_by(slug=slug).first()
         if not existing:
-            tpl = models.ModuleTemplate(slug=slug, name=name, prereq_slugs=prereqs)
+            tpl = models.ModuleTemplate(slug=slug, name=name)  # Phase 08 (D-05): column dropped
             db_session.add(tpl)
     db_session.flush()
 
@@ -44,7 +44,7 @@ def test_create_template(client, db_session, admin_headers):
         json={
             "slug": "advanced-bio",
             "name": "Advanced Biology",
-            "prereq_slugs": ["intro-bio"],
+            # Phase 08 (D-05): prerequisite slugs field removed
             "default_capacity": 15,
             "duration_minutes": 120,
         },
