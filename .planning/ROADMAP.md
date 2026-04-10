@@ -19,7 +19,7 @@ Phase numbering continues from v1.0 (which ended at 07); v1.1 starts at 08.
 - [ ] **Phase 09: Public signup backend** — volunteer upsert-by-email, signup create/confirm/list endpoints, magic-link issue for `signup_confirm` + `signup_manage` purposes, orientation-attendance DB check.
 - [x] **Phase 10: Public events-by-week browse + signup form** — loginless weekly browse page, signup form with identity fields, orientation soft-warning modal wired to the backend check. (completed 2026-04-10)
 - [ ] **Phase 11: Magic-link manage-my-signup flow** — token-gated page listing a volunteer's signups for an event, per-row cancel + batch cancel, cancel endpoints on the backend.
-- [ ] **Phase 12: Retirement pass** — delete student Register/Login/MySignups pages, Phase 4 prereq enforcement router + UI, Phase 7 override UI; update nav, permissions, and tests.
+- [x] **Phase 12: Retirement pass** — delete student Register/Login/MySignups pages, Phase 4 prereq enforcement router + UI, Phase 7 override UI; update nav, permissions, and tests. (completed 2026-04-10)
 - [ ] **Phase 13: E2E seed + Playwright coverage** — `backend/scripts/seed_e2e.py`, Playwright suite covering browse → signup → confirm → manage, organizer check-in still green.
 
 ## Dependency Graph
@@ -156,11 +156,11 @@ Plans:
 3. The app still boots; public browse, organizer check-in, and admin dashboard all still work end-to-end.
 4. Retired routes are removed from the router entirely (no dead 200-returning routes).
 5. Role-based nav shows organizer/admin users their correct menus; logged-out users see only the public browse.
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 Plans:
 - [x] 12-01-PLAN.md — Backend prereq deletion, dead stub removal, analytics/CCPA reimplementation, test rewrites
 - [x] 12-02-PLAN.md — Frontend page deletions, route/nav cleanup, api.js cleanup, LoginPage edit, role guards, prereq_slugs strip
-- [ ] 12-03-PLAN.md — Full-codebase verification sweep, dead-reference audit, write 12-SUMMARY.md, human verification
+- [x] 12-03-PLAN.md — Full-codebase verification sweep, dead-reference audit, write 12-SUMMARY.md, human verification
 
 **UI hint:** yes
 **Touches (v1.0 surviving code):** `frontend/src/pages/*`, frontend router, `backend/app/routers/*`, permissions module, Phase 07.07 integration tests.
@@ -194,7 +194,7 @@ Plans:
 | 09. Public signup backend | 0/? | Not started | - |
 | 10. Public events-by-week browse + signup form | 5/4 | Complete   | 2026-04-10 |
 | 11. Magic-link manage-my-signup | 0/1 | Not started | - |
-| 12. Retirement pass | 2/3 | In Progress|  |
+| 12. Retirement pass | 3/3 | Complete   | 2026-04-10 |
 | 13. E2E seed + Playwright coverage | 0/? | Not started | - |
 
 ## Coverage
