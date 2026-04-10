@@ -11,11 +11,16 @@ from sqlalchemy.orm import Session
 from app.models import (
     Event,
     ModuleTemplate,
-    PrereqOverride,
     Signup,
     SignupStatus,
     Slot,
 )
+# Phase 08 (D-05): PrereqOverride table dropped in migration 0009.
+# This import guard prevents test collection failure until Phase 12 cleans up the service.
+try:
+    from app.models import PrereqOverride
+except ImportError:
+    PrereqOverride = None  # type: ignore[assignment,misc]
 
 
 def check_missing_prereqs(db: Session, user_id: UUID, module_slug: str) -> list[str]:
