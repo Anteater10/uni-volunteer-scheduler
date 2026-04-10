@@ -1,5 +1,26 @@
 # Uni Volunteer Scheduler
 
+## Current Milestone: v1.1 Account-less realignment
+
+**Goal:** bring the shipped v1.0 code back in line with the original "no accounts — magic link only" product thesis. The v1.0 autonomous run produced a working but drifted implementation that introduced student login/register flows and a complex multi-prereq enforcement system — neither of which were in the original product spec. v1.1 rips those out and replaces them with the email-keyed `Volunteer` model, magic-link signup-confirm/manage flows, and a simple orientation-attendance soft-warning.
+
+**Target features:**
+- Email-keyed `Volunteer` data model (no login/register)
+- Public signup API + email confirmation via magic link
+- Public events-by-week browse page (structured quarter/year/week_number/module/school)
+- Signup form with orientation-warning modal (DB-checked, soft warn only)
+- Magic-link "manage my signup" page (view + self-serve cancel)
+- Retirement of Phase 4 prereq enforcement + Phase 7 override UI
+- Stage 0 latent bug cleanup (enum downgrades, Playwright seed data script)
+
+**Locked decisions** (see `.planning/REQUIREMENTS-v1.1-accountless.md` for full spec):
+1. Identify by email — first signup creates a lightweight `Volunteer` row, later signups attach
+2. One `Signup` row per slot (not per form submission)
+3. `Event` gets structured columns: `quarter`, `year`, `week_number` (start week), `module_slug`, `school`
+4. Each `Slot` has a single `capacity`; no role column on `Signup` (leads-vs-mentors is organizer-side knowledge only)
+
+**Not in this milestone:** Phase 8 deployment, Phase 5.07 LLM CSV extraction (still blocked on real sample from Hung), any new product features beyond the pivot.
+
 ## What This Is
 
 A mobile-first, loginless volunteer scheduler rebuilding SignupGenius for UCSB Sci Trek. UCSB students sign up to teach NGSS science modules to high schoolers; organizers run events and track attendance; admins manage everything. The product's thesis: **check-in is the source of truth**, **deterministic core with AI only where it earns its keep**, and **no accounts** — identity is just email + name + phone verified via magic link.
@@ -123,6 +144,11 @@ Everything else (CSV import, notifications, admin polish) serves that loop.
 | Check-in is source of truth for prereqs | Cleaner than a separate attendance system | Pending |
 | No accounts — magic link only | Loginless thesis; matches user base (one-cycle volunteers) | Pending |
 | Handoff maintainer undecided | Treat as open question; optimize for onboarding-friendliness | Open |
+| v1.0 drifted from no-accounts thesis → v1.1 realigns | Autonomous run introduced student accounts and complex prereq system not in original spec; easier to realign now than maintain two conflicting mental models | Accepted 2026-04-09 |
+| Volunteers identified by email (Q1, Stage 1) | Lets orientation warning do a real DB check instead of a dumb modal | Locked 2026-04-09 |
+| One Signup row per slot (Q2, Stage 1) | Matches SignUpGenius; simpler capacity logic; cancel-all is just UI | Locked 2026-04-09 |
+| Event has structured quarter/year/week_number/module/school columns (Q3, Stage 1) | Week-view browse is one WHERE clause; preserves multi-day date range via start_date/end_date | Locked 2026-04-09 |
+| Slot has single capacity; no role on Signup (Q4, Stage 1) | Leads-vs-mentors is organizer-side knowledge, kept out of DB entirely | Locked 2026-04-09 |
 
 ## Open Questions
 
@@ -152,4 +178,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-08 after initialization*
+*Last updated: 2026-04-09 — v1.1 milestone opened (account-less realignment)*
