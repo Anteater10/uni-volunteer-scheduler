@@ -58,7 +58,10 @@ Retirement (12) deliberately runs after replacements (09–11) so the app is nev
 3. `volunteers` table exists; `signups.volunteer_id` FK is enforced; `signups.user_id` is gone.
 4. A unit test queries events `WHERE quarter = ? AND year = ? AND week_number = ?` and returns the expected rows.
 5. `prereq_overrides` and `module_templates.prereq_slugs` no longer exist in the schema.
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 08-01-PLAN.md — Schema realignment: migration 0009, enum-leak sweep, model/schema updates, phonenumbers dep, retired test cleanup
+
 **Touches (v1.0 surviving code):** `backend/app/models/*`, `backend/alembic/versions/*`, `backend/app/schemas/*`, `alembic/env.py` (VARCHAR(128) widening stays).
 
 ### Phase 09: Public signup backend
@@ -173,7 +176,7 @@ Retirement (12) deliberately runs after replacements (09–11) so the app is nev
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 08. Schema realignment migration | 0/? | Not started | - |
+| 08. Schema realignment migration | 0/1 | Not started | - |
 | 09. Public signup backend | 0/? | Not started | - |
 | 10. Public events-by-week browse + signup form | 0/? | Not started | - |
 | 11. Magic-link manage-my-signup | 0/? | Not started | - |
