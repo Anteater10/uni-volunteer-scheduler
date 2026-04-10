@@ -1,4 +1,8 @@
-"""Plan 02-03: Magic-link service unit tests."""
+"""Plan 02-03: Magic-link service unit tests.
+
+Phase 09: Rewired — SignupFactory now uses volunteer_id (D-01).
+Skipped tests updated to use signup.volunteer.email instead of signup.user.email.
+"""
 import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
@@ -11,15 +15,15 @@ from app.magic_link_service import (
 )
 from app.models import MagicLinkToken, SignupStatus
 from tests.fixtures.helpers import make_event_with_slot, make_user, _bind_factories
-from tests.fixtures.factories import SignupFactory
+from tests.fixtures.factories import SignupFactory, VolunteerFactory
 
 
 def _make_pending_signup(db_session, email="svc@example.com"):
-    user = make_user(db_session, email=email)
-    event, slot = make_event_with_slot(db_session, capacity=5, owner=user)
     _bind_factories(db_session)
+    volunteer = VolunteerFactory(email=email, first_name="Svc", last_name="Vol")
+    event, slot = make_event_with_slot(db_session, capacity=5)
     signup = SignupFactory(
-        user=user,
+        volunteer=volunteer,
         slot=slot,
         status=SignupStatus.pending,
         timestamp=datetime.now(timezone.utc),
@@ -28,10 +32,9 @@ def _make_pending_signup(db_session, email="svc@example.com"):
     return signup, event, slot
 
 
-@pytest.mark.skip(reason="Phase 08: signup.user removed; Phase 09 will update this test")
 def test_issue_token_returns_raw_stores_hash(db_session):
     signup, event, slot = _make_pending_signup(db_session, "issue1@example.com")
-    raw = issue_token(db_session, signup, signup.user.email)
+    raw = issue_token(db_session, signup, signup.volunteer.email)
     assert isinstance(raw, str)
     assert len(raw) > 20
     row = db_session.query(MagicLinkToken).first()
@@ -39,29 +42,26 @@ def test_issue_token_returns_raw_stores_hash(db_session):
     assert row.token_hash != raw  # hash != raw
 
 
-@pytest.mark.skip(reason="Phase 08: signup.user removed; Phase 09 will update this test")
 def test_consume_token_ok_flips_to_confirmed(db_session):
     signup, event, slot = _make_pending_signup(db_session, "consume1@example.com")
-    raw = issue_token(db_session, signup, signup.user.email)
+    raw = issue_token(db_session, signup, signup.volunteer.email)
     result, returned_signup = consume_token(db_session, raw)
     assert result == ConsumeResult.ok
     assert returned_signup.status == SignupStatus.confirmed
 
 
-@pytest.mark.skip(reason="Phase 08: signup.user removed; Phase 09 will update this test")
 def test_consume_token_used_on_second_call(db_session):
     signup, event, slot = _make_pending_signup(db_session, "consume2@example.com")
-    raw = issue_token(db_session, signup, signup.user.email)
+    raw = issue_token(db_session, signup, signup.volunteer.email)
     consume_token(db_session, raw)
     result, returned_signup = consume_token(db_session, raw)
     assert result == ConsumeResult.used
     assert returned_signup is None
 
 
-@pytest.mark.skip(reason="Phase 08: signup.user removed; Phase 09 will update this test")
 def test_consume_token_expired(db_session):
     signup, event, slot = _make_pending_signup(db_session, "expired@example.com")
-    raw = issue_token(db_session, signup, signup.user.email)
+    raw = issue_token(db_session, signup, signup.volunteer.email)
     # Manually expire the token
     row = db_session.query(MagicLinkToken).first()
     row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -77,10 +77,9 @@ def test_consume_token_not_found(db_session):
     assert returned_signup is None
 
 
-@pytest.mark.skip(reason="Phase 08: signup.user removed; Phase 09 will update this test")
 def test_consume_token_cancelled_signup(db_session):
     signup, event, slot = _make_pending_signup(db_session, "cancelled@example.com")
-    raw = issue_token(db_session, signup, signup.user.email)
+    raw = issue_token(db_session, signup, signup.volunteer.email)
     signup.status = SignupStatus.cancelled
     db_session.flush()
     result, returned_signup = consume_token(db_session, raw)

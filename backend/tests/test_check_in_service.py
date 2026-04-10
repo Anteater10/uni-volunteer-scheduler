@@ -1,9 +1,8 @@
 """Tests for the check-in state machine service layer.
 
-Phase 08 (D-06): check-in service uses Signup via user; Phase 09 will rewire.
+Phase 09: Rewired — Signup now uses volunteer_id (D-01).
 """
 import pytest
-pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
 
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -14,7 +13,9 @@ from app.models import (
     Signup,
     SignupStatus,
     Slot,
+    SlotType,
     User,
+    Volunteer,
 )
 from app.services.check_in_service import (
     ALLOWED_TRANSITIONS,
@@ -43,10 +44,22 @@ def _make_user(db, **kwargs):
     return user
 
 
-def _make_event_slot_signup(db, *, venue_code=None, slot_start=None, status=SignupStatus.confirmed, user=None):
-    """Helper: create user + event + slot + signup."""
-    if user is None:
-        user = _make_user(db)
+def _make_volunteer(db, email=None):
+    v = Volunteer(
+        id=uuid.uuid4(),
+        email=email or f"vol-{uuid.uuid4().hex[:8]}@example.com",
+        first_name="Test",
+        last_name="Vol",
+    )
+    db.add(v)
+    db.flush()
+    return v
+
+
+def _make_event_slot_signup(db, *, venue_code=None, slot_start=None, status=SignupStatus.confirmed, volunteer=None):
+    """Helper: create volunteer + event + slot + signup."""
+    if volunteer is None:
+        volunteer = _make_volunteer(db)
     owner = _make_user(db, role="organizer")
     now = datetime.now(timezone.utc)
     event = Event(
@@ -67,26 +80,27 @@ def _make_event_slot_signup(db, *, venue_code=None, slot_start=None, status=Sign
         start_time=start,
         end_time=start + timedelta(hours=2),
         capacity=10,
+        slot_type=SlotType.PERIOD,
     )
     db.add(slot)
     db.flush()
 
     signup = Signup(
         id=uuid.uuid4(),
-        user_id=user.id,
+        volunteer_id=volunteer.id,
         slot_id=slot.id,
         status=status,
     )
     db.add(signup)
     db.flush()
 
-    return user, owner, event, slot, signup
+    return volunteer, owner, event, slot, signup
 
 
 class TestCheckInSignupHappyPath:
     def test_organizer_check_in(self, db_session):
         """Organizer check-in: confirmed -> checked_in, audit log written."""
-        user, owner, event, slot, signup = _make_event_slot_signup(db_session)
+        volunteer, owner, event, slot, signup = _make_event_slot_signup(db_session)
 
         result = check_in_signup(db_session, signup.id, owner.id, via="organizer")
 
@@ -106,7 +120,7 @@ class TestCheckInSignupHappyPath:
 class TestIdempotentRepeat:
     def test_repeat_check_in_no_duplicate_audit(self, db_session):
         """Repeat check_in_signup on same signup: only ONE audit log row."""
-        user, owner, event, slot, signup = _make_event_slot_signup(db_session)
+        volunteer, owner, event, slot, signup = _make_event_slot_signup(db_session)
 
         check_in_signup(db_session, signup.id, owner.id)
         result = check_in_signup(db_session, signup.id, owner.id)
@@ -123,7 +137,7 @@ class TestIdempotentRepeat:
 class TestInvalidTransition:
     def test_attended_to_checked_in_raises(self, db_session):
         """Attempt attended -> checked_in raises InvalidTransitionError."""
-        user, owner, event, slot, signup = _make_event_slot_signup(
+        volunteer, owner, event, slot, signup = _make_event_slot_signup(
             db_session, status=SignupStatus.confirmed
         )
         # First get to checked_in, then attended
@@ -138,12 +152,12 @@ class TestSelfCheckIn:
     def test_inside_window(self, db_session):
         """Self check-in at slot_start with correct venue code succeeds."""
         slot_start = datetime.now(timezone.utc) + timedelta(hours=1)
-        user, owner, event, slot, signup = _make_event_slot_signup(
+        volunteer, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
 
         result = self_check_in(
-            db_session, event.id, signup.id, "1234", user.id, now=slot_start
+            db_session, event.id, signup.id, "1234", owner.id, now=slot_start
         )
 
         assert result.status == SignupStatus.checked_in
@@ -157,39 +171,39 @@ class TestSelfCheckIn:
     def test_before_window_raises(self, db_session):
         """Self check-in 20 min before slot -> CheckInWindowError."""
         slot_start = datetime.now(timezone.utc) + timedelta(hours=1)
-        user, owner, event, slot, signup = _make_event_slot_signup(
+        volunteer, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
 
         too_early = slot_start - timedelta(minutes=20)
         with pytest.raises(CheckInWindowError):
             self_check_in(
-                db_session, event.id, signup.id, "1234", user.id, now=too_early
+                db_session, event.id, signup.id, "1234", owner.id, now=too_early
             )
 
     def test_after_window_raises(self, db_session):
         """Self check-in 45 min after slot -> CheckInWindowError."""
         slot_start = datetime.now(timezone.utc) + timedelta(hours=1)
-        user, owner, event, slot, signup = _make_event_slot_signup(
+        volunteer, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
 
         too_late = slot_start + timedelta(minutes=45)
         with pytest.raises(CheckInWindowError):
             self_check_in(
-                db_session, event.id, signup.id, "1234", user.id, now=too_late
+                db_session, event.id, signup.id, "1234", owner.id, now=too_late
             )
 
     def test_wrong_venue_code_raises(self, db_session):
         """Wrong venue code -> VenueCodeError."""
         slot_start = datetime.now(timezone.utc) + timedelta(hours=1)
-        user, owner, event, slot, signup = _make_event_slot_signup(
+        volunteer, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
 
         with pytest.raises(VenueCodeError):
             self_check_in(
-                db_session, event.id, signup.id, "9999", user.id, now=slot_start
+                db_session, event.id, signup.id, "9999", owner.id, now=slot_start
             )
 
 
@@ -214,16 +228,17 @@ class TestResolveEvent:
             start_time=now,
             end_time=now + timedelta(hours=2),
             capacity=10,
+            slot_type=SlotType.PERIOD,
         )
         db_session.add(slot)
         db_session.flush()
 
         signups = []
-        for _ in range(3):
-            user = _make_user(db_session)
+        for i in range(3):
+            vol = _make_volunteer(db_session, email=f"rv-{i}-{uuid.uuid4().hex[:6]}@example.com")
             s = Signup(
                 id=uuid.uuid4(),
-                user_id=user.id,
+                volunteer_id=vol.id,
                 slot_id=slot.id,
                 status=SignupStatus.checked_in,
             )
@@ -267,23 +282,24 @@ class TestResolveEvent:
             start_time=now,
             end_time=now + timedelta(hours=2),
             capacity=10,
+            slot_type=SlotType.PERIOD,
         )
         db_session.add(slot)
         db_session.flush()
 
-        user1 = _make_user(db_session)
+        vol1 = _make_volunteer(db_session)
         s1 = Signup(
             id=uuid.uuid4(),
-            user_id=user1.id,
+            volunteer_id=vol1.id,
             slot_id=slot.id,
             status=SignupStatus.attended,  # Already attended — invalid to transition again
         )
         db_session.add(s1)
 
-        user2 = _make_user(db_session)
+        vol2 = _make_volunteer(db_session)
         s2 = Signup(
             id=uuid.uuid4(),
-            user_id=user2.id,
+            volunteer_id=vol2.id,
             slot_id=slot.id,
             status=SignupStatus.checked_in,
         )

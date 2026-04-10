@@ -1,23 +1,37 @@
 """Tests for check-in HTTP endpoints (Phase 3).
 
-Phase 08 (D-06): check-in endpoints use Signup via user_id; Phase 09 will rewire.
+Phase 09: Rewired — Signup now uses volunteer_id (D-01). All Signup(..., user_id=...)
+replaced with Signup(..., volunteer_id=...) via a local _make_volunteer() helper.
 """
 import pytest
-pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+import uuid
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from tests.fixtures.helpers import auth_headers, make_event_with_slot, make_user
 
-from app.models import AuditLog, Event, Signup, SignupStatus, Slot, UserRole
+from app.models import AuditLog, Event, Signup, SignupStatus, Slot, SlotType, UserRole, Volunteer
+
+
+def _make_volunteer(db_session, email=None):
+    """Create a Volunteer row for use in Signup."""
+    v = Volunteer(
+        id=uuid.uuid4(),
+        email=email or f"vol-{uuid.uuid4().hex[:8]}@example.com",
+        first_name="Test",
+        last_name="Vol",
+    )
+    db_session.add(v)
+    db_session.flush()
+    return v
 
 
 class TestOrganizerCheckIn:
     def test_happy_path(self, client, db_session):
         organizer = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=organizer)
-        participant = make_user(db_session)
-        signup = Signup(user_id=participant.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
         db_session.add(signup)
         db_session.flush()
 
@@ -29,8 +43,8 @@ class TestOrganizerCheckIn:
     def test_idempotent_repeat(self, client, db_session):
         organizer = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=organizer)
-        participant = make_user(db_session)
-        signup = Signup(user_id=participant.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
         db_session.add(signup)
         db_session.flush()
 
@@ -49,15 +63,14 @@ class TestOrganizerCheckIn:
     def test_not_found(self, client, db_session):
         organizer = make_user(db_session, role=UserRole.organizer)
         headers = auth_headers(client, organizer)
-        import uuid
         resp = client.post(f"/api/v1/signups/{uuid.uuid4()}/check-in", headers=headers)
         assert resp.status_code == 404
 
     def test_cancelled_signup_409(self, client, db_session):
         organizer = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=organizer)
-        participant = make_user(db_session)
-        signup = Signup(user_id=participant.id, slot_id=slot.id, status=SignupStatus.cancelled)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.cancelled)
         db_session.add(signup)
         db_session.flush()
 
@@ -74,8 +87,8 @@ class TestSelfCheckIn:
         event.venue_code = "1234"
         db_session.flush()
 
-        participant = make_user(db_session)
-        signup = Signup(user_id=participant.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
         db_session.add(signup)
         db_session.flush()
 
@@ -93,8 +106,8 @@ class TestSelfCheckIn:
         event.venue_code = "1234"
         db_session.flush()
 
-        participant = make_user(db_session)
-        signup = Signup(user_id=participant.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
         db_session.add(signup)
         db_session.flush()
 
@@ -124,12 +137,13 @@ class TestSelfCheckIn:
             start_time=now,  # starts now, so we're within the window
             end_time=now + timedelta(hours=2),
             capacity=10,
+            slot_type=SlotType.PERIOD,
         )
         db_session.add(slot)
         db_session.flush()
 
-        participant = make_user(db_session)
-        signup = Signup(user_id=participant.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
         db_session.add(signup)
         db_session.flush()
 
@@ -147,9 +161,9 @@ class TestResolveEndpoint:
         event, slot = make_event_with_slot(db_session, owner=organizer, capacity=5)
 
         signups = []
-        for _ in range(3):
-            p = make_user(db_session)
-            s = Signup(user_id=p.id, slot_id=slot.id, status=SignupStatus.checked_in)
+        for i in range(3):
+            vol = _make_volunteer(db_session, email=f"rh-{i}-{uuid.uuid4().hex[:6]}@example.com")
+            s = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.checked_in)
             db_session.add(s)
             signups.append(s)
         db_session.flush()
@@ -172,8 +186,8 @@ class TestResolveEndpoint:
         organizer = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=organizer)
 
-        p = make_user(db_session)
-        s = Signup(user_id=p.id, slot_id=slot.id, status=SignupStatus.attended)
+        vol = _make_volunteer(db_session)
+        s = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.attended)
         db_session.add(s)
         db_session.flush()
 

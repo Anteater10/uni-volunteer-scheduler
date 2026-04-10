@@ -14,7 +14,6 @@ through Celery — freezegun pins ``datetime.now`` inside the task body.
 Phase 08 (D-06): Uses SignupFactory which requires Signup.user_id; Phase 09 will rewire.
 """
 import pytest
-pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
 
 from datetime import datetime, timedelta, timezone
 from freezegun import freeze_time
@@ -23,6 +22,7 @@ from app import celery_app as celery_mod
 from app import models
 from app.celery_app import send_reminders_24h, send_reminders_1h, send_email_notification
 from tests.fixtures.factories import SignupFactory
+from tests.fixtures.factories import VolunteerFactory
 from tests.fixtures.helpers import _bind_factories, make_event_with_slot, make_user
 
 
@@ -50,18 +50,21 @@ def patch_session_local(db_session, monkeypatch):
 
 def _seed_confirmed_signup(db_session, *, start_time, reminder_sent=False, email_tag=""):
     owner = make_user(db_session, email=f"owner_rem{email_tag}@example.com")
-    user = make_user(db_session, email=f"user_rem{email_tag}@example.com")
     _bind_factories(db_session)
+    volunteer = VolunteerFactory(
+        email=f"vol_rem{email_tag}@example.com",
+        first_name="Vol",
+        last_name=f"Rem{email_tag}",
+    )
     event, slot = make_event_with_slot(db_session, capacity=5, owner=owner)
     # Override slot start_time to the caller-specified instant
     slot.start_time = start_time
     slot.end_time = start_time + timedelta(hours=1)
     db_session.flush()
     s = SignupFactory(
-        user=user,
+        volunteer=volunteer,
         slot=slot,
         status=models.SignupStatus.confirmed,
-        reminder_sent=reminder_sent,
     )
     db_session.flush()
     return s

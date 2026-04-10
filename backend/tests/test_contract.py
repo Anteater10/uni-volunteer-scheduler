@@ -16,21 +16,9 @@ from tests.fixtures.helpers import (
 # ------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
-def test_createSignup_trailing_slash(client, db_session):
-    """POST '/signups/' (trailing slash) must be a direct 2xx — not a 307."""
-    user = make_user(db_session, email="signer@example.com")
-    event, slot = make_event_with_slot(db_session, capacity=1, owner=user)
-    db_session.commit()
-
-    headers = auth_headers(client, user)
-    resp = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(slot.id)},
-        headers=headers,
-    )
-    assert resp.status_code != 307, "trailing-slash POST should not redirect"
-    assert 200 <= resp.status_code < 300, resp.text
+# Phase 09 (D-10): test_createSignup_trailing_slash DELETED.
+# POST /api/v1/signups/ removed in Phase 09 (account-less pivot).
+# Public signup is now at POST /api/v1/public/signups.
 
 
 def test_updateEvent_accepts_put(client, db_session):
@@ -132,14 +120,13 @@ def test_error_response_shape(client, db_session):
     _assert_error_shape(body1)
     assert body1["code"] == "AUTH_REFRESH_INVALID"
 
-    # b) signups router — 404 on non-existent slot
+    # b) events router — 404 on non-existent event (Phase 09: old POST /signups/ deleted D-10)
     user = make_user(db_session, email="shaper@example.com")
     db_session.commit()
     headers = auth_headers(client, user)
 
-    r2 = client.post(
-        "/api/v1/signups/",
-        json={"slot_id": str(uuid.uuid4())},
+    r2 = client.get(
+        f"/api/v1/events/{uuid.uuid4()}",
         headers=headers,
     )
     assert r2.status_code == 404

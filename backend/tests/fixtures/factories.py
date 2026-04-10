@@ -23,6 +23,7 @@ from app.models import (
     SlotType,
     User,
     UserRole,
+    Volunteer,
 )
 
 
@@ -91,14 +92,29 @@ class SlotFactory(SQLAlchemyModelFactory):
     slot_type = SlotType.PERIOD
 
 
+class VolunteerFactory(SQLAlchemyModelFactory):
+    """Phase 09: Volunteer factory — used by SignupFactory and test helpers."""
+
+    class Meta:
+        model = Volunteer
+        sqlalchemy_session_persistence = "flush"
+
+    id = factory.LazyFunction(uuid.uuid4)
+    email = factory.Sequence(lambda n: f"volunteer{n}@example.com")
+    first_name = factory.Sequence(lambda n: f"First{n}")
+    last_name = factory.Sequence(lambda n: f"Last{n}")
+    phone_e164 = None
+
+
 class SignupFactory(SQLAlchemyModelFactory):
     class Meta:
         model = Signup
         sqlalchemy_session_persistence = "flush"
 
     id = factory.LazyFunction(uuid.uuid4)
-    user = factory.SubFactory(UserFactory)
-    user_id = factory.LazyAttribute(lambda o: o.user.id)
+    # Phase 09: Signup keyed to Volunteer, not User (D-01).
+    volunteer = factory.SubFactory(VolunteerFactory)
+    volunteer_id = factory.LazyAttribute(lambda o: o.volunteer.id)
     slot = factory.SubFactory(SlotFactory)
     slot_id = factory.LazyAttribute(lambda o: o.slot.id)
     status = SignupStatus.confirmed

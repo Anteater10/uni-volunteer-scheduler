@@ -132,7 +132,7 @@ def test_audit_logs_csv_export(client, db_session):
 
 
 @pytest.mark.integration
-@pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+@pytest.mark.skip(reason="Phase 09 (D-05): analytics_volunteer_hours stubbed 501; Phase 12 will implement")
 def test_analytics_volunteer_hours_shape(client, db_session):
     """Volunteer hours endpoint returns list of objects with expected fields."""
     admin = _make_admin(db_session, email="a_vhours@example.com")
@@ -160,7 +160,7 @@ def test_analytics_attendance_rates_shape(client, db_session):
 
 
 @pytest.mark.integration
-@pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+@pytest.mark.skip(reason="Phase 09: ccpa_export returns signups=[] stub; Phase 12 will implement signups via Volunteer FK")
 def test_ccpa_export_returns_user_data(client, db_session):
     """CCPA export returns all user data sections."""
     admin = _make_admin(db_session, email="a_ccpaexp@example.com")
@@ -213,7 +213,7 @@ def test_ccpa_delete_anonymizes_pii(client, db_session):
 
 
 @pytest.mark.integration
-@pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+@pytest.mark.skip(reason="Phase 09 (D-10): old POST /api/v1/signups/ deleted; test requires public signup flow rewrite in Phase 12")
 def test_ccpa_delete_preserves_signups(client, db_session):
     """CCPA delete preserves signup rows for analytics integrity."""
     admin = _make_admin(db_session, email="a_ccpakeep@example.com")

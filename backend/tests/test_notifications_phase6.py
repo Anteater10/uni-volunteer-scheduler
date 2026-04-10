@@ -3,17 +3,15 @@
 Proves:
 1. Double-run of send_reminders_24h produces exactly 1 send per signup
 2. Double-run of send_reminders_1h produces exactly 1 send per signup
-3. Cancellation dispatches task with kind='cancellation'
+3. 1h reminder respects Event.reminder_1h_enabled toggle
 4. Slot reschedule invalidates old reminder rows and resets sent_at
 5. Daily send limit blocks further sends when exceeded
-
-Phase 08 (D-06): These tests use SignupFactory which requires Signup.user_id; Phase 09 will rewire.
 6. send_email_notification dedup prevents double-send for same (signup, kind)
 
-All tests mock the email provider (no real emails). Real DB with savepoint isolation.
+Phase 09: Rewired — SignupFactory now uses volunteer_id (D-01).
+All mocked email provider (no real emails). Real DB with savepoint isolation.
 """
 import pytest
-pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
@@ -30,7 +28,7 @@ from app.celery_app import (
     send_email_notification,
     _dedup_insert,
 )
-from tests.fixtures.factories import SignupFactory
+from tests.fixtures.factories import SignupFactory, VolunteerFactory
 from tests.fixtures.helpers import _bind_factories, make_event_with_slot, make_user
 
 
@@ -58,15 +56,19 @@ def patch_session_local(db_session, monkeypatch):
 def _seed_confirmed_signup(db_session, *, start_time, email_tag="", reminder_1h_enabled=True):
     """Create a confirmed signup with a slot starting at the given time."""
     owner = make_user(db_session, email=f"owner_n{email_tag}@example.com")
-    user = make_user(db_session, email=f"user_n{email_tag}@example.com")
     _bind_factories(db_session)
+    volunteer = VolunteerFactory(
+        email=f"vol_n{email_tag}@example.com",
+        first_name="Vol",
+        last_name=f"N{email_tag}",
+    )
     event, slot = make_event_with_slot(db_session, capacity=5, owner=owner)
     slot.start_time = start_time
     slot.end_time = start_time + timedelta(hours=1)
     event.reminder_1h_enabled = reminder_1h_enabled
     db_session.flush()
     s = SignupFactory(
-        user=user,
+        volunteer=volunteer,
         slot=slot,
         status=models.SignupStatus.confirmed,
     )
@@ -240,12 +242,8 @@ def test_daily_limit_blocks_sends(client, db_session, monkeypatch, patch_session
     )
 
     with freeze_time(now):
-        # Call send_email_notification directly (not via delay, since eager mode)
-        send_email_notification(
-            str(signup.user_id),
-            "Test subject",
-            "Test body",
-        )
+        # Call kind-based path (volunteer-backed); daily limit check fires first
+        send_email_notification(signup_id=str(signup.id), kind="cancellation")
 
     # Should have been blocked by daily limit
     assert len(send_calls) == 0

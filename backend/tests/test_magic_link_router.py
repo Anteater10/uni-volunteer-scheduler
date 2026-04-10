@@ -1,9 +1,8 @@
 """Plan 02-03: Magic-link router integration tests.
 
-Phase 08 (D-06): Uses Signup via user_id; Phase 09 will rewire.
+Phase 09: Rewired — Signup now uses volunteer_id (D-01).
 """
 import pytest
-pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
@@ -11,26 +10,26 @@ from unittest.mock import MagicMock
 from app.magic_link_service import issue_token, _hash_token
 from app.models import MagicLinkToken, SignupStatus
 from tests.fixtures.helpers import make_event_with_slot, make_user, _bind_factories
-from tests.fixtures.factories import SignupFactory
+from tests.fixtures.factories import SignupFactory, VolunteerFactory
 
 
 def _make_pending_signup(db_session, email="router@example.com"):
-    user = make_user(db_session, email=email)
-    event, slot = make_event_with_slot(db_session, capacity=5, owner=user)
     _bind_factories(db_session)
+    volunteer = VolunteerFactory(email=email, first_name="Router", last_name="Vol")
+    event, slot = make_event_with_slot(db_session, capacity=5)
     signup = SignupFactory(
-        user=user,
+        volunteer=volunteer,
         slot=slot,
         status=SignupStatus.pending,
         timestamp=datetime.now(timezone.utc),
     )
     db_session.flush()
-    return signup, event, slot, user
+    return signup, event, slot, volunteer
 
 
 def test_consume_valid_token_redirects_to_confirmed(client, db_session, monkeypatch):
-    signup, event, slot, user = _make_pending_signup(db_session, "valid1@example.com")
-    raw = issue_token(db_session, signup, user.email)
+    signup, event, slot, volunteer = _make_pending_signup(db_session, "valid1@example.com")
+    raw = issue_token(db_session, signup, volunteer.email)
     db_session.commit()
 
     resp = client.get(f"/api/v1/auth/magic/{raw}", follow_redirects=False)
@@ -45,8 +44,8 @@ def test_consume_valid_token_redirects_to_confirmed(client, db_session, monkeypa
 
 
 def test_consume_expired_token_redirects_with_reason(client, db_session):
-    signup, event, slot, user = _make_pending_signup(db_session, "expired1@example.com")
-    raw = issue_token(db_session, signup, user.email)
+    signup, event, slot, volunteer = _make_pending_signup(db_session, "expired1@example.com")
+    raw = issue_token(db_session, signup, volunteer.email)
     # Expire the token
     row = db_session.query(MagicLinkToken).first()
     row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -59,8 +58,8 @@ def test_consume_expired_token_redirects_with_reason(client, db_session):
 
 
 def test_consume_used_token_redirects_with_reason(client, db_session):
-    signup, event, slot, user = _make_pending_signup(db_session, "used1@example.com")
-    raw = issue_token(db_session, signup, user.email)
+    signup, event, slot, volunteer = _make_pending_signup(db_session, "used1@example.com")
+    raw = issue_token(db_session, signup, volunteer.email)
     db_session.commit()
 
     # First consume
@@ -81,7 +80,7 @@ def test_consume_unknown_token_redirects_not_found(client, db_session):
 
 
 def test_resend_returns_200_on_valid_request(client, db_session, monkeypatch):
-    signup, event, slot, user = _make_pending_signup(db_session, "resend1@example.com")
+    signup, event, slot, volunteer = _make_pending_signup(db_session, "resend1@example.com")
     db_session.commit()
 
     # Mock Redis for rate limiting
@@ -119,7 +118,7 @@ def test_resend_returns_200_for_unknown_email(client, db_session, monkeypatch):
 
 
 def test_resend_rate_limited_returns_429(client, db_session, monkeypatch):
-    signup, event, slot, user = _make_pending_signup(db_session, "ratelim@example.com")
+    signup, event, slot, volunteer = _make_pending_signup(db_session, "ratelim@example.com")
     db_session.commit()
 
     # Mock Redis to indicate rate limit exceeded

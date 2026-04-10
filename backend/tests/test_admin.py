@@ -50,7 +50,6 @@ def test_admin_create_user(client, db_session):
     assert created is not None
 
 
-@pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
 def test_admin_delete_user(client, db_session):
     admin = _make_admin(db_session, email="admin_del@example.com")
     target = make_user(db_session, email="todelete@example.com")
@@ -64,7 +63,7 @@ def test_admin_delete_user(client, db_session):
     assert gone is None
 
 
-@pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+@pytest.mark.skip(reason="Phase 09 (D-10): old POST /api/v1/signups/ endpoint deleted; test requires rewrite for public signup flow in Phase 12")
 def test_admin_cancel_signup_promotes_waitlist(client, db_session):
     """Same canonical assertion as test_signups — proves admin path uses promote_waitlist_fifo."""
     admin = _make_admin(db_session, email="admin_pf@example.com")

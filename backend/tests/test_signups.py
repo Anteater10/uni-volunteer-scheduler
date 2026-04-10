@@ -9,7 +9,7 @@ Locks:
 Phase 08 (D-06): signup router still references Signup.user_id; Phase 09 will fix.
 """
 import pytest
-pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+pytestmark = pytest.mark.skip(reason="Phase 09 (D-10): old POST /api/v1/signups/ endpoint deleted (account-less pivot). Rewrite for public signup flow in Phase 12.")
 
 from datetime import datetime, timedelta, timezone
 

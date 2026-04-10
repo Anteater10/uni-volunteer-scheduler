@@ -4,10 +4,9 @@ Proves that SELECT ... FOR UPDATE plus the idempotency branch results in
 exactly ONE audit log row when two clients race to check in the same signup.
 Uses real Postgres (not SQLite) with separate DB sessions per thread.
 
-Phase 08 (D-06): check-in uses Signup.user_id; Phase 09 will rewire.
+Phase 09: Rewired — Signup now uses volunteer_id (D-01).
 """
 import pytest
-pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
 
 import os
 import uuid
@@ -19,7 +18,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import Base
-from app.models import AuditLog, Event, Signup, SignupStatus, Slot, User
+from app.models import AuditLog, Event, Signup, SignupStatus, Slot, SlotType, User, Volunteer
 from app.services.check_in_service import check_in_signup, self_check_in
 
 TEST_DATABASE_URL = os.environ.get(
@@ -56,13 +55,14 @@ def _create_test_data(engine, venue_code="1234"):
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()
     try:
-        user = User(
+        # Phase 09: Signup keyed to Volunteer, not User (D-01)
+        volunteer = Volunteer(
             id=uuid.uuid4(),
-            name="Concurrent User",
             email=f"concurrent-{uuid.uuid4().hex[:8]}@example.com",
-            hashed_password="fakehash",
+            first_name="Concurrent",
+            last_name="Vol",
         )
-        session.add(user)
+        session.add(volunteer)
         session.flush()
 
         organizer = User(
@@ -93,13 +93,14 @@ def _create_test_data(engine, venue_code="1234"):
             start_time=now,
             end_time=now + timedelta(hours=2),
             capacity=10,
+            slot_type=SlotType.PERIOD,
         )
         session.add(slot)
         session.flush()
 
         signup = Signup(
             id=uuid.uuid4(),
-            user_id=user.id,
+            volunteer_id=volunteer.id,
             slot_id=slot.id,
             status=SignupStatus.confirmed,
         )
@@ -107,7 +108,7 @@ def _create_test_data(engine, venue_code="1234"):
         session.commit()
 
         return {
-            "user_id": user.id,
+            "volunteer_id": volunteer.id,
             "organizer_id": organizer.id,
             "event_id": event.id,
             "slot_id": slot.id,
@@ -139,9 +140,14 @@ def _cleanup_test_data(engine, data):
             text("DELETE FROM events WHERE id = :sid"),
             {"sid": str(data["event_id"])},
         )
+        # Phase 09: delete volunteer instead of user (D-01)
         session.execute(
-            text("DELETE FROM users WHERE id IN (:u1, :u2)"),
-            {"u1": str(data["user_id"]), "u2": str(data["organizer_id"])},
+            text("DELETE FROM volunteers WHERE id = :v1"),
+            {"v1": str(data["volunteer_id"])},
+        )
+        session.execute(
+            text("DELETE FROM users WHERE id = :u2"),
+            {"u2": str(data["organizer_id"])},
         )
         session.commit()
     finally:
@@ -196,7 +202,7 @@ class TestConcurrentCheckIn:
                         data["event_id"],
                         data["signup_id"],
                         "1234",
-                        data["user_id"],
+                        data["organizer_id"],
                     )
                     session.commit()
                     results[1] = signup.status.value

@@ -9,12 +9,13 @@ from .factories import (
     SignupFactory,
     SlotFactory,
     UserFactory,
+    VolunteerFactory,
 )
 
 
 def _bind_factories(db_session):
     """Attach all factories to the given SQLAlchemy session."""
-    for factory in (UserFactory, EventFactory, SlotFactory, SignupFactory):
+    for factory in (UserFactory, EventFactory, SlotFactory, VolunteerFactory, SignupFactory):
         factory._meta.sqlalchemy_session = db_session
 
 

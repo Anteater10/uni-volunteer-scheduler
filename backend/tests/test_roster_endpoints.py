@@ -1,17 +1,29 @@
 """Tests for GET /events/{event_id}/roster endpoint."""
 import pytest
+import uuid
 from tests.fixtures.helpers import auth_headers, make_event_with_slot, make_user
 
-from app.models import Signup, SignupStatus, UserRole
+from app.models import Signup, SignupStatus, UserRole, Volunteer
+
+
+def _make_volunteer(db_session, email=None):
+    v = Volunteer(
+        id=uuid.uuid4(),
+        email=email or f"vol-{uuid.uuid4().hex[:8]}@example.com",
+        first_name="Test",
+        last_name="Vol",
+    )
+    db_session.add(v)
+    db_session.flush()
+    return v
 
 
 class TestGetRoster:
-    @pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
     def test_organizer_fetches_roster(self, client, db_session):
         organizer = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=organizer, capacity=5)
-        participant = make_user(db_session, role=UserRole.participant)
-        signup = Signup(user_id=participant.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
         db_session.add(signup)
         db_session.flush()
 

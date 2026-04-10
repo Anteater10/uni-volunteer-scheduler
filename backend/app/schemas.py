@@ -218,7 +218,8 @@ class SignupCreate(SignupBase):
 
 class SignupRead(ORMBase):
     id: UUID
-    user_id: UUID
+    # Phase 09: user_id replaced by volunteer_id (D-01, D-06)
+    volunteer_id: UUID
     slot_id: UUID
     status: SignupStatus
     timestamp: datetime
