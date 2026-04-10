@@ -124,7 +124,7 @@ def send_email_notification(
         if not _check_daily_send_limit(db):
             return
 
-        # Resolve user + content from signup_id when kind is provided.
+        # Resolve volunteer/user + content from signup_id when kind is provided.
         if kind is not None and signup_id is not None:
             builder = BUILDERS.get(kind)
             if builder is None:
@@ -138,10 +138,19 @@ def send_email_notification(
                 return  # Already sent by another worker
 
             payload = builder(signup)
-            user = signup.user
+            # Phase 09: signup.user removed — use volunteer
+            v = signup.volunteer
             subject = payload["subject"]
             body = payload.get("text_body") or payload.get("body", "")
             html_body = payload.get("html_body")
+            to_email = v.email if v else None
+            if not to_email:
+                return
+            _send_email_via_sendgrid(to_email, subject, body, html_body=html_body)
+            # Phase 09 (D-11): skip Notification row for volunteer-backed signups;
+            # migration 0010 adds volunteer_id FK but this pipeline uses dedup kind pattern
+            # which doesn't map cleanly. Phase 11 will add audit rows here.
+            db.commit()
         else:
             if user_id is None:
                 return
@@ -150,21 +159,21 @@ def send_email_notification(
                 return
             html_body = None
 
-        # 1) Send real email (if configured)
-        if user.notify_email:
-            _send_email_via_sendgrid(user.email, subject, body, html_body=html_body)
+            # 1) Send real email (if configured)
+            if user.notify_email:
+                _send_email_via_sendgrid(user.email, subject, body, html_body=html_body)
 
-        # 2) Log notification in DB
-        notif = models.Notification(
-            user_id=user.id,
-            type=models.NotificationType.email,
-            subject=subject,
-            body=body,
-            delivery_method="email",
-            delivered_at=datetime.now(timezone.utc),
-        )
-        db.add(notif)
-        db.commit()
+            # 2) Log notification in DB
+            notif = models.Notification(
+                user_id=user.id,
+                type=models.NotificationType.email,
+                subject=subject,
+                body=body,
+                delivery_method="email",
+                delivered_at=datetime.now(timezone.utc),
+            )
+            db.add(notif)
+            db.commit()
     finally:
         db.close()
 
@@ -275,22 +284,22 @@ def weekly_digest() -> None:
             .all()
         )
 
-        # Group by user
-        by_user: dict = {}
+        # Phase 09: Group by volunteer_id (signup.user removed in Phase 08)
+        by_volunteer: dict = {}
         for s in signups:
-            by_user.setdefault(s.user_id, []).append(s.slot)
+            by_volunteer.setdefault(s.volunteer_id, []).append(s.slot)
 
-        for user_id, slots in by_user.items():
+        for volunteer_id, slots in by_volunteer.items():
+            v = db.get(models.Volunteer, volunteer_id)
+            if not v:
+                continue
             lines = [
                 f"- {slot.start_time} at {slot.event.location or 'TBD'} ({slot.event.title})"
                 for slot in slots
             ]
             body = "Your upcoming volunteer slots this week:\n\n" + "\n".join(lines)
-            send_email_notification.delay(
-                str(user_id),
-                "Weekly volunteer digest",
-                body,
-            )
+            subject = "Weekly volunteer digest"
+            _send_email_via_sendgrid(v.email, subject, body)
     finally:
         db.close()
 
