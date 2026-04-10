@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: executing
-last_updated: "2026-04-10T01:30:06.150Z"
+status: Ready to execute
+last_updated: "2026-04-10T17:35:07.553Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 6
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 100
+  completed_phases: 2
+  total_plans: 6
+  completed_plans: 3
+  percent: 50
 ---
 
 # Project State
@@ -22,10 +22,12 @@ progress:
 
 ## Current Position
 
+Phase: 10 (public-events-by-week-browse-signup-form) — EXECUTING
+Plan: 2 of 4
 **Milestone:** v1.1 Account-less realignment
 **Phase:** 09 public-signup-backend — COMPLETE (188 passed, 12 skipped, 0 failed)
 **Next phase:** 10 frontend-public-signup
-**Last activity:** 2026-04-10 — Phase 09 shipped 7 public endpoints, expire_pending_signups task, 74 un-skipped tests, 28 new integration tests
+**Last activity:** 2026-04-10
 
 ## Current Status
 
