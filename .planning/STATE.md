@@ -23,9 +23,9 @@ progress:
 ## Current Position
 
 **Milestone:** v1.1 Account-less realignment
-**Phase:** 08 schema-realignment-migration — COMPLETE (verified PASS-WITH-CONCERNS, minor)
-**Next phase:** 09 public-signup-backend
-**Last activity:** 2026-04-10 — Phase 08 shipped migration 0009, volunteers table, FK rewires, enum leak sweep; 9 commits
+**Phase:** 09 public-signup-backend — COMPLETE (188 passed, 12 skipped, 0 failed)
+**Next phase:** 10 frontend-public-signup
+**Last activity:** 2026-04-10 — Phase 09 shipped 7 public endpoints, expire_pending_signups task, 74 un-skipped tests, 28 new integration tests
 
 ## Current Status
 
@@ -34,11 +34,12 @@ progress:
 - ✓ REQUIREMENTS-v1.1-accountless.md — Stage 1 locked decisions
 - ✓ ROADMAP.md — v1.1 phases 08–13 defined
 - ✓ Phase 08 — schema realignment migration executed and verified
-- ⏳ Phase 09 — public signup backend (next up)
+- ✓ Phase 09 — public signup backend complete (188 passed, 12 skipped)
+- ⏳ Phase 10 — frontend public signup pages (next up)
 
 ## Next Action
 
-`/gsd-plan-phase 09` to plan the public signup backend. Inputs: the volunteer-keyed schema that Phase 08 just landed, plus the runtime-breakage handoff list in `.planning/phases/08-schema-realignment-migration/08-SUMMARY.md`.
+`/gsd-plan-phase 10` to plan the frontend public signup pages. Inputs: Phase 09 public API endpoints now live at `/api/v1/public/`; see `09-SUMMARY.md` for endpoint shapes and token flow.
 
 ## Accumulated Context
 
@@ -72,4 +73,4 @@ See `.planning/PROJECT.md` → Key Decisions.
 See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.1-accountless.md` → Open items for Stage 2.
 
 ---
-*Last updated: 2026-04-10 — Phase 08 schema realignment migration complete*
+*Last updated: 2026-04-10 — Phase 09 public signup backend complete*
