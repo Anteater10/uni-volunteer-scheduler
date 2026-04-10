@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
-from .models import UserRole, SignupStatus, NotificationType, PrivacyMode
+from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType
 
 
 # -------------------------
@@ -493,3 +493,79 @@ class CsvImportRead(ORMBase):
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+# =========================
+# PHASE 09: PUBLIC SIGNUP SCHEMAS
+# =========================
+from datetime import date  # noqa: E402 (local import to avoid circular)
+
+
+class VolunteerCreate(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    phone: str = Field(min_length=7, max_length=20)
+
+
+class VolunteerRead(BaseModel):
+    id: UUID
+    email: EmailStr
+    first_name: str
+    last_name: str
+    phone_e164: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicSignupCreate(VolunteerCreate):
+    slot_ids: List[UUID] = Field(min_length=1, max_length=20)
+
+
+class PublicSignupResponse(BaseModel):
+    volunteer_id: UUID
+    signup_ids: List[UUID]
+    magic_link_sent: bool
+
+
+class PublicSlotRead(BaseModel):
+    id: UUID
+    slot_type: SlotType
+    date: date
+    start_time: datetime
+    end_time: datetime
+    location: Optional[str] = None
+    capacity: int
+    filled: int  # = slot.current_count
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicEventRead(BaseModel):
+    id: UUID
+    title: str
+    quarter: Optional[Quarter] = None
+    year: Optional[int] = None
+    week_number: Optional[int] = None
+    school: Optional[str] = None
+    module_slug: Optional[str] = None
+    start_date: datetime  # Event.start_date is DateTime not Date in model
+    end_date: datetime
+    slots: List[PublicSlotRead] = []
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrientationStatusRead(BaseModel):
+    has_attended_orientation: bool
+    last_attended_at: Optional[datetime] = None
+
+
+class TokenedSignupRead(BaseModel):
+    signup_id: UUID
+    status: SignupStatus
+    slot: PublicSlotRead
+
+
+class TokenedManageRead(BaseModel):
+    volunteer_id: UUID
+    event_id: UUID
+    signups: List[TokenedSignupRead]
