@@ -131,7 +131,10 @@ Plans:
 3. Cancel-all flips every listed signup to `cancelled` in one request.
 4. Tokens expire after ~14 days and reject further use with a clear error page.
 5. Cancel events appear in the audit log with actor = volunteer email.
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 11-01-PLAN.md — API helpers, backend audit log, ManageSignupsPage, ConfirmSignupPage, route wiring, vitest coverage
+
 **UI hint:** yes
 **Touches (v1.0 surviving code):** magic-link service, audit log (Phase 07), notifications pipeline (cancellation email from Phase 06).
 
@@ -185,7 +188,7 @@ Plans:
 | 08. Schema realignment migration | 0/1 | Not started | - |
 | 09. Public signup backend | 0/? | Not started | - |
 | 10. Public events-by-week browse + signup form | 5/4 | Complete   | 2026-04-10 |
-| 11. Magic-link manage-my-signup | 0/? | Not started | - |
+| 11. Magic-link manage-my-signup | 0/1 | Not started | - |
 | 12. Retirement pass | 0/? | Not started | - |
 | 13. E2E seed + Playwright coverage | 0/? | Not started | - |
 
