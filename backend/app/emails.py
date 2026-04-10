@@ -1,7 +1,7 @@
 """Transactional email builders.
 
 One function per notification kind. Each takes a Signup ORM instance
-(with user/slot/event relationships loadable) and returns a dict the
+(with volunteer/slot/event relationships loadable) and returns a dict the
 Celery email task consumes: {to, subject, text_body, html_body}.
 
 The builders here are the single source of truth for transactional
@@ -250,3 +250,48 @@ def send_magic_link(email: str, token: str, event, base_url: str) -> dict:
     )
 
     return result
+
+
+# -------------------------
+# Phase 09: Signup confirmation email (public signups)
+# -------------------------
+
+
+def build_signup_confirmation_email(
+    volunteer: "models.Volunteer",
+    signups: list,  # list[models.Signup], loaded with slot
+    token: str,
+    event: "models.Event",
+) -> tuple[str, str]:
+    """Build the signup confirmation email for a public signup batch.
+
+    Args:
+        volunteer: The Volunteer row.
+        signups: List of Signup rows with slot relationship loaded.
+        token: Raw magic-link token (for confirm URL).
+        event: The Event the signups belong to.
+
+    Returns:
+        (subject, html_body) tuple — no plain-text version (HTML only for this flow).
+    """
+    from .config import settings
+
+    confirm_url = f"{settings.frontend_url}/signup/confirm?token={token}"
+
+    slot_lines = []
+    for s in signups:
+        slot = s.slot
+        slot_lines.append(
+            f"- {slot.slot_type.value.title()}: {slot.date} "
+            f"{slot.start_time.strftime('%I:%M %p')} - {slot.end_time.strftime('%I:%M %p')} "
+            f"@ {slot.location or event.school or 'TBD'}"
+        )
+
+    html = _render_html(
+        "signup_confirm.html",
+        volunteer_first_name=volunteer.first_name,
+        confirm_url=confirm_url,
+        slot_list="\n".join(slot_lines),
+    )
+    subject = f"Confirm your SciTrek volunteer signup — {event.title}"
+    return subject, html
