@@ -35,6 +35,8 @@ import SignupConfirmedPage from "./pages/SignupConfirmedPage";
 import SignupConfirmFailedPage from "./pages/SignupConfirmFailedPage";
 import SignupConfirmPendingPage from "./pages/SignupConfirmPendingPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import ConfirmSignupPage from "./pages/public/ConfirmSignupPage";
+import ManageSignupsPage from "./pages/public/ManageSignupsPage";
 
 export default function App() {
   return (
@@ -52,6 +54,8 @@ export default function App() {
         <Route path="signup/confirmed" element={<SignupConfirmedPage />} />
         <Route path="signup/confirm-failed" element={<SignupConfirmFailedPage />} />
         <Route path="signup/confirm-pending" element={<SignupConfirmPendingPage />} />
+        <Route path="signup/confirm" element={<ConfirmSignupPage />} />
+        <Route path="signup/manage" element={<ManageSignupsPage />} />
 
         {/* Auth-required (any logged-in user) */}
         <Route element={<ProtectedRoute />}>
