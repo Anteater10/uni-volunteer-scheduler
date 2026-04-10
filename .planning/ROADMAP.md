@@ -82,7 +82,9 @@ Plans:
 3. The confirm endpoint, given a valid token, flips all signups issued by that token to `confirmed`; expired or reused tokens are rejected with a clear error.
 4. The orientation-status endpoint returns `true` when a prior `attended` orientation exists under that email and `false` otherwise.
 5. Phone numbers round-trip as E.164; malformed phones return a 422 with a clear error body.
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 13-01-PLAN.md — Backend token exposure, seed rewrite, 4 Playwright specs (public-signup, orientation-modal, organizer-check-in, admin-smoke), CI wiring
 **Touches (v1.0 surviving code):** magic-link service (v1.0 Phase 02), notifications pipeline (Phase 06), signup status state machine (Phase 03), existing `events`/`slots` routers.
 
 ### Phase 10: Public events-by-week browse + signup form
@@ -182,7 +184,9 @@ Plans:
 3. CI runs the Playwright suite on PRs and fails loudly on regression.
 4. The public signup → confirm → manage → cancel flow is covered by at least one passing E2E.
 5. The organizer check-in flow from v1.0 Phase 03 still has at least one passing E2E after the retirement pass.
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 13-01-PLAN.md — Backend token exposure, seed rewrite, 4 Playwright specs (public-signup, orientation-modal, organizer-check-in, admin-smoke), CI wiring
 **UI hint:** yes
 **Touches (v1.0 surviving code):** organizer check-in flow (Phase 03), notifications dev inbox, GitHub Actions CI config.
 
