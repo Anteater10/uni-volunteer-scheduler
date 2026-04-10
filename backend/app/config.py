@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     magic_link_max_per_email_per_hour: int = 5
     magic_link_max_per_ip_per_hour: int = 20
     frontend_base_url: str = "http://localhost:5173"
+    frontend_url: str = "http://localhost:5173"  # alias for Phase 09 public signup emails
     backend_base_url: str = "http://localhost:8000"
+    debug: bool = False  # Phase 09: if True, debug-logs raw signup tokens in Celery (dev only)
 
     # --- Phase 6: Resend monitoring ---
     resend_daily_limit: int = 100  # free-tier limit; 80% warning threshold

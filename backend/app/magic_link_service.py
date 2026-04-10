@@ -10,11 +10,16 @@ import time
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import MagicLinkToken, Signup, SignupStatus
+from .models import MagicLinkToken, MagicLinkPurpose, Signup, SignupStatus, Slot
+
+
+# Phase 09 (D-06): 14-day TTL for signup-confirm tokens
+SIGNUP_CONFIRM_TTL_MINUTES = 20160  # 14 days * 24h * 60min
 
 
 class ConsumeResult(str, Enum):
@@ -28,24 +33,57 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def issue_token(db: Session, signup: Signup, email: str) -> str:
-    """Create a new magic-link token for a signup. Returns raw token."""
+def issue_token(
+    db: Session,
+    signup: Signup,
+    email: str,
+    *,
+    purpose: MagicLinkPurpose = MagicLinkPurpose.SIGNUP_CONFIRM,
+    volunteer_id: UUID | None = None,
+    ttl_minutes: int | None = None,
+) -> str:
+    """Create a new magic-link token for a signup. Returns raw token.
+
+    Args:
+        db: DB session (caller commits).
+        signup: Anchor signup row (signup_id stored on token).
+        email: Email address to store on the token (lowercased).
+        purpose: Token purpose (default SIGNUP_CONFIRM for Phase 09).
+        volunteer_id: Optional volunteer UUID to store on the token; enables batch confirm.
+        ttl_minutes: Override TTL in minutes; defaults to settings.magic_link_ttl_minutes.
+    """
     raw = secrets.token_urlsafe(32)
     token_hash = _hash_token(raw)
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.magic_link_ttl_minutes)
+    ttl = ttl_minutes if ttl_minutes is not None else settings.magic_link_ttl_minutes
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=ttl)
     row = MagicLinkToken(
         token_hash=token_hash,
         signup_id=signup.id,
         email=email.lower(),
         expires_at=expires_at,
+        purpose=purpose,
+        volunteer_id=volunteer_id,
     )
     db.add(row)
     db.flush()
     return raw
 
 
+def _lookup_token(db: Session, raw: str) -> Optional[MagicLinkToken]:
+    """Hash the raw token and return the MagicLinkToken row without consuming it.
+
+    Returns None if not found. Does NOT flip consumed_at. Used by manage + cancel endpoints.
+    """
+    token_hash = _hash_token(raw)
+    return db.query(MagicLinkToken).filter_by(token_hash=token_hash).first()
+
+
 def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup]]:
-    """Atomically consume a token, returning (result, signup)."""
+    """Atomically consume a token, returning (result, signup).
+
+    For SIGNUP_CONFIRM purpose with volunteer_id set: batch-flips all pending
+    signups for that volunteer in the same event as the anchor signup.
+    """
     token_hash = _hash_token(raw)
     row = db.query(MagicLinkToken).filter_by(token_hash=token_hash).first()
     if row is None:
@@ -68,6 +106,29 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
     if signup.status == SignupStatus.pending:
         signup.status = SignupStatus.confirmed
     db.flush()
+
+    # Phase 09 (D-06): batch-flip sibling pending signups for same volunteer + event
+    sibling_count = 0
+    if row.purpose == MagicLinkPurpose.SIGNUP_CONFIRM and row.volunteer_id is not None:
+        anchor_slot = db.query(Slot).filter_by(id=signup.slot_id).first()
+        if anchor_slot is not None:
+            anchor_event_id = anchor_slot.event_id
+            sibling_signups = (
+                db.query(Signup)
+                .join(Slot, Slot.id == Signup.slot_id)
+                .filter(
+                    Signup.volunteer_id == row.volunteer_id,
+                    Signup.status == SignupStatus.pending,
+                    Slot.event_id == anchor_event_id,
+                    Signup.id != signup.id,
+                )
+                .all()
+            )
+            for s in sibling_signups:
+                s.status = SignupStatus.confirmed
+                sibling_count += 1
+            db.flush()
+
     return ConsumeResult.ok, signup
 
 
