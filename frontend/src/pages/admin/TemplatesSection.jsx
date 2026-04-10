@@ -67,7 +67,6 @@ export default function TemplatesSection() {
     name: "",
     default_capacity: 20,
     duration_minutes: 90,
-    prereq_slugs: "",
     materials: "",
     description: "",
   });
@@ -92,7 +91,7 @@ export default function TemplatesSection() {
       setShowCreate(false);
       setNewTemplate({
         slug: "", name: "", default_capacity: 20, duration_minutes: 90,
-        prereq_slugs: "", materials: "", description: "",
+        materials: "", description: "",
       });
       queryClient.invalidateQueries({ queryKey: ["adminTemplates"] });
       toast.success("Template created.");
@@ -131,12 +130,7 @@ export default function TemplatesSection() {
   }, [templates, selected.size]);
 
   function handleInlineUpdate(slug, field, value) {
-    const data = {};
-    if (field === "prereq_slugs") {
-      data[field] = value.split(",").map((s) => s.trim()).filter(Boolean);
-    } else {
-      data[field] = value;
-    }
+    const data = { [field]: value };
     updateMut.mutate({ slug, data });
   }
 
@@ -147,7 +141,6 @@ export default function TemplatesSection() {
       name: newTemplate.name,
       default_capacity: Number(newTemplate.default_capacity),
       duration_minutes: Number(newTemplate.duration_minutes),
-      prereq_slugs: newTemplate.prereq_slugs.split(",").map((s) => s.trim()).filter(Boolean),
       materials: newTemplate.materials.split(",").map((s) => s.trim()).filter(Boolean),
       description: newTemplate.description || null,
     });
@@ -204,7 +197,6 @@ export default function TemplatesSection() {
                   <th className="py-2 pr-3 font-medium">Name</th>
                   <th className="py-2 pr-3 font-medium">Capacity</th>
                   <th className="py-2 pr-3 font-medium">Duration (min)</th>
-                  <th className="py-2 pr-3 font-medium">Prereqs</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
@@ -238,12 +230,6 @@ export default function TemplatesSection() {
                         onSave={(v) => handleInlineUpdate(t.slug, "duration_minutes", Number(v))}
                       />
                     </td>
-                    <td className="py-2 pr-3">
-                      <InlineEditCell
-                        value={(t.prereq_slugs || []).join(", ")}
-                        onSave={(v) => handleInlineUpdate(t.slug, "prereq_slugs", v)}
-                      />
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -270,11 +256,6 @@ export default function TemplatesSection() {
                   <p className="text-sm text-[var(--color-fg-muted)] mt-1">
                     Capacity: {t.default_capacity} | Duration: {t.duration_minutes}min
                   </p>
-                  {t.prereq_slugs?.length > 0 && (
-                    <p className="text-xs text-[var(--color-fg-muted)]">
-                      Prereqs: {t.prereq_slugs.join(", ")}
-                    </p>
-                  )}
                 </Card>
               ))}
             </div>
@@ -325,15 +306,6 @@ export default function TemplatesSection() {
                 onChange={(e) => setNewTemplate((p) => ({ ...p, duration_minutes: e.target.value }))}
               />
             </div>
-          </div>
-          <div>
-            <Label htmlFor="ct-prereqs">Prereq Slugs (comma-separated)</Label>
-            <Input
-              id="ct-prereqs"
-              value={newTemplate.prereq_slugs}
-              onChange={(e) => setNewTemplate((p) => ({ ...p, prereq_slugs: e.target.value }))}
-              placeholder="slug-1, slug-2"
-            />
           </div>
           <div>
             <Label htmlFor="ct-mat">Materials (comma-separated)</Label>
