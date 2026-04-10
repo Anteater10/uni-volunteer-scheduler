@@ -3,13 +3,11 @@ from typing import List
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_role, log_action, hash_password
-from ..services.prereqs import check_missing_prereqs
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -150,100 +148,3 @@ def admin_update_user(
     log_action(db, admin_user, "admin_update_user", "User", str(user.id))
     return user
 
-
-# =========================
-# MODULE TIMELINE (Phase 4)
-# =========================
-
-
-@router.get("/me/module-timeline", response_model=List[schemas.ModuleTimelineItem])
-def my_module_timeline(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    """Return per-module status (locked/unlocked/completed) for the current user."""
-    # 1. Find all module_slugs the user has interacted with via signups
-    interacted_slugs = set()
-    signup_slugs = (
-        db.execute(
-            select(models.Event.module_slug)
-            .join(models.Slot, models.Slot.event_id == models.Event.id)
-            .join(models.Signup, models.Signup.slot_id == models.Slot.id)
-            .where(
-                models.Signup.user_id == current_user.id,
-                models.Event.module_slug.isnot(None),
-            )
-            .distinct()
-        )
-        .scalars()
-        .all()
-    )
-    interacted_slugs.update(signup_slugs)
-
-    # 2. Also include prereqs of interacted modules
-    for slug in list(interacted_slugs):
-        template = db.get(models.ModuleTemplate, slug)
-        if template and template.prereq_slugs:
-            interacted_slugs.update(template.prereq_slugs)
-
-    if not interacted_slugs:
-        return []
-
-    # 3. For each module, compute status
-    results = []
-    for slug in sorted(interacted_slugs):
-        template = db.get(models.ModuleTemplate, slug)
-        if template is None:
-            continue
-
-        # Check if user has attended this module
-        attended = db.execute(
-            select(models.Signup.id)
-            .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-            .join(models.Event, models.Event.id == models.Slot.event_id)
-            .where(
-                models.Signup.user_id == current_user.id,
-                models.Signup.status == models.SignupStatus.attended,
-                models.Event.module_slug == slug,
-            )
-            .limit(1)
-        ).scalar_one_or_none()
-
-        if attended is not None:
-            status_val = "completed"
-        elif not check_missing_prereqs(db, current_user.id, slug):
-            status_val = "unlocked"
-        else:
-            status_val = "locked"
-
-        # Check override active
-        override_active = db.execute(
-            select(models.PrereqOverride.id).where(
-                models.PrereqOverride.user_id == current_user.id,
-                models.PrereqOverride.module_slug == slug,
-                models.PrereqOverride.revoked_at.is_(None),
-            ).limit(1)
-        ).scalar_one_or_none() is not None
-
-        # Last activity
-        last_activity = db.execute(
-            select(func.max(models.Signup.timestamp))
-            .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-            .join(models.Event, models.Event.id == models.Slot.event_id)
-            .where(
-                models.Signup.user_id == current_user.id,
-                models.Event.module_slug == slug,
-            )
-        ).scalar()
-
-        results.append(
-            schemas.ModuleTimelineItem(
-                slug=slug,
-                name=template.name,
-                status=status_val,
-                override_active=override_active,
-                last_activity=last_activity,
-            )
-        )
-
-    return sorted(results, key=lambda r: r.name)
