@@ -5,7 +5,9 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
 
-import EventsPage from "./pages/EventsPage";
+import EventsPage from "./pages/EventsPage"; // kept on disk — Phase 12 removes it
+import EventsBrowsePage from "./pages/public/EventsBrowsePage";
+// TODO(plan-10-03): replace EventDetailPage import below with pages/public/EventDetailPage once Plan 03 ships
 import EventDetailPage from "./pages/EventDetailPage";
 import PortalPage from "./pages/PortalPage";
 import LoginPage from "./pages/LoginPage";
@@ -44,7 +46,7 @@ export default function App() {
         <Route index element={<Navigate to="/events" replace />} />
         <Route path="login" element={<LoginPage />} />
         <Route path="register" element={<RegisterPage />} />
-        <Route path="events" element={<EventsPage />} />
+        <Route path="events" element={<EventsBrowsePage />} />
         <Route path="events/:eventId" element={<EventDetailPage />} />
         <Route path="portals/:slug" element={<PortalPage />} />
         <Route path="check-in/:signupId" element={<SelfCheckInPage />} />
