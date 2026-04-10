@@ -156,10 +156,10 @@ Plans:
 3. The app still boots; public browse, organizer check-in, and admin dashboard all still work end-to-end.
 4. Retired routes are removed from the router entirely (no dead 200-returning routes).
 5. Role-based nav shows organizer/admin users their correct menus; logged-out users see only the public browse.
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 Plans:
 - [x] 12-01-PLAN.md — Backend prereq deletion, dead stub removal, analytics/CCPA reimplementation, test rewrites
-- [ ] 12-02-PLAN.md — Frontend page deletions, route/nav cleanup, api.js cleanup, LoginPage edit, role guards, prereq_slugs strip
+- [x] 12-02-PLAN.md — Frontend page deletions, route/nav cleanup, api.js cleanup, LoginPage edit, role guards, prereq_slugs strip
 - [ ] 12-03-PLAN.md — Full-codebase verification sweep, dead-reference audit, write 12-SUMMARY.md, human verification
 
 **UI hint:** yes
@@ -194,7 +194,7 @@ Plans:
 | 09. Public signup backend | 0/? | Not started | - |
 | 10. Public events-by-week browse + signup form | 5/4 | Complete   | 2026-04-10 |
 | 11. Magic-link manage-my-signup | 0/1 | Not started | - |
-| 12. Retirement pass | 1/3 | In Progress|  |
+| 12. Retirement pass | 2/3 | In Progress|  |
 | 13. E2E seed + Playwright coverage | 0/? | Not started | - |
 
 ## Coverage
