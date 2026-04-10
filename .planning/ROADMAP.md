@@ -103,10 +103,10 @@ Plans:
 3. The orientation modal fires in the period-only + no-prior-attendance case and is skipped when the DB reports prior attendance.
 4. Clicking No in the modal returns to slot selection with orientation slots highlighted.
 5. No path in the public flow requires login.
-**Plans:** 1/4 plans executed
+**Plans:** 2/4 plans executed
 Plans:
 - [x] 10-01-PLAN.md — Backend current-week endpoint + frontend API helpers + week navigation utility
-- [ ] 10-02-PLAN.md — Events browse page with week navigation + route wiring
+- [x] 10-02-PLAN.md — Events browse page with week navigation + route wiring
 - [ ] 10-03-PLAN.md — Event detail page with signup form, orientation modal, success card
 - [ ] 10-04-PLAN.md — Final route wiring, build verification, visual smoke test
 
@@ -184,7 +184,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 08. Schema realignment migration | 0/1 | Not started | - |
 | 09. Public signup backend | 0/? | Not started | - |
-| 10. Public events-by-week browse + signup form | 1/4 | In Progress|  |
+| 10. Public events-by-week browse + signup form | 2/4 | In Progress|  |
 | 11. Magic-link manage-my-signup | 0/? | Not started | - |
 | 12. Retirement pass | 0/? | Not started | - |
 | 13. E2E seed + Playwright coverage | 0/? | Not started | - |
