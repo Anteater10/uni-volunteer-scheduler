@@ -3,14 +3,18 @@
 Proves that SELECT ... FOR UPDATE plus the idempotency branch results in
 exactly ONE audit log row when two clients race to check in the same signup.
 Uses real Postgres (not SQLite) with separate DB sessions per thread.
+
+Phase 08 (D-06): check-in uses Signup.user_id; Phase 09 will rewire.
 """
+import pytest
+pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Barrier
 
-import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 

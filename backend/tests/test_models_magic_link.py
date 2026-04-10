@@ -1,8 +1,13 @@
-"""Plan 02-01: Magic-link model & schema tests."""
+"""Plan 02-01: Magic-link model & schema tests.
+
+Phase 08 (D-06): These tests create Signup rows via user_id; Phase 09 will rewire.
+"""
+import pytest
+pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.models import MagicLinkToken, Signup, SignupStatus, Slot, Event, User

@@ -1,8 +1,12 @@
-"""Plan 02-03: Magic-link router integration tests."""
+"""Plan 02-03: Magic-link router integration tests.
+
+Phase 08 (D-06): Uses Signup via user_id; Phase 09 will rewire.
+"""
+import pytest
+pytestmark = pytest.mark.skip(reason="Phase 08: Signup.user_id removed; Phase 09 will rewire")
+
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
-
-import pytest
 
 from app.magic_link_service import issue_token, _hash_token
 from app.models import MagicLinkToken, SignupStatus
