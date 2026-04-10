@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: milestone
-status: Phase 10 complete — all 4 plans executed, ready for verification
-last_updated: "2026-04-09T00:00:00Z"
+status: Phase 11 complete — ready for verification
+last_updated: "2026-04-09T11:35:00.000Z"
 last_activity: 2026-04-09
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 6
-  completed_plans: 7
+  completed_phases: 4
+  total_plans: 7
+  completed_plans: 8
   percent: 100
 ---
 
@@ -22,8 +22,8 @@ progress:
 
 ## Current Position
 
-Phase: 10 (public-events-by-week-browse-signup-form) — COMPLETE
-Plan: 4 of 4
+Phase: 11 (magic-link-manage-my-signup-flow) — EXECUTING
+Plan: 1 of 1
 **Milestone:** v1.1 Account-less realignment
 **Phase:** 09 public-signup-backend — COMPLETE (188 passed, 12 skipped, 0 failed)
 **Next phase:** 10 frontend-public-signup
@@ -38,10 +38,17 @@ Plan: 4 of 4
 - ✓ Phase 08 — schema realignment migration executed and verified
 - ✓ Phase 09 — public signup backend complete (188 passed, 12 skipped)
 - ✓ Phase 10 — frontend public signup pages COMPLETE (64/64 vitest pass, clean Vite build)
+- ✓ Phase 11 — magic-link manage-my-signup flow COMPLETE (78/78 vitest pass, 16/16 backend pass, clean Vite build)
+  - 3 api.public helpers (confirmSignup, getManageSignups, cancelSignup)
+  - ManageSignupsPage: cancel single/all, token error card, loading skeleton, empty state
+  - ConfirmSignupPage: spinner → inline manage view, idempotent confirm support
+  - Routes /signup/confirm and /signup/manage (no ProtectedRoute)
+  - Backend audit log on cancel_signup (log_action, actor=None, volunteer_email in extra)
+  - Key decisions: inline render (no redirect), tokenOverride prop, sequential cancel-all loop, React Query v5 useEffect pattern
 
 ## Next Action
 
-Phase 11: manage-my-signup page. Token flow: `manage_token` from POST /public/signups response → GET /public/signups/{token}. Shared components: Modal, SignupSuccessCard, OrientationWarningModal. API helpers: api.public.* (add getSignupByToken + cancelSignup). No ProtectedRoute — token-auth only. Route: `/my-signup/:token`.
+Phase 12: retire v1.0 signup legacy pages (SignupConfirmedPage, SignupConfirmFailedPage, SignupConfirmPendingPage) and wire confirmation email link to /signup/confirm?token=.
 
 ## Accumulated Context
 
