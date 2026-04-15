@@ -13,9 +13,40 @@
 import { test, expect } from '@playwright/test';
 import { getSeed, ephemeralEmail, VOLUNTEER_IDENTITY } from './fixtures.js';
 
+// PART-02 — no console errors / pageerrors on any public route during the
+// golden path. Allow-list is empty today; add an entry ONLY with an explicit
+// justification comment naming the source of the noise and why it is benign.
+const ALLOWED_CONSOLE_PATTERNS = [
+  // e.g. /Download the React DevTools/ — dev-only noise (uncomment if it appears in CI)
+];
+
 test.describe.serial('public volunteer flow', () => {
   let token;
   const email = ephemeralEmail('pub');
+
+  // PART-02: capture pageerror + console.error per-test (testInfo bag avoids
+  // cross-test bleed when `fullyParallel: true` is enabled in playwright.config.js).
+  test.beforeEach(async ({ page }, testInfo) => {
+    testInfo.errors = [];
+    page.on('pageerror', (err) => {
+      testInfo.errors.push(`pageerror: ${err.message}`);
+    });
+    page.on('console', (msg) => {
+      if (msg.type() !== 'error') return;
+      const text = msg.text();
+      if (ALLOWED_CONSOLE_PATTERNS.some((re) => re.test(text))) return;
+      testInfo.errors.push(`console.error: ${text}`);
+    });
+  });
+
+  test.afterEach(async ({}, testInfo) => {
+    const errors = testInfo.errors || [];
+    if (errors.length > 0) {
+      throw new Error(
+        `PART-02 violation — ${errors.length} error(s) captured during "${testInfo.title}":\n${errors.join('\n')}`,
+      );
+    }
+  });
 
   test('browse /events shows seed event', async ({ page }) => {
     const seed = getSeed();
