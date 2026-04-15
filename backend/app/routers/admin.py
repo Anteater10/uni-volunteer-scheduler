@@ -20,10 +20,24 @@ from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
 from ..services import template_service, import_service
+from ..services.audit_log_humanize import humanize as humanize_audit_log
+from ..services.quarter import (
+    current_quarter_bounds,
+    previous_quarter_bounds,
+    quarter_progress,
+)
 from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate, CsvImportRead, SentNotificationRead
 from ..tasks.import_csv import process_csv_import
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _csv_safe(value) -> str:
+    """Prefix cells starting with CSV-injection metacharacters with a single quote."""
+    s = "" if value is None else str(value)
+    if s and s[0] in ("=", "+", "-", "@"):
+        return "'" + s
+    return s
 
 
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
@@ -95,32 +109,255 @@ def _volunteer_participant_payload(v: models.Volunteer, privacy: PrivacyMode) ->
 # =========================
 
 
-@router.get("/summary", response_model=schemas.AdminSummary)
+_CONFIRMED_STATUSES = [
+    models.SignupStatus.confirmed,
+    models.SignupStatus.checked_in,
+    models.SignupStatus.attended,
+]
+
+
+@router.get("/summary")
 def admin_summary(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    total_users = db.query(func.count(models.User.id)).scalar()
-    total_events = db.query(func.count(models.Event.id)).scalar()
-    total_slots = db.query(func.count(models.Slot.id)).scalar()
-    total_signups = db.query(func.count(models.Signup.id)).scalar()
+    """Expanded admin dashboard summary (Phase 16 Plan 02, D-14..D-29, D-47).
 
-    cutoff = datetime.utcnow() - timedelta(days=7)
-    signups_last_7d = (
-        db.query(func.count(models.Signup.id))
-        .filter(models.Signup.timestamp >= cutoff)
+    Returns all-time totals, this-quarter aggregates, this-week counts, fill-rate
+    attention, week-over-week deltas, quarter progress, and a last_updated
+    timestamp. D-23: `signups_last_7d` removed (was buggy) — frontend consumes
+    week_over_week.signups instead.
+    """
+    now = datetime.now(timezone.utc)
+    q_start, q_end = current_quarter_bounds(now)
+    week_ago = now - timedelta(days=7)
+    two_weeks_ago = now - timedelta(days=14)
+    week_forward = now + timedelta(days=7)
+    two_weeks_forward = now + timedelta(days=14)
+
+    # -------- all-time totals --------
+    users_total = (
+        db.query(func.count(models.User.id))
+        .filter(
+            models.User.deleted_at.is_(None),
+            models.User.role != models.UserRole.participant,
+        )
         .scalar()
+        or 0
+    )
+    events_total = db.query(func.count(models.Event.id)).scalar() or 0
+    slots_total = db.query(func.count(models.Slot.id)).scalar() or 0
+    signups_total = db.query(func.count(models.Signup.id)).scalar() or 0
+    signups_confirmed_total = (
+        db.query(func.count(models.Signup.id))
+        .filter(models.Signup.status.in_(_CONFIRMED_STATUSES))
+        .scalar()
+        or 0
+    )
+
+    # -------- this-quarter aggregates --------
+    users_quarter = (
+        db.query(func.count(models.User.id))
+        .filter(
+            models.User.created_at >= q_start,
+            models.User.created_at < q_end,
+            models.User.role != models.UserRole.participant,
+        )
+        .scalar()
+        or 0
+    )
+    events_quarter = (
+        db.query(func.count(models.Event.id))
+        .filter(
+            models.Event.start_date >= q_start,
+            models.Event.start_date < q_end,
+        )
+        .scalar()
+        or 0
+    )
+    slots_quarter = (
+        db.query(func.count(models.Slot.id))
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(
+            models.Event.start_date >= q_start,
+            models.Event.start_date < q_end,
+        )
+        .scalar()
+        or 0
+    )
+    signups_quarter = (
+        db.query(func.count(models.Signup.id))
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(
+            models.Event.start_date >= q_start,
+            models.Event.start_date < q_end,
+        )
+        .scalar()
+        or 0
+    )
+    signups_confirmed_quarter = (
+        db.query(func.count(models.Signup.id))
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(
+            models.Event.start_date >= q_start,
+            models.Event.start_date < q_end,
+            models.Signup.status.in_(_CONFIRMED_STATUSES),
+        )
+        .scalar()
+        or 0
+    )
+
+    # -------- this-week (next 7 days) --------
+    this_week_events = (
+        db.query(func.count(models.Event.id))
+        .filter(
+            models.Event.start_date >= now,
+            models.Event.start_date < week_forward,
+        )
+        .scalar()
+        or 0
+    )
+    # Approximation: open slots = (sum capacity) - (sum current_count). Computed
+    # per-slot to avoid a correlated subquery.
+    upcoming_week_slots = (
+        db.query(models.Slot)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(
+            models.Event.start_date >= now,
+            models.Event.start_date < week_forward,
+        )
+        .all()
+    )
+    this_week_open_slots = sum(
+        max(0, (s.capacity or 0) - (s.current_count or 0)) for s in upcoming_week_slots
+    )
+
+    # -------- week-over-week deltas --------
+    def _count_created_between(model, start_dt, end_dt):
+        col = getattr(model, "created_at", None) or getattr(model, "timestamp")
+        return (
+            db.query(func.count(model.id))
+            .filter(col >= start_dt, col < end_dt)
+            .scalar()
+            or 0
+        )
+
+    users_this_week = _count_created_between(models.User, week_ago, now)
+    users_last_week = _count_created_between(models.User, two_weeks_ago, week_ago)
+    events_this_week = _count_created_between(models.Event, week_ago, now)
+    events_last_week = _count_created_between(models.Event, two_weeks_ago, week_ago)
+    signups_this_week = _count_created_between(models.Signup, week_ago, now)
+    signups_last_week = _count_created_between(models.Signup, two_weeks_ago, week_ago)
+
+    # -------- fill-rate attention (next 2 weeks) --------
+    upcoming_events = (
+        db.query(models.Event)
+        .filter(
+            models.Event.start_date >= now,
+            models.Event.start_date < two_weeks_forward,
+        )
+        .order_by(models.Event.start_date)
+        .limit(20)
+        .all()
+    )
+    attention = []
+    for ev in upcoming_events:
+        caps = sum(s.capacity or 0 for s in ev.slots)
+        filled = sum(s.current_count or 0 for s in ev.slots)
+        pct = (filled / caps) if caps else 0.0
+        days_out = max(0, (ev.start_date - now).days)
+        if pct < 0.3 and days_out < 3:
+            status_color = "red"
+        elif pct < 0.5:
+            status_color = "amber"
+        else:
+            status_color = "green"
+        attention.append(
+            {
+                "event_id": str(ev.id),
+                "title": ev.title,
+                "start_at": ev.start_date.isoformat(),
+                "filled": filled,
+                "capacity": caps,
+                "status": status_color,
+            }
+        )
+
+    # -------- volunteer hours + attendance rate this quarter --------
+    vh_rows = (
+        db.query(models.Slot, models.Signup)
+        .join(models.Signup, models.Signup.slot_id == models.Slot.id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(
+            models.Event.start_date >= q_start,
+            models.Event.start_date < q_end,
+            models.Signup.status == models.SignupStatus.attended,
+        )
+        .all()
+    )
+    volunteer_hours_quarter = round(
+        sum(
+            (slot.end_time - slot.start_time).total_seconds() / 3600.0
+            for slot, _ in vh_rows
+        ),
+        2,
+    )
+
+    att_rows = (
+        db.query(models.Signup.status, func.count(models.Signup.id))
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(
+            models.Event.start_date >= q_start,
+            models.Event.start_date < q_end,
+            models.Signup.status.in_(
+                [
+                    models.SignupStatus.confirmed,
+                    models.SignupStatus.attended,
+                    models.SignupStatus.no_show,
+                ]
+            ),
+        )
+        .group_by(models.Signup.status)
+        .all()
+    )
+    att_counts = {s: c for s, c in att_rows}
+    att_total = sum(att_counts.values())
+    attendance_rate_quarter = (
+        round(att_counts.get(models.SignupStatus.attended, 0) / att_total, 4)
+        if att_total > 0
+        else 0.0
     )
 
     log_action(db, admin_user, "admin_summary", "Admin", None)
+    db.commit()
 
-    return schemas.AdminSummary(
-        total_users=total_users or 0,
-        total_events=total_events or 0,
-        total_slots=total_slots or 0,
-        total_signups=total_signups or 0,
-        signups_last_7d=signups_last_7d or 0,
-    )
+    return {
+        "users_total": users_total,
+        "events_total": events_total,
+        "slots_total": slots_total,
+        "signups_total": signups_total,
+        "signups_confirmed_total": signups_confirmed_total,
+        "users_quarter": users_quarter,
+        "events_quarter": events_quarter,
+        "slots_quarter": slots_quarter,
+        "signups_quarter": signups_quarter,
+        "signups_confirmed_quarter": signups_confirmed_quarter,
+        "this_week_events": this_week_events,
+        "this_week_open_slots": this_week_open_slots,
+        "volunteer_hours_quarter": volunteer_hours_quarter,
+        "attendance_rate_quarter": attendance_rate_quarter,
+        "week_over_week": {
+            "users": users_this_week - users_last_week,
+            "events": events_this_week - events_last_week,
+            "signups": signups_this_week - signups_last_week,
+        },
+        "quarter_progress": quarter_progress(now),
+        "fill_rate_attention": attention,
+        "last_updated": now.isoformat(),
+    }
 
 
 # =========================
@@ -685,8 +922,8 @@ def _build_audit_log_query(
     return query
 
 
-@router.get("/audit-logs", response_model=schemas.PaginatedAuditLogs)
-@router.get("/audit_logs", response_model=schemas.PaginatedAuditLogs, include_in_schema=False)
+@router.get("/audit-logs")
+@router.get("/audit_logs", include_in_schema=False)
 def list_audit_logs(
     q: str | None = Query(None),
     action: str | None = Query(None),
@@ -719,10 +956,20 @@ def list_audit_logs(
 
     logs = query.order_by(models.AuditLog.timestamp.desc()).offset(offset).limit(page_size).all()
 
+    # Phase 16 Plan 02 (D-19 / D-34): humanize each row so the admin Audit page
+    # can render action_label / actor_label / actor_role / entity_label without
+    # a second round-trip.
+    items = [humanize_audit_log(log, db) for log in logs]
+
     log_action(db, admin_user, "admin_list_audit_logs", "AuditLog", None)
-    return schemas.PaginatedAuditLogs(
-        items=logs, total=total, page=page, page_size=page_size, pages=pages,
-    )
+    db.commit()
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+    }
 
 
 @router.get("/audit-logs.csv")
@@ -751,18 +998,25 @@ def export_audit_logs_csv(
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["timestamp", "actor_id", "action", "entity_type", "entity_id", "extra"])
+    writer.writerow(
+        ["When", "Who", "Role", "What", "Target", "Raw Action", "Entity ID"]
+    )
     for log in logs:
-        writer.writerow([
-            log.timestamp.isoformat() if log.timestamp else "",
-            str(log.actor_id) if log.actor_id else "",
-            log.action,
-            log.entity_type,
-            log.entity_id or "",
-            json_mod.dumps(log.extra) if log.extra else "",
-        ])
+        row = humanize_audit_log(log, db)
+        writer.writerow(
+            [
+                _csv_safe(row["timestamp"] or ""),
+                _csv_safe(row["actor_label"] or ""),
+                _csv_safe(row["actor_role"] or ""),
+                _csv_safe(row["action_label"] or ""),
+                _csv_safe(row["entity_label"] or ""),
+                _csv_safe(row["action"] or ""),
+                _csv_safe(row["entity_id"] or ""),
+            ]
+        )
 
     log_action(db, admin_user, "admin_export_audit_logs_csv", "AuditLog", None)
+    db.commit()
     headers = {"Content-Disposition": 'attachment; filename="audit-logs.csv"'}
     return Response(content=output.getvalue(), media_type="text/csv", headers=headers)
 
@@ -998,6 +1252,120 @@ def export_volunteer_hours_csv(
     log_action(db, admin_user, "admin_analytics_volunteer_hours_csv", "Analytics", None)
     db.commit()
     headers_resp = {"Content-Disposition": 'attachment; filename="volunteer-hours.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
+
+
+# Phase 16 Plan 02 (D-47): attendance-rates + no-show-rates CSV exports, same
+# query params as the JSON variants. Frontend wires these to the Exports page.
+
+
+@router.get("/analytics/attendance-rates.csv")
+def export_attendance_rates_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Attendance-rate-per-event CSV (mirrors /analytics/attendance-rates JSON)."""
+    query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+    events = query.distinct().all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Event", "Start Date", "Confirmed", "Attended", "No Show", "Attendance Rate"])
+    for event in events:
+        slot_ids = [s.id for s in event.slots]
+        if not slot_ids:
+            continue
+        signups = (
+            db.query(models.Signup)
+            .filter(models.Signup.slot_id.in_(slot_ids))
+            .all()
+        )
+        confirmed = sum(1 for s in signups if s.status == models.SignupStatus.confirmed)
+        attended = sum(1 for s in signups if s.status == models.SignupStatus.attended)
+        no_show = sum(1 for s in signups if s.status == models.SignupStatus.no_show)
+        denom = confirmed + attended + no_show
+        rate = (attended / denom) if denom > 0 else 0.0
+        writer.writerow(
+            [
+                _csv_safe(event.title),
+                event.start_date.date().isoformat() if event.start_date else "",
+                confirmed,
+                attended,
+                no_show,
+                f"{rate:.2%}",
+            ]
+        )
+
+    log_action(db, admin_user, "admin_analytics_attendance_rates_csv", "Analytics", None)
+    db.commit()
+    headers_resp = {"Content-Disposition": 'attachment; filename="attendance-rates.csv"'}
+    return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
+
+
+@router.get("/analytics/no-show-rates.csv")
+def export_no_show_rates_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """No-show-rate-per-volunteer CSV (mirrors /analytics/no-show-rates JSON)."""
+    query = (
+        db.query(models.Signup, models.Volunteer)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        .filter(
+            models.Signup.status.in_(
+                [models.SignupStatus.attended, models.SignupStatus.no_show]
+            )
+        )
+    )
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+    rows = query.all()
+
+    from collections import defaultdict
+    counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
+    for signup, volunteer in rows:
+        key = volunteer.id
+        if signup.status == models.SignupStatus.attended:
+            counts[key]["attended"] += 1
+        elif signup.status == models.SignupStatus.no_show:
+            counts[key]["no_show"] += 1
+        counts[key]["volunteer"] = volunteer
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Volunteer", "Email", "Attended", "No Show", "No-Show Rate"])
+    for _, data in counts.items():
+        attended = data["attended"]
+        no_show = data["no_show"]
+        denom = attended + no_show
+        if denom == 0:
+            continue
+        v = data["volunteer"]
+        writer.writerow(
+            [
+                _csv_safe(f"{v.first_name} {v.last_name}"),
+                _csv_safe(v.email),
+                attended,
+                no_show,
+                f"{(no_show / denom):.2%}",
+            ]
+        )
+
+    log_action(db, admin_user, "admin_analytics_no_show_rates_csv", "Analytics", None)
+    db.commit()
+    headers_resp = {"Content-Disposition": 'attachment; filename="no-show-rates.csv"'}
     return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
 
 
