@@ -5,9 +5,9 @@
 //   Test B: Modal skipped when volunteer has prior attended orientation
 //
 // From OrientationWarningModal.jsx:
-//   title: "Have you completed orientation?"
-//   Yes button: "Yes, I have completed orientation"
-//   No button: "No — show me orientation slots"
+//   title: "Have you done a Sci Trek orientation?"
+//   Primary button: "I've done orientation — continue"
+//   Secondary button: "I haven't — show me orientation events"
 
 import { test, expect } from '@playwright/test';
 import { getSeed, ephemeralEmail, VOLUNTEER_IDENTITY } from './fixtures.js';
@@ -45,11 +45,11 @@ test.describe('orientation modal', () => {
     // - Only period slot selected (no orientation slot)
     // - Email has no prior orientation history
     await expect(
-      page.getByText('Have you completed orientation?')
+      page.getByText('Have you done a Sci Trek orientation?')
     ).toBeVisible({ timeout: 8000 });
 
-    // Click "Yes, I have completed orientation"
-    await page.getByRole('button', { name: /yes, i have completed orientation/i }).click();
+    // Click "I've done orientation — continue"
+    await page.getByRole('button', { name: /i've done orientation/i }).click();
 
     // Signup should proceed — success response (API call happens after modal confirm)
     // Wait for the POST /public/signups to complete
@@ -105,7 +105,7 @@ test.describe('orientation modal', () => {
     // Orientation modal must NOT appear (suppressed because has_attended_orientation=true)
     await page.waitForTimeout(500);
     await expect(
-      page.getByText('Have you completed orientation?')
+      page.getByText('Have you done a Sci Trek orientation?')
     ).not.toBeVisible();
   });
 });
