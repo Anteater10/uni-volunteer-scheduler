@@ -162,7 +162,8 @@ describe("ManageSignupsPage", () => {
       expect(screen.queryByText("Room 101")).not.toBeInTheDocument();
     });
 
-    expect(toast.success).toHaveBeenCalledWith("Signup cancelled.");
+    // Phase 15-05: American spelling "canceled" (one L) per UI-SPEC.
+    expect(toast.success).toHaveBeenCalledWith("Signup canceled.");
   });
 
   it("3. cancel all — sequential loop removes both signups, success toast shown", async () => {
@@ -179,9 +180,10 @@ describe("ManageSignupsPage", () => {
     const cancelAllBtn = screen.getByRole("button", { name: /cancel all signups/i });
     fireEvent.click(cancelAllBtn);
 
-    // Modal should appear
+    // Modal should appear (Phase 15-05: title is now plain UI-SPEC copy
+    // without the dynamic count, since UI-SPEC mandates exact wording).
     await waitFor(() => {
-      expect(screen.getByText(/cancel all 2 signups/i)).toBeInTheDocument();
+      expect(screen.getByText("Cancel all signups?")).toBeInTheDocument();
     });
 
     // Confirm
@@ -197,7 +199,8 @@ describe("ManageSignupsPage", () => {
     });
 
     expect(api.public.cancelSignup).toHaveBeenCalledTimes(2);
-    expect(toast.success).toHaveBeenCalledWith("All signups cancelled.");
+    // Phase 15-05: American spelling.
+    expect(toast.success).toHaveBeenCalledWith("All signups canceled.");
   });
 
   it("4. token error — shows 'Link expired or invalid' card", async () => {
@@ -208,7 +211,8 @@ describe("ManageSignupsPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Link expired or invalid")).toBeInTheDocument();
+      // Phase 15-05: shared ErrorState with UI-SPEC network-error copy.
+      expect(screen.getByText("We couldn't load this page")).toBeInTheDocument();
     });
   });
 
@@ -233,8 +237,14 @@ describe("ManageSignupsPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("No upcoming signups found for this event.")).toBeInTheDocument();
+      // Phase 15-05: UI-SPEC empty-state copy + "View events" primary action.
+      expect(
+        screen.getByText("You haven't signed up for anything yet")
+      ).toBeInTheDocument();
     });
+    expect(
+      screen.getByRole("button", { name: /view events/i })
+    ).toBeInTheDocument();
   });
 
   it("7. 403 on cancel — shows permission error toast", async () => {
