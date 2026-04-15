@@ -1,25 +1,24 @@
 # Uni Volunteer Scheduler
 
-## Current Milestone: v1.1 Account-less realignment
+## Current Milestone: v1.2-prod Production-ready by role
 
-**Goal:** bring the shipped v1.0 code back in line with the original "no accounts — magic link only" product thesis. The v1.0 autonomous run produced a working but drifted implementation that introduced student login/register flows and a complex multi-prereq enforcement system — neither of which were in the original product spec. v1.1 rips those out and replaces them with the email-keyed `Volunteer` model, magic-link signup-confirm/manage flows, and a simple orientation-attendance soft-warning.
+**Goal:** Take the v1.1 base from "works" to "production-ready and handoff-grade" by walking each user role end-to-end — participant, admin, organizer — auditing functionality, polishing UX, filling missing features, then proving the three roles work together. Set up a parallel collaboration workflow so Andy and Hung can both run Claude Code + GSD on the repo without stepping on each other.
 
-**Target features:**
-- Email-keyed `Volunteer` data model (no login/register)
-- Public signup API + email confirmation via magic link
-- Public events-by-week browse page (structured quarter/year/week_number/module/school)
-- Signup form with orientation-warning modal (DB-checked, soft warn only)
-- Magic-link "manage my signup" page (view + self-serve cancel)
-- Retirement of Phase 4 prereq enforcement + Phase 7 override UI
-- Stage 0 latent bug cleanup (enum downgrades, Playwright seed data script)
+**Target pillars (in order):**
+1. **Collaboration setup** — git-worktree parallel workflow, role-owned branches, COLLABORATION.md updates, role assignments for Andy and Hung
+2. **Participant role (logged-out)** — audit + UX polish + missing features for browse → signup → confirm → manage flows; 375px mobile-first; WCAG AA
+3. **Admin role** — every admin sidebar page built/polished: Overview, Audit Log, Templates, Imports, Users, Exports; LLM CSV import (Phase 5.07 unblocked — Andy has the file); retire **Overrides** for real (Phase 12 cleanup left it lingering)
+4. **Organizer role** — audit + UX polish + missing features for organizer login → dashboard → roster → check-in flows
+5. **Cross-role integration** — admin creates event → organizer runs it → participant signs up → admin sees it in audit log; extend Playwright suite
 
-**Locked decisions** (see `.planning/REQUIREMENTS-v1.1-accountless.md` for full spec):
-1. Identify by email — first signup creates a lightweight `Volunteer` row, later signups attach
-2. One `Signup` row per slot (not per form submission)
-3. `Event` gets structured columns: `quarter`, `year`, `week_number` (start week), `module_slug`, `school`
-4. Each `Slot` has a single `capacity`; no role column on `Signup` (leads-vs-mentors is organizer-side knowledge only)
+**Locked decisions:**
+1. Phase 8 deployment to UCSB infrastructure stays deferred — this milestone is feature-complete only
+2. LLM CSV import (Phase 5.07) IS in scope, owned under the admin pillar — Andy holds the CSV file
+3. Parallel collab uses git worktrees + role-owned branches (not separate workspaces, not strict phase handoffs)
+4. The "Overrides" admin tab is fully retired — closes the Phase 12 loop
+5. Phase numbering continues from v1.1 (which ended at 13) — v1.2-prod starts at Phase 14
 
-**Not in this milestone:** Phase 8 deployment, Phase 5.07 LLM CSV extraction (still blocked on real sample from Hung), any new product features beyond the pivot.
+**Not in this milestone:** UCSB production deployment (next milestone), any new product features beyond audit / polish / role-completeness gaps.
 
 ## What This Is
 
@@ -45,90 +44,81 @@ Everything else (CSV import, notifications, admin polish) serves that loop.
 
 ## Requirements
 
-### Validated (from existing code — brownfield)
+### Validated (shipped through v1.1)
 
-- ✓ FastAPI backend with routers for auth, users, portals, events, slots, signups, notifications, admin — existing
-- ✓ SQLAlchemy models + Alembic migrations — existing
-- ✓ Celery worker wiring + Docker compose + GitHub Actions CI — existing
-- ✓ React frontend page skeletons (Login, Register, Portal, Events, EventDetail, MySignups, Notifications, Admin, Organizer, AuditLogs, Users, Portals) — existing
-- ✓ `lib/api.js` client stub — existing
-- ✓ `test_smoke.py` baseline — existing
+**Brownfield baseline (pre-v1.0):**
+- ✓ FastAPI + SQLAlchemy + Alembic + Postgres 16 + Celery + Redis stack
+- ✓ Docker compose orchestration + GitHub Actions CI
+- ✓ React 19 + Vite 7 + Tailwind v4 frontend baseline
 
-### Active (hypotheses until shipped)
+**v1.0 shipped (phases 0–7, 2026-04-08):**
+- ✓ Backend routers wired: auth, users, portals, events, slots, signups, notifications, admin
+- ✓ Magic-link confirmation infrastructure
+- ✓ Check-in state machine + organizer roster (polling-based)
+- ✓ Event template scaffold (`module_templates` table)
+- ✓ Notifications pipeline (registration, reminders, cancellation) via Celery + Resend
+- ✓ Admin dashboard shell (audit log viewer, CCPA export, analytics)
 
-**Phase 0 — Backend completion + frontend integration**
-- [ ] Every existing backend endpoint audited: working / stubbed / broken, with a punch list
-- [ ] Validation + consistent error shapes across all routers
-- [ ] Auth / magic-link hardening (token expiry, rate limits, replay protection)
-- [ ] Celery + notifications reliability (idempotency, retries, dedup keys)
-- [ ] Expanded test coverage beyond smoke tests (unit + integration)
-- [ ] Every page wired to real backend via `lib/api.js`
-- [ ] E2E flows: student register → confirm → browse → signup → see it in MySignups
-- [ ] E2E flows: organizer login → dashboard → roster
-- [ ] E2E flows: admin login → CRUD users/portals/events
-- [ ] Playwright E2E suite in CI covering each critical flow
-- [ ] **Volunteer cancel/withdraw flow** (surfaced by research — missing from IDEAS.md; table stakes)
+**v1.1 shipped (phases 08–13, 2026-04-10):**
+- ✓ Email-keyed `Volunteer` data model (no login/register for participants)
+- ✓ Public signup API + magic-link email confirmation
+- ✓ Public events-by-week browse page (structured quarter/year/week_number/module/school)
+- ✓ Signup form with orientation-warning modal (DB-checked, soft warn only)
+- ✓ Magic-link "manage my signup" page (view + per-row + cancel-all)
+- ✓ Retirement of student Register/Login/MySignups pages, Phase 4 prereq enforcement, most of Phase 7 override UI (Overrides admin tab still lingering)
+- ✓ Stage 0 latent bug cleanup (enum downgrades, Playwright seed data script)
+- ✓ E2E coverage: 16/16 Playwright tests passing (public signup, orientation modal, organizer check-in, admin smoke)
 
-**Phase 1 — Mobile-first frontend pass**
-- [ ] Tailwind migration (decided: yes, early)
-- [ ] All pages designed at 375px first
-- [ ] Touch targets ≥ 44px, thumb-zone bottom nav, card-based event list, sticky filter chips, skeleton loaders
-- [ ] One-tap signup flow (tap slot → confirm modal → done)
-- [ ] ADA / WCAG AA compliance baseline
-- [ ] SEO baseline (meta tags, semantic HTML, sitemap)
+### Active (v1.2-prod pillars — hypotheses until shipped)
 
-**Phase 2 — Magic-link confirmation**
-- [ ] On registration, send one-time confirmation link via Resend
-- [ ] Clicking flips signup `registered → confirmed`
-- [ ] Weak identity proof; catches email typos before they break prereq history
+**Pillar 1 — Collaboration setup**
+- [ ] Git-worktree parallel workflow documented and tested
+- [ ] Role-owned long-lived branches with merge cadence agreed
+- [ ] COLLABORATION.md updated for v1.2-prod (role assignments Andy ↔ Hung)
+- [ ] Conflict-avoidance strategy (file ownership, lock conventions)
 
-**Phase 3 — Check-in state machine + organizer roster**
-- [ ] Signup lifecycle: `registered → confirmed → checked_in → attended | no_show`
-- [ ] Organizer-driven roster with large tap targets, polling updates
-- [ ] Self check-in via time-gated magic link + per-event venue code
-- [ ] End-of-event unmarked-attendee prompt
+**Pillar 2 — Participant role (logged-out flows)**
+- [ ] End-to-end audit of browse → signup → confirm → manage at 375px
+- [ ] UX polish: spacing, typography, loading/empty/error states, skeleton loaders, card design
+- [ ] Missing-feature pass: anything a real student would expect that isn't there
+- [ ] WCAG 2.1 AA verification on every public page (axe-core in CI if not already)
+- [ ] SEO baseline polish (meta tags, semantic landmarks, sitemap)
+- [ ] Cross-browser smoke: Safari mobile, Chrome mobile, Firefox
 
-**Phase 4 — Prereq / eligibility enforcement**
-- [ ] Prereq SQL query against `checked_in` status
-- [ ] **Soft warn** on registration (not hard block) — show "you haven't completed X" with link to next orientation
-- [ ] Admin manual override for edge cases (email history broken)
+**Pillar 3 — Admin role (every sidebar tab functional + polished)**
+- [ ] Overview: live stats (Users, Events, Slots, Signups, recent activity)
+- [ ] Audit Log: filtered view with pagination, search, kind filter
+- [ ] Templates: full CRUD on `module_templates` (slug, name, prereqs, capacity, duration)
+- [ ] Imports: LLM CSV extraction (Phase 5.07) — Andy holds the CSV file; single-shot extraction → preview → atomic commit
+- [ ] Users: organizer + admin user CRUD (no participant accounts)
+- [ ] Exports: CCPA export polish + reporting exports (volunteer hours, attendance, no-shows)
+- [ ] **Retire Overrides tab for real** — close the Phase 12 loop (delete UI + backend route)
+- [ ] Admin shell UX polish (consistent layout, breadcrumbs, mobile-responsive)
 
-**Phase 5 — Event template + LLM CSV import**
-- [ ] `module_templates` table (permanent records: slug, name, prereqs, capacity, duration)
-- [ ] Stage 1: single LLM extraction call (Pydantic + response_format) normalizing yearly CSV → canonical JSON
-- [ ] Stage 2: deterministic importer with preview UI, atomic commit, rollback on error
-- [ ] Few-shot examples from past years; log raw→normalized pairs for eval corpus
-- [ ] Explicitly NOT an agent — single-shot extraction
+**Pillar 4 — Organizer role**
+- [ ] End-to-end audit of organizer login → dashboard → event roster → check-in
+- [ ] Roster UX polish: large tap targets, polling indicator, conflict resolution
+- [ ] Self check-in via time-gated magic link + per-event venue code (verify shipped or build)
+- [ ] End-of-event prompt for unmarked attendees
+- [ ] Missing-feature pass: anything organizers need at the venue that isn't there
 
-**Phase 6 — Notifications polish**
-- [ ] Registration confirmation email (with magic link)
-- [ ] 24h reminder
-- [ ] 1h reminder (optional)
-- [ ] Cancellation email on slot removal/reschedule
-- [ ] Celery idempotency + dedup keys
-
-**Phase 7 — Admin dashboard polish**
-- [ ] Manual eligibility override UI
-- [ ] Bulk module-template CRUD
-- [ ] CSV import UI surface (from Phase 5)
-- [ ] Audit log viewer polish
-- [ ] Analytics reporting (volunteer hours, attendance rates) — nice-to-have
-
-**Phase 8 — Deployment to UCSB infrastructure**
-- [ ] Production deploy target identified and configured
-- [ ] Secrets management
-- [ ] Monitoring / error reporting
-- [ ] Handoff-ready docs (README, ops runbook, onboarding)
+**Pillar 5 — Cross-role integration**
+- [ ] Cross-role E2E: admin creates event → organizer runs roster → participant signs up → admin sees in audit log
+- [ ] Extend Playwright suite to cover the integration scenarios
+- [ ] Run the full suite green in CI on every PR
+- [ ] Manual smoke pass against the docker stack covering all three roles in one sitting
 
 ### Out of Scope
 
 - **AI matching / recommendation engine** — no user profiles to match against
 - **Full AI agent for event creation** — single LLM extraction call instead
-- **Accounts, passwords, OAuth** — magic links only
+- **Accounts, passwords, OAuth (for participants)** — magic links only; organizer/admin still authenticate
 - **Storing high school student data** — keeps FERPA/COPPA out of scope
 - **Real-time WebSockets in v1** — 5s polling is sufficient
 - **Multi-tenant / SaaS features** — single org (Sci Trek) only
 - **i18n / Spanish support** — deferred
+- **UCSB production deployment** — deferred to next milestone after v1.2-prod (feature-completeness comes first; deploy is its own surface area)
+- **New product features beyond audit/polish** in v1.2-prod — this milestone is finishing the existing roles, not adding new capabilities
 
 ## Key Decisions
 
@@ -144,11 +134,16 @@ Everything else (CSV import, notifications, admin polish) serves that loop.
 | Check-in is source of truth for prereqs | Cleaner than a separate attendance system | Pending |
 | No accounts — magic link only | Loginless thesis; matches user base (one-cycle volunteers) | Pending |
 | Handoff maintainer undecided | Treat as open question; optimize for onboarding-friendliness | Open |
-| v1.0 drifted from no-accounts thesis → v1.1 realigns | Autonomous run introduced student accounts and complex prereq system not in original spec; easier to realign now than maintain two conflicting mental models | Accepted 2026-04-09 |
-| Volunteers identified by email (Q1, Stage 1) | Lets orientation warning do a real DB check instead of a dumb modal | Locked 2026-04-09 |
-| One Signup row per slot (Q2, Stage 1) | Matches SignUpGenius; simpler capacity logic; cancel-all is just UI | Locked 2026-04-09 |
-| Event has structured quarter/year/week_number/module/school columns (Q3, Stage 1) | Week-view browse is one WHERE clause; preserves multi-day date range via start_date/end_date | Locked 2026-04-09 |
-| Slot has single capacity; no role on Signup (Q4, Stage 1) | Leads-vs-mentors is organizer-side knowledge, kept out of DB entirely | Locked 2026-04-09 |
+| v1.0 drifted from no-accounts thesis → v1.1 realigns | Autonomous run introduced student accounts and complex prereq system not in original spec; easier to realign now than maintain two conflicting mental models | ✓ Shipped 2026-04-10 |
+| Volunteers identified by email (Q1, Stage 1) | Lets orientation warning do a real DB check instead of a dumb modal | ✓ Shipped 2026-04-10 |
+| One Signup row per slot (Q2, Stage 1) | Matches SignUpGenius; simpler capacity logic; cancel-all is just UI | ✓ Shipped 2026-04-10 |
+| Event has structured quarter/year/week_number/module/school columns (Q3, Stage 1) | Week-view browse is one WHERE clause; preserves multi-day date range via start_date/end_date | ✓ Shipped 2026-04-10 |
+| Slot has single capacity; no role on Signup (Q4, Stage 1) | Leads-vs-mentors is organizer-side knowledge, kept out of DB entirely | ✓ Shipped 2026-04-10 |
+| v1.2-prod organized by user role, not feature phases | Walking each role end-to-end surfaces UX gaps that feature-phase slicing misses; also enables clean parallel work between Andy and Hung | Locked 2026-04-14 |
+| v1.2-prod = feature-complete only, deploy deferred | Deploy is its own surface (UCSB infra, secrets, monitoring) and shouldn't gate the role-completeness work | Locked 2026-04-14 |
+| LLM CSV import (Phase 5.07) unblocked — Andy holds the file | Earlier notes saying "blocked on CSV from Hung" are wrong; Andy has the file and CSV import ships under the v1.2-prod admin pillar | Locked 2026-04-14 |
+| Overrides admin tab fully retired in v1.2-prod | Phase 12 left it lingering; no orientation-override workflow in the loginless model | Locked 2026-04-14 |
+| Parallel collab via git worktrees + role-owned branches | Lets Andy and Hung run Claude Code + GSD on different role pillars without stepping on each other; merge to main between phases | Locked 2026-04-14 |
 
 ## Open Questions
 
@@ -178,4 +173,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-09 — v1.1 milestone opened (account-less realignment)*
+*Last updated: 2026-04-14 — v1.2-prod milestone opened (production-ready by role: participant → admin → organizer → integration)*
