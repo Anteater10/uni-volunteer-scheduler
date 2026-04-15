@@ -31,9 +31,9 @@ Use the exact pillar names `participant`, `admin`, `organizer` — all grep-frie
 
 **Hung is a real second human working on his own machine** with his own clone of the repo. Coordination is via push/pull/PRs against the shared `main` branch. There is no shared filesystem between Andy and Hung.
 
-**Each dev uses single checkout, branch switching on their own machine** — not literal `git worktree add`. Andy has one clone at his existing repo path and runs `git checkout feature/v1.2-admin` (or `feature/v1.2-organizer`) to switch pillars. Hung does the same on his machine with `feature/v1.2-participant`.
+**Each dev uses single checkout, branch switching on their own machine** — no multiple simultaneous working trees needed. Andy has one clone at his existing repo path and runs `git checkout feature/v1.2-admin` (or `feature/v1.2-organizer`) to switch pillars. Hung does the same on his machine with `feature/v1.2-participant`.
 
-**Reconciling the REQUIREMENTS wording:** COLLAB-01 in `.planning/REQUIREMENTS-v1.2-prod.md` uses "git-worktree" as loose shorthand. The spirit of COLLAB-01 is "role-owned long-lived branches enabling parallel work"; the implementation is one clone per dev with `git checkout` to switch. Do not go looking for `git worktree add` instructions here — they don't exist and are not needed.
+**Reconciling the REQUIREMENTS wording:** COLLAB-01 in `.planning/REQUIREMENTS-v1.2-prod.md` uses "git-worktree" as loose shorthand. The spirit of COLLAB-01 is "role-owned long-lived branches enabling parallel work"; the implementation is one clone per dev with `git checkout` to switch. No additional working tree setup is needed or used.
 
 **One docker stack at a time per machine.** Container names and ports (5173 frontend, 8000 backend) are hardcoded in `docker-compose.yml`. DB and Redis are not exposed to localhost — both devs run pytest via the docker-network pattern documented in `CLAUDE.md`:
 
