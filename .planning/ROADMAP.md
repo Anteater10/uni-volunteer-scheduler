@@ -101,9 +101,16 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
   3. The confirmation email arrives reliably and the magic link works on Safari iOS and Chrome Android; the manage-my-signup page lists everything with per-row + cancel-all controls.
   4. Self check-in via `/check-in/:signupId` works inside the time window and is clearly rejected outside it.
   5. axe-core in CI passes on every public page; every page passes a 375px audit (no horizontal scroll, ≥44px touch targets, thumb-zone CTAs); loading/empty/error states present everywhere; one new feature picked from PART-13 is shipped.
-**Plans:** TBD
+**Plans:** 7 plans (Wave 0: 01, 02 parallel scaffolding; Wave 1: 03, 04, 05, 06 parallel page polishes; Wave 2: 07 integration + audit)
+  - [ ] 15-01-PLAN.md — PR-only bundle: ErrorState primitive + ui barrel + playwright cross-browser matrix + ci.yml install-all
+  - [ ] 15-02-PLAN.md — calendar.js .ics util + test + a11y.spec.js skeleton + PART-AUDIT.md scaffold
+  - [ ] 15-03-PLAN.md — EventsBrowsePage + PortalPage polish (UI-SPEC states + copy)
+  - [ ] 15-04-PLAN.md — EventDetailPage polish + E.164 validation + Add-to-Calendar button (PART-13 surface A)
+  - [ ] 15-05-PLAN.md — ConfirmSignupPage + ManageSignupsPage + SignupSuccessCard polish (PART-13 surface B)
+  - [ ] 15-06-PLAN.md — SelfCheckInPage polish + OrientationWarningModal copy alignment
+  - [ ] 15-07-PLAN.md — console-error assertion + full matrix green + copy-drift + PART-AUDIT fill-in (D-05 checkpoint)
 **UI hint:** yes
-**Touches:** `frontend/src/pages/public/*`, `frontend/src/components/*`, `frontend/src/lib/api.js` (read-only — coordinate with admin worktree per file-ownership rules), public routes in `frontend/src/App.jsx`, axe-core CI config.
+**Touches:** `frontend/src/pages/public/*`, `frontend/src/pages/{SelfCheckInPage,PortalPage}.jsx`, `frontend/src/components/{OrientationWarningModal,SignupSuccessCard}.jsx`, `frontend/src/components/ui/ErrorState.jsx`, `frontend/src/components/ui/index.js`, `frontend/src/lib/calendar.js`, `e2e/{a11y,public-signup,orientation-modal}.spec.js`, `playwright.config.js`, `.github/workflows/ci.yml`, `frontend/package.json`. **Hard bar:** `frontend/src/lib/api.js` and `frontend/src/App.jsx` are UNTOUCHED (read-only per D-14; no new public routes per D-15).
 
 ### Phase 16: Admin shell + retirement + Overview/Audit/Users/Exports
 **Goal:** Bring the admin shell to production grade — retire the `Overrides` lingering tab, audit every admin route, ship the live Overview + filtered Audit Log + Users CRUD + Exports surfaces, and hold WCAG AA + 375px-or-graceful-mobile across every admin page. Templates and LLM Imports are intentionally split into Phase 17 and 18.
@@ -190,7 +197,7 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 14. Collaboration setup | 3/4 | In Progress|  |
-| 15. Participant role audit + UX polish | 0/? | Not started | - |
+| 15. Participant role audit + UX polish | 0/7 | Planned | - |
 | 16. Admin shell + retirement + Overview/Audit/Users/Exports | 0/? | Not started | - |
 | 17. Admin Templates CRUD | 0/? | Not started | - |
 | 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 0/? | Not started | - |
