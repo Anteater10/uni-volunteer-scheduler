@@ -553,5 +553,5 @@ class SentNotification(Base):
     signup = relationship("Signup", back_populates="sent_notifications")
 
 # Phase 08: PrereqOverride model REMOVED (D-05).
-# The prereq_overrides table was dropped in migration 0009.
-# Router/service cleanup is Phase 12 scope.
+# The legacy table was dropped in migration 0009. Router/service cleanup
+# is Phase 12 scope, Phase 16 Plan 01 finished the admin-shell retirement.

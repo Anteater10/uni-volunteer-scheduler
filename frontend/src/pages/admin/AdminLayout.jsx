@@ -10,7 +10,7 @@ const allNavItems = [
   { to: "/admin/audit-logs", label: "Audit Log", roles: ["admin"] },
   { to: "/admin/templates", label: "Templates", roles: ["admin"] },
   { to: "/admin/imports", label: "Imports", roles: ["admin", "organizer"] },
-  { to: "/admin/overrides", label: "Overrides", roles: ["admin"] },
+  // Phase 16 Plan 01 (ADMIN-01): prereq-override nav item retired.
   { to: "/admin/users", label: "Users", roles: ["admin"] },
   { to: "/admin/exports", label: "Exports", roles: ["admin"] },
 ];
