@@ -56,6 +56,16 @@ class UserCreate(UserBase):
 class UserRead(ORMBase, UserBase):
     id: UUID
     created_at: datetime
+    # Phase 16 Plan 02: Users page surface
+    is_active: bool = True
+    last_login_at: Optional[datetime] = None
+
+
+class UserInvite(BaseModel):
+    """Admin-only invite payload (D-11, D-41). Name + Email + Role only."""
+    name: str = Field(min_length=1, max_length=200)
+    email: EmailStr
+    role: Literal["admin", "organizer"]
 
 
 class UserUpdate(BaseModel):

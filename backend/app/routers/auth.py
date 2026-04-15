@@ -164,6 +164,12 @@ def login(
     access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
     raw_refresh = _issue_refresh_token(db, user)
 
+    # Phase 16 Plan 02 (D-37): stamp last_login_at on successful login so the
+    # admin Users page can show "last seen" per user. Application-code driven,
+    # NOT a DB trigger, for portability.
+    user.last_login_at = datetime.now(timezone.utc)
+    db.add(user)
+
     log_action(db, user, "user_login", "User", str(user.id))
 
     db.commit()
