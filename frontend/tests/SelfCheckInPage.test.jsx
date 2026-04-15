@@ -75,8 +75,8 @@ describe("SelfCheckInPage", () => {
     // Type venue code
     await user.type(screen.getByLabelText(/4-digit venue code/i), "1234");
 
-    // Click Check in
-    await user.click(screen.getByRole("button", { name: /check in/i }));
+    // Click "Check me in"
+    await user.click(screen.getByRole("button", { name: /check me in/i }));
 
     expect(selfCheckIn).toHaveBeenCalledWith("event-1", "signup-1", "1234");
 
@@ -100,7 +100,7 @@ describe("SelfCheckInPage", () => {
     });
 
     await user.type(screen.getByLabelText(/4-digit venue code/i), "9999");
-    await user.click(screen.getByRole("button", { name: /check in/i }));
+    await user.click(screen.getByRole("button", { name: /check me in/i }));
 
     await waitFor(() => {
       expect(
@@ -123,7 +123,7 @@ describe("SelfCheckInPage", () => {
     });
 
     await user.type(screen.getByLabelText(/4-digit venue code/i), "1234");
-    await user.click(screen.getByRole("button", { name: /check in/i }));
+    await user.click(screen.getByRole("button", { name: /check me in/i }));
 
     await waitFor(() => {
       expect(
