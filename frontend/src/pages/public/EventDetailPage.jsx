@@ -9,19 +9,23 @@
 // cleared on form reset or unmount.
 
 import React, { useState, useMemo } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { XCircle } from "lucide-react";
 
 import api from "../../lib/api";
+import { downloadIcs } from "../../lib/calendar";
 import { toast } from "../../state/toast";
 import {
   Button,
   Card,
+  Chip,
   Input,
   Label,
   FieldError,
   Skeleton,
   EmptyState,
+  ErrorState,
   PageHeader,
 } from "../../components/ui";
 import OrientationWarningModal from "../../components/OrientationWarningModal";
@@ -60,6 +64,28 @@ function formatDateRange(start, end) {
   const s = formatDate(start);
   const e = end ? formatDate(end) : null;
   return e && e !== s ? `${s} - ${e}` : s;
+}
+
+// ---------------------------------------------------------------------------
+// Phone validation (PART-05) — accepts US-formatted and E.164.
+// Exported only via internal use. Server-side Pydantic is authoritative.
+// ---------------------------------------------------------------------------
+
+export function isValidPhone(raw) {
+  if (raw == null) return false;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return false;
+  // E.164: +[country code 1-9][7-14 more digits], total 8-15 digits after +.
+  // If the string starts with '+', it MUST match E.164 — do not fall back to
+  // US digit-count which would accept things like '+0123456789'.
+  if (trimmed.startsWith("+")) {
+    return /^\+[1-9]\d{7,14}$/.test(trimmed);
+  }
+  // US: strip non-digits; require exactly 10 digits, OR 11 with leading 1.
+  const digitsOnly = trimmed.replace(/\D/g, "");
+  if (digitsOnly.length === 10) return true;
+  if (digitsOnly.length === 11 && digitsOnly.startsWith("1")) return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +135,13 @@ function SlotRow({ slot, selected, onToggle, highlight }) {
       {/* Sign Up button */}
       <td className="py-3 px-2 text-center align-top">
         {isFull ? (
-          <span className="text-xs text-[var(--color-fg-muted)] font-medium">Full</span>
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-semibold text-[var(--color-danger,#dc2626)]"
+            aria-label="Slot full"
+          >
+            <XCircle size={12} aria-hidden="true" />
+            Full
+          </span>
         ) : (
           <button
             onClick={() => onToggle(slot.id)}
@@ -208,7 +240,13 @@ function SlotRowInline({ slot, selected, onToggle, highlight }) {
       {/* Sign Up button */}
       <td className="py-3 px-2 text-center align-top w-20">
         {isFull ? (
-          <span className="text-xs text-[var(--color-fg-muted)] font-medium">Full</span>
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-semibold text-[var(--color-danger,#dc2626)]"
+            aria-label="Slot full"
+          >
+            <XCircle size={12} aria-hidden="true" />
+            Full
+          </span>
         ) : (
           <button
             onClick={() => onToggle(slot.id)}
@@ -341,7 +379,12 @@ function EventDescription({ event, orientationSlots }) {
 
 function DetailSkeleton() {
   return (
-    <div className="flex flex-col gap-4 py-4">
+    <div
+      className="flex flex-col gap-4 py-4"
+      aria-busy="true"
+      aria-live="polite"
+      aria-label="Loading event details"
+    >
       <Skeleton className="h-16 rounded-xl" />
       <Skeleton className="h-32 rounded-xl" />
       <Skeleton className="h-64 rounded-xl" />
@@ -355,6 +398,7 @@ function DetailSkeleton() {
 
 export default function EventDetailPage() {
   const { eventId } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   // State machine
@@ -435,22 +479,30 @@ export default function EventDetailPage() {
     }
   }
 
-  // Client-side validation
+  // Client-side validation (UI-SPEC §Form validation copy)
+  // Phone accepts BOTH US-formatted (10 digits, optional leading 1) and
+  // E.164 (+[country][number], total 8-15 digits). Server (D-14) remains
+  // authoritative; this only improves UX before the round-trip. PART-05.
   function validateIdentity() {
     const errors = {};
-    if (!identity.first_name.trim()) errors.first_name = "First name is required";
-    if (!identity.last_name.trim()) errors.last_name = "Last name is required";
+    const fullName = `${identity.first_name} ${identity.last_name}`.trim();
+    if (!identity.first_name.trim() || !identity.last_name.trim()) {
+      const msg = "Enter your full name";
+      if (!identity.first_name.trim()) errors.first_name = msg;
+      if (!identity.last_name.trim()) errors.last_name = msg;
+    }
     if (!identity.email.trim()) {
-      errors.email = "Email is required";
+      errors.email = "Enter your email address";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.email)) {
-      errors.email = "Enter a valid email address";
+      errors.email = "That doesn't look like a valid email";
     }
     if (!identity.phone.trim()) {
-      errors.phone = "Phone number is required";
-    } else {
-      const digits = identity.phone.replace(/\D/g, "");
-      if (digits.length < 10) errors.phone = "Enter a valid phone number (10+ digits)";
+      errors.phone = "Enter your phone number";
+    } else if (!isValidPhone(identity.phone)) {
+      errors.phone = "Use a US format: (805) 555-1234 or +18055551234";
     }
+    // Touch fullName so the helper isn't dead code if a future linter trims it.
+    void fullName;
     return errors;
   }
 
@@ -558,12 +610,12 @@ export default function EventDetailPage() {
 
   if (eventQ.isError) {
     return (
-      <EmptyState
-        title="Could not load event"
-        body={eventQ.error?.message || "Something went wrong."}
+      <ErrorState
+        title="We couldn't load this page"
+        body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
         action={
           <Button variant="secondary" onClick={() => eventQ.refetch()}>
-            Retry
+            Try again
           </Button>
         }
       />
@@ -608,9 +660,56 @@ export default function EventDetailPage() {
         </Link>
       </div>
 
+      {/* Add to calendar (PART-13 surface A) — secondary CTA below event metadata,
+          above the slot list. Only renders when there is at least one slot to add. */}
+      {slots.length > 0 && (
+        <div className="mt-2 mb-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              // Slot precedence: selected → first non-full orientation → first slot
+              const selectedSlot =
+                [...selectedSlotIds]
+                  .map((id) => slotMap[id])
+                  .find(Boolean) ||
+                orientationSlots.find(
+                  (s) => (s.filled ?? 0) < (s.capacity ?? 0)
+                ) ||
+                slots[0];
+              if (!selectedSlot) return;
+              const dateStr =
+                event.start_date
+                  ? String(event.start_date).slice(0, 10)
+                  : selectedSlot.start_time
+                  ? new Date(selectedSlot.start_time)
+                      .toISOString()
+                      .slice(0, 10)
+                  : "event";
+              const slugPart = event.slug || event.id;
+              const filename = `scitrek-${slugPart}-${dateStr}.ics`;
+              downloadIcs({ event, slot: selectedSlot, filename });
+              toast.success(
+                "Calendar file saved. Open it to add to your calendar."
+              );
+            }}
+          >
+            Add to calendar
+          </Button>
+        </div>
+      )}
+
       {/* Slot table */}
       {slots.length === 0 ? (
-        <EmptyState title="No slots available" body="Check back later." />
+        <EmptyState
+          title="Every slot is full"
+          body="This event is fully booked. Try another event from this week's list."
+          action={
+            <Button variant="secondary" onClick={() => navigate("/events")}>
+              Back to events
+            </Button>
+          }
+        />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
           <table className="w-full text-sm">
@@ -645,7 +744,13 @@ export default function EventDetailPage() {
                       {/* Sign Up button */}
                       <td className="py-3 px-2 text-center align-top">
                         {slot.filled >= slot.capacity ? (
-                          <span className="text-xs text-[var(--color-fg-muted)]">Full</span>
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-semibold text-[var(--color-danger,#dc2626)]"
+                            aria-label="Slot full"
+                          >
+                            <XCircle size={12} aria-hidden="true" />
+                            Full
+                          </span>
                         ) : (
                           <button
                             onClick={() => toggleSlot(slot.id)}
@@ -716,7 +821,13 @@ export default function EventDetailPage() {
                       {/* Sign Up button */}
                       <td className="py-3 px-2 text-center align-top">
                         {slot.filled >= slot.capacity ? (
-                          <span className="text-xs text-[var(--color-fg-muted)]">Full</span>
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-semibold text-[var(--color-danger,#dc2626)]"
+                            aria-label="Slot full"
+                          >
+                            <XCircle size={12} aria-hidden="true" />
+                            Full
+                          </span>
                         ) : (
                           <button
                             onClick={() => toggleSlot(slot.id)}
