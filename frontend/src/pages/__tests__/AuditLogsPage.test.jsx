@@ -131,7 +131,7 @@ describe("AuditLogsPage", () => {
   it("renders the 5-column table header in the correct order", async () => {
     renderPage();
     await waitFor(() =>
-      expect(screen.getByText("Andy Admin")).toBeInTheDocument(),
+      expect(screen.getByText("Jane Newcomer")).toBeInTheDocument(),
     );
     const headers = screen
       .getAllByRole("columnheader")
@@ -157,9 +157,10 @@ describe("AuditLogsPage", () => {
   it("opens the SideDrawer with JSON payload when a row is clicked", async () => {
     renderPage();
     await waitFor(() =>
-      expect(screen.getByText("Andy Admin")).toBeInTheDocument(),
+      expect(screen.getByText("Jane Newcomer")).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByText("Invited a new user"));
+    // Click the humanized entity label cell — unambiguous (not in any dropdown).
+    fireEvent.click(screen.getByText("Jane Newcomer"));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/Raw payload/i)).toBeInTheDocument();
     // JSON includes the action_label
@@ -175,7 +176,7 @@ describe("AuditLogsPage", () => {
   it("typing in the search box updates the `q` URL param", async () => {
     renderPage();
     await waitFor(() =>
-      expect(screen.getByText("Andy Admin")).toBeInTheDocument(),
+      expect(screen.getByText("Invited a new user")).toBeInTheDocument(),
     );
     const search = screen.getByPlaceholderText(/Search/i);
     fireEvent.change(search, { target: { value: "invite" } });
@@ -189,7 +190,7 @@ describe("AuditLogsPage", () => {
   it("D-19 gate: no UUIDs in the rendered table body", async () => {
     const { container } = renderPage();
     await waitFor(() =>
-      expect(screen.getByText("Andy Admin")).toBeInTheDocument(),
+      expect(screen.getByText("Invited a new user")).toBeInTheDocument(),
     );
     const text = container.textContent || "";
     const uuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/i;
@@ -199,7 +200,7 @@ describe("AuditLogsPage", () => {
   it("Export button calls downloadBlob with current filter params", async () => {
     renderPage(["/admin/audit-logs?q=invite&kind=user_invite"]);
     await waitFor(() =>
-      expect(screen.getByText("Andy Admin")).toBeInTheDocument(),
+      expect(screen.getByText("Invited a new user")).toBeInTheDocument(),
     );
     fireEvent.click(
       screen.getByRole("button", { name: /Export filtered view/i }),
