@@ -216,10 +216,10 @@ jobs:
             sleep 2
           done
 
-      - name: Install root playwright deps + browser
+      - name: Install root playwright deps + browsers
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps
 
       - name: Install frontend + start dev server
         run: |
