@@ -15,6 +15,7 @@ import {
   Skeleton,
 } from "../components/ui";
 import { toast } from "../state/toast";
+import { useAdminPageTitle } from "./admin/AdminLayout";
 
 export default function AdminEventPage() {
   const { eventId } = useParams();
@@ -32,6 +33,12 @@ export default function AdminEventPage() {
     queryKey: ["adminEventRoster", eventId, privacy],
     queryFn: () => api.admin.eventRoster(eventId, privacy),
   });
+
+  const eventTitle =
+    analyticsQ.data?.event?.title ||
+    analyticsQ.data?.title ||
+    "Event";
+  useAdminPageTitle(eventTitle);
 
   const roster = rosterQ.data || [];
 
@@ -54,8 +61,7 @@ export default function AdminEventPage() {
         { auth: true },
       );
       setConfirmExport(false);
-      // TODO(copy)
-      toast.success("Export ready.");
+      toast.success("Roster CSV download started.");
     } catch (e) {
       setErr(e?.message || "Export failed");
     }
@@ -64,51 +70,47 @@ export default function AdminEventPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        /* TODO(copy) */
-        title="Admin — Event"
+        title={eventTitle}
         action={
           <Button variant="danger" onClick={() => setConfirmExport(true)}>
-            {/* TODO(copy) */}
-            Export CSV
+            Download roster CSV
           </Button>
         }
       />
 
       <Card>
         <div>
-          {/* TODO(copy) */}
-          <Label htmlFor="privacy">Privacy</Label>
+          <Label htmlFor="privacy">Who can see volunteer names on this roster?</Label>
           <select
             id="privacy"
             value={privacy}
             onChange={(e) => setPrivacy(e.target.value)}
             className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
           >
-            <option value="full">full</option>
-            <option value="minimal">minimal</option>
+            <option value="full">Show full names</option>
+            <option value="minimal">Show initials only</option>
           </select>
         </div>
         <FieldError>{err}</FieldError>
       </Card>
 
       <section>
-        {/* TODO(copy) */}
         <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
-          Analytics
+          Attendance summary
         </h2>
         {analyticsQ.isPending ? (
           <Skeleton className="h-24" />
         ) : analyticsQ.error ? (
           <EmptyState
-            /* TODO(copy) */
-            title="Couldn't load analytics"
-            /* TODO(copy) */
+            title="Couldn't load attendance summary"
             body={analyticsQ.error.message}
+            action={
+              <Button onClick={() => analyticsQ.refetch()}>Try again</Button>
+            }
           />
         ) : (
           <Card>
             <pre className="text-xs whitespace-pre-wrap">
-              {/* TODO(copy) */}
               {JSON.stringify(analyticsQ.data, null, 2)}
             </pre>
           </Card>
@@ -116,9 +118,8 @@ export default function AdminEventPage() {
       </section>
 
       <section>
-        {/* TODO(copy) */}
         <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
-          Roster
+          Signed-up volunteers
         </h2>
         {rosterQ.isPending ? (
           <div className="space-y-2">
@@ -128,28 +129,24 @@ export default function AdminEventPage() {
           </div>
         ) : rosterQ.error ? (
           <EmptyState
-            /* TODO(copy) */
             title="Couldn't load roster"
-            /* TODO(copy) */
             body={rosterQ.error.message}
             action={
               <Button onClick={() => qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] })}>
-                {/* TODO(copy) */}
-                Retry
+                Try again
               </Button>
             }
           />
         ) : grouped.length === 0 ? (
           <EmptyState
-            /* TODO(copy) */
-            title="No signups yet"
+            title="No one has signed up yet"
+            body="As soon as volunteers start signing up, they will appear here."
           />
         ) : (
           <div className="space-y-3">
             {grouped.map(({ slot, rows }) => (
               <Card key={slot.id}>
                 <p className="text-sm font-medium">
-                  {/* TODO(copy) */}
                   Slot: {slot.start} → {slot.end}
                 </p>
                 <ul className="mt-2 space-y-1">
@@ -169,21 +166,19 @@ export default function AdminEventPage() {
       <Modal
         open={confirmExport}
         onClose={() => setConfirmExport(false)}
-        /* TODO(copy) */
-        title="Export roster"
+        title="Download roster CSV"
       >
         <p className="text-sm">
-          {/* TODO(copy) */}
-          Download the current roster as CSV with privacy "{privacy}"?
+          Download the roster for this event as a CSV file? Volunteer names
+          will be shown using the privacy setting you selected
+          ({privacy === "full" ? "full names" : "initials only"}).
         </p>
         <div className="flex justify-end gap-2 mt-4">
           <Button variant="ghost" onClick={() => setConfirmExport(false)}>
-            {/* TODO(copy) */}
             Cancel
           </Button>
           <Button onClick={doExport}>
-            {/* TODO(copy) */}
-            Download
+            Download CSV
           </Button>
         </div>
       </Modal>
