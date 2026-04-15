@@ -109,7 +109,18 @@ describe("SelfCheckInPage", () => {
     });
   });
 
-  it("shows outside window error", async () => {
+  it("shows outside window error (not yet open)", async () => {
+    // Page heuristic compares `new Date()` to slot.start_time to distinguish
+    // "not yet open" from "closed". Use a far-future slot so the test stays
+    // deterministic regardless of system clock.
+    const futureStart = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const futureEnd = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+    getSignupEvent.mockResolvedValue({
+      ...MOCK_SIGNUP,
+      slot_start_time: futureStart,
+      slot_end_time: futureEnd,
+    });
+
     const err = new Error("Outside window");
     err.status = 403;
     err.response = { status: 403, data: { code: "OUTSIDE_WINDOW" } };
