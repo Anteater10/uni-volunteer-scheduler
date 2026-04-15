@@ -118,7 +118,15 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
   3. The Overview page shows live stats (Users, Events, Slots, Signups, Confirmed signups) sourced from the live DB plus a Recent Activity feed of the last N audit entries with clear actor + timestamp formatting.
   4. The Audit Log page paginates every audit entry and supports filters by kind, actor, date range, and free-text search; the Users page supports list/create/edit/deactivate for organizer + admin users (no participant accounts).
   5. Admin can export volunteer hours + attendance + no-show CSVs and the CCPA export flow is polished and tested; every admin page meets WCAG AA, passes a 375px audit (or has a graceful "desktop-only" mobile message), and shows loading/empty/error states.
-**Plans:** TBD
+**Plans:** 7 plans
+Plans:
+- [ ] 16-01-PLAN.md — Wave 0 backend foundation: Alembic 0011/0012, humanization service, Overrides retirement
+- [ ] 16-02-PLAN.md — Backend endpoints: users invite/deactivate, expanded summary, humanized audit, 2 new CSV endpoints
+- [ ] 16-03-PLAN.md — Frontend primitives + AdminLayout rework + HelpSection + api.js batch (PR-only)
+- [ ] 16-04-PLAN.md — Overview page rewire + Audit Log page in-place rewrite
+- [ ] 16-05-PLAN.md — Users page fix + rewrite (table, drawer, invite, deactivate, CCPA)
+- [ ] 16-06-PLAN.md — Exports polish + Imports cleanups + AdminEventPage + PortalsAdminPage
+- [ ] 16-07-PLAN.md — ADMIN-AUDIT.md + Playwright a11y spec + final gate verification
 **UI hint:** yes
 **Touches:** `frontend/src/pages/admin/*`, `frontend/src/components/admin/*`, `frontend/src/lib/api.js` (write — coordinate with participant worktree per ownership rules), `backend/app/routers/admin.py`, `backend/app/routers/users.py`, audit log services, CCPA export router.
 
@@ -191,7 +199,7 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
 |-------|----------------|--------|-----------|
 | 14. Collaboration setup | 2/4 | In Progress|  |
 | 15. Participant role audit + UX polish | 0/? | Not started | - |
-| 16. Admin shell + retirement + Overview/Audit/Users/Exports | 0/? | Not started | - |
+| 16. Admin shell + retirement + Overview/Audit/Users/Exports | 0/7 | Not started | - |
 | 17. Admin Templates CRUD | 0/? | Not started | - |
 | 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 0/? | Not started | - |
 | 19. Organizer role audit + UX polish | 0/? | Not started | - |
