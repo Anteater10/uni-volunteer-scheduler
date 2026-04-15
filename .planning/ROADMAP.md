@@ -84,7 +84,7 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
   3. CLAUDE.md tells future Claude Code sessions which branch they should be on for any given pillar.
   4. The file-ownership table (which files require a PR vs which can be edited directly on a role branch) is written and agreed.
   5. Both devs run a one-day parallel test: each opens a Claude Code session on a different pillar branch, completes one trivial change, merges to main without conflict.
-**Plans:** TBD
+**Plans:** 2/4 plans executed
 **UI hint:** no
 **Touches:** `COLLABORATION.md`, `CLAUDE.md`, `.gitignore` (worktree dirs if needed), no app code.
 
@@ -189,7 +189,7 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 14. Collaboration setup | 0/? | Not started | - |
+| 14. Collaboration setup | 2/4 | In Progress|  |
 | 15. Participant role audit + UX polish | 0/? | Not started | - |
 | 16. Admin shell + retirement + Overview/Audit/Users/Exports | 0/? | Not started | - |
 | 17. Admin Templates CRUD | 0/? | Not started | - |
