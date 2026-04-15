@@ -149,7 +149,13 @@ def login(
     _: None = Depends(rate_limit(30, 60)),
 ):
     user = db.query(models.User).filter(models.User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    # Phase 16 Plan 01: hashed_password may be NULL for magic-link-only users
+    if not user or user.hashed_password is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+    if not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",

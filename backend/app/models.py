@@ -119,7 +119,8 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    # Phase 16 Plan 01: nullable so magic-link-only invites can create users
+    hashed_password = Column(String(255), nullable=True)
 
     # ✅ lock enum name to match Alembic migration
     role = Column(
@@ -133,6 +134,9 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     # Added in Phase 7 for CCPA soft-delete
     deleted_at = Column(DateTime(timezone=True), nullable=True, default=None)
+    # Phase 16 Plan 01: admin Users page surface
+    is_active = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True, default=None)
 
     # Relationships
     events = relationship("Event", back_populates="owner")
