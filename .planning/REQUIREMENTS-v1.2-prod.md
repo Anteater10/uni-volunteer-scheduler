@@ -174,7 +174,92 @@ These are NOT requirements themselves but standards every requirement must meet:
 
 ## Traceability
 
-(Filled by the roadmapper during ROADMAP creation.)
+Every requirement is mapped to exactly one phase. 68/68 requirements covered. No orphans.
+
+| REQ-ID | Phase | Pillar |
+|---|---|---|
+| COLLAB-01 | 14 | 1 |
+| COLLAB-02 | 14 | 1 |
+| COLLAB-03 | 14 | 1 |
+| COLLAB-04 | 14 | 1 |
+| COLLAB-05 | 14 | 1 |
+| COLLAB-06 | 14 | 1 |
+| COLLAB-07 | 14 | 1 |
+| PART-01 | 15 | 2 |
+| PART-02 | 15 | 2 |
+| PART-03 | 15 | 2 |
+| PART-04 | 15 | 2 |
+| PART-05 | 15 | 2 |
+| PART-06 | 15 | 2 |
+| PART-07 | 15 | 2 |
+| PART-08 | 15 | 2 |
+| PART-09 | 15 | 2 |
+| PART-10 | 15 | 2 |
+| PART-11 | 15 | 2 |
+| PART-12 | 15 | 2 |
+| PART-13 | 15 | 2 |
+| PART-14 | 15 | 2 |
+| ADMIN-01 | 16 | 3 |
+| ADMIN-02 | 16 | 3 |
+| ADMIN-03 | 16 | 3 |
+| ADMIN-04 | 16 | 3 |
+| ADMIN-05 | 16 | 3 |
+| ADMIN-06 | 16 | 3 |
+| ADMIN-07 | 16 | 3 |
+| ADMIN-08 | 17 | 3 |
+| ADMIN-09 | 17 | 3 |
+| ADMIN-10 | 17 | 3 |
+| ADMIN-11 | 17 | 3 |
+| ADMIN-12 | 18 | 3 |
+| ADMIN-13 | 18 | 3 |
+| ADMIN-14 | 18 | 3 |
+| ADMIN-15 | 18 | 3 |
+| ADMIN-16 | 18 | 3 |
+| ADMIN-17 | 18 | 3 |
+| ADMIN-18 | 16 | 3 |
+| ADMIN-19 | 16 | 3 |
+| ADMIN-20 | 16 | 3 |
+| ADMIN-21 | 16 | 3 |
+| ADMIN-22 | 16 | 3 |
+| ADMIN-23 | 16 | 3 |
+| ADMIN-24 | 16 | 3 |
+| ADMIN-25 | 16 | 3 |
+| ADMIN-26 | 16 | 3 |
+| ADMIN-27 | 16 | 3 |
+| ORG-01 | 19 | 4 |
+| ORG-02 | 19 | 4 |
+| ORG-03 | 19 | 4 |
+| ORG-04 | 19 | 4 |
+| ORG-05 | 19 | 4 |
+| ORG-06 | 19 | 4 |
+| ORG-07 | 19 | 4 |
+| ORG-08 | 19 | 4 |
+| ORG-09 | 19 | 4 |
+| ORG-10 | 19 | 4 |
+| ORG-11 | 19 | 4 |
+| ORG-12 | 19 | 4 |
+| ORG-13 | 19 | 4 |
+| ORG-14 | 19 | 4 |
+| INTEG-01 | 20 | 5 |
+| INTEG-02 | 20 | 5 |
+| INTEG-03 | 20 | 5 |
+| INTEG-04 | 20 | 5 |
+| INTEG-05 | 20 | 5 |
+| INTEG-06 | 20 | 5 |
+
+**Counts by phase:**
+
+| Phase | Pillar | Reqs | Count |
+|---|---|---|---:|
+| 14 | 1 — Collaboration | COLLAB-01..07 | 7 |
+| 15 | 2 — Participant | PART-01..14 | 14 |
+| 16 | 3 — Admin shell + Overview/Audit/Users/Exports + UX polish | ADMIN-01..07, 18..27 | 17 |
+| 17 | 3 — Admin Templates CRUD | ADMIN-08..11 | 4 |
+| 18 | 3 — Admin LLM CSV Imports | ADMIN-12..17 | 6 |
+| 19 | 4 — Organizer | ORG-01..14 | 14 |
+| 20 | 5 — Integration | INTEG-01..06 | 6 |
+| **Total** | | | **68** |
 
 ---
 *Created: 2026-04-14*
+*Traceability filled by roadmapper: 2026-04-14*
