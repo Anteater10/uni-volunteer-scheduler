@@ -1,14 +1,14 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2-prod
-milestone_name: production-ready-by-role
-status: Phase 14 context captured; awaiting plan
-last_updated: "2026-04-14T20:34:00.000Z"
-last_activity: 2026-04-14
+milestone: v1.2
+milestone_name: milestone
+status: executing
+last_updated: "2026-04-15T04:59:06.011Z"
+last_activity: 2026-04-15
 progress:
   total_phases: 7
   completed_phases: 0
-  total_plans: 0
+  total_plans: 4
   completed_plans: 0
   percent: 0
 ---
@@ -25,8 +25,8 @@ progress:
 Phase: 14 — Collaboration setup (Context captured)
 Plan: —
 **Milestone:** v1.2-prod Production-ready by role
-Status: Phase 14 context captured; awaiting plan
-**Last activity:** 2026-04-14 — Phase 14 CONTEXT.md + DISCUSSION-LOG.md written; role split locked (Andy = admin + organizer, Hung = participant + frontend patterns); single-checkout branch-switching workflow chosen over literal git worktrees; daily 3h sync; pillar-owner-decides tie-breaker; wholesale rewrite of stale `docs/COLLABORATION.md` planned
+Status: Ready to execute
+**Last activity:** 2026-04-15
 
 ## Current Status
 
@@ -36,6 +36,7 @@ Status: Phase 14 context captured; awaiting plan
 - ▶ Phase 14 (Collaboration setup) is the next action
 
 **v1.2-prod phase plan (7 phases, 14–20):**
+
 - Phase 14: Collaboration setup — git-worktree workflow, role-owned branches, COLLABORATION.md + CLAUDE.md updates
 - Phase 15: Participant audit + UX polish (PART-01..14) — runs in PARALLEL with Phase 16
 - Phase 16: Admin shell + retire Overrides + Overview + Audit Log + Users + Exports + UX polish (ADMIN-01..07, 18..27) — runs in PARALLEL with Phase 15
@@ -51,6 +52,7 @@ Status: Phase 14 context captured; awaiting plan
 `/gsd-plan-phase 14` — start Phase 14 (Collaboration setup). This phase MUST ship first because every later phase depends on the worktree workflow being defined and tested. After Phase 14 merges, Andy and Hung can run Phase 15 (participant) and Phase 16 (admin) in parallel on different worktrees.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
+
 - Test-helper backend endpoints (`seed-cleanup`, `event-signups-cleanup`) gated by `EXPOSE_TOKENS_FOR_TESTING=1` enable idempotent Playwright reruns despite UNIQUE(volunteer_id, slot_id) constraint
 - Rate-limit bypass when `EXPOSE_TOKENS_FOR_TESTING=1` is required so parallel Playwright workers (sharing localhost IP) don't exhaust the 10/min limit
 - Slot capacity 200 for E2E events prevents exhaustion across 4 parallel workers
