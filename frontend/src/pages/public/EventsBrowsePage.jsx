@@ -11,7 +11,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import api from "../../lib/api";
 import { getNextWeek, getPrevWeek, formatWeekLabel } from "../../lib/weekUtils";
-import { Button, Card, Skeleton, EmptyState } from "../../components/ui";
+import { Button, Card, Skeleton, EmptyState, ErrorState } from "../../components/ui";
 import { toast } from "../../state/toast";
 
 // ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ function EventCard({ event }) {
 
 function LoadingSkeletons() {
   return (
-    <div className="flex flex-col gap-3">
+    <div aria-busy="true" aria-live="polite" className="flex flex-col gap-3">
       <Skeleton className="h-24 rounded-xl" />
       <Skeleton className="h-24 rounded-xl" />
       <Skeleton className="h-24 rounded-xl" />
@@ -178,7 +178,7 @@ export default function EventsBrowsePage() {
     : "Loading…";
 
   return (
-    <div className="flex flex-col gap-4 py-4">
+    <div className="flex flex-col gap-4 py-4 px-4 md:px-8">
       {/* ---- Week navigator ---- */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
@@ -221,19 +221,24 @@ export default function EventsBrowsePage() {
       {!allParamsReady || eventsQ.isPending ? (
         <LoadingSkeletons />
       ) : eventsQ.isError ? (
-        <EmptyState
-          title="Could not load events"
-          body={eventsQ.error?.message || "Something went wrong."}
+        <ErrorState
+          title="We couldn't load this page"
+          body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
           action={
             <Button variant="secondary" onClick={() => eventsQ.refetch()}>
-              Retry
+              Try again
             </Button>
           }
         />
       ) : events.length === 0 ? (
         <EmptyState
-          title="No events this week"
-          body="Try browsing a different week."
+          title="Nothing scheduled this week"
+          body="New events go up on Mondays. Check back then, or browse next week's calendar."
+          action={
+            <Button variant="secondary" onClick={handleNext}>
+              View next week
+            </Button>
+          }
         />
       ) : (
         <div className="flex flex-col gap-2">
