@@ -122,7 +122,11 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
 
     # ✅ lock enum name to match Alembic migration
-    role = Column(SqlEnum(UserRole, name="userrole"), default=UserRole.participant, nullable=False)
+    role = Column(
+        SqlEnum(UserRole, values_callable=lambda x: [e.value for e in x], name="userrole"),
+        default=UserRole.participant,
+        nullable=False,
+    )
 
     university_id = Column(String(64), nullable=True)
     notify_email = Column(Boolean, default=True)
@@ -170,7 +174,10 @@ class Event(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Phase 08: new structured columns (R08-02)
-    quarter = Column(SqlEnum(Quarter, name="quarter"), nullable=True)
+    quarter = Column(
+        SqlEnum(Quarter, values_callable=lambda x: [e.value for e in x], name="quarter"),
+        nullable=True,
+    )
     year = Column(Integer, nullable=True)
     week_number = Column(Integer, nullable=True)
     school = Column(String(255), nullable=True)
@@ -200,7 +207,10 @@ class Slot(Base):
     current_count = Column(Integer, nullable=False, default=0)
 
     # Phase 08: new columns (R08-03, D-02)
-    slot_type = Column(SqlEnum(SlotType, name="slottype"), nullable=False)
+    slot_type = Column(
+        SqlEnum(SlotType, values_callable=lambda x: [e.value for e in x], name="slottype"),
+        nullable=False,
+    )
     date = Column(Date, nullable=False, server_default=text("CURRENT_DATE"))
     location = Column(String(255), nullable=True)
 
@@ -230,7 +240,7 @@ class Signup(Base):
 
     # ✅ lock enum name to match Alembic migration
     status = Column(
-        SqlEnum(SignupStatus, name="signupstatus"),
+        SqlEnum(SignupStatus, values_callable=lambda x: [e.value for e in x], name="signupstatus"),
         default=SignupStatus.confirmed,
         nullable=False,
     )
@@ -313,7 +323,10 @@ class Notification(Base):
     )
 
     # ✅ lock enum name to match Alembic migration
-    type = Column(SqlEnum(NotificationType, name="notificationtype"), nullable=False)
+    type = Column(
+        SqlEnum(NotificationType, values_callable=lambda x: [e.value for e in x], name="notificationtype"),
+        nullable=False,
+    )
 
     subject = Column(String(255), nullable=True)
     body = Column(Text, nullable=False)
@@ -383,7 +396,7 @@ class SiteSettings(Base):
 
     # ✅ lock enum name to match Alembic migration
     default_privacy_mode = Column(
-        SqlEnum(PrivacyMode, name="privacymode"),
+        SqlEnum(PrivacyMode, values_callable=lambda x: [e.value for e in x], name="privacymode"),
         default=PrivacyMode.full,
     )
 
@@ -440,7 +453,7 @@ class MagicLinkToken(Base):
     signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id", ondelete="CASCADE"), nullable=False)
     email = Column(String, nullable=False)
     purpose = Column(
-        SqlEnum(MagicLinkPurpose, name="magiclinkpurpose"),
+        SqlEnum(MagicLinkPurpose, values_callable=lambda x: [e.value for e in x], name="magiclinkpurpose"),
         nullable=False,
         server_default="email_confirm",
     )
@@ -497,7 +510,7 @@ class CsvImport(Base):
     filename = Column(String(512), nullable=False)
     raw_csv_hash = Column(String(64), nullable=False)
     status = Column(
-        SqlEnum(CsvImportStatus, name="csvimportstatus"),
+        SqlEnum(CsvImportStatus, values_callable=lambda x: [e.value for e in x], name="csvimportstatus"),
         default=CsvImportStatus.pending,
         nullable=False,
     )

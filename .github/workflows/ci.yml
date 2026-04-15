@@ -197,7 +197,7 @@ jobs:
           JWT_ALGORITHM=HS256
           ACCESS_TOKEN_EXPIRES_MINUTES=60
           REFRESH_TOKEN_EXPIRES_DAYS=14
-          SEED_ADMIN_EMAIL=admin@e2e.test
+          SEED_ADMIN_EMAIL=admin@e2e.example.com
           SEED_ADMIN_PASSWORD=Admin!2345
           EXPOSE_TOKENS_FOR_TESTING=1
           EOF

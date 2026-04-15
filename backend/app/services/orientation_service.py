@@ -23,6 +23,9 @@ def has_attended_orientation(db: Session, email: str) -> OrientationStatusRead:
     Returns:
         OrientationStatusRead with has_attended_orientation + last_attended_at.
     """
+    # Count both "attended" and "checked_in" as having attended orientation.
+    # A volunteer who has been checked in at an orientation slot has physically
+    # attended — event resolution (which sets "attended") may not have run yet.
     row = (
         db.query(Signup)
         .join(Slot, Slot.id == Signup.slot_id)
@@ -30,7 +33,7 @@ def has_attended_orientation(db: Session, email: str) -> OrientationStatusRead:
         .filter(
             Volunteer.email == email.lower().strip(),
             Slot.slot_type == SlotType.ORIENTATION,
-            Signup.status == SignupStatus.attended,
+            Signup.status.in_([SignupStatus.attended, SignupStatus.checked_in]),
         )
         .order_by(Signup.checked_in_at.desc().nullslast())
         .first()

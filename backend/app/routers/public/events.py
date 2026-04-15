@@ -67,6 +67,39 @@ def current_week() -> schemas.CurrentWeekRead:
 def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEventRead:
     """Build a PublicEventRead dict for the given event, with slots hydrated."""
     slots = db.query(models.Slot).filter(models.Slot.event_id == event.id).all()
+
+    # Batch-load active signups + volunteer names for all slots in one query
+    slot_ids = [s.id for s in slots]
+    active_statuses = {
+        models.SignupStatus.confirmed,
+        models.SignupStatus.checked_in,
+        models.SignupStatus.attended,
+        models.SignupStatus.pending,
+    }
+    signup_rows = (
+        db.query(
+            models.Signup.slot_id,
+            models.Volunteer.first_name,
+            models.Volunteer.last_name,
+        )
+        .join(models.Volunteer, models.Signup.volunteer_id == models.Volunteer.id)
+        .filter(
+            models.Signup.slot_id.in_(slot_ids),
+            models.Signup.status.in_(active_statuses),
+        )
+        .all()
+    ) if slot_ids else []
+
+    # Group by slot_id
+    signups_by_slot: dict[str, list[schemas.SlotSignupRead]] = {}
+    for row in signup_rows:
+        sid = str(row.slot_id)
+        entry = schemas.SlotSignupRead(
+            first_name=row.first_name,
+            last_initial=row.last_name[0].upper() if row.last_name else "",
+        )
+        signups_by_slot.setdefault(sid, []).append(entry)
+
     slot_reads = [
         schemas.PublicSlotRead(
             id=slot.id,
@@ -77,12 +110,14 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
             location=slot.location,
             capacity=slot.capacity,
             filled=slot.current_count,
+            signups=signups_by_slot.get(str(slot.id), []),
         )
         for slot in slots
     ]
     return schemas.PublicEventRead(
         id=event.id,
         title=event.title,
+        description=event.description,
         quarter=event.quarter,
         year=event.year,
         week_number=event.week_number,

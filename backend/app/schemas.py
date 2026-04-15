@@ -145,7 +145,7 @@ class EventBase(BaseModel):
 
 
 class EventCreate(EventBase):
-    quarter: Optional[str] = None
+    quarter: Optional[Quarter] = None
     year: Optional[int] = None
     week_number: Optional[int] = None
     school: Optional[str] = None
@@ -516,6 +516,13 @@ class PublicSignupResponse(BaseModel):
     confirm_token: str | None = None
 
 
+class SlotSignupRead(BaseModel):
+    """Public-facing signup: first name + last initial only."""
+    first_name: str
+    last_initial: str
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PublicSlotRead(BaseModel):
     id: UUID
     slot_type: SlotType
@@ -525,12 +532,14 @@ class PublicSlotRead(BaseModel):
     location: Optional[str] = None
     capacity: int
     filled: int  # = slot.current_count
+    signups: List[SlotSignupRead] = []
     model_config = ConfigDict(from_attributes=True)
 
 
 class PublicEventRead(BaseModel):
     id: UUID
     title: str
+    description: Optional[str] = None
     quarter: Optional[Quarter] = None
     year: Optional[int] = None
     week_number: Optional[int] = None
