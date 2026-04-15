@@ -1,39 +1,66 @@
 # backend/app/main.py
+import logging
+import os
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.errors import RateLimitExceeded
-from slowapi import _rate_limit_exceeded_handler
-
-from .deps import limiter
+from .config import settings
 from .database import get_db
-from .routers import auth, users, events, slots, signups, notifications, admin, portals
+from .routers import auth, users, events, slots, signups, notifications, admin, portals, magic, roster, check_in
+from .routers.public import events as public_events
+from .routers.public import signups as public_signups
+from .routers.public import orientation as public_orientation
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="University Volunteer Scheduler API")
 
-# Rate limiting middleware
-app.state.limiter = limiter
-app.add_middleware(SlowAPIMiddleware)
-# ✅ Return clean 429 responses when rate limited
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+    logger.warning(
+        "EXPOSE_TOKENS_FOR_TESTING is ON — confirm tokens will be returned in signup "
+        "responses. DO NOT use in production."
+    )
+    from .routers.test_helpers import router as test_helpers_router
 
-# CORS
-origins = [
-    # Dev frontends
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    # TODO: add your production frontend origin here, e.g.:
-    # "https://volunteer.your-university.edu",
-]
 
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """AUDIT-03: Normalize every HTTPException into {error, code, detail}.
+
+    - error:  short machine-readable slug derived from the status code
+              (e.g. 'http_401'), or the raising site's override
+    - code:   when the raising site passed a dict detail with a 'code'
+              key (e.g. 'AUTH_REFRESH_INVALID'), surface that; otherwise
+              fall back to the same status-code slug
+    - detail: original human-readable string detail
+
+    Plan 06 `test_error_response_shape` asserts this shape across the
+    auth, signups, and admin routers.
+    """
+    status_code = exc.status_code
+    raw = exc.detail
+    if isinstance(raw, dict):
+        code = raw.get("code", f"http_{status_code}")
+        detail = raw.get("detail", raw.get("message", ""))
+        error = raw.get("error", f"http_{status_code}")
+    else:
+        code = f"http_{status_code}"
+        detail = raw if isinstance(raw, str) else str(raw)
+        error = f"http_{status_code}"
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": error, "code": code, "detail": detail},
+        headers=getattr(exc, "headers", None) or None,
+    )
+
+# CORS origins loaded from settings.cors_allowed_origins env var
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,3 +95,14 @@ app.include_router(signups.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(portals.router, prefix="/api/v1")
+app.include_router(magic.router, prefix="/api/v1")
+app.include_router(roster.router, prefix="/api/v1")
+app.include_router(check_in.router, prefix="/api/v1")
+# Phase 09: public (unauthenticated) volunteer signup surface
+app.include_router(public_events.router, prefix="/api/v1")
+app.include_router(public_signups.router, prefix="/api/v1")
+app.include_router(public_orientation.router, prefix="/api/v1")
+
+# Test helpers — only included when EXPOSE_TOKENS_FOR_TESTING=1
+if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+    app.include_router(test_helpers_router)

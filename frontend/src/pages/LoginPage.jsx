@@ -1,6 +1,13 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../state/authContext";
+import { useAuth } from "../state/useAuth";
+import {
+  PageHeader,
+  Label,
+  Input,
+  Button,
+  FieldError,
+} from "../components/ui";
 
 export default function LoginPage() {
   const nav = useNavigate();
@@ -26,21 +33,46 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ maxWidth: 420 }}>
-      <h2>Login</h2>
-      {err && <div style={{ color: "crimson", marginBottom: 8 }}>{err}</div>}
+    <div className="mx-auto max-w-sm w-full pt-8">
+      <PageHeader title="Organizer / Admin Login" />
 
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
-        <label>
-          Email
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
-        </label>
-        <label>
-          Password
-          <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required />
-        </label>
-        <button disabled={loading}>{loading ? "Logging in..." : "Login"}</button>
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div>
+          {/* TODO(copy) */}
+          <Label htmlFor="login-email">Email</Label>
+          <Input
+            id="login-email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            required
+          />
+        </div>
+        <div>
+          {/* TODO(copy) */}
+          <Label htmlFor="login-password">Password</Label>
+          <Input
+            id="login-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </div>
+        <FieldError>{err}</FieldError>
+        <Button
+          type="submit"
+          className="w-full"
+          size="lg"
+          disabled={loading}
+        >
+          {/* TODO(copy) */}
+          {loading ? "Signing in..." : "Sign in"}
+        </Button>
       </form>
+
     </div>
   );
 }

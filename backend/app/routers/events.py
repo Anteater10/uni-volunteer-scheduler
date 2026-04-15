@@ -7,29 +7,21 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, log_action
+from ..deps import require_role, log_action, ensure_event_owner_or_admin
 
 router = APIRouter(prefix="/events", tags=["events"])
 
 
-def _to_naive_utc(dt: datetime) -> datetime:
-    """Normalize datetimes so comparisons are safe across aware/naive values."""
+def _normalize_dt(dt: datetime) -> datetime:
+    """Return an aware datetime in UTC. Naive datetimes are assumed to be UTC."""
     if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def _ensure_event_owner_or_admin(
-    event: models.Event,
-    current_user: models.User,
-):
-    if current_user.role != models.UserRole.admin and event.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not allowed to modify this event")
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _validate_event_dates(start_date: datetime, end_date: datetime):
-    start_date = _to_naive_utc(start_date)
-    end_date = _to_naive_utc(end_date)
+    start_date = _normalize_dt(start_date)
+    end_date = _normalize_dt(end_date)
     if end_date <= start_date:
         raise HTTPException(status_code=400, detail="end_date must be after start_date")
 
@@ -39,10 +31,10 @@ def _validate_slot_range_within_event(
     start_time: datetime,
     end_time: datetime,
 ):
-    start_time = _to_naive_utc(start_time)
-    end_time = _to_naive_utc(end_time)
-    event_start = _to_naive_utc(event.start_date)
-    event_end = _to_naive_utc(event.end_date)
+    start_time = _normalize_dt(start_time)
+    end_time = _normalize_dt(end_time)
+    event_start = _normalize_dt(event.start_date)
+    event_end = _normalize_dt(event.end_date)
 
     if end_time <= start_time:
         raise HTTPException(
@@ -66,10 +58,10 @@ def create_event(
 ):
     _validate_event_dates(event_in.start_date, event_in.end_date)
 
-    start_date = _to_naive_utc(event_in.start_date)
-    end_date = _to_naive_utc(event_in.end_date)
-    signup_open_at = _to_naive_utc(event_in.signup_open_at) if event_in.signup_open_at else None
-    signup_close_at = _to_naive_utc(event_in.signup_close_at) if event_in.signup_close_at else None
+    start_date = _normalize_dt(event_in.start_date)
+    end_date = _normalize_dt(event_in.end_date)
+    signup_open_at = _normalize_dt(event_in.signup_open_at) if event_in.signup_open_at else None
+    signup_close_at = _normalize_dt(event_in.signup_close_at) if event_in.signup_close_at else None
 
     event = models.Event(
         owner_id=current_user.id,
@@ -83,6 +75,11 @@ def create_event(
         max_signups_per_user=event_in.max_signups_per_user,
         signup_open_at=signup_open_at,
         signup_close_at=signup_close_at,
+        quarter=event_in.quarter,
+        year=event_in.year,
+        week_number=event_in.week_number,
+        school=event_in.school,
+        module_slug=event_in.module_slug,
     )
     db.add(event)
     db.flush()
@@ -95,6 +92,9 @@ def create_event(
                 start_time=s.start_time,
                 end_time=s.end_time,
                 capacity=s.capacity,
+                slot_type=s.slot_type,
+                date=s.date or s.start_time.date(),
+                location=s.location,
             )
             db.add(slot)
 
@@ -132,12 +132,12 @@ def update_event(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, current_user)
+    ensure_event_owner_or_admin(event, current_user)
 
-    data = event_in.dict(exclude_unset=True)
+    data = event_in.model_dump(exclude_unset=True)
     for key in ("start_date", "end_date", "signup_open_at", "signup_close_at"):
         if key in data and data[key] is not None:
-            data[key] = _to_naive_utc(data[key])
+            data[key] = _normalize_dt(data[key])
 
     # If dates are being updated, validate them
     new_start = data.get("start_date", event.start_date)
@@ -167,7 +167,7 @@ def delete_event(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, current_user)
+    ensure_event_owner_or_admin(event, current_user)
 
     db.delete(event)
     db.commit()
@@ -192,12 +192,12 @@ def generate_slots(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, current_user)
+    ensure_event_owner_or_admin(event, current_user)
 
-    start_time = _to_naive_utc(recurrence.start_time)
-    end_time = _to_naive_utc(recurrence.end_time)
-    event_start = _to_naive_utc(event.start_date)
-    event_end = _to_naive_utc(event.end_date)
+    start_time = _normalize_dt(recurrence.start_time)
+    end_time = _normalize_dt(recurrence.end_time)
+    event_start = _normalize_dt(event.start_date)
+    event_end = _normalize_dt(event.end_date)
 
     if end_time <= start_time:
         raise HTTPException(status_code=400, detail="end_time must be after start_time")
@@ -270,7 +270,7 @@ def list_custom_questions(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, current_user)
+    ensure_event_owner_or_admin(event, current_user)
 
     return (
         db.query(models.CustomQuestion)
@@ -295,7 +295,7 @@ def create_custom_question(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(event, current_user)
+    ensure_event_owner_or_admin(event, current_user)
 
     question = models.CustomQuestion(
         event_id=event.id,
@@ -329,9 +329,9 @@ def update_custom_question(
         raise HTTPException(status_code=404, detail="Question not found")
 
     # Ensure caller owns the event or is admin
-    _ensure_event_owner_or_admin(question.event, current_user)
+    ensure_event_owner_or_admin(question.event, current_user)
 
-    data = updates.dict(exclude_unset=True)
+    data = updates.model_dump(exclude_unset=True)
     for field, value in data.items():
         setattr(question, field, value)
 
@@ -357,7 +357,7 @@ def delete_custom_question(
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    _ensure_event_owner_or_admin(question.event, current_user)
+    ensure_event_owner_or_admin(question.event, current_user)
 
     db.delete(question)
     db.commit()
@@ -384,7 +384,7 @@ def clone_event(
     if not original:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    _ensure_event_owner_or_admin(original, current_user)
+    ensure_event_owner_or_admin(original, current_user)
 
     # For simplicity, keep same dates; organizer can edit after cloning.
     cloned = models.Event(

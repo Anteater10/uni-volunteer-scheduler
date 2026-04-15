@@ -11,6 +11,11 @@ from ..deps import get_current_user, require_role, log_action, hash_password
 
 router = APIRouter(prefix="/users", tags=["users"])
 
+# T-00-18: explicit allow-list for PATCH /users/me. Never mutate
+# role/email/hashed_password/id via this endpoint — those are handled
+# by admin endpoints or SSO and must never be reachable via user input.
+_USER_UPDATE_ALLOWED_FIELDS = {"name", "university_id", "notify_email"}
+
 
 @router.get("/me", response_model=schemas.UserRead)
 def read_me(current_user: models.User = Depends(get_current_user)):
@@ -23,8 +28,10 @@ def update_me(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    data = updates.dict(exclude_unset=True)
+    data = updates.model_dump(exclude_unset=True)
     for field, value in data.items():
+        if field not in _USER_UPDATE_ALLOWED_FIELDS:
+            continue
         setattr(current_user, field, value)
 
     db.add(current_user)
@@ -130,7 +137,7 @@ def admin_update_user(
             detail="User not found",
         )
 
-    data = updates.dict(exclude_unset=True)
+    data = updates.model_dump(exclude_unset=True)
     for field, value in data.items():
         setattr(user, field, value)
 
@@ -140,3 +147,4 @@ def admin_update_user(
 
     log_action(db, admin_user, "admin_update_user", "User", str(user.id))
     return user
+

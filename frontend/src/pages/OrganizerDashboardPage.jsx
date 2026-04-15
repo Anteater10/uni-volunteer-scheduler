@@ -3,6 +3,17 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../lib/api";
 import { toEpochMs } from "../lib/datetime";
+import {
+  PageHeader,
+  Card,
+  Button,
+  Input,
+  Label,
+  FieldError,
+  Skeleton,
+  EmptyState,
+} from "../components/ui";
+import { toast } from "../state/toast";
 
 function fromDateTimeLocalToIso(value) {
   if (!value) return null;
@@ -17,14 +28,11 @@ export default function OrganizerDashboardPage() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-
-  // Create event form (simple MVP)
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     title: "",
     description: "",
     location: "",
-    visibility: "public",
     start_date: "",
     end_date: "",
   });
@@ -51,41 +59,34 @@ export default function OrganizerDashboardPage() {
     if (!me) return [];
     return (events || [])
       .filter((e) => String(e.owner_id) === String(me.id))
-      .sort((a, b) => toEpochMs(b.created_at || b.start_date) - toEpochMs(a.created_at || a.start_date));
+      .sort(
+        (a, b) =>
+          toEpochMs(b.created_at || b.start_date) -
+          toEpochMs(a.created_at || a.start_date),
+      );
   }, [events, me]);
 
   async function createEvent(e) {
     e.preventDefault();
     setErr("");
-
     if (!form.title.trim() || !form.start_date || !form.end_date) {
       setErr("Title, start date, and end date are required.");
       return;
     }
-
     setCreating(true);
     try {
       const payload = {
         title: form.title.trim(),
         description: form.description?.trim() || null,
         location: form.location?.trim() || null,
-        visibility: form.visibility || "public",
+        visibility: "public",
         start_date: fromDateTimeLocalToIso(form.start_date),
         end_date: fromDateTimeLocalToIso(form.end_date),
       };
-
       const created = await api.createEvent(payload);
-
-      setForm({
-        title: "",
-        description: "",
-        location: "",
-        visibility: "public",
-        start_date: "",
-        end_date: "",
-      });
-
-      // Go straight to manage page
+      setForm({ title: "", description: "", location: "", start_date: "", end_date: "" });
+      // TODO(copy)
+      toast.success("Event created.");
       nav(`/organizer/events/${created.id}`);
     } catch (e2) {
       setErr(e2?.message || "Failed to create event");
@@ -94,141 +95,119 @@ export default function OrganizerDashboardPage() {
     }
   }
 
-  if (loading) {
-    return (
-      <div style={{ padding: 16 }}>
-        <div>Loading…</div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ padding: 16, maxWidth: 1100, margin: "0 auto" }}>
-      <h1 style={{ marginBottom: 8 }}>Organizer Dashboard</h1>
+    <div className="space-y-6">
+      {/* TODO(copy) */}
+      <PageHeader title="My Events" />
 
-      {err ? (
-        <div
-          style={{
-            background: "rgba(255,0,0,0.08)",
-            border: "1px solid rgba(255,0,0,0.25)",
-            padding: 12,
-            borderRadius: 10,
-            marginBottom: 12,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {err}
+      {loading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 w-full rounded-xl" />
+          ))}
         </div>
-      ) : null}
-
-      <div style={{ display: "grid", gap: 18, gridTemplateColumns: "1fr 1fr" }}>
-        <section>
-          <h2 style={{ fontSize: 18, marginBottom: 8 }}>My events</h2>
-
-          {!me ? (
-            <div style={{ opacity: 0.8 }}>Could not load user profile.</div>
-          ) : myEvents.length === 0 ? (
-            <div style={{ opacity: 0.8 }}>
-              No events yet. Create one on the right.
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {myEvents.map((e) => (
-                <div
-                  key={e.id}
-                  style={{
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 12,
-                    padding: 12,
-                  }}
+      ) : myEvents.length === 0 ? (
+        <EmptyState
+          /* TODO(copy) */
+          title="No events yet"
+          /* TODO(copy) */
+          body="Create one below."
+        />
+      ) : (
+        <div className="space-y-3">
+          {myEvents.map((e) => (
+            <Card key={e.id}>
+              <h3 className="text-base font-semibold">{e.title}</h3>
+              <p className="text-sm text-[var(--color-fg-muted)]">
+                {e.location || ""}
+              </p>
+              <div className="mt-3 flex gap-2">
+                <Button
+                  variant="secondary"
+                  as={Link}
+                  to={`/organizer/events/${e.id}`}
                 >
-                  <div style={{ fontWeight: 700 }}>{e.title}</div>
-                  <div style={{ opacity: 0.8, marginTop: 4 }}>
-                    <code style={{ fontSize: 12 }}>{e.id}</code>
-                  </div>
+                  {/* TODO(copy) */}
+                  Open roster
+                </Button>
+                <Button variant="ghost" as={Link} to={`/events/${e.id}`}>
+                  {/* TODO(copy) */}
+                  View public
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
 
-                  <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-                    <Link to={`/organizer/events/${e.id}`}>Manage</Link>
-                    <span style={{ opacity: 0.6 }}>·</span>
-                    <Link to={`/events/${e.id}`}>Public view</Link>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div style={{ marginTop: 12 }}>
-            <button onClick={load} type="button">
-              Refresh
-            </button>
-          </div>
-        </section>
-
-        <section>
-          <h2 style={{ fontSize: 18, marginBottom: 8 }}>Create event</h2>
-          <form onSubmit={createEvent} style={{ display: "grid", gap: 10 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Title</span>
-              <input
+      <section>
+        {/* TODO(copy) */}
+        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+          Create event
+        </h2>
+        <Card>
+          <form onSubmit={createEvent} className="space-y-3">
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="org-title">Title</Label>
+              <Input
+                id="org-title"
                 value={form.title}
                 onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
-                placeholder="e.g., SciTrek Day 1 Volunteers"
               />
-            </label>
-
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Description</span>
+            </div>
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="org-location">Location</Label>
+              <Input
+                id="org-location"
+                value={form.location}
+                onChange={(e) => setForm((p) => ({ ...p, location: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                {/* TODO(copy) */}
+                <Label htmlFor="org-start">Start</Label>
+                <Input
+                  id="org-start"
+                  type="datetime-local"
+                  value={form.start_date}
+                  onChange={(e) => setForm((p) => ({ ...p, start_date: e.target.value }))}
+                />
+              </div>
+              <div>
+                {/* TODO(copy) */}
+                <Label htmlFor="org-end">End</Label>
+                <Input
+                  id="org-end"
+                  type="datetime-local"
+                  value={form.end_date}
+                  onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="org-desc">Description</Label>
               <textarea
+                id="org-desc"
                 rows={3}
                 value={form.description}
                 onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+                className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-base"
               />
-            </label>
-
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Location</span>
-              <input
-                value={form.location}
-                onChange={(e) => setForm((p) => ({ ...p, location: e.target.value }))}
-                placeholder="Optional"
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Visibility</span>
-              <select
-                value={form.visibility}
-                onChange={(e) => setForm((p) => ({ ...p, visibility: e.target.value }))}
-              >
-                <option value="public">public</option>
-                <option value="private">private</option>
-              </select>
-            </label>
-
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Start date/time</span>
-              <input
-                type="datetime-local"
-                value={form.start_date}
-                onChange={(e) => setForm((p) => ({ ...p, start_date: e.target.value }))}
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>End date/time</span>
-              <input
-                type="datetime-local"
-                value={form.end_date}
-                onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value }))}
-              />
-            </label>
-
-            <button type="submit" disabled={creating}>
-              {creating ? "Creating…" : "Create event"}
-            </button>
+            </div>
+            <FieldError>{err}</FieldError>
+            <div className="flex justify-end">
+              <Button type="submit" disabled={creating}>
+                {/* TODO(copy) */}
+                {creating ? "Creating..." : "Create event"}
+              </Button>
+            </div>
           </form>
-        </section>
-      </div>
+        </Card>
+      </section>
     </div>
   );
 }

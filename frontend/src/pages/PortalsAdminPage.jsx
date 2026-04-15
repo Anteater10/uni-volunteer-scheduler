@@ -1,97 +1,59 @@
 // src/pages/PortalsAdminPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import api from "../lib/api";
+import {
+  PageHeader,
+  Card,
+  Button,
+  Modal,
+  Input,
+  Label,
+  FieldError,
+  EmptyState,
+  Skeleton,
+} from "../components/ui";
+import { toast } from "../state/toast";
 
 export default function PortalsAdminPage() {
   const [portals, setPortals] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [selectedPortalSlug, setSelectedPortalSlug] = useState("");
-  const [selectedPortalDetail, setSelectedPortalDetail] = useState(null);
-
   const [loading, setLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [err, setErr] = useState("");
-
-  // Create portal form
-  const [createForm, setCreateForm] = useState({
-    name: "",
-    description: "",
-    visibility: "public",
-  });
   const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ name: "", slug: "", description: "" });
+  const [pendingDelete, setPendingDelete] = useState(null);
 
-  // Attach flow
-  const [attachEventId, setAttachEventId] = useState("");
-  const [attachLoading, setAttachLoading] = useState(false);
-
-  async function loadAll() {
+  async function load() {
     setErr("");
     setLoading(true);
     try {
-      const [p, e] = await Promise.all([api.listPortals(), api.listEvents()]);
-      setPortals(p || []);
-      setEvents(e || []);
-    } catch (e2) {
-      setErr(e2?.message || "Failed to load portals/events");
+      const data = await api.listPortals();
+      setPortals(data || []);
+    } catch (e) {
+      setErr(e?.message || "Failed to load portals");
     } finally {
       setLoading(false);
     }
   }
 
-  async function loadPortalDetail(slug) {
-    if (!slug) return;
-    setErr("");
-    setDetailLoading(true);
-    try {
-      const d = await api.getPortalBySlug(slug); // returns {id, name, slug, description, visibility, events: [...]}
-      setSelectedPortalDetail(d);
-    } catch (e) {
-      setErr(e?.message || "Failed to load portal detail");
-      setSelectedPortalDetail(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  }
-
   useEffect(() => {
-    loadAll();
+    load();
   }, []);
-
-  useEffect(() => {
-    if (selectedPortalSlug) loadPortalDetail(selectedPortalSlug);
-  }, [selectedPortalSlug]);
-
-  const selectedPortal = useMemo(() => {
-    return portals.find((p) => p.slug === selectedPortalSlug) || null;
-  }, [portals, selectedPortalSlug]);
-
-  const attachedEventIds = useMemo(() => {
-    const ids = new Set((selectedPortalDetail?.events || []).map((e) => String(e.id)));
-    return ids;
-  }, [selectedPortalDetail]);
-
-  const attachableEvents = useMemo(() => {
-    return (events || []).filter((e) => !attachedEventIds.has(String(e.id)));
-  }, [events, attachedEventIds]);
 
   async function createPortal(e) {
     e.preventDefault();
     setErr("");
-    if (!createForm.name.trim()) {
-      setErr("Portal name is required.");
-      return;
-    }
-
     setCreating(true);
     try {
       await api.createPortal({
-        name: createForm.name.trim(),
-        description: createForm.description?.trim() || null,
-        visibility: createForm.visibility || "public",
+        name: form.name.trim(),
+        slug: form.slug.trim(),
+        description: form.description?.trim() || null,
       });
-
-      setCreateForm({ name: "", description: "", visibility: "public" });
-      await loadAll();
+      setForm({ name: "", slug: "", description: "" });
+      // TODO(copy)
+      toast.success("Portal created.");
+      load();
     } catch (e2) {
       setErr(e2?.message || "Failed to create portal");
     } finally {
@@ -99,212 +61,132 @@ export default function PortalsAdminPage() {
     }
   }
 
-  async function attachSelectedEvent() {
-    if (!selectedPortalDetail?.id) {
-      setErr("Select a portal first.");
-      return;
-    }
-    if (!attachEventId) {
-      setErr("Select an event to attach.");
-      return;
-    }
-
-    setErr("");
-    setAttachLoading(true);
-    try {
-      await api.attachEventToPortal(selectedPortalDetail.id, attachEventId);
-      setAttachEventId("");
-      await loadPortalDetail(selectedPortalDetail.slug);
-    } catch (e) {
-      setErr(e?.message || "Failed to attach event");
-    } finally {
-      setAttachLoading(false);
-    }
-  }
-
-  async function detachEvent(eventId) {
-    if (!selectedPortalDetail?.id) return;
-    setErr("");
-    try {
-      await api.detachEventFromPortal(selectedPortalDetail.id, eventId);
-      await loadPortalDetail(selectedPortalDetail.slug);
-    } catch (e) {
-      setErr(e?.message || "Failed to detach event");
-    }
+  function doDelete() {
+    if (!pendingDelete) return;
+    setPendingDelete(null);
+    // TODO(copy): delete portal endpoint not wired
+    toast.info("Delete portal: backend endpoint not yet wired.");
   }
 
   return (
-    <div style={{ padding: 16, maxWidth: 1200, margin: "0 auto" }}>
-      <h1 style={{ marginBottom: 8 }}>Portals (Admin)</h1>
-      <p style={{ marginTop: 0, opacity: 0.8 }}>
-        Create portals + attach/detach events. (Backend: <code>/portals</code>)
-      </p>
+    <div className="space-y-4">
+      {/* TODO(copy) */}
+      <PageHeader title="Portals" />
 
-      {err ? (
-        <div
-          style={{
-            background: "rgba(255,0,0,0.08)",
-            border: "1px solid rgba(255,0,0,0.25)",
-            padding: 12,
-            borderRadius: 10,
-            marginBottom: 12,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {err}
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-20" />
+          ))}
         </div>
-      ) : null}
-
-      <div style={{ display: "grid", gap: 18, gridTemplateColumns: "1fr 1fr" }}>
-        <section>
-          <h2 style={{ fontSize: 18, marginBottom: 8 }}>Create portal</h2>
-          <form onSubmit={createPortal} style={{ display: "grid", gap: 10 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Name</span>
-              <input
-                value={createForm.name}
-                onChange={(e) => setCreateForm((p) => ({ ...p, name: e.target.value }))}
-                placeholder="SciTrek Volunteers"
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Description</span>
-              <textarea
-                value={createForm.description}
-                onChange={(e) => setCreateForm((p) => ({ ...p, description: e.target.value }))}
-                rows={3}
-                placeholder="Optional description"
-              />
-            </label>
-
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Visibility</span>
-              <select
-                value={createForm.visibility}
-                onChange={(e) => setCreateForm((p) => ({ ...p, visibility: e.target.value }))}
-              >
-                <option value="public">public</option>
-                <option value="private">private</option>
-              </select>
-            </label>
-
-            <div style={{ display: "flex", gap: 10 }}>
-              <button type="submit" disabled={creating}>
-                {creating ? "Creating..." : "Create portal"}
-              </button>
-              <button type="button" onClick={loadAll} disabled={loading}>
-                Refresh
-              </button>
-            </div>
-          </form>
-        </section>
-
-        <section>
-          <h2 style={{ fontSize: 18, marginBottom: 8 }}>Select portal</h2>
-          {loading ? (
-            <div>Loading portals…</div>
-          ) : (
-            <select
-              value={selectedPortalSlug}
-              onChange={(e) => setSelectedPortalSlug(e.target.value)}
-              style={{ width: "100%" }}
-            >
-              <option value="">— choose a portal —</option>
-              {portals.map((p) => (
-                <option key={p.id} value={p.slug}>
-                  {p.slug} — {p.name}
-                </option>
-              ))}
-            </select>
-          )}
-
-          <div style={{ marginTop: 12, opacity: 0.85 }}>
-            {selectedPortal ? (
-              <>
-                <div>
-                  <strong>Name:</strong> {selectedPortal.name}
-                </div>
-                <div>
-                  <strong>Slug:</strong> <code>{selectedPortal.slug}</code>
-                </div>
-              </>
-            ) : (
-              <div>Select a portal to manage event attachments.</div>
-            )}
-          </div>
-        </section>
-      </div>
-
-      <hr style={{ margin: "18px 0", opacity: 0.2 }} />
+      ) : err ? (
+        <EmptyState
+          /* TODO(copy) */
+          title="Couldn't load portals"
+          /* TODO(copy) */
+          body={err}
+          action={
+            <Button onClick={load}>
+              {/* TODO(copy) */}
+              Retry
+            </Button>
+          }
+        />
+      ) : portals.length === 0 ? (
+        <EmptyState
+          /* TODO(copy) */
+          title="No portals yet"
+        />
+      ) : (
+        <div className="space-y-3">
+          {portals.map((p) => (
+            <Card key={p.id}>
+              <h3 className="font-semibold">{p.name}</h3>
+              <p className="text-sm text-[var(--color-fg-muted)]">/{p.slug}</p>
+              {p.description && (
+                <p className="text-sm mt-1">{p.description}</p>
+              )}
+              <div className="mt-3 flex gap-2">
+                <Button variant="secondary" as={Link} to={`/portals/${p.slug}`}>
+                  {/* TODO(copy) */}
+                  Open public
+                </Button>
+                <Button variant="danger" onClick={() => setPendingDelete(p)}>
+                  {/* TODO(copy) */}
+                  Delete
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
 
       <section>
-        <h2 style={{ fontSize: 18, marginBottom: 8 }}>Attach / detach events</h2>
-
-        {!selectedPortalSlug ? (
-          <div style={{ opacity: 0.8 }}>Pick a portal first.</div>
-        ) : detailLoading ? (
-          <div>Loading portal detail…</div>
-        ) : !selectedPortalDetail ? (
-          <div style={{ opacity: 0.8 }}>No portal detail loaded.</div>
-        ) : (
-          <>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <select
-                value={attachEventId}
-                onChange={(e) => setAttachEventId(e.target.value)}
-                style={{ minWidth: 320 }}
-              >
-                <option value="">— select event to attach —</option>
-                {attachableEvents.map((ev) => (
-                  <option key={ev.id} value={ev.id}>
-                    {ev.title} ({String(ev.id).slice(0, 8)}…)
-                  </option>
-                ))}
-              </select>
-              <button onClick={attachSelectedEvent} disabled={attachLoading}>
-                {attachLoading ? "Attaching..." : "Attach"}
-              </button>
+        {/* TODO(copy) */}
+        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mt-4 mb-2">
+          Create portal
+        </h2>
+        <Card>
+          <form onSubmit={createPortal} className="space-y-3">
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="np-name">Name</Label>
+              <Input
+                id="np-name"
+                value={form.name}
+                onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+              />
             </div>
-
-            <div style={{ marginTop: 14 }}>
-              <h3 style={{ fontSize: 16, marginBottom: 8 }}>Attached events</h3>
-              {selectedPortalDetail.events?.length ? (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ textAlign: "left" }}>
-                        <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Title</th>
-                        <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Event ID</th>
-                        <th style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.12)" }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedPortalDetail.events.map((ev) => (
-                        <tr key={ev.id}>
-                          <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                            {ev.title}
-                          </td>
-                          <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                            <code style={{ fontSize: 12 }}>{ev.id}</code>
-                          </td>
-                          <td style={{ padding: 8, borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-                            <button onClick={() => detachEvent(ev.id)} type="button">
-                              Detach
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div style={{ opacity: 0.8 }}>No events attached yet.</div>
-              )}
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="np-slug">Slug</Label>
+              <Input
+                id="np-slug"
+                value={form.slug}
+                onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))}
+              />
             </div>
-          </>
-        )}
+            <div>
+              {/* TODO(copy) */}
+              <Label htmlFor="np-desc">Description</Label>
+              <Input
+                id="np-desc"
+                value={form.description}
+                onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+              />
+            </div>
+            <FieldError>{err}</FieldError>
+            <div className="flex justify-end">
+              <Button type="submit" disabled={creating}>
+                {/* TODO(copy) */}
+                {creating ? "Creating..." : "Create portal"}
+              </Button>
+            </div>
+          </form>
+        </Card>
       </section>
+
+      <Modal
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        /* TODO(copy) */
+        title="Delete portal"
+      >
+        <p className="text-sm">
+          {/* TODO(copy) */}
+          Delete portal "{pendingDelete?.name}"?
+        </p>
+        <div className="flex justify-end gap-2 mt-4">
+          <Button variant="ghost" onClick={() => setPendingDelete(null)}>
+            {/* TODO(copy) */}
+            Keep
+          </Button>
+          <Button variant="danger" onClick={doDelete}>
+            {/* TODO(copy) */}
+            Delete portal
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
