@@ -11,13 +11,18 @@ import {
   Skeleton,
 } from "../../components/ui";
 import { toast } from "../../state/toast";
+import { useAdminPageTitle } from "./AdminLayout";
 
-function formatTs(ts) {
-  try {
-    return new Date(ts).toLocaleString();
-  } catch {
-    return String(ts || "");
-  }
+const RTF = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+function formatTs(iso) {
+  if (!iso) return "—";
+  const diff = (new Date(iso) - new Date()) / 1000;
+  if (Number.isNaN(diff)) return "—";
+  const abs = Math.abs(diff);
+  if (abs < 60) return RTF.format(Math.round(diff), "second");
+  if (abs < 3600) return RTF.format(Math.round(diff / 60), "minute");
+  if (abs < 86400) return RTF.format(Math.round(diff / 3600), "hour");
+  return RTF.format(Math.round(diff / 86400), "day");
 }
 
 const STATUS_COLORS = {
@@ -38,6 +43,7 @@ function StatusChip({ status }) {
 }
 
 export default function ImportsSection() {
+  useAdminPageTitle("Imports");
   const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
   const [commitTarget, setCommitTarget] = useState(null);
@@ -45,8 +51,6 @@ export default function ImportsSection() {
   const importsQ = useQuery({
     queryKey: ["adminImports"],
     queryFn: () => api.admin.imports.list(),
-    // Some backends return a list, some wrap in an object
-    select: (data) => (Array.isArray(data) ? data : data?.items || []),
   });
 
   const uploadMut = useMutation({
@@ -92,9 +96,9 @@ export default function ImportsSection() {
         <Button
           onClick={() => fileInputRef.current?.click()}
           disabled={uploadMut.isPending}
+          title="Upload a Sci Trek quarterly CSV to preview and commit events."
         >
-          {/* TODO(copy) */}
-          {uploadMut.isPending ? "Uploading..." : "Upload CSV"}
+          {uploadMut.isPending ? "Uploading…" : "Upload quarterly CSV"}
         </Button>
         <input
           ref={fileInputRef}
@@ -125,8 +129,8 @@ export default function ImportsSection() {
         />
       ) : (
         <>
-          {/* Desktop table */}
-          <div className="hidden md:block overflow-x-auto">
+          {/* Admin-only, desktop-first (D-08): single table, no mobile fallback. */}
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-left">
@@ -176,44 +180,6 @@ export default function ImportsSection() {
               </tbody>
             </table>
           </div>
-
-          {/* Mobile cards */}
-          <div className="md:hidden space-y-3">
-            {imports.map((imp) => (
-              <Card key={imp.id}>
-                <div className="flex items-baseline gap-2">
-                  <span className="font-medium">{imp.filename}</span>
-                  <StatusChip status={imp.status} />
-                </div>
-                <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-                  {formatTs(imp.created_at)}
-                </p>
-                {imp.error_message && (
-                  <p className="text-xs text-red-600 mt-1">{imp.error_message}</p>
-                )}
-                <div className="mt-2 flex gap-2">
-                  {(imp.status === "ready" || imp.status === "previewing") && (
-                    <Button
-                      className="text-xs !px-2 !py-1"
-                      onClick={() => setCommitTarget(imp)}
-                    >
-                      Commit
-                    </Button>
-                  )}
-                  {imp.status === "failed" && (
-                    <Button
-                      variant="secondary"
-                      className="text-xs !px-2 !py-1"
-                      disabled={retryMut.isPending}
-                      onClick={() => retryMut.mutate(imp.id)}
-                    >
-                      Re-run
-                    </Button>
-                  )}
-                </div>
-              </Card>
-            ))}
-          </div>
         </>
       )}
 
@@ -224,9 +190,8 @@ export default function ImportsSection() {
         title="Commit Import"
       >
         <p className="text-sm">
-          {/* TODO(copy) */}
-          Commit import <strong>{commitTarget?.filename}</strong>? This will create events
-          from the validated rows.
+          Commit this import? This creates all events in the preview and
+          cannot be undone. Click Commit to proceed or Cancel to go back.
         </p>
         <div className="flex justify-end gap-2 mt-4">
           <Button variant="ghost" onClick={() => setCommitTarget(null)}>Cancel</Button>
