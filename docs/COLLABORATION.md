@@ -1,224 +1,200 @@
 # Collaboration Contract
 
-Two developers (Hung, Andy) shipping the UCSB Sci Trek volunteer scheduler to production before June 2026 graduation handoff. Both use Claude Code + GSD. This doc is the operational contract — read once, reference often. Both Claude sessions read this too.
+Two developers (Andy and Hung) running Claude Code + GSD on the UCSB Sci Trek volunteer scheduler in parallel for the v1.2-prod milestone (production-ready by role). This doc is the operational contract for that parallel work.
 
-**Status:** v1.0 + v1.1 merged into `main` (tag `v1.1.0`). Next milestone: `v1.2-prod-deploy`.
+**Status:** v1.1 merged into `main`. Next milestone: v1.2-prod (production-ready by role).
 
----
-
-## Roles
-
-- **Andy** — backend, infra, DB, Celery, deployment, CI pipelines.
-- **Hung** — frontend, UX, Playwright E2E, accessibility, copy, user-facing docs.
-
-Neither dev should be "blocked" by the other in normal operation. API contract changes are the only coupling point — see "Joint review" below.
+**This is a wholesale rewrite** of a prior collaboration doc that used a role split no longer accurate for v1.2-prod, referenced an outdated requirements filename, and treated Phase 14 as UCSB infra work. None of that applies here. The canonical requirements file is `.planning/REQUIREMENTS-v1.2-prod.md`.
 
 ---
 
-## Hard ownership rules
+## Roles (D-02, D-03, D-04, D-05)
 
-### Andy-only writes
+| Pillar | Owner | Phases |
+|---|---|---|
+| **participant** | Hung | Phase 15 |
+| **admin** | Andy | Phases 16, 17, 18 |
+| **organizer** | Andy | Phase 19 |
+| Integration | Shared | Phase 20 |
 
-- `backend/alembic/versions/*` — **single writer**. Prevents multi-head migrations. Andy runs `alembic heads` before every migration and aborts if >1.
-- `backend/app/models.py`, `backend/app/services/*`, `backend/app/routers/*`, `backend/app/celery_app.py`, `backend/app/main.py`, `backend/app/deps.py`
-- `docker-compose.yml`, `backend/Dockerfile`, infra scripts
-- `.github/workflows/*`
-- `.planning/STATE.md` (via `/gsd-progress` or `/gsd-next` — not manual)
+**Hung is frontend-leaning.** His participant pillar ships first; the polished frontend patterns he lands (components, layout, loading/empty/error states, Tailwind classes) become the template Andy refactors into admin and organizer with role-appropriate deviations.
 
-### Hung-only writes
+**Phases 15 (participant) and 16 (admin) start in parallel** as the roadmap calls for, but Andy's UI polish for admin intentionally lags Hung's participant polish so Andy can lift Hung's patterns rather than reinvent them. Andy uses the early parallel window for backend admin work and retiring the Overrides tab.
 
-- `frontend/src/*` (pages, components, state, lib, styles)
-- `e2e/*` Playwright specs
-- `docs/*` user-facing docs (`HANDOFF.md`, admin guide, volunteer guide, this file)
-- `.planning/ROADMAP.md` edits (after initial GSD generation)
+**Admin and organizer are both Andy's** — the cross-dev shared-code sequencing risk that would exist if they were split collapses into an intra-Andy scheduling problem. Phase 19 (organizer) still waits for Phase 18 (admin LLM imports) to land for clean serialization, but that is Andy scheduling against himself.
 
-### Joint review (both must approve)
-
-- `frontend/src/lib/api.js`, `frontend/src/lib/api.public.js` — API contract. Changes to this file go in the same PR as the backend change, or in tightly coupled back-to-back PRs.
-- `.planning/REQUIREMENTS-v1.2.md` — scope contract. Changed only by explicit joint decision.
-- `.github/workflows/ci.yml` quality-gate changes (adding new test suites is OK solo).
+Use the exact pillar names `participant`, `admin`, `organizer` — all grep-friendly.
 
 ---
 
-## Shared source of truth
+## Machine model and worktree explanation (D-01, D-06, D-07, D-08, D-09)
 
-| File | Purpose | Owner |
-|------|---------|-------|
-| `.planning/ROADMAP.md` | Master phase list (14-20) with owners, deps, dates | Hung writes, Andy reviews |
-| `.planning/STATE.md` | Current project status, last activity, next action | Andy writes via GSD skills |
-| `.planning/REQUIREMENTS-v1.2.md` | v1.2 feature scope lock | Joint |
-| `.planning/PROJECT.md` | Product thesis + open questions | Joint |
-| `docs/COLLABORATION.md` | This file | Hung |
-| `docs/OPERATIONS.md` | Deployment runbook (to be written in Phase 16) | Andy |
-| `docs/HANDOFF.md` | Post-June maintainer handoff (Phase 20) | Hung |
+**Hung is a real second human working on his own machine** with his own clone of the repo. Coordination is via push/pull/PRs against the shared `main` branch. There is no shared filesystem between Andy and Hung.
 
----
+**Each dev uses single checkout, branch switching on their own machine** — not literal `git worktree add`. Andy has one clone at his existing repo path and runs `git checkout feature/v1.2-admin` (or `feature/v1.2-organizer`) to switch pillars. Hung does the same on his machine with `feature/v1.2-participant`.
 
-## GSD multi-dev workflow
+**Reconciling the REQUIREMENTS wording:** COLLAB-01 in `.planning/REQUIREMENTS-v1.2-prod.md` uses "git-worktree" as loose shorthand. The spirit of COLLAB-01 is "role-owned long-lived branches enabling parallel work"; the implementation is one clone per dev with `git checkout` to switch. Do not go looking for `git worktree add` instructions here — they don't exist and are not needed.
 
-### Shared setup (runs once, by Andy, after v1.1.0 merge lands)
+**One docker stack at a time per machine.** Container names and ports (5173 frontend, 8000 backend) are hardcoded in `docker-compose.yml`. DB and Redis are not exposed to localhost — both devs run pytest via the docker-network pattern documented in `CLAUDE.md`:
 
-```
-/gsd-new-milestone v1.2-prod-deploy
+```bash
+docker run --rm \
+  --network uni-volunteer-scheduler_default \
+  -v $PWD/backend:/app -w /app \
+  -e TEST_DATABASE_URL="postgresql+psycopg2://postgres:postgres@db:5432/test_uvs" \
+  uni-volunteer-scheduler-backend \
+  sh -c "pytest -q"
 ```
 
-This generates `.planning/ROADMAP.md` with phases 14-20 and `.planning/REQUIREMENTS-v1.2.md`. Scope must be pre-decided in a 30-min joint call before running this — GSD reads REQUIREMENTS to generate the ROADMAP.
+This pattern is non-negotiable for both devs. See `CLAUDE.md` for the full setup including first-time `CREATE DATABASE test_uvs`.
 
-### Per-phase workflow (each dev, independently)
+---
+
+## The three long-lived role branches (D-06, D-07, D-09)
 
 ```
-# Claim the phase
-/gsd-workstreams create <phase-slug>        # creates .planning/workstreams/<slug>/
-
-# Plan it
-/gsd-plan-phase <N>                         # writes <N>-PLAN.md in your workstream
-
-# Execute
-/gsd-execute-phase <N>                      # atomic commits, runs tests per task
-
-# Verify
-/gsd-verify-work <N>                        # goal-backward check against phase success criteria
-
-# Review your own code before shipping
-/gsd-code-review <N>                        # flags issues; fix them
-/gsd-code-review-fix                        # auto-fix trivial findings
-
-# Ship
-/gsd-pr-branch                              # strips .planning/ from PR diff
-/gsd-ship                                   # pushes + opens PR (but let the reviewer merge)
-
-# After PR merges to main
-/gsd-workstreams complete <slug>            # merges workstream STATE back into shared STATE.md
+feature/v1.2-participant   # Hung — Phase 15
+feature/v1.2-admin         # Andy — Phases 16, 17, 18
+feature/v1.2-organizer     # Andy — Phase 19
 ```
 
-### Daily loop
-
-- **Start of session:** `/gsd-progress` reads shared STATE + your workstream; tells you what's unblocked.
-- **Mid-work:** your Claude operates only in your workstream dir — never touches the other dev's files (enforced by ownership rules above).
-- **Context switch or stop:** `/gsd-pause-work` — writes `.continue-here.md` so tomorrow's session picks up cleanly.
-- **Next morning:** `/gsd-resume-work` restores full state.
-
-### Workstream isolation rule
-
-Your workstream is your private workspace. Never commit to `.planning/STATE.md` or `.planning/ROADMAP.md` from inside a workstream — those changes flow through `/gsd-workstreams complete`. If you need a ROADMAP change mid-phase (e.g. dependency discovered), stop, commit a 1-line ROADMAP fix to main as its own PR, then resume the workstream.
+All three are created from `main` once at Phase 14, live for the entire v1.2-prod milestone, and merge back to `main` only after each phase ships green (see Merge Cadence below). Do not create `gsd/phase-15-...` branches that bypass this model — the GSD config `phase_branch_template` is overridden by this collaboration contract.
 
 ---
 
-## PR & merge workflow
+## File ownership rules (D-10, D-11, D-12, D-13)
 
-1. Work on a feature branch. Name it: `phase-<N>-<slug>` (e.g. `phase-14-infra-staging`).
-2. Commit cadence: atomic green commits. No >500 LOC per commit.
-3. Run `/gsd-code-review` before opening PR.
-4. Use `/gsd-pr-branch` — your PR excludes `.planning/` noise. Reviewers see only code diff.
-5. Open PR against `main`. Title format: `feat(<N>-<plan>): <short>` matching commit convention.
-6. CI must be green before review requested.
-7. Reviewer = the other dev. Review required if PR is >200 LOC **or** touches Alembic, auth, deployment, or API contract.
-8. Pure-frontend copy/style PRs <200 LOC can self-merge after CI green.
-9. After merge, the author runs `/gsd-workstreams complete <slug>` to sync STATE.md.
+### PR-only files — both devs must approve any change
 
-### Quality gates (minimum bar)
+These files are cross-cutting or operationally risky. A change touching any of them must go through a PR reviewed by both Andy and Hung before landing on any role branch or `main`.
 
-Every PR merged to main must have:
+| File / Glob | Why PR-only |
+|---|---|
+| `frontend/src/lib/api.js` | Shared API contract — locks both pillars simultaneously |
+| `frontend/src/lib/api.public.js` | Public API contract |
+| `frontend/src/App.jsx` | Route table — affects every pillar |
+| `frontend/src/components/ui/*` | Shared design system components |
+| `backend/app/models.py` | Schema — concurrent edits risk migration drift |
+| `backend/alembic/versions/*` | Andy is the single Alembic writer (see hard rule below) |
+| `.planning/STATE.md` | Single-source-of-truth project state |
+| `.planning/ROADMAP.md` | Master phase list |
+| `.planning/REQUIREMENTS-v1.2-prod.md` | Joint scope contract |
+| `CLAUDE.md` | Both Claude sessions read this |
+| `docs/COLLABORATION.md` | This file — joint contract |
+| `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile` | Stack definition |
+| `.github/workflows/*` | CI — quality gates |
 
-1. **CI green:** pytest (≥206 baseline), vitest (≥78 baseline), Playwright (16/16 baseline + any new specs).
-2. **Alembic round-trip** (CI-enforced on any PR touching `backend/alembic/` or `backend/app/models.py`): `upgrade head → downgrade base → upgrade head`.
-3. **One human review** from the other dev per the threshold rule above.
-4. **Deployment PRs:** staging URL 200-OK smoke test is a required check.
+**Hard rule overriding high trust:** Andy is the single Alembic writer. `backend/alembic/versions/*` is Andy-only regardless of D-11. Multi-head migrations are operationally painful to recover from. If Hung needs a schema change, file a ticket or ping Andy in the daily sync.
 
-Two real gates: CI green + one human eyeball on substantive diffs. No approval theater.
+### Pillar-direct files — write freely on your role branch
 
-### Rollback protocol
+**High trust** — each dev edits any file they need on their own role branch. The PR-only list above is the only enforced wall. Resist formalizing this into a 30-row matrix.
 
-If main's Playwright suite goes red after a merge: the merger has **2 hours** to revert or forward-fix. No exceptions. If both devs are away, whoever is online first reverts.
+**Hung / participant domain:**
+- `frontend/src/pages/public/*`
+- Public-facing route components
+- `e2e/` Playwright specs touching public flows
+- Backend changes Hung needs in participant-facing routers:
+  `backend/app/routers/portals.py`, `backend/app/routers/events.py` (read paths), `backend/app/routers/signups.py` (read paths)
 
----
+**Andy / admin domain:**
+- `frontend/src/pages/admin/*`
+- `frontend/src/components/admin/*`
+- `backend/app/routers/admin.py`
+- `backend/app/routers/templates.py`, `backend/app/routers/imports.py`
+- `backend/app/services/llm_import.py`
+- Admin-related migrations (Andy-only as noted above)
 
-## Collision prevention
+**Andy / organizer domain:**
+- `frontend/src/pages/organizer/*`
+- `frontend/src/components/organizer/*`
+- `backend/app/routers/organizer.py`
+- Organizer-side magic-link self-checkin code
 
-1. **Alembic multi-head:** Andy-only. PR title must include revision ID (e.g. `feat(19-02): migration 0012_waitlist_table`). Hung never creates a migration; if schema is needed, file a ticket or ping Andy.
-2. **API contract drift:** any new backend endpoint or signature change → `frontend/src/lib/api.public.js` updated in the same PR (or the immediate next PR, with cross-links).
-3. **`.planning/` conflicts:** solved by workstream isolation above. If you ever see a merge conflict in `.planning/STATE.md`, stop — something bypassed the workflow. Resolve by hand, notify the other dev.
-4. **Parallel commits breaking E2E:** rebase feature branches onto main daily; don't let a branch drift more than 24h behind main.
-5. **Commit-cadence discipline:** no >500 LOC diffs per commit; each phase checkpoint is an atomic green commit.
-
----
-
-## Autonomous (Hetzner) execution
-
-There's a Hetzner box that can run `/gsd-autonomous` unattended. Use it for deterministic, test-covered work:
-
-**Safe to run autonomous:**
-- Deterministic backend validators / importers (Phase 15 sub-plans).
-- Accessibility lint fixes, copy-only PRs (Phase 17 sub-plans).
-- Backlog items (`.planning/999.x`).
-- Overnight test-baseline runs.
-
-**Never autonomous:**
-- Infra decisions (Phase 14).
-- Production deployment (Phase 16 — irreversible).
-- Handoff docs (Phase 20 — judgment required).
-- Any PR touching secrets, schema, or auth.
-
-Schedule via `CronCreate` for nightly backlog passes. Follow `remote-run-instructions.md` at repo root.
+Hung may also contribute frontend patterns that land in his participant branch first; Andy refactors them into admin and organizer as needed. This is informal — one sentence is all the formality it needs.
 
 ---
 
-## Onboarding — your first session
+## Sync cadence (D-14)
 
-### If you're Hung:
-1. `cd ~/Desktop/uni-volunteer-scheduler` (main repo) — wait for `v1.1.0` merge to land.
-2. `git pull`.
-3. `/gsd-progress` — see current state.
-4. Begin Phase 17 discovery in parallel with Andy's Phase 14.
+**Daily 3-hour pair/sync session** between Andy and Hung. This is unusual cadence for a software project but explicitly chosen. The 3-hour window is for live alignment, joint review of shared-file changes, and pair work on cross-cutting decisions.
 
-### If you're Andy:
-1. `cd <your-repo-path>` on main.
-2. `git pull`.
-3. **First run:** `/gsd-new-milestone v1.2-prod-deploy` — generates the shared roadmap. Do this only after you and Hung have agreed on 2-3 v1.2 features.
-4. `/gsd-workstreams create andy-phase-14-infra`.
-5. `/gsd-plan-phase 14`.
-6. Phase 14 hard deadline: UCSB infra target chosen by **2026-04-21**. Fallback: DigitalOcean droplet.
+Disagreements that are not tie-breaker calls (see Conflict Resolution below) go to the daily 3-hour sync, not async commit-watching.
 
-### Joint: v1.2 scoping call (30 min, before Andy runs `/gsd-new-milestone`)
-
-Pick 2-3 of these v1.2 features (all must avoid schema changes outside of one Andy-owned Alembic migration):
-
-- **Waitlist + auto-promote** — when a slot is full, collect waitlist; Celery task promotes on cancel.
-- **iCal export** — confirmed signups return a `.ics` attachment in the confirmation email + download link on manage page.
-- **Bulk signup for school groups** — organizer-facing endpoint to create N signups for a cohort email list.
-- **Organizer attendance analytics** — dashboard card with quarter-over-quarter attendance trends per school.
-
-Lock the decision in `.planning/REQUIREMENTS-v1.2.md` before running `/gsd-new-milestone`.
+Expect this to relax to a lighter cadence once the milestone is well underway. Phase 14 documents the heavy version because that is what is planned now.
 
 ---
 
-## Weekly cadence (zero-meeting)
+## Merge cadence (D-15)
 
-- **Monday:** each dev runs `/gsd-progress`. 5 min.
-- **Throughout week:** daily `git push` of WIP; `/gsd-pause-work` if dropping mid-phase.
-- **Friday:** each dev commits a 3-bullet update to a `docs/weeknotes.md` (new file, append-only). What shipped, what's in flight, what's next.
-- **Blockers:** `@` mention in commit message or PR description; other dev responds within 24h.
+Role branches merge to `main` **after each phase ships green**. The three gates are:
+1. Phase success criteria pass
+2. Playwright suite green
+3. Code review done (both devs)
 
-No standups, no story points, no sprint ceremonies. The tests + ROADMAP checkmarks are the status report.
+**No mid-phase merges to main.** If a shared-file fix is urgent, open a hotfix PR directly on `main` and rebase both role branches on main within 24 hours.
 
 ---
 
-## Top 3 risks
+## GSD harness command flow
 
-1. **v1.2 scope creep blows the deadline.** Mitigation: `REQUIREMENTS-v1.2.md` locked end of week 1. No new features after week 3. Late asks → `.planning/999.x` backlog for post-June handoff.
-2. **UCSB infra decision stalls.** Hard deadline 2026-04-21. Fallback = DigitalOcean droplet with documented migration path. Staging on DO is enough for UAT.
-3. **AI regenerates the other dev's in-flight code.** Enforced commit cadence, ownership walls, `/gsd-pause-work` before context switches. If PRs start overlapping, fall back to whole-phase ownership until re-synced.
+Both devs use the same GSD commands. Per phase:
+
+| Command | When |
+|---|---|
+| `/gsd-progress` | Daily session start — reads STATE + gives next action |
+| `/gsd-plan-phase <N>` | Before executing a phase |
+| `/gsd-execute-phase <N>` | Main work loop — atomic commits per task |
+| `/gsd-verify-work <N>` | Goal-backward check against success criteria |
+| `/gsd-code-review <N>` | Self-review before opening PR |
+| `/gsd-pr-branch` | Strips `.planning/` noise from PR diff |
+| `/gsd-ship` | Pushes + opens PR |
+| `/gsd-pause-work` | Context switch or end of session — writes `.continue-here.md` |
+| `/gsd-resume-work` | Next session — restores full state |
+
+These are documented in the GSD harness. This file references them; it does not redefine them.
+
+**`.planning/STATE.md` is PR-only** (D-12). Changes flow through Andy via `/gsd-progress` rather than direct edits from either dev's role branch. If Hung's GSD session writes to STATE.md from the participant branch, that is a conflict point — pull Andy in at the next sync.
+
+---
+
+## Conflict resolution and tie-breaker (D-16, COLLAB-07)
+
+### Tie-breaker rule
+
+The dev whose pillar is being most affected by a shared-file change wins the call:
+- `frontend/src/lib/api.js` change for participant work → Hung decides
+- `frontend/src/lib/api.js` change for admin or organizer work → Andy decides
+- Tied still tied? **Andy holds the casting vote** as project owner.
+
+### Rebase on main
+
+When shared files change on `main`, role branches rebase (not merge) to keep history clean. Do not let a role branch drift more than ~24 hours behind `main` during the parallel window.
+
+### Daily sync as the escalation path
+
+Disagreements that do not resolve via the tie-breaker rule go to the daily 3-hour sync, not to async comment threads.
 
 ---
 
 ## Critical files reference
 
-- `.planning/ROADMAP.md` — master phase list. Generated by GSD after v1.2 scoping.
-- `.planning/STATE.md` — Andy-owned via GSD skills.
-- `.planning/REQUIREMENTS-v1.2.md` — jointly locked.
-- `backend/alembic/versions/` — Andy single-writer. Current head: `0010`.
-- `frontend/src/lib/api.public.js` — joint API contract.
-- `.github/workflows/ci.yml` — quality gates.
-- `remote-run-instructions.md` — Hetzner handoff rules.
-- `docs/OPERATIONS.md` — deployment runbook (to be written in Phase 16).
-- `docs/HANDOFF.md` — post-June handoff (to be written in Phase 20).
+| File | Purpose | Owner |
+|---|---|---|
+| `docs/COLLABORATION.md` | This file — joint contract | Joint (PR-only) |
+| `CLAUDE.md` | Project notes for Claude (stack, test pattern, Alembic conventions, teaching style) | Joint (PR-only) |
+| `.planning/ROADMAP.md` | Master phase list (14–20) | Joint (PR-only) |
+| `.planning/STATE.md` | Current project status — Andy writes via GSD | Andy via `/gsd-progress` |
+| `.planning/REQUIREMENTS-v1.2-prod.md` | Joint scope contract for v1.2-prod | Joint (PR-only) |
+| `feature/v1.2-participant` | Hung's long-lived role branch | Hung |
+| `feature/v1.2-admin` | Andy's admin role branch | Andy |
+| `feature/v1.2-organizer` | Andy's organizer role branch | Andy |
+| `docker-compose.yml` | Canonical stack — one stack at a time per machine | Joint (PR-only) |
+| `backend/alembic/versions/*` | Migrations — Andy single-writer | Andy only |
+| `.github/workflows/*` | CI quality gates | Joint (PR-only) |
+
+---
+
+## Optional
+
+A `docs/weeknotes.md` append-only weekly log is optional. If anyone wants to start one, append three bullets at end of each Friday session: what shipped, what's in flight, what's next. Not a Phase 14 deliverable.
