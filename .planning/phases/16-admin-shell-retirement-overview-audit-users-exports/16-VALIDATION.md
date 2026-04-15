@@ -37,6 +37,7 @@ Postgres and Redis are only reachable from inside `uni-volunteer-scheduler_defau
 - **After every plan wave:** Run full backend suite + full frontend unit suite
 - **Before `/gsd-verify-work`:** Full backend + frontend + Playwright E2E all green, including new admin a11y specs
 - **Max feedback latency:** 30 seconds for targeted tests; 180 seconds for full suite
+- **Exception:** Plan 07 Task 2 (`admin-a11y.spec.js`) is a long-run phase-closing Playwright a11y gate and may take 60–180s. It is run at the END of Phase 16, not after each task commit, and is therefore exempt from the 30s per-task feedback-latency target.
 
 ---
 

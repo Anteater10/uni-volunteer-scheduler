@@ -662,30 +662,17 @@ def humanize(log, db):
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **File-location debt: move `UsersAdminPage.jsx` + `AuditLogsPage.jsx` + `AdminEventPage.jsx` + `PortalsAdminPage.jsx` into `pages/admin/`?**
-   - What we know: CONTEXT says flag in audit doc but don't move in Phase 16 (file moves are "disruptive and out of ADMIN-03 scope").
-   - What's unclear: Whether to create *new* `pages/admin/AuditLogSection.jsx` (duplicating file) or edit existing `pages/AuditLogsPage.jsx` in place.
-   - Recommendation: **Edit in place.** File moves create merge pain with Hung's parallel Phase 15. Log in ADMIN-AUDIT.md as "Phase 16 declined file move to preserve parallelism; move in Phase 20 doc sweep."
+1. **File-location debt: move `UsersAdminPage.jsx` + `AuditLogsPage.jsx` + `AdminEventPage.jsx` + `PortalsAdminPage.jsx` into `pages/admin/`?** — RESOLVED: keep current locations; file relocation is explicitly deferred in CONTEXT.md `<deferred>` section. No moves in Phase 16. Edit in place; log in ADMIN-AUDIT.md as "Phase 16 declined file move to preserve parallelism; move in Phase 20 doc sweep."
 
-2. **`last_login_at` update trigger.**
-   - What we know: D-17 says magic-link click, session creation, or first API call after session start.
-   - What's unclear: Which one is cheapest + most accurate.
-   - Recommendation: **On successful token verification in magic.py `GET /{token}`.** One write per login, no per-request overhead.
+2. **`last_login_at` update trigger.** — RESOLVED: update via application code in the login path (FastAPI middleware or the existing auth/magic router — specifically on successful magic-link token verification in `backend/app/routers/magic.py`), NOT via a DB trigger. Keeps the column behavior portable and testable. Documented in Plan 02 Task 1 action.
 
-3. **11-week quarter anchor date.**
-   - What we know: Phase 5 CSV import is quarterly. `alembic/versions/0006_phase5_module_templates_csv_imports.py` may encode an anchor; haven't verified.
-   - What's unclear: Whether to derive from CSV cadence anchor or hard-code.
-   - Recommendation: Planner greps Phase 5 code first; if nothing found, surface to user before locking the `lib/quarter.js` helper.
+3. **11-week quarter anchor date.** — RESOLVED by user confirmation on 2026-04-15: anchor = **Monday 2026-03-30** (Spring 2026 week 1 start). The quarter helper (`backend/app/services/quarter.py` and `frontend/src/lib/quarter.js`) rolls forward/back in 11-week intervals from this anchor. Plan 02 and Plan 03 updated to use `date(2026, 3, 30)` (Python) / `new Date(2026, 2, 30)` (JS — month is 0-indexed).
 
-4. **Number of Recent Activity rows: 20 (per CONTEXT D-15) vs 10 (current code).**
-   - Code currently does `.slice(0, 10)` and queries `limit: 10`. CONTEXT says 20. Safe to bump — just change the number. Resolved; left here only as a reminder.
+4. **Number of Recent Activity rows: 20 (per CONTEXT D-15) vs 10 (current code).** — RESOLVED: 10 rows, per CONTEXT.md D-05. (Note: D-05 supersedes the earlier D-15 reference; final answer is 10.)
 
-5. **Deep-linkable audit log pagination via query params.**
-   - What we know: D-03 says page number must be deep-linkable.
-   - What's unclear: `react-router-dom` 7 uses `useSearchParams`. Verified it's available.
-   - Recommendation: Planner uses `useSearchParams(['page', 'kind', 'q', 'from', 'to'])`.
+5. **Deep-linkable audit log pagination via query params.** — RESOLVED: use `searchParams` in the URL for filters + page number via `useSearchParams(['page', 'kind', 'q', 'from', 'to'])`; browser back/forward works; no custom history stack. Documented in Plan 04 Task 2 action.
 
 ---
 
