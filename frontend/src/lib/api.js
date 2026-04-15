@@ -535,10 +535,18 @@ export const api = {
   admin: {
     summary: () => adminSummary(),
     users: {
-      list: (params) => adminListUsers(params),
+      // Phase 16 Plan 03 (ADMIN-18..21): invite / deactivate / reactivate wire
+      // up to Plan 02's backend endpoints. Legacy create/update/delete kept for
+      // compatibility but the UI flow prefers invite + soft-delete.
+      list: (params = {}) => request("/users/", { method: "GET", params }),
       create: (payload) => adminCreateUser(payload),
       update: (id, payload) => adminUpdateUser(id, payload),
       delete: (id) => adminDeleteUser(id),
+      invite: (body) => request("/users/invite", { method: "POST", body }),
+      deactivate: (id) =>
+        request(`/users/${id}/deactivate`, { method: "POST", body: {} }),
+      reactivate: (id) =>
+        request(`/users/${id}/reactivate`, { method: "POST", body: {} }),
       ccpaExport: (userId, reason) =>
         request(`/admin/users/${userId}/ccpa-export`, { method: "GET", params: { reason } }),
       ccpaDelete: (userId, reason) =>
@@ -557,9 +565,20 @@ export const api = {
       resend: (id) => adminResendSignup(id),
     },
     analytics: {
-      volunteerHours: (params) => request("/admin/analytics/volunteer-hours", { method: "GET", params }),
-      attendanceRates: (params) => request("/admin/analytics/attendance-rates", { method: "GET", params }),
-      noShowRates: (params) => request("/admin/analytics/no-show-rates", { method: "GET", params }),
+      // JSON read helpers — consumed by ExportsSection panels in Plan 06
+      volunteerHours: (params = {}) =>
+        request("/admin/analytics/volunteer-hours", { method: "GET", params }),
+      attendanceRates: (params = {}) =>
+        request("/admin/analytics/attendance-rates", { method: "GET", params }),
+      noShowRates: (params = {}) =>
+        request("/admin/analytics/no-show-rates", { method: "GET", params }),
+      // CSV download helpers — consumed by ExportsSection Download CSV buttons in Plan 06
+      volunteerHoursCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/volunteer-hours.csv", "volunteer-hours.csv", { params }),
+      attendanceRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/attendance-rates.csv", "attendance-rates.csv", { params }),
+      noShowRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/no-show-rates.csv", "no-show-rates.csv", { params }),
     },
     templates: {
       list: () => request("/admin/module-templates"),

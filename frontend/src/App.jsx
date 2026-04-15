@@ -25,6 +25,7 @@ import AuditLogsPage from "./pages/AuditLogsPage";
 import ExportsSection from "./pages/admin/ExportsSection";
 import TemplatesSection from "./pages/admin/TemplatesSection";
 import ImportsSection from "./pages/admin/ImportsSection";
+import HelpSection from "./pages/admin/HelpSection";
 
 import SelfCheckInPage from "./pages/SelfCheckInPage";
 import NotFoundPage from "./pages/NotFoundPage";
@@ -70,6 +71,7 @@ export default function App() {
             <Route path="templates" element={<TemplatesSection />} />
             <Route path="imports" element={<ImportsSection />} />
             <Route path="exports" element={<ExportsSection />} />
+            <Route path="help" element={<HelpSection />} />
           </Route>
         </Route>
 
