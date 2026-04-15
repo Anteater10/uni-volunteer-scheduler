@@ -92,10 +92,13 @@ export function isValidPhone(raw) {
 // Volunteer avatar (initials circle like SignUpGenius)
 // ---------------------------------------------------------------------------
 
+// Avatar palette uses -700 shades so white text on each background clears the
+// WCAG AA 4.5:1 contrast bar (PART-10). The -500/-400 shades that were here
+// previously failed contrast (pink-500=3.58, orange-500=2.88, red-400=2.92, etc.)
 const AVATAR_COLORS = [
-  "bg-blue-500", "bg-green-500", "bg-purple-500", "bg-orange-500",
-  "bg-pink-500", "bg-teal-500", "bg-indigo-500", "bg-red-400",
-  "bg-cyan-500", "bg-amber-500",
+  "bg-blue-700", "bg-green-700", "bg-purple-700", "bg-orange-700",
+  "bg-pink-700", "bg-teal-700", "bg-indigo-700", "bg-red-700",
+  "bg-cyan-700", "bg-amber-700",
 ];
 
 function getAvatarColor(name) {
@@ -149,7 +152,7 @@ function SlotRow({ slot, selected, onToggle, highlight }) {
               "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
               selected
                 ? "bg-green-600 text-white"
-                : "bg-red-500 text-white hover:bg-red-600",
+                : "bg-red-600 text-white hover:bg-red-700",
             ].join(" ")}
           >
             {selected ? "Selected" : "Sign Up"}
@@ -254,7 +257,7 @@ function SlotRowInline({ slot, selected, onToggle, highlight }) {
               "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
               selected
                 ? "bg-green-600 text-white"
-                : "bg-red-500 text-white hover:bg-red-600",
+                : "bg-red-600 text-white hover:bg-red-700",
             ].join(" ")}
           >
             {selected ? "Selected" : "Sign Up"}
@@ -381,6 +384,7 @@ function DetailSkeleton() {
   return (
     <div
       className="flex flex-col gap-4 py-4"
+      role="status"
       aria-busy="true"
       aria-live="polite"
       aria-label="Loading event details"
@@ -758,7 +762,7 @@ export default function EventDetailPage() {
                               "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
                               selectedSlotIds.has(slot.id)
                                 ? "bg-green-600 text-white"
-                                : "bg-red-500 text-white hover:bg-red-600",
+                                : "bg-red-600 text-white hover:bg-red-700",
                             ].join(" ")}
                           >
                             {selectedSlotIds.has(slot.id) ? "Selected" : "Sign Up"}
@@ -835,7 +839,7 @@ export default function EventDetailPage() {
                               "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
                               selectedSlotIds.has(slot.id)
                                 ? "bg-green-600 text-white"
-                                : "bg-red-500 text-white hover:bg-red-600",
+                                : "bg-red-600 text-white hover:bg-red-700",
                             ].join(" ")}
                           >
                             {selectedSlotIds.has(slot.id) ? "Selected" : "Sign Up"}

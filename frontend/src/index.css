@@ -6,7 +6,7 @@
   --color-fg: #0f172a;          /* TODO(brand) */
   --color-fg-muted: #475569;    /* TODO(brand) */
   --color-border: #e2e8f0;      /* TODO(brand) */
-  --color-brand: #0284c7;       /* TODO(brand) */
+  --color-brand: #0369a1;       /* sky-700 — bumped from sky-600 (#0284c7) for WCAG AA contrast: white text on brand was 4.09:1, sky-700 is 5.36:1. PART-10. */
   --color-brand-fg: #ffffff;    /* TODO(brand) */
   --color-danger: #dc2626;      /* TODO(brand) */
   --color-success: #16a34a;     /* TODO(brand) */
