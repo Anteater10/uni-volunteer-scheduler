@@ -34,3 +34,4 @@ backend/.coverage
 # --- AI scaffolding (never commit) ---
 .claude/
 .gsd/
+.continue-here.md
