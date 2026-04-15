@@ -1,7 +1,42 @@
 # uni-volunteer-scheduler — project notes for Claude
 
-UCSB SciTrek volunteer scheduling app. Sole developer: Andy. First-time Claude
-Code user — prefer plain-language explanations and short replies.
+UCSB SciTrek volunteer scheduling app. **v1.2-prod milestone — production-ready by role.**
+Two developers are running Claude Code + GSD on this repo from their own machines:
+
+- **Andy** — admin pillar (Phases 16, 17, 18) and organizer pillar (Phase 19); project owner
+- **Hung** — participant pillar (Phase 15)
+- Phase 20 (cross-role integration) is shared
+
+Both developers use single checkout + branch switching on their own clones. Coordination
+happens via push/pull/PRs against shared `main`. See `docs/COLLABORATION.md` for the full
+collaboration contract (file-ownership rules, PR-only list, sync cadence, tie-breaker).
+
+Andy prefers plain-language explanations and short replies.
+
+## Branch awareness
+
+Before starting any work in a session, run:
+
+```bash
+git branch --show-current
+```
+
+Then check the table below and only edit files in the matching pillar. Files on the
+PR-only list in `docs/COLLABORATION.md` require explicit user permission before editing.
+
+| Branch | Pillar | Owner |
+|---|---|---|
+| `feature/v1.2-participant` | participant pillar | Hung |
+| `feature/v1.2-admin` | admin pillar | Andy |
+| `feature/v1.2-organizer` | organizer pillar | Andy |
+| `main` | integration / shared | read-only between phase merges |
+
+**Rule:** Only edit files in the pillar that owns the current branch. The PR-only list
+(in `docs/COLLABORATION.md`) covers files where concurrent edits cause hard-to-reverse
+damage — those need explicit user permission regardless of which branch you are on.
+
+**If you find yourself on `main`, do NOT make changes.** Switch to the appropriate
+role branch first, or ask the user which branch they want.
 
 ## Stack
 - **Backend:** FastAPI + SQLAlchemy + Alembic + Postgres 16 + Celery + Redis
