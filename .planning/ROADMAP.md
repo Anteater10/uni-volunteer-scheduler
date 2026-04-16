@@ -18,7 +18,7 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
 - [ ] **Phase 14: Collaboration setup** — git-worktree workflow, role-owned long-lived branches, COLLABORATION.md + CLAUDE.md updates, file-ownership conventions, conflict playbook. Must ship before Andy and Hung run parallel pillars.
 - [ ] **Phase 15: Participant role audit + UX polish** — end-to-end audit of public flows, fixes, WCAG AA + 375px verification, loading/empty/error states, cross-browser smoke, one new audit-surfaced feature.
 - [x] **Phase 16: Admin shell + retirement + Overview/Audit/Users/Exports** — retire `Overrides`, audit every admin route, polish admin shell, ship live Overview + filtered Audit Log + Users CRUD + Exports + UX polish across all admin pages. (completed 2026-04-15)
-- [ ] **Phase 17: Admin Templates CRUD** — full CRUD on `module_templates` (list, create, edit, delete/archive). Smaller scoped phase that can land independently between admin shell and the LLM import.
+- [x] **Phase 17: Admin Templates CRUD** — full CRUD on `module_templates` (list, create, edit, delete/archive). Smaller scoped phase that can land independently between admin shell and the LLM import. (completed 2026-04-16)
 - [ ] **Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)** — upload UI, single-shot LLM extraction → Pydantic, preview screen, atomic commit, eval-corpus logging, low-confidence flagging.
 - [ ] **Phase 19: Organizer role audit + UX polish** — route normalization (`/organize` → `/organizer`), audit, fixes, roster polish, end-of-event prompts, WCAG AA + 375px verification, one new audit-surfaced feature.
 - [ ] **Phase 20: Cross-role integration** — cross-role E2E (admin creates → organizer runs → participant signs up → admin sees in audit log), 4+ new Playwright scenarios, manual smoke checklist, doc sweep.
@@ -142,10 +142,10 @@ Plans:
   3. Admin can edit an existing module template and see the change reflected in the list and in any downstream consumers.
   4. Admin can delete or soft-archive a module template; the row disappears from the active list and is preserved if soft-archived.
   5. The Templates page meets the Phase 16 standards (WCAG AA, 375px audit or graceful desktop-only message, loading/empty/error states).
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 Plans:
-- [ ] 17-01-PLAN.md — Backend foundation: Alembic 0013 (type enum + session_count + duration fix), model/schema/service updates, restore endpoint, backend tests, api.js restore method
-- [ ] 17-02-PLAN.md — Frontend rewrite: TemplatesSection.jsx SideDrawer CRUD pattern + tests + visual checkpoint
+- [x] 17-01-PLAN.md — Backend foundation: Alembic 0013 (type enum + session_count + duration fix), model/schema/service updates, restore endpoint, backend tests, api.js restore method
+- [x] 17-02-PLAN.md — Frontend rewrite: TemplatesSection.jsx SideDrawer CRUD pattern + tests + visual checkpoint
 **UI hint:** yes
 **Touches:** `frontend/src/pages/admin/TemplatesSection.jsx`, `backend/app/routers/admin.py`, `backend/app/models.py`, `backend/app/schemas.py`, `backend/app/services/template_service.py`, `frontend/src/lib/api.js`.
 
@@ -203,7 +203,7 @@ Plans:
 | 14. Collaboration setup | 2/4 | In Progress|  |
 | 15. Participant role audit + UX polish | 0/? | Not started | - |
 | 16. Admin shell + retirement + Overview/Audit/Users/Exports | 7/7 | Complete    | 2026-04-16 |
-| 17. Admin Templates CRUD | 0/2 | Planned | - |
+| 17. Admin Templates CRUD | 2/2 | Complete    | 2026-04-16 |
 | 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 0/? | Not started | - |
 | 19. Organizer role audit + UX polish | 0/? | Not started | - |
 | 20. Cross-role integration | 0/? | Not started | - |
