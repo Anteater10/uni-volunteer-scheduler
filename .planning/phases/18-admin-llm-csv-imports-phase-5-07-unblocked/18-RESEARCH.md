@@ -368,22 +368,19 @@ Not a rename/refactor phase. Skipped.
 | LLM prompt injection via CSV content | Tampering | The CSV is treated as data in the user message, not as instructions. System prompt is server-controlled. Pydantic schema enforces output shape regardless of what the model says. |
 | API key exposure | Information Disclosure | `openai_api_key` is an env var, never logged. Corpus logger stores raw CSV bytes (event data only, no PII per REQUIREMENTS.md). |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Provider: OpenAI gpt-4o-mini vs Anthropic Claude Haiku**
+   - RESOLVED: Use OpenAI gpt-4o-mini — matches existing code and installed packages. Andy needs to add OPENAI_API_KEY to backend/.env.
    - What we know: all existing code uses OpenAI; instructor + openai are installed; no Anthropic package present
-   - What's unclear: whether Andy has an OpenAI key or only an Anthropic key
-   - Recommendation: default to OpenAI gpt-4o-mini (matches existing code). If Andy only has Anthropic, the planner adds `anthropic` to requirements.txt and switches the instructor client in one place.
 
 2. **Real CSV column structure**
-   - What we know: the Celery task receives the raw CSV as a string; the prompt needs to reference actual column names
-   - What's unclear: what columns the Sci Trek quarterly CSV actually has (date, module, location, instructor, capacity?)
-   - Recommendation: plan includes a Wave 0 "read the CSV header" task where Andy provides the header row; the system prompt is written against those exact column names
+   - RESOLVED: System prompt uses flexible field extraction (module_slug, location, start_at, end_at) with instructions to match closest known slug. Handles unknown column names gracefully.
+   - What we know: the Celery task receives the raw CSV as a string; the prompt references generic field names
 
 3. **raw_csv preservation on retry**
-   - What we know: `update_import_status()` replaces `result_payload` fully; the retry endpoint doesn't exist in backend
-   - What's unclear: whether to fix the overwrite bug (merge dict instead of replace) or accept that retry is not supported
-   - Recommendation: add the retry endpoint + fix the merge so retry works correctly; it's 10 lines of code and the frontend already calls the endpoint
+   - RESOLVED: Plan 01 Task 1 fixes the merge bug (dict merge instead of replace) and adds the retry endpoint.
+   - What we know: `update_import_status()` replaces `result_payload` fully; fix is ~10 lines
 
 ## Assumptions Log
 
