@@ -175,7 +175,9 @@ test.describe.serial('public volunteer flow', () => {
     }
 
     await page.goto(`/signup/manage?token=${resolvedToken}`);
-    await expect(page.getByText('Your Signups')).toBeVisible({ timeout: 10000 });
+    // Page header renders "Your signups" (UI-SPEC) or "Signups for {name}" when
+    // the backend resolves the volunteer — accept either via the shared /signups/i.
+    await expect(page.getByText(/signups/i).first()).toBeVisible({ timeout: 10000 });
     // At least one signup card
     const cancelButtons = page.getByRole('button', { name: /^cancel$/i });
     await expect(cancelButtons.first()).toBeVisible();
@@ -188,7 +190,7 @@ test.describe.serial('public volunteer flow', () => {
     }
 
     await page.goto(`/signup/manage?token=${resolvedToken}`);
-    await expect(page.getByText('Your Signups')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/signups/i).first()).toBeVisible({ timeout: 10000 });
 
     // Click first Cancel button
     await page.getByRole('button', { name: /^cancel$/i }).first().click();
@@ -209,7 +211,7 @@ test.describe.serial('public volunteer flow', () => {
     }
 
     await page.goto(`/signup/manage?token=${resolvedToken}`);
-    await expect(page.getByText('Your Signups')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/signups/i).first()).toBeVisible({ timeout: 10000 });
 
     // "Cancel all signups" button appears when activeCount >= 2 (ManageSignupsPage.jsx)
     // After previous test cancelled one, there may be only 1 left so "cancel all" won't appear.
