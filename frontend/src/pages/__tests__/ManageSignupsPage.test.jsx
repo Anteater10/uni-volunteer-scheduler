@@ -1,6 +1,6 @@
 // src/pages/__tests__/ManageSignupsPage.test.jsx
 //
-// Component tests for ManageSignupsPage — 8 test cases.
+// Component tests for ManageSignupsPage — 9 test cases.
 
 import React from "react";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
