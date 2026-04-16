@@ -37,16 +37,30 @@ def get_import(db: Session, import_id) -> CsvImport:
     return imp
 
 
+_UNSET = object()  # sentinel: distinguishes "not passed" from explicit None/""
+
+
 def update_import_status(
     db: Session, import_id, status: CsvImportStatus,
-    result_payload: dict | None = None, error_message: str | None = None
+    result_payload: dict | None = None, error_message=_UNSET
 ) -> None:
-    """Update import status and optional payload."""
+    """Update import status and optional payload.
+
+    error_message semantics:
+      - not passed (default _UNSET): leave existing error_message unchanged
+      - passed as None: clear error_message (used by retry endpoint)
+      - passed as str: set error_message to that string
+    """
     imp = get_import(db, import_id)
     imp.status = status
     if result_payload is not None:
-        imp.result_payload = result_payload
-    if error_message is not None:
+        existing = imp.result_payload or {}
+        # Merge new payload into existing, preserving raw_csv from the initial upload
+        merged = {**existing, **result_payload}
+        if "raw_csv" in existing and "raw_csv" not in result_payload:
+            merged["raw_csv"] = existing["raw_csv"]
+        imp.result_payload = merged
+    if error_message is not _UNSET:
         imp.error_message = error_message
     imp.updated_at = datetime.now(timezone.utc)
     db.commit()

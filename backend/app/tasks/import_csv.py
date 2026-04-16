@@ -4,11 +4,16 @@ Runs stage-1 LLM extraction then stage-2 deterministic validation.
 Stores preview in csv_imports.result_payload.
 """
 import statistics
+from typing import List
+
+import instructor
+from openai import OpenAI
+
 from app.celery_app import celery
 from app.database import SessionLocal
 from app.models import CsvImportStatus
 from app.config import settings
-from app.services.csv_validator import validate_import
+from app.services.csv_validator import validate_import, _get_active_template_slugs
 from app.services.import_schemas import ExtractedEvent
 from app.services import corpus_logger, import_service
 
@@ -18,33 +23,66 @@ def _estimate_cost(row_count: int, model: str) -> float:
 
     Rough estimate: ~500 input tokens per row + ~200 output tokens per row.
     gpt-4o-mini pricing: $0.15/1M input, $0.60/1M output (as of 2025).
+    For OpenRouter free models, cost is effectively 0 but we still guard row count.
     """
     input_tokens = row_count * 500 + 2000  # rows + system prompt
     output_tokens = row_count * 200
     if "gpt-4o-mini" in model:
         cost = (input_tokens * 0.15 + output_tokens * 0.60) / 1_000_000
     else:
-        # Conservative estimate for unknown models
+        # Conservative estimate for unknown / free models
         cost = (input_tokens + output_tokens) * 0.01 / 1_000
     return round(cost, 4)
 
 
-def _stage1_extract_stub(raw_csv: str) -> list[dict]:
-    """STUB: Placeholder for stage-1 LLM extraction.
-
-    Returns empty list. Real implementation in plan 05-07 (BLOCKED on CSV sample).
-    In tests, this is monkey-patched to return test data.
-    """
-    # TODO(phase5-07): Replace with real instructor + OpenAI structured output call
-    return []
-
-
 def _stage1_extract(raw_csv: str, model: str) -> list[dict]:
-    """Stage-1 LLM extraction entry point.
+    """Stage-1 LLM extraction: CSV -> list of ExtractedEvent dicts.
 
-    Delegates to stub for now. Real implementation replaces _stage1_extract_stub.
+    Uses instructor + OpenAI client pointed at OpenRouter (Gemma 4 31B free tier).
+    Active module template slugs from the database are injected into the prompt so
+    the model can match rows to known slugs.
     """
-    return _stage1_extract_stub(raw_csv)
+    if not settings.openrouter_api_key:
+        raise ValueError(
+            "OPENROUTER_API_KEY is not set. Add it to backend/.env before running imports."
+        )
+
+    # Fetch active template slugs from DB for prompt context
+    db = SessionLocal()
+    try:
+        active_slugs = _get_active_template_slugs(db)
+    finally:
+        db.close()
+
+    slug_list = ", ".join(sorted(active_slugs)) if active_slugs else "(no templates yet)"
+
+    system_prompt = (
+        "You extract Sci Trek volunteer events from quarterly CSV schedules.\n"
+        "Output one ExtractedEvent per CSV data row.\n"
+        f"Known module template slugs: {slug_list}.\n"
+        "Match each row to the closest known slug. If no slug matches, use a "
+        "kebab-case slug derived from the module name.\n"
+        "Set confidence below 0.85 when:\n"
+        "- A field is ambiguous or missing\n"
+        "- The module name doesn't closely match any known slug\n"
+        "- Date/time parsing is uncertain\n"
+        "Always include start_at and end_at as ISO-8601 datetimes."
+    )
+
+    client = instructor.from_openai(OpenAI(
+        api_key=settings.openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+    ))
+    result: List[ExtractedEvent] = client.chat.completions.create(
+        model=model,
+        response_model=List[ExtractedEvent],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Extract all events from this CSV:\n\n{raw_csv}"},
+        ],
+        max_retries=2,
+    )
+    return [e.model_dump(by_alias=True) for e in result]
 
 
 @celery.task(
@@ -70,7 +108,7 @@ def process_csv_import(self, import_id: str) -> None:
 
         # Estimate cost
         row_count = raw_csv_bytes.decode("utf-8", errors="replace").count("\n")
-        estimated_cost = _estimate_cost(row_count, settings.openai_model)
+        estimated_cost = _estimate_cost(row_count, settings.llm_model)
         if estimated_cost > settings.import_cost_ceiling:
             import_service.update_import_status(
                 db, import_id, CsvImportStatus.failed,
@@ -78,9 +116,9 @@ def process_csv_import(self, import_id: str) -> None:
             )
             return
 
-        # Stage 1: LLM extraction (stub)
+        # Stage 1: LLM extraction via OpenRouter (Gemma 4 31B free)
         raw_csv = raw_csv_bytes.decode("utf-8", errors="replace")
-        extracted_dicts = _stage1_extract(raw_csv, settings.openai_model)
+        extracted_dicts = _stage1_extract(raw_csv, settings.llm_model)
 
         if not extracted_dicts:
             import_service.update_import_status(
@@ -106,7 +144,7 @@ def process_csv_import(self, import_id: str) -> None:
         corpus_logger.log_import(
             raw_csv_bytes=raw_csv_bytes,
             normalized_json=extracted_dicts,
-            model=settings.openai_model,
+            model=settings.llm_model,
             confidence_distribution={
                 "min": min(confidences) if confidences else 0,
                 "max": max(confidences) if confidences else 0,

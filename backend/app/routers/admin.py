@@ -1637,6 +1637,27 @@ def commit_csv_import(
     return import_service.commit_import(db, import_id)
 
 
+@router.post("/imports/{import_id}/retry")
+def retry_csv_import(
+    import_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Re-run a failed import. Resets status to pending and re-queues the Celery task."""
+    imp = import_service.get_import(db, import_id)
+    if imp.status not in (models.CsvImportStatus.failed,):
+        raise HTTPException(status_code=400, detail="Only failed imports can be retried")
+    # Preserve raw_csv, clear preview data and error
+    raw_csv = (imp.result_payload or {}).get("raw_csv", "")
+    import_service.update_import_status(
+        db, import_id, models.CsvImportStatus.pending,
+        result_payload={"raw_csv": raw_csv},
+        error_message=None,
+    )
+    process_csv_import.delay(str(imp.id))
+    return {"status": "retrying", "import_id": import_id}
+
+
 # =========================
 # NOTIFICATIONS MONITORING (Phase 6)
 # =========================
