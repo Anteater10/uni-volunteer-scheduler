@@ -142,9 +142,12 @@ Plans:
   3. Admin can edit an existing module template and see the change reflected in the list and in any downstream consumers.
   4. Admin can delete or soft-archive a module template; the row disappears from the active list and is preserved if soft-archived.
   5. The Templates page meets the Phase 16 standards (WCAG AA, 375px audit or graceful desktop-only message, loading/empty/error states).
-**Plans:** TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 17-01-PLAN.md — Backend foundation: Alembic 0013 (type enum + session_count + duration fix), model/schema/service updates, restore endpoint, backend tests, api.js restore method
+- [ ] 17-02-PLAN.md — Frontend rewrite: TemplatesSection.jsx SideDrawer CRUD pattern + tests + visual checkpoint
 **UI hint:** yes
-**Touches:** `frontend/src/pages/admin/AdminTemplatesPage.jsx`, `backend/app/routers/templates.py` (or admin.py), `backend/app/models/module_template.py`, `backend/app/schemas/module_template.py`.
+**Touches:** `frontend/src/pages/admin/TemplatesSection.jsx`, `backend/app/routers/admin.py`, `backend/app/models.py`, `backend/app/schemas.py`, `backend/app/services/template_service.py`, `frontend/src/lib/api.js`.
 
 ### Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)
 **Goal:** Finally unblock and ship the LLM CSV extraction surface — Andy holds the Sci Trek CSV. Single-shot LLM call (Haiku default), structured Pydantic output, preview screen, atomic commit, eval-corpus logging, low-confidence flagging. This is the biggest net-new admin feature in v1.2-prod.
@@ -200,7 +203,7 @@ Plans:
 | 14. Collaboration setup | 2/4 | In Progress|  |
 | 15. Participant role audit + UX polish | 0/? | Not started | - |
 | 16. Admin shell + retirement + Overview/Audit/Users/Exports | 7/7 | Complete    | 2026-04-16 |
-| 17. Admin Templates CRUD | 0/? | Not started | - |
+| 17. Admin Templates CRUD | 0/2 | Planned | - |
 | 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 0/? | Not started | - |
 | 19. Organizer role audit + UX polish | 0/? | Not started | - |
 | 20. Cross-role integration | 0/? | Not started | - |
