@@ -199,7 +199,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 14. Collaboration setup | 2/4 | In Progress|  |
 | 15. Participant role audit + UX polish | 0/? | Not started | - |
-| 16. Admin shell + retirement + Overview/Audit/Users/Exports | 7/7 | Complete   | 2026-04-15 |
+| 16. Admin shell + retirement + Overview/Audit/Users/Exports | 7/7 | Complete    | 2026-04-16 |
 | 17. Admin Templates CRUD | 0/? | Not started | - |
 | 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 0/? | Not started | - |
 | 19. Organizer role audit + UX polish | 0/? | Not started | - |
