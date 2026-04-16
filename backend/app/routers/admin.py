@@ -1518,10 +1518,11 @@ def ccpa_delete(
 
 @router.get("/module-templates", response_model=list[ModuleTemplateRead])
 def list_module_templates(
+    include_archived: bool = False,
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    return template_service.list_templates(db)
+    return template_service.list_templates(db, include_archived=include_archived)
 
 
 @router.post("/module-templates", response_model=ModuleTemplateRead, status_code=201)
@@ -1552,6 +1553,15 @@ def delete_module_template(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     template_service.soft_delete_template(db, slug)
+
+
+@router.post("/module-templates/{slug}/restore", response_model=ModuleTemplateRead)
+def restore_module_template(
+    slug: str,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return template_service.restore_template(db, slug)
 
 
 # =========================

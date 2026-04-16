@@ -581,11 +581,12 @@ export const api = {
         downloadBlob("/admin/analytics/no-show-rates.csv", "no-show-rates.csv", { params }),
     },
     templates: {
-      list: () => request("/admin/module-templates"),
+      list: (params) => request("/admin/module-templates", { params }),
       create: (payload) => request("/admin/module-templates", { method: "POST", body: payload }),
       update: (slug, payload) => request(`/admin/module-templates/${slug}`, { method: "PATCH", body: payload }),
       delete: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
       bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/module-templates/${s}`, { method: "DELETE" }))),
+      restore: (slug) => request(`/admin/module-templates/${slug}/restore`, { method: "POST" }),
     },
     imports: {
       list: () => request("/admin/imports", { method: "GET" }),
