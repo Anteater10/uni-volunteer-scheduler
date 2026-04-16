@@ -1,44 +1,22 @@
 ---
 phase: 16-admin-shell-retirement-overview-audit-users-exports
-verified: 2026-04-15T00:00:00Z
-status: gaps_found
-score: 22/25 must-haves verified
+verified: 2026-04-15T06:30:00Z
+status: human_needed
+score: 25/25 must-haves verified
 overrides_applied: 0
-gaps:
-  - truth: "Exports page: Attendance Rates and No-Show Rates panels render backend data correctly in the preview tables"
-    status: failed
-    reason: "HI-01 from 16-REVIEW. ExportsSection.jsx uses field names that do not match backend schemas. Volunteer Hours renders r.name (backend returns volunteer_name), silently falls back to email. No-Show Rates renders r.event_title and r.registered (backend NoShowRateRow is per-volunteer and returns volunteer_name/count/rate). Preview tables will display blank columns as soon as real data exists."
-    artifacts:
-      - path: "frontend/src/pages/admin/ExportsSection.jsx"
-        issue: "Lines 114, 129-130, 148-149 reference r.name / r.event_title / r.registered which do not exist on the backend response shape"
-    missing:
-      - "Rebind Volunteer Hours panel to r.volunteer_name + r.email + r.hours + r.events"
-      - "Rebind No-Show Rates panel columns to [Volunteer, No-Shows, Rate] and render r.volunteer_name / r.count / r.rate*100%"
-      - "Verify Attendance Rates panel bindings against AttendanceRateRow schema"
-  - truth: "Overrides retirement gate passes (scripts/verify-overrides-retired.sh returns 0)"
-    status: failed
-    reason: "Gate script exits 1. Two live matches remain in frontend/src/pages/admin/__tests__/AdminLayout.test.jsx (lines 32, 44). These are NEGATIVE-ASSERTION regression guards (test name + queryByRole regex asserting absence), so the retirement itself is complete — but the hard gate the success criteria points at fails literally. Either add AdminLayout.test.jsx to the script's exclude list alongside api.test.js, or rename the regression test to avoid the literal word."
-    artifacts:
-      - path: "scripts/verify-overrides-retired.sh"
-        issue: "Exclude list omits frontend/src/pages/admin/__tests__/AdminLayout.test.jsx"
-      - path: "frontend/src/pages/admin/__tests__/AdminLayout.test.jsx"
-        issue: "Uses the literal word 'Overrides' in a regression guard — legitimate but trips the gate"
-    missing:
-      - "Add AdminLayout.test.jsx to the exclude list in verify-overrides-retired.sh and rerun"
-  - truth: "Users page invite UX matches the shipped invite implementation"
-    status: partial
-    reason: "ME-01 from 16-REVIEW. UsersAdminPage invite form footer advertises 'sign-in link that expires in 15 minutes' but backend/app/services/invite.py only sends a plain /login?invited=<email> URL. hashed_password is NULL so an invitee cannot actually log in without an out-of-band password reset. Invite endpoint exists and is wired — but the end-to-end flow the copy promises does not work."
-    artifacts:
-      - path: "frontend/src/pages/UsersAdminPage.jsx"
-        issue: "Invite form copy promises a magic-link token that does not exist"
-      - path: "backend/app/services/invite.py"
-        issue: "send_invite_email composes a login URL without minting a magic-link token"
-    missing:
-      - "Either land the real magic-link token in invite.py (matches D-11 intent) OR rewrite the invite form copy + email body to describe the actual 'forgot password' first-login flow"
+re_verification:
+  previous_status: gaps_found
+  previous_score: 22/25
+  gaps_closed:
+    - "Exports page: Attendance Rates and No-Show Rates panels render backend data correctly in the preview tables"
+    - "Overrides retirement gate passes (scripts/verify-overrides-retired.sh returns 0)"
+    - "Users page invite UX matches the shipped invite implementation"
+  gaps_remaining: []
+  regressions: []
 human_verification:
-  - test: "Magic-link invite end-to-end"
-    expected: "Admin invites a new user from /admin/users, invitee receives an email, clicks the link, completes first login, lands authenticated"
-    why_human: "Requires Mailhog or real SMTP — cannot verify programmatically. Currently expected to FAIL per ME-01 / partial gap above."
+  - test: "Invite end-to-end flow"
+    expected: "Admin invites a new user from /admin/users, invitee receives an email, clicks the link, sets password on first login, lands authenticated"
+    why_human: "Requires Mailhog or real SMTP — cannot verify programmatically"
   - test: "375px desktop-only banner on every admin route"
     expected: "Every /admin/* route shows DesktopOnlyBanner below 768px with no layout glitch"
     why_human: "Visual check beyond axe; ADMIN-26"
@@ -57,9 +35,9 @@ human_verification:
 
 **Phase Goal:** Bring the admin shell to production grade — retire Overrides, audit every admin route, ship live Overview + filtered Audit Log + Users CRUD + Exports, hold WCAG AA + desktop-only-banner across every admin page.
 **Verified:** 2026-04-15
-**Status:** gaps_found
-**Score:** 22/25 must-haves verified
-**Re-verification:** No — initial verification
+**Status:** human_needed
+**Score:** 25/25 must-haves verified
+**Re-verification:** Yes — after gap closure (commit db238d5)
 
 ## Goal Achievement — Observable Truths
 
@@ -69,15 +47,15 @@ human_verification:
 | --- | ------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------- |
 | 1   | users.is_active + last_login_at + hashed_password nullable    | VERIFIED   | alembic/versions/0011 exists; backend tests green per VALIDATION        |
 | 2   | 5 seed module templates soft-deleted                          | VERIFIED   | alembic/versions/0012 exists; test_seed_templates_retired.py green      |
-| 3   | signup_cancel → signup_cancelled data + code normalization    | VERIFIED   | 0012 backfill + test_audit_log_normalization.py green                   |
-| 4   | Overrides sidebar nav removed + live references scrubbed      | FAILED     | Gate script exits 1 — see gap #2 above                                  |
+| 3   | signup_cancel -> signup_cancelled data + code normalization   | VERIFIED   | 0012 backfill + test_audit_log_normalization.py green                   |
+| 4   | Overrides sidebar nav removed + live references scrubbed      | VERIFIED   | Gate script exits 0 after adding AdminLayout.test.jsx to exclude list   |
 | 5   | audit_log_humanize resolves actor/entity labels               | VERIFIED   | Service file present; test_audit_log_humanize.py green                  |
 
 ### Plan 16-02 (Backend endpoints)
 
 | #   | Truth                                                         | Status     | Evidence                                                                |
 | --- | ------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------- |
-| 6   | POST /users/invite creates NULL-password magic-link user      | VERIFIED*  | users.py:149 defines endpoint; test_users_invite.py green (*but email flow disconnected — see gap #3) |
+| 6   | POST /users/invite creates NULL-password user                 | VERIFIED   | users.py:149 defines endpoint; test_users_invite.py green               |
 | 7   | POST /users/{id}/deactivate with last-admin guard             | VERIFIED   | users.py:196; test_users_deactivate.py green                            |
 | 8   | POST /users/{id}/reactivate                                   | VERIFIED   | users.py:239                                                            |
 | 9   | PATCH /users/{id} blocks self-demote + last-admin demote      | VERIFIED   | test_users_deactivate.py covers                                         |
@@ -109,13 +87,13 @@ human_verification:
 
 | #   | Truth                                                         | Status     | Evidence                                                                |
 | --- | ------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------- |
-| 23  | Users page: shared-err fix + ROLES fix + invite + deactivate + table + drawer + CCPA preserved | PARTIAL | UsersAdminPage.test.jsx green, but invite copy/email flow disconnected — see gap #3 |
+| 23  | Users page: shared-err fix + ROLES fix + invite + deactivate + table + drawer + CCPA preserved | VERIFIED | UsersAdminPage.test.jsx green; invite copy now matches actual flow (link to sign in + set password on first login) |
 
 ### Plan 16-06 (Exports/Imports/AdminEvent/Portals)
 
 | #   | Truth                                                         | Status     | Evidence                                                                |
 | --- | ------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------- |
-| 24  | Exports panels wired to backend + CSV buttons + presets + explainers | FAILED | HI-01: field bindings wrong on Volunteer Hours + No-Show Rates previews — see gap #1 |
+| 24  | Exports panels wired to backend + CSV buttons + presets + explainers | VERIFIED | Field bindings now match schemas: VolunteerHoursRow(volunteer_name/email/hours/events), AttendanceRateRow(name/confirmed/attended/rate), NoShowRateRow(volunteer_name/count/rate) |
 
 ### Plan 16-07 (Docs + a11y)
 
@@ -127,13 +105,13 @@ human_verification:
 
 | Requirement | Source Plan(s) | Status     | Evidence                                                 |
 | ----------- | -------------- | ---------- | -------------------------------------------------------- |
-| ADMIN-01    | 16-01          | PARTIAL    | Overrides removed from shell, but gate script literal-fails |
+| ADMIN-01    | 16-01          | SATISFIED  | Overrides removed from shell; gate script exits 0        |
 | ADMIN-02    | 16-07          | SATISFIED  | docs/ADMIN-AUDIT.md present                              |
 | ADMIN-03    | 16-03          | SATISFIED  | Admin shell rework landed                                |
 | ADMIN-04,05 | 16-02, 16-04   | SATISFIED  | Overview + expanded /admin/summary green                 |
 | ADMIN-06,07 | 16-02, 16-04   | SATISFIED  | Audit Log filters + humanized backend rows               |
-| ADMIN-18..21| 16-02, 16-05   | PARTIAL    | Backend + UI wired; invite-email end-to-end disconnected |
-| ADMIN-22,23 | 16-02, 16-06   | PARTIAL    | CSV downloads work, preview bindings wrong (HI-01)       |
+| ADMIN-18..21| 16-02, 16-05   | SATISFIED  | Backend + UI wired; invite copy now accurate             |
+| ADMIN-22,23 | 16-02, 16-06   | SATISFIED  | CSV downloads work; preview bindings fixed               |
 | ADMIN-24    | 16-05          | SATISFIED  | Per-user CCPA buttons preserved + wired (copy needs human check) |
 | ADMIN-25    | 16-03, 16-07   | NEEDS_HUMAN| axe spec exists, full Playwright run deferred to CI     |
 | ADMIN-26    | 16-03          | NEEDS_HUMAN| Desktop-only banner landed, 375px visual check manual   |
@@ -143,22 +121,54 @@ human_verification:
 
 From 16-REVIEW.md (filed into gaps/human-verification where they affect must-haves):
 
-- **HI-01** — Exports field binding bug → blocking gap #1
-- **ME-01** — Invite copy vs real flow mismatch → gap #3
-- **ME-02** — Unencoded email in invite URL → non-blocking (low risk with EmailStr)
-- **ME-03** — Migration 0011 downgrade null-not-null bug → non-blocking (latent, matches existing CLAUDE.md-tracked class)
-- **ME-04** — Pre-existing NameError in notify_event_participants → pre-existing, not phase-16 regression
+- **HI-01** — Exports field binding bug -- RESOLVED in db238d5
+- **ME-01** — Invite copy vs real flow mismatch -- RESOLVED in db238d5 (copy rewritten)
+- **ME-02** — Unencoded email in invite URL -- non-blocking (low risk with EmailStr)
+- **ME-03** — Migration 0011 downgrade null-not-null bug -- non-blocking (latent, matches existing CLAUDE.md-tracked class)
+- **ME-04** — Pre-existing NameError in notify_event_participants -- pre-existing, not phase-16 regression
 - **LO-01..LO-05** — Minor polish items, non-blocking
+
+## Human Verification Required
+
+### 1. Invite end-to-end flow
+
+**Test:** Admin invites a new user from /admin/users, invitee receives an email, clicks the link, sets password on first login, lands authenticated
+**Expected:** Full flow completes without errors
+**Why human:** Requires Mailhog or real SMTP -- cannot verify programmatically
+
+### 2. 375px desktop-only banner on every admin route
+
+**Test:** Resize browser to below 768px on every /admin/* route
+**Expected:** DesktopOnlyBanner appears with no layout glitch
+**Why human:** Visual check beyond axe; ADMIN-26
+
+### 3. WCAG AA color-contrast spot check + keyboard-only focus ring visibility
+
+**Test:** Tab through every interactive element on admin pages
+**Expected:** Focus ring visible on every interactive element, contrast passes on dynamic states
+**Why human:** axe catches most but not all cases; ADMIN-25
+
+### 4. CCPA Export + Delete modal copy readability
+
+**Test:** Read the CCPA modal copy aloud
+**Expected:** Plain-English, non-jargon, readable aloud
+**Why human:** D-18 readability is a human judgement call
+
+### 5. Playwright admin-a11y.spec.js full run against docker stack
+
+**Test:** Run e2e/admin-a11y.spec.js against a live docker stack
+**Expected:** Zero serious/critical axe violations on every in-scope admin route at 1280x800
+**Why human:** Spec file landed at e2e/admin-a11y.spec.js but full run deferred to CI/local dev stack per VALIDATION sign-off
 
 ## Gaps Summary
 
-Three gaps block "passed" status:
+All three previously identified gaps are now resolved:
 
-1. **Exports preview panels render blank columns** (HI-01, high severity). Pure render-time bug; CSV downloads are unaffected. Quick fix (rebind field names).
-2. **Overrides retirement gate script fails literally** due to exclude-list omission. The retirement is genuinely complete — test assertions that guard against re-introduction legitimately contain the word. Add AdminLayout.test.jsx to the script's exclude list.
-3. **Invite magic-link flow is disconnected from the UI copy**. Users can be "invited" but cannot log in without an out-of-band password reset. Either implement real magic-link or rewrite copy to match reality.
+1. **Exports preview field bindings** (HI-01) -- RESOLVED. All three panels (Volunteer Hours, Attendance Rates, No-Show Rates) now render fields matching their backend schema exactly.
+2. **Overrides retirement gate script** -- RESOLVED. AdminLayout.test.jsx added to exclude list; script exits 0.
+3. **Invite copy mismatch** (ME-01) -- RESOLVED. Copy rewritten to "link to sign in" + "set a password on first login", matching the actual backend flow.
 
-None of these are deep architectural problems; all three are scoped fixes. Status is `gaps_found` (not `human_needed`) because gap #1 and #2 are programmatically verifiable failures — but the human_verification list must also be completed once the gaps are closed.
+Status is `human_needed` because 5 human verification items remain (visual, a11y, SMTP-dependent tests).
 
 ---
 
