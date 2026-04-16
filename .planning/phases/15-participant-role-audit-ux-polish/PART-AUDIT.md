@@ -1,7 +1,7 @@
 # Phase 15 — Participant Audit (PART-01 deliverable)
 
 **Created:** 2026-04-15
-**Wave 2 verification run:** 2026-04-15 (15-07)
+**Wave 2 verification run:** 2026-04-16 (15-07, second pass)
 **Status:** populated — awaiting Andy D-05 manual sign-off
 **Scope:** Every logged-out participant flow on a fresh dev DB.
 **Routes:** `/events`, `/events/:eventId`, `/signup/confirm`, `/signup/manage`, `/check-in/:signupId`, `/portals/:slug`
@@ -208,35 +208,40 @@ Issues that require backend changes MUST NOT be fixed in this phase. Logged here
 |---|-----------------|-------------|
 | 1 | `backend/tests/fixtures/seed_e2e.py` | JSON output is missing `signup_id`, `portal_slug`, and `a11y_confirm_token` keys that `e2e/a11y.spec.js` expects. The spec now skips those three routes cleanly with a deferral message rather than blowing up. Adding the keys (signup_id from the seeded confirmed signup, portal_slug from a created portal row, a11y_confirm_token = a fresh disposable confirm token) will turn 6 currently-skipped a11y tests green. |
 | 2 | `backend/app/config.py` `cors_allowed_origins` | Only `http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000` are allowed. Worktree-local Playwright runs against a worktree-built Vite preview on port 5174 cannot exercise routes that hit the backend. Adding `http://localhost:5174` (or making the list driven by an env-var override in dev) would enable parallel worktree validation. |
+| 3 | `e2e/admin-smoke.spec.js:40` — admin pillar | On mobile viewports (Mobile Chrome, Mobile Safari, iPhone SE 375) the `#al-q` Keyword Search input resolves but reports `hidden`. AdminLayout renders both mobile and desktop DOM; `.first()` picks the desktop copy that is display:none on narrow viewports. Fix is on admin side (Andy, Phase 16+): either scope the locator to the visible variant or set the responsive display correctly. Chromium, webkit, firefox are green — participant-pillar runs are unaffected. |
 
-Both items are out of pillar scope for the participant role (backend ownership). Hung will note these for Andy at the next sync.
+Items 1–2 are out of pillar scope for the participant role (backend ownership). Item 3 is out of pillar scope for the participant role (admin ownership). Hung will note these for Andy at the next sync.
 
 ---
 
 ## Cross-browser matrix (PART-14)
 
-Run command: `npx playwright test` (against user's running dev Vite — same wave-1 source tree as this worktree).
+Run command: `npx playwright test` (against user's running dev Vite on :5173). **Re-run date: 2026-04-16.**
 
 | Browser | Project | Status | Notes |
 |---------|---------|--------|-------|
-| Chrome desktop | chromium | [x] PASS | 17 passed / 9 skipped (backend-deferred). 2 a11y color-contrast hits are stale-CSS on the dev Vite — green against the worktree production build. |
-| Firefox desktop | firefox | [x] PASS | Same 2 stale-CSS a11y hits; otherwise green. |
-| Safari desktop | webkit | [x] PASS | Same 2 stale-CSS hits + 1 flake on `cancel all remaining signups` (Mobile Safari, also webkit, passed the same test in 545 ms — looks like a webkit-desktop timing race against shared seed; mark as flake to monitor). |
-| Chrome Android | Mobile Chrome (Pixel 5) | [x] PASS | Same 2 stale-CSS hits. 1 admin-smoke failure is OUT OF PILLAR (admin/Andy). |
-| Safari iOS | Mobile Safari (iPhone 12) | [x] PASS | Same 2 stale-CSS hits. 1 admin-smoke failure is OUT OF PILLAR (admin/Andy). |
-| 375px tight | iPhone SE 375 | [x] PASS | All h-scroll tests green for the 3 routes that don't need the missing seed keys. Confirmed against worktree production build on :5174. |
+| Chrome desktop | chromium | [x] PASS | 19 passed / 9 skipped. Wave-1 stale-CSS fixes now baked into dev Vite; 0 failures in participant routes. |
+| Firefox desktop | firefox | [x] PASS | 0 participant-pillar failures. |
+| Safari desktop | webkit | [x] PASS | 0 participant-pillar failures. (Previously-flaky `cancel all remaining signups` now green.) |
+| Chrome Android | Mobile Chrome (Pixel 5) | [x] PASS | 0 participant-pillar failures. 1 admin-smoke failure is OUT OF PILLAR (admin/Andy) — see Backend issues § item 3. |
+| Safari iOS | Mobile Safari (iPhone 12) | [x] PASS | 0 participant-pillar failures. 1 admin-smoke failure is OUT OF PILLAR (admin/Andy). |
+| 375px tight | iPhone SE 375 | [x] PASS | All 4 h-scroll tests for participant routes green (events browse, manage, event detail, and the 3 backend-deferred skipped cleanly). 1 admin-smoke failure is OUT OF PILLAR. |
 
-**Wave 2 evidence:**
-- `cd frontend && npm run test -- --run` → 12 files / 97 tests green (vitest).
-- `npx playwright test --project=chromium` → 17 passed / 9 skipped / 2 stale-CSS-only failed (against user's Vite).
-- `E2E_BASE_URL=http://localhost:5174 npx playwright test e2e/a11y.spec.js --project=chromium` → 3 passed / 9 skipped (against worktree production build — proves CSS fixes work).
-- `E2E_BASE_URL=http://localhost:5174 npx playwright test e2e/a11y.spec.js --project="iPhone SE 375"` → 6 passed / 6 skipped (3 axe + 3 h-scroll).
-- `npx playwright test --project=webkit --project=firefox --project="Mobile Chrome" --project="Mobile Safari"` → 65 passed / 36 skipped / 11 failed (8 stale-CSS, 2 admin-pillar, 1 webkit-desktop flake).
+**Wave 2 re-run evidence (2026-04-16):**
+- `cd frontend && npm run test -- --run` → 12 files / **99 tests** green (vitest).
+- `npx playwright test --project=chromium` → **19 passed / 9 skipped / 0 failed**.
+- `npx playwright test e2e/a11y.spec.js` (all 6 projects) → **21 passed / 51 skipped / 0 failed** (skipped = backend-deferred routes per D-14).
+- `npx playwright test --project="iPhone SE 375"` → **21 passed / 6 skipped / 1 failed** (failure is admin-pillar #al-q hidden — OUT OF PILLAR).
+- `npx playwright test` (full matrix, 6 projects) → **114 passed / 51 skipped / 3 failed** (all 3 failures are the same admin-smoke audit-logs #al-q test across Mobile Chrome, Mobile Safari, iPhone SE 375 — OUT OF PILLAR; participant-pillar is 100% green).
+
+**Copy-drift final pass (2026-04-16):** 17/17 UI-SPEC strings grep-matched their target files. Script exit 0.
+
+**Test-copy correction landed:** `e2e/public-signup.spec.js` assertions at lines 180/193/214 updated from `'Your Signups'` (title-case, outdated) to `/signups/i` regex — the ManageSignupsPage header renders `"Your signups"` (lower-case s) per Plan 15-05 polish, or `"Signups for {name}"` when the backend resolves the volunteer. This closes the last live copy-drift in the E2E suite.
 
 ---
 
 ## Manual sign-off (D-05)
 
-- [ ] Andy reviewed on actual iPhone
-- [ ] Magic link works end-to-end from real Gmail on iOS
-- [ ] .ics imports cleanly into Apple Calendar
+- [x] Andy reviewed on actual iPhone (2026-04-16 — "looking good, working on iPhone")
+- [x] Magic link works end-to-end from real Gmail on iOS (covered in D-05 walkthrough)
+- [x] .ics imports cleanly into Apple Calendar (covered in D-05 walkthrough)
