@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
-from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType
+from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType, ModuleType
 
 
 # -------------------------
@@ -434,6 +434,8 @@ class ModuleTemplateBase(BaseModel):
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
+    type: ModuleType = ModuleType.module
+    session_count: int = 1
     materials: List[str] = []
     description: Optional[str] = None
     metadata: dict = {}
@@ -448,6 +450,8 @@ class ModuleTemplateUpdate(BaseModel):
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: Optional[int] = None
     duration_minutes: Optional[int] = None
+    type: Optional[ModuleType] = None
+    session_count: Optional[int] = None
     materials: Optional[List[str]] = None
     description: Optional[str] = None
     metadata: Optional[dict] = None
@@ -459,6 +463,8 @@ class ModuleTemplateRead(ORMBase):
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
+    type: ModuleType = ModuleType.module
+    session_count: int = 1
     materials: List[str] = []
     description: Optional[str] = None
     metadata: dict = Field(default={}, validation_alias="metadata_")
