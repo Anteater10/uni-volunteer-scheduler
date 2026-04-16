@@ -609,6 +609,8 @@ export const api = {
       },
       commit: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
       retry: (importId) => request(`/admin/imports/${importId}/retry`, { method: "POST" }),
+      updateRow: (importId, rowIndex, data) =>
+        request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
     },
   },
 };
