@@ -53,10 +53,20 @@ function formatShortDate(isoString) {
   return d.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
 }
 
+// Slot datetimes arrive as UTC ISO strings. Render in venue timezone so all
+// viewers see wall-clock at UCSB regardless of browser locale.
+const VENUE_TZ = "America/Los_Angeles";
+
 function formatTime(isoString) {
   if (!isoString) return "";
   const d = new Date(isoString);
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).toLowerCase();
+  return d
+    .toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: VENUE_TZ,
+    })
+    .toLowerCase();
 }
 
 function formatDateRange(start, end) {
@@ -650,6 +660,9 @@ export default function EventDetailPage() {
         </h1>
         <p className="text-sm text-[var(--color-fg-muted)] mt-1">
           {event.school} &middot; {formatDateRange(event.start_date, event.end_date)}
+        </p>
+        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+          Times shown in Pacific Time.
         </p>
       </div>
 

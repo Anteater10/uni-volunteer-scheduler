@@ -20,8 +20,25 @@ import html
 import logging
 from pathlib import Path
 from string import Template
+from zoneinfo import ZoneInfo
 
 from . import models
+
+VENUE_TZ = ZoneInfo("America/Los_Angeles")
+
+
+def _fmt_slot_time(dt) -> str:
+    """Render a slot datetime as 'HH:MM AM/PM TZ' in the venue timezone.
+
+    Slot columns are timestamptz, so values arrive UTC-aware. Convert to
+    the venue zone first so PDT/PST viewers see wall-clock at the venue.
+    """
+    if dt.tzinfo is None:
+        # Legacy naive values (shouldn't happen post-Phase-09) treated as UTC.
+        from datetime import timezone
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(VENUE_TZ)
+    return local.strftime("%I:%M %p %Z")
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +300,7 @@ def build_signup_confirmation_email(
         slot = s.slot
         slot_lines.append(
             f"- {slot.slot_type.value.title()}: {slot.date} "
-            f"{slot.start_time.strftime('%I:%M %p')} - {slot.end_time.strftime('%I:%M %p')} "
+            f"{_fmt_slot_time(slot.start_time)} - {_fmt_slot_time(slot.end_time)} "
             f"@ {slot.location or event.school or 'TBD'}"
         )
 

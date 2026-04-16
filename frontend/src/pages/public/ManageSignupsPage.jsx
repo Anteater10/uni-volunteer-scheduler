@@ -32,11 +32,18 @@ import {
   PageHeader,
 } from "../../components/ui";
 
-// Use the no-Z pattern from EventDetailPage to avoid UTC offset shifts in JSDOM
+// Slot datetimes arrive as UTC ISO strings (e.g. "2026-04-16T09:00:00Z").
+// Render them in SciTrek's venue timezone so all viewers see wall-clock at UCSB.
+const VENUE_TZ = "America/Los_Angeles";
+
 function formatTime(isoString) {
   if (!isoString) return "";
   const d = new Date(isoString);
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: VENUE_TZ,
+  });
 }
 
 function formatDate(dateString) {
@@ -194,6 +201,7 @@ export default function ManageSignupsPage({ tokenOverride }) {
             : "Your signups"
         }
       />
+      <p className="text-sm text-gray-600">Times shown in Pacific Time.</p>
 
       {signups.map((signup) => (
         <Card key={signup.signup_id} className="p-4">
