@@ -1,6 +1,6 @@
 // src/pages/__tests__/ManageSignupsPage.test.jsx
 //
-// Component tests for ManageSignupsPage — 7 test cases.
+// Component tests for ManageSignupsPage — 8 test cases.
 
 import React from "react";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
@@ -290,6 +290,20 @@ describe("ManageSignupsPage", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Signups for Hung Khuu")).toBeInTheDocument();
+    });
+  });
+
+  it("9. falls back to 'Your signups' when name fields are absent", async () => {
+    api.public.getManageSignups.mockResolvedValue({
+      volunteer_id: "vol-abc",
+      event_id: "evt-xyz",
+      signups: [SIGNUP_1, SIGNUP_2],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Your signups")).toBeInTheDocument();
     });
   });
 });
