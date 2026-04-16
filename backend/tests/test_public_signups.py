@@ -423,3 +423,36 @@ class TestCancelSignup:
         assert log_entry is not None, "AuditLog entry for signup_cancelled not found"
         assert log_entry.extra is not None
         assert log_entry.extra.get("volunteer_email") == "audit_log11@example.com"
+
+
+def test_manage_response_includes_volunteer_name(client, db_session, monkeypatch):
+    """Manage endpoint must return volunteer first/last name so the
+    UI can render 'Signups for {first} {last}' on shared-device flows."""
+    monkeypatch.setattr(
+        "app.celery_app.send_signup_confirmation_email.delay",
+        lambda *a, **k: None,
+    )
+    event = _make_event(db_session)
+    slot = _make_slot(db_session, event.id)
+    db_session.commit()
+
+    payload = {
+        "first_name": "Hung",
+        "last_name": "Khuu",
+        "email": "hung_name_test@example.com",
+        "phone": GOOD_PHONE,
+        "slot_ids": [str(slot.id)],
+    }
+    with _TokenCapture(monkeypatch) as cap:
+        r = client.post("/api/v1/public/signups", json=payload)
+    assert r.status_code == 201, r.text
+
+    if cap.last_token is None:
+        pytest.skip("Token capture failed")
+
+    token = cap.last_token
+    r = client.get("/api/v1/public/signups/manage", params={"token": token})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["volunteer_first_name"] == "Hung"
+    assert body["volunteer_last_name"] == "Khuu"

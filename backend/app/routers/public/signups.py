@@ -91,6 +91,10 @@ def manage_signups(
     if anchor is None:
         raise HTTPException(status_code=400, detail="token references missing signup")
 
+    volunteer = db.get(models.Volunteer, token_row.volunteer_id)
+    if volunteer is None:
+        raise HTTPException(status_code=400, detail="token references missing volunteer")
+
     anchor_slot = db.get(Slot, anchor.slot_id)
     if anchor_slot is None:
         raise HTTPException(status_code=400, detail="anchor slot not found")
@@ -129,6 +133,8 @@ def manage_signups(
 
     return schemas.TokenedManageRead(
         volunteer_id=token_row.volunteer_id,
+        volunteer_first_name=volunteer.first_name,
+        volunteer_last_name=volunteer.last_name,
         event_id=event_id,
         signups=signup_reads,
     )

@@ -579,5 +579,7 @@ class TokenedSignupRead(BaseModel):
 
 class TokenedManageRead(BaseModel):
     volunteer_id: UUID
+    volunteer_first_name: str
+    volunteer_last_name: str
     event_id: UUID
     signups: List[TokenedSignupRead]
