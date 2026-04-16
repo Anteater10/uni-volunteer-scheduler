@@ -224,9 +224,10 @@ describe("EventDetailPage", () => {
     const periodLabels = screen.getAllByText(/^Period\s*1$/);
     expect(periodLabels.length).toBeGreaterThanOrEqual(1);
 
-    // Filled counts are displayed for both available slots
-    expect(screen.getByText(/5 slots filled/i)).toBeInTheDocument();
-    expect(screen.getByText(/7 slots filled/i)).toBeInTheDocument();
+    // Filled counts now show capacity denominator per UI-SPEC (PART-04 / GAP-A):
+    // "N of M filled" so the remaining headroom is visible even when a slot is not yet full.
+    expect(screen.getByText(/5 of 20 filled/i)).toBeInTheDocument();
+    expect(screen.getByText(/7 of 20 filled/i)).toBeInTheDocument();
   });
 
   it("Full slot renders a chip with both 'Full' text AND an XCircle icon (no color-only signal)", async () => {

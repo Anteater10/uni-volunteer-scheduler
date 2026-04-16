@@ -176,9 +176,9 @@ function SlotRow({ slot, selected, onToggle, highlight }) {
             ? `Orientation`
             : `Period ${slot._periodLabel || ""}`}
         </div>
-        {slot.filled > 0 && (
+        {slot.capacity > 0 && (
           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5 mb-1">
-            {slot.filled} slot{slot.filled !== 1 ? "s" : ""} filled
+            {slot.filled} of {slot.capacity} filled
           </div>
         )}
         {slot.signups && slot.signups.length > 0 && (
@@ -284,9 +284,9 @@ function SlotRowInline({ slot, selected, onToggle, highlight }) {
             ? "Orientation"
             : `Period ${slot._periodLabel || ""}`}
         </div>
-        {slot.filled > 0 && (
+        {slot.capacity > 0 && (
           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-            {slot.filled} slot{slot.filled !== 1 ? "s" : ""} filled
+            {slot.filled} of {slot.capacity} filled
           </div>
         )}
         {slot.signups && slot.signups.length > 0 && (
@@ -790,9 +790,9 @@ export default function EventDetailPage() {
                         <div className="font-medium">
                           Orientation {slot._periodLabel}
                         </div>
-                        {slot.filled > 0 && (
+                        {slot.capacity > 0 && (
                           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-                            {slot.filled} slot{slot.filled !== 1 ? "s" : ""} filled
+                            {slot.filled} of {slot.capacity} filled
                           </div>
                         )}
                         {slot.signups?.length > 0 && (
@@ -862,9 +862,9 @@ export default function EventDetailPage() {
                       {/* Slot label + volunteers */}
                       <td className="py-3 px-2 align-top">
                         <div className="font-medium">Period {slot._periodLabel}</div>
-                        {slot.filled > 0 && (
+                        {slot.capacity > 0 && (
                           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-                            {slot.filled} slot{slot.filled !== 1 ? "s" : ""} filled
+                            {slot.filled} of {slot.capacity} filled
                           </div>
                         )}
                         {slot.signups?.length > 0 && (
