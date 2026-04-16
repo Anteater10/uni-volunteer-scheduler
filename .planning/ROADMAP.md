@@ -19,7 +19,7 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
 - [ ] **Phase 15: Participant role audit + UX polish** — end-to-end audit of public flows, fixes, WCAG AA + 375px verification, loading/empty/error states, cross-browser smoke, one new audit-surfaced feature.
 - [x] **Phase 16: Admin shell + retirement + Overview/Audit/Users/Exports** — retire `Overrides`, audit every admin route, polish admin shell, ship live Overview + filtered Audit Log + Users CRUD + Exports + UX polish across all admin pages. (completed 2026-04-15)
 - [x] **Phase 17: Admin Templates CRUD** — full CRUD on `module_templates` (list, create, edit, delete/archive). Smaller scoped phase that can land independently between admin shell and the LLM import. (completed 2026-04-16)
-- [ ] **Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)** — upload UI, single-shot LLM extraction → Pydantic, preview screen, atomic commit, eval-corpus logging, low-confidence flagging.
+- [x] **Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)** — upload UI, single-shot LLM extraction → Pydantic, preview screen, atomic commit, eval-corpus logging, low-confidence flagging. (completed 2026-04-16)
 - [ ] **Phase 19: Organizer role audit + UX polish** — route normalization (`/organize` → `/organizer`), audit, fixes, roster polish, end-of-event prompts, WCAG AA + 375px verification, one new audit-surfaced feature.
 - [ ] **Phase 20: Cross-role integration** — cross-role E2E (admin creates → organizer runs → participant signs up → admin sees in audit log), 4+ new Playwright scenarios, manual smoke checklist, doc sweep.
 
@@ -161,7 +161,7 @@ Plans:
   3. The Imports page shows a preview of the parsed events ("N events will be created, M skipped") with a confirm/cancel choice; low-confidence rows are flagged for manual review rather than silently guessed.
   4. Confirming the import is atomic — all rows commit or none do; any error during commit triggers a full rollback and a clear error message.
   5. A real Sci Trek quarterly CSV (the one Andy holds) imports cleanly end-to-end against the docker stack and the resulting events are visible in the public events-by-week browse.
-**Plans:** TBD
+**Plans:** 2/2 plans complete
 **UI hint:** yes
 **Touches:** `frontend/src/pages/admin/AdminImportsPage.jsx`, new `backend/app/services/llm_import.py`, new `backend/app/routers/imports.py`, Pydantic schemas for canonical event JSON, eval-corpus storage, `module_templates` lookup.
 
@@ -204,7 +204,7 @@ Plans:
 | 15. Participant role audit + UX polish | 0/? | Not started | - |
 | 16. Admin shell + retirement + Overview/Audit/Users/Exports | 7/7 | Complete    | 2026-04-16 |
 | 17. Admin Templates CRUD | 2/2 | Complete    | 2026-04-16 |
-| 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 0/? | Not started | - |
+| 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 2/2 | Complete   | 2026-04-16 |
 | 19. Organizer role audit + UX polish | 0/? | Not started | - |
 | 20. Cross-role integration | 0/? | Not started | - |
 

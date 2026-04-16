@@ -1,6 +1,6 @@
 // layout.jsx
 import React from "react";
-import { Link, Outlet } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { Calendar, User, LayoutDashboard, Shield, ClipboardList } from "lucide-react";
 import { useAuth } from "../state/useAuth";
 import ToastHost from "./ui/Toast";
@@ -38,11 +38,14 @@ function navItemsForRole(role) {
 export default function Layout() {
   const { user, isAuthed, role, logout } = useAuth();
   const navItems = isAuthed ? navItemsForRole(role) : null;
+  const { pathname } = useLocation();
+  const isAdminRoute = pathname.startsWith("/admin");
+  const containerWidth = isAdminRoute ? "max-w-none" : "max-w-screen-md";
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-fg)]">
       <header className="sticky top-0 z-30 h-14 border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 backdrop-blur">
-        <div className="mx-auto flex h-full max-w-screen-md items-center justify-between px-4">
+        <div className={`mx-auto flex h-full ${containerWidth} items-center justify-between px-4`}>
           {/* TODO(brand): logo/wordmark */}
           <Link to="/events" className="font-semibold">
             {/* TODO(copy): brand wordmark */}
@@ -67,7 +70,7 @@ export default function Layout() {
         </div>
       </header>
 
-      <main className="flex-1 mx-auto w-full max-w-screen-md px-4 pb-20 md:pb-8">
+      <main className={`flex-1 mx-auto w-full ${containerWidth} ${isAdminRoute ? "" : "px-4 pb-20 md:pb-8"}`}>
         <Outlet />
       </main>
 

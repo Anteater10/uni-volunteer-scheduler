@@ -59,6 +59,9 @@ class UserRead(ORMBase, UserBase):
     # Phase 16 Plan 02: Users page surface
     is_active: bool = True
     last_login_at: Optional[datetime] = None
+    # Override: read responses accept any string email, including reserved
+    # test TLDs like .test/.example (RFC 2606) that EmailStr rejects.
+    email: str
 
 
 class UserInvite(BaseModel):

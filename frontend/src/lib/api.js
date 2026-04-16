@@ -210,6 +210,17 @@ function logout() {
   authStorage.clearAll();
 }
 
+async function setPasswordFromInvite(token, password) {
+  const json = await request("/auth/set-password", {
+    method: "POST",
+    auth: false,
+    body: { token, password },
+  });
+  if (json?.access_token) authStorage.setToken(json.access_token);
+  if (json?.refresh_token) authStorage.setRefreshToken(json.refresh_token);
+  return json;
+}
+
 // --------------------
 // USERS
 // --------------------
@@ -428,6 +439,7 @@ export const api = {
   // auth
   login,
   logout,
+  setPasswordFromInvite,
 
   // users
   me,

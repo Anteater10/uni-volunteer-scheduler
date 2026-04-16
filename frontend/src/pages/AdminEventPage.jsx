@@ -17,6 +17,40 @@ import {
 import { toast } from "../state/toast";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function StatCard({ label, value }) {
+  return (
+    <Card>
+      <p className="text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
+        {label}
+      </p>
+      <p className="mt-1 text-2xl font-semibold">{value ?? "—"}</p>
+    </Card>
+  );
+}
+
+function DetailRow({ label, value }) {
+  return (
+    <div>
+      <dt className="text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
+        {label}
+      </dt>
+      <dd className="mt-0.5">{value}</dd>
+    </div>
+  );
+}
+
 export default function AdminEventPage() {
   const { eventId } = useParams();
   const qc = useQueryClient();
@@ -29,13 +63,18 @@ export default function AdminEventPage() {
     queryFn: () => api.admin.eventAnalytics(eventId),
   });
 
+  const eventQ = useQuery({
+    queryKey: ["adminEventDetail", eventId],
+    queryFn: () => api.events.get(eventId),
+  });
+
   const rosterQ = useQuery({
     queryKey: ["adminEventRoster", eventId, privacy],
     queryFn: () => api.admin.eventRoster(eventId, privacy),
   });
 
   const eventTitle =
-    analyticsQ.data?.event?.title ||
+    eventQ.data?.title ||
     analyticsQ.data?.title ||
     "Event";
   useAdminPageTitle(eventTitle);
@@ -109,10 +148,51 @@ export default function AdminEventPage() {
             }
           />
         ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <StatCard label="Total slots" value={analyticsQ.data.total_slots} />
+            <StatCard label="Total capacity" value={analyticsQ.data.total_capacity} />
+            <StatCard label="Confirmed" value={analyticsQ.data.confirmed_signups} />
+            <StatCard label="Waitlisted" value={analyticsQ.data.waitlisted_signups} />
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+          Event details
+        </h2>
+        {eventQ.isPending ? (
+          <Skeleton className="h-32" />
+        ) : eventQ.error ? (
+          <EmptyState
+            title="Couldn't load event"
+            body={eventQ.error.message}
+            action={<Button onClick={() => eventQ.refetch()}>Try again</Button>}
+          />
+        ) : (
           <Card>
-            <pre className="text-xs whitespace-pre-wrap">
-              {JSON.stringify(analyticsQ.data, null, 2)}
-            </pre>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              <DetailRow label="Location" value={eventQ.data.location || "—"} />
+              <DetailRow label="Visibility" value={eventQ.data.visibility || "—"} />
+              <DetailRow label="Starts" value={fmtDateTime(eventQ.data.start_at)} />
+              <DetailRow label="Ends" value={fmtDateTime(eventQ.data.end_at)} />
+              <DetailRow
+                label="Max signups per user"
+                value={eventQ.data.max_signups_per_user ?? "—"}
+              />
+              <DetailRow
+                label="Created"
+                value={fmtDateTime(eventQ.data.created_at)}
+              />
+            </dl>
+            {eventQ.data.description ? (
+              <div className="mt-4">
+                <p className="text-xs uppercase tracking-wide text-[var(--color-fg-muted)] mb-1">
+                  Description
+                </p>
+                <p className="text-sm whitespace-pre-wrap">{eventQ.data.description}</p>
+              </div>
+            ) : null}
           </Card>
         )}
       </section>
@@ -147,7 +227,7 @@ export default function AdminEventPage() {
             {grouped.map(({ slot, rows }) => (
               <Card key={slot.id}>
                 <p className="text-sm font-medium">
-                  Slot: {slot.start} → {slot.end}
+                  Slot: {fmtDateTime(slot.start)} → {fmtDateTime(slot.end)}
                 </p>
                 <ul className="mt-2 space-y-1">
                   {rows.map((r) => (

@@ -38,7 +38,7 @@ def _estimate_cost(row_count: int, model: str) -> float:
 def _stage1_extract(raw_csv: str, model: str) -> list[dict]:
     """Stage-1 LLM extraction: CSV -> list of ExtractedEvent dicts.
 
-    Uses instructor + OpenAI client pointed at OpenRouter (Gemma 4 31B free tier).
+    Uses instructor (JSON mode) + OpenAI client pointed at OpenRouter.
     Active module template slugs from the database are injected into the prompt so
     the model can match rows to known slugs.
     """
@@ -56,12 +56,26 @@ def _stage1_extract(raw_csv: str, model: str) -> list[dict]:
 
     slug_list = ", ".join(sorted(active_slugs)) if active_slugs else "(no templates yet)"
 
+    # Derive the current year for date parsing (CSVs use "5/27" without year)
+    from datetime import datetime as _dt
+    current_year = _dt.now().year
+
     system_prompt = (
-        "You extract Sci Trek volunteer events from quarterly CSV schedules.\n"
-        "Output one ExtractedEvent per CSV data row.\n"
+        "You extract Sci Trek volunteer events from quarterly CSV sign-up sheets.\n\n"
+        "CSV LAYOUT (not a standard tabular CSV):\n"
+        "- Cell A1: module name (e.g. 'Glucose Sensing')\n"
+        "- Header row also has teacher name and school name in adjacent cells\n"
+        "- Then rows alternate between: date rows like '5/27 (Wednesday)' and\n"
+        "  period rows like 'Period 1: 8:00 AM to 10:20 AM'\n"
+        "- Each date may have 1-4 periods. Each period = one event.\n"
+        "- Lead/Volunteer name columns may be empty or filled — ignore them.\n\n"
+        "OUTPUT: One ExtractedEvent per period block found in the CSV.\n"
+        f"Use year {current_year} for all dates (CSV only shows month/day).\n"
+        "Set location to the school name from the header.\n"
+        "Set instructor_name to the teacher name from the header.\n\n"
         f"Known module template slugs: {slug_list}.\n"
-        "Match each row to the closest known slug. If no slug matches, use a "
-        "kebab-case slug derived from the module name.\n"
+        "Match the module name (cell A1) to the closest known slug. If no slug "
+        "matches, use a kebab-case slug derived from the module name.\n\n"
         "Set confidence below 0.85 when:\n"
         "- A field is ambiguous or missing\n"
         "- The module name doesn't closely match any known slug\n"
@@ -69,10 +83,13 @@ def _stage1_extract(raw_csv: str, model: str) -> list[dict]:
         "Always include start_at and end_at as ISO-8601 datetimes."
     )
 
-    client = instructor.from_openai(OpenAI(
-        api_key=settings.openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1",
-    ))
+    client = instructor.from_openai(
+        OpenAI(
+            api_key=settings.openrouter_api_key,
+            base_url="https://openrouter.ai/api/v1",
+        ),
+        mode=instructor.Mode.JSON,
+    )
     result: List[ExtractedEvent] = client.chat.completions.create(
         model=model,
         response_model=List[ExtractedEvent],
@@ -82,7 +99,7 @@ def _stage1_extract(raw_csv: str, model: str) -> list[dict]:
         ],
         max_retries=2,
     )
-    return [e.model_dump(by_alias=True) for e in result]
+    return [e.model_dump(by_alias=True, mode="json") for e in result]
 
 
 @celery.task(
@@ -136,7 +153,7 @@ def process_csv_import(self, import_id: str) -> None:
         # Store preview
         import_service.update_import_status(
             db, import_id, CsvImportStatus.ready,
-            result_payload=preview.model_dump()
+            result_payload=preview.model_dump(mode="json")
         )
 
         # Corpus logging
