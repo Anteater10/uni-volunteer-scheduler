@@ -4,7 +4,7 @@ from datetime import date as DateType, datetime, timezone
 from typing import Optional, List, Literal, Dict, Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator, field_serializer
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
 from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType
 
@@ -534,15 +534,6 @@ class PublicSlotRead(BaseModel):
     filled: int  # = slot.current_count
     signups: List[SlotSignupRead] = []
     model_config = ConfigDict(from_attributes=True)
-
-    @field_serializer("start_time", "end_time")
-    def _serialize_naive(self, value: datetime) -> str:
-        # Slot times are wall-clock at the venue, not UTC. Drop any tzinfo
-        # so the JSON value is "YYYY-MM-DDTHH:MM:SS" with no Z / no offset.
-        # Browsers then parse as local time and skip the offset math.
-        if value.tzinfo is not None:
-            value = value.replace(tzinfo=None)
-        return value.isoformat(timespec="seconds")
 
 
 class PublicEventRead(BaseModel):
