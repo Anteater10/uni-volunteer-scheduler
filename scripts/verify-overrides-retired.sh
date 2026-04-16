@@ -17,6 +17,7 @@ RAW=$(git grep -in 'overrides' -- \
   ':(exclude).planning' \
   ':(exclude)backend/alembic/versions' \
   ':(exclude)frontend/src/lib/__tests__/api.test.js' \
+  ':(exclude)frontend/src/pages/admin/__tests__/AdminLayout.test.jsx' \
   ':(exclude)docs/COLLABORATION.md' \
   ':(exclude)docs/ADMIN-AUDIT.md' \
   ':(exclude)scripts/verify-overrides-retired.sh' \

@@ -108,11 +108,13 @@ export default function ExportsSection() {
         fetchFn={(p) => api.admin.analytics.volunteerHours(p)}
         csvFn={(p) => api.admin.analytics.volunteerHoursCsv(p)}
         queryKey="volunteerHours"
-        columns={["Volunteer", "Hours"]}
+        columns={["Volunteer", "Email", "Hours", "Events"]}
         renderRow={(r) => (
           <>
-            <td className="py-2 pr-3">{r.name || r.email}</td>
+            <td className="py-2 pr-3">{r.volunteer_name || r.email}</td>
+            <td className="py-2 pr-3">{r.email}</td>
             <td className="py-2 pr-3">{r.hours}</td>
+            <td className="py-2 pr-3">{r.events}</td>
           </>
         )}
       />
@@ -123,11 +125,11 @@ export default function ExportsSection() {
         fetchFn={(p) => api.admin.analytics.attendanceRates(p)}
         csvFn={(p) => api.admin.analytics.attendanceRatesCsv(p)}
         queryKey="attendanceRates"
-        columns={["Event", "Registered", "Attended", "Rate"]}
+        columns={["Event", "Signed Up", "Attended", "Rate"]}
         renderRow={(r) => (
           <>
-            <td className="py-2 pr-3">{r.event_title || r.name}</td>
-            <td className="py-2 pr-3">{r.registered ?? r.confirmed}</td>
+            <td className="py-2 pr-3">{r.name}</td>
+            <td className="py-2 pr-3">{r.confirmed}</td>
             <td className="py-2 pr-3">{r.attended}</td>
             <td className="py-2 pr-3">
               {typeof r.rate === "number" ? `${Math.round(r.rate * 100)}%` : "--"}
@@ -142,12 +144,11 @@ export default function ExportsSection() {
         fetchFn={(p) => api.admin.analytics.noShowRates(p)}
         csvFn={(p) => api.admin.analytics.noShowRatesCsv(p)}
         queryKey="noShowRates"
-        columns={["Event", "Registered", "No Shows", "Rate"]}
+        columns={["Volunteer", "No-Shows", "Rate"]}
         renderRow={(r) => (
           <>
-            <td className="py-2 pr-3">{r.event_title || r.name}</td>
-            <td className="py-2 pr-3">{r.registered ?? r.confirmed}</td>
-            <td className="py-2 pr-3">{r.no_shows ?? r.count}</td>
+            <td className="py-2 pr-3">{r.volunteer_name}</td>
+            <td className="py-2 pr-3">{r.count}</td>
             <td className="py-2 pr-3">
               {typeof r.rate === "number" ? `${Math.round(r.rate * 100)}%` : "--"}
             </td>

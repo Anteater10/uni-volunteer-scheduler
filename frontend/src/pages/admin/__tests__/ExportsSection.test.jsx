@@ -10,13 +10,13 @@ vi.mock("../AdminLayout", () => ({
 
 // Mock api — the three read fns and three csv fns.
 const volunteerHours = vi.fn(async () => [
-  { name: "Alice", hours: 4 },
+  { volunteer_name: "Alice", email: "alice@ucsb.edu", hours: 4, events: 2 },
 ]);
 const attendanceRates = vi.fn(async () => [
-  { event_title: "Intro Physics", registered: 10, attended: 8, rate: 0.8 },
+  { name: "Intro Physics", confirmed: 10, attended: 8, no_show: 2, rate: 0.8 },
 ]);
 const noShowRates = vi.fn(async () => [
-  { event_title: "Intro Physics", registered: 10, no_shows: 2, rate: 0.2 },
+  { volunteer_name: "Bob", count: 2, rate: 0.2 },
 ]);
 const volunteerHoursCsv = vi.fn(async () => {});
 const attendanceRatesCsv = vi.fn(async () => {});

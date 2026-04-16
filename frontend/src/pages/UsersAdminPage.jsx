@@ -85,7 +85,7 @@ export default function UsersAdminPage() {
       setInviteOpen(false);
       setCreateError(null);
       toast.success(
-        `Invite sent to ${vars?.email || "user"} — they'll receive a sign-in link.`,
+        `Invite sent to ${vars?.email || "user"} — they'll receive an email with next steps.`,
       );
     },
     onError: (e) => setCreateError(e?.message || "Failed to send invite"),
@@ -442,8 +442,8 @@ function InviteForm({ onSubmit, submitting, error }) {
         </p>
       )}
       <p className="text-xs text-[var(--color-fg-muted)]">
-        They'll get an email with a sign-in link. The link expires in 15
-        minutes.
+        They'll get an email with a link to sign in. If they're new, they'll
+        set a password on first login.
       </p>
       <div className="flex justify-end">
         <Button type="submit" disabled={submitting}>
