@@ -187,7 +187,13 @@ export default function ManageSignupsPage({ tokenOverride }) {
 
   return (
     <div className="max-w-xl mx-auto mt-8 px-4 space-y-4">
-      <PageHeader title="Your signups" />
+      <PageHeader
+        title={
+          data?.volunteer_first_name
+            ? `Signups for ${data.volunteer_first_name} ${data.volunteer_last_name}`
+            : "Your signups"
+        }
+      />
 
       {signups.map((signup) => (
         <Card key={signup.signup_id} className="p-4">

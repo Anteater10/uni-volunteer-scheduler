@@ -68,6 +68,8 @@ const SIGNUP_2 = {
 
 const MANAGE_RESPONSE = {
   volunteer_id: "vol-abc",
+  volunteer_first_name: "Hung",
+  volunteer_last_name: "Khuu",
   event_id: "evt-xyz",
   signups: [SIGNUP_1, SIGNUP_2],
 };
@@ -230,6 +232,8 @@ describe("ManageSignupsPage", () => {
   it("6. empty state — shows 'No upcoming signups' message", async () => {
     api.public.getManageSignups.mockResolvedValue({
       volunteer_id: "vol-abc",
+      volunteer_first_name: "Hung",
+      volunteer_last_name: "Khuu",
       event_id: "evt-xyz",
       signups: [],
     });
@@ -276,6 +280,16 @@ describe("ManageSignupsPage", () => {
       expect(toast.error).toHaveBeenCalledWith(
         "You don't have permission to cancel this signup."
       );
+    });
+  });
+
+  it("8. renders 'Signups for {first} {last}' in the page header", async () => {
+    api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Signups for Hung Khuu")).toBeInTheDocument();
     });
   });
 });
