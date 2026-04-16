@@ -91,7 +91,7 @@ def manage_signups(
     if anchor is None:
         raise HTTPException(status_code=400, detail="token references missing signup")
 
-    volunteer = db.get(models.Volunteer, token_row.volunteer_id)
+    volunteer = token_row.volunteer
     if volunteer is None:
         raise HTTPException(status_code=400, detail="token references missing volunteer")
 
