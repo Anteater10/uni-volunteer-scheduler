@@ -7,7 +7,6 @@ import ProtectedRoute from "./components/ProtectedRoute";
 
 import EventsBrowsePage from "./pages/public/EventsBrowsePage";
 import EventDetailPage from "./pages/public/EventDetailPage";
-import PortalPage from "./pages/PortalPage";
 import LoginPage from "./pages/LoginPage";
 import SetPasswordPage from "./pages/SetPasswordPage";
 import NotificationsPage from "./pages/NotificationsPage";
@@ -21,7 +20,6 @@ import AdminLayout from "./pages/admin/AdminLayout";
 import OverviewSection from "./pages/admin/OverviewSection";
 import AdminEventPage from "./pages/AdminEventPage";
 import UsersAdminPage from "./pages/UsersAdminPage";
-import PortalsAdminPage from "./pages/PortalsAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
 import ExportsSection from "./pages/admin/ExportsSection";
 import TemplatesSection from "./pages/admin/TemplatesSection";
@@ -45,7 +43,6 @@ export default function App() {
         <Route path="set-password" element={<SetPasswordPage />} />
         <Route path="events" element={<EventsBrowsePage />} />
         <Route path="events/:eventId" element={<EventDetailPage />} />
-        <Route path="portals/:slug" element={<PortalPage />} />
         <Route path="check-in/:signupId" element={<SelfCheckInPage />} />
         <Route path="signup/confirm" element={<ConfirmSignupPage />} />
         <Route path="signup/manage" element={<ManageSignupsPage />} />
@@ -70,7 +67,6 @@ export default function App() {
             <Route path="events" element={<EventsSection />} />
             <Route path="events/:eventId" element={<AdminEventPage />} />
             <Route path="users" element={<UsersAdminPage />} />
-            <Route path="portals" element={<PortalsAdminPage />} />
             <Route path="audit-logs" element={<AuditLogsPage />} />
             <Route path="templates" element={<TemplatesSection />} />
             <Route path="imports" element={<ImportsSection />} />

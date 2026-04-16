@@ -5,13 +5,41 @@ and performs atomic commit of validated events.
 """
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date as date_cls
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from app.models import CsvImport, CsvImportStatus, Event, Slot, ModuleTemplate
+from app.models import CsvImport, CsvImportStatus, Event, Slot, ModuleTemplate, Quarter, SlotType
+
+
+# UCSB quarter start dates — keep in sync with backend/app/routers/public/events.py
+_QUARTER_START_DATES: dict[tuple[int, str], date_cls] = {
+    (2026, "winter"): date_cls(2026, 1, 5),
+    (2026, "spring"): date_cls(2026, 3, 30),
+    (2026, "summer"): date_cls(2026, 6, 22),
+    (2026, "fall"):   date_cls(2026, 9, 21),
+    (2027, "winter"): date_cls(2027, 1, 4),
+}
+
+
+def _compute_quarter_week(d: date_cls) -> tuple[Quarter | None, int | None, int | None]:
+    """Map a calendar date → (quarter, year, week_number 1..11). Returns (None, None, None)
+    when the date does not fall inside a known UCSB quarter window."""
+    best: tuple[int, str] | None = None
+    best_start: date_cls | None = None
+    for (year, quarter), start in _QUARTER_START_DATES.items():
+        if start <= d and (best_start is None or start > best_start):
+            best = (year, quarter)
+            best_start = start
+    if best is None or best_start is None:
+        return (None, None, None)
+    week = ((d - best_start).days // 7) + 1
+    if week < 1 or week > 11:
+        return (None, None, None)
+    quarter_enum = Quarter(best[1])
+    return (quarter_enum, best[0], week)
 
 
 def create_import(db: Session, user_id: uuid.UUID, filename: str, raw_bytes: bytes) -> CsvImport:
@@ -66,6 +94,46 @@ def update_import_status(
     db.commit()
 
 
+def revalidate_import(db: Session, import_id) -> dict:
+    """Re-run conflict detection against the *current* DB state.
+
+    Called when the admin deleted conflicting events and wants the preview
+    refreshed without re-uploading the CSV.
+    """
+    from app.services.csv_validator import validate_import
+    from app.services.import_schemas import ExtractedEvent
+
+    imp = get_import(db, import_id)
+    if imp.status != CsvImportStatus.ready:
+        raise HTTPException(status_code=400, detail="Import is not in 'ready' state")
+    if not imp.result_payload or "rows" not in imp.result_payload:
+        raise HTTPException(status_code=400, detail="No preview rows available")
+
+    # Reconstruct ExtractedEvent objects from the stored preview rows. The
+    # preview keeps the original LLM extraction in row["original"]; if absent,
+    # fall back to row["normalized"].
+    extracted: list[ExtractedEvent] = []
+    for row in imp.result_payload["rows"]:
+        src = row.get("original") or row.get("normalized") or {}
+        extracted.append(ExtractedEvent(
+            module_slug=src.get("module_slug", ""),
+            location=src.get("location", ""),
+            start_at=src.get("start_at"),
+            end_at=src.get("end_at"),
+            capacity=src.get("capacity"),
+            instructor_name=src.get("instructor_name", ""),
+            _confidence=src.get("confidence", row.get("confidence", 1.0)),
+        ))
+
+    fresh = validate_import(extracted, db)
+    payload = fresh.model_dump(mode="json")
+    imp.result_payload = {**(imp.result_payload or {}), **payload}
+    imp.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(imp)
+    return imp.result_payload
+
+
 def update_preview_row(db: Session, import_id, row_index: int, updates: dict) -> dict:
     """Update a single row in the preview payload (for inline edits)."""
     imp = get_import(db, import_id)
@@ -99,8 +167,12 @@ def update_preview_row(db: Session, import_id, row_index: int, updates: dict) ->
     return imp.result_payload
 
 
-def commit_import(db: Session, import_id) -> dict:
+def commit_import(db: Session, import_id, module_template_slug: str | None = None) -> dict:
     """Atomically insert all 'ok' rows as Events + Slots.
+
+    The admin picks `module_template_slug` at commit time (Option A workflow):
+    every row is created against the chosen template, regardless of what the
+    LLM guessed. The template supplies title/description/default capacity.
 
     Returns {created_count, events[]} on success.
     Raises HTTPException with {error, failing_row_index, reason} on failure.
@@ -108,6 +180,19 @@ def commit_import(db: Session, import_id) -> dict:
     imp = get_import(db, import_id)
     if imp.status != CsvImportStatus.ready:
         raise HTTPException(status_code=400, detail="Import is not in 'ready' state")
+
+    # Refresh conflict status against the *current* DB so previously-conflicting
+    # rows that the admin has since deleted no longer block commit.
+    revalidate_import(db, import_id)
+    db.refresh(imp)
+
+    if not module_template_slug:
+        raise HTTPException(status_code=400, detail="module_template_slug is required")
+    template = db.query(ModuleTemplate).filter(
+        ModuleTemplate.slug == module_template_slug
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Module template '{module_template_slug}' not found")
 
     rows = imp.result_payload.get("rows", [])
     # Check no unresolved low_confidence rows
@@ -122,42 +207,81 @@ def commit_import(db: Session, import_id) -> dict:
     if not ok_rows:
         raise HTTPException(status_code=400, detail="No rows to commit")
 
+    # Normalise + group rows by (school, week_number). Each group becomes ONE
+    # Event with N slots — admins want a single "Glucose Sensing" card per
+    # week per school, not one per period.
+    normalised_rows = []
+    for row in ok_rows:
+        n = row["normalized"]
+        start_at = n["start_at"]
+        end_at = n["end_at"]
+        if isinstance(start_at, str):
+            start_at = datetime.fromisoformat(start_at)
+        if isinstance(end_at, str):
+            end_at = datetime.fromisoformat(end_at)
+        location = n.get("location") or ""
+        capacity = n.get("capacity") or template.default_capacity
+        quarter, year, week = _compute_quarter_week(start_at.date())
+        normalised_rows.append({
+            "start_at": start_at,
+            "end_at": end_at,
+            "location": location,
+            "capacity": capacity,
+            "quarter": quarter,
+            "year": year,
+            "week": week,
+        })
+
+    groups: dict[tuple[str, int | None], list[dict]] = {}
+    for r in normalised_rows:
+        key = (r["location"], r["week"])
+        groups.setdefault(key, []).append(r)
+
     created_events = []
     try:
-        # Single transaction for all inserts
-        for i, row in enumerate(ok_rows):
-            n = row["normalized"]
-            # Look up template for defaults
-            template = db.query(ModuleTemplate).filter(
-                ModuleTemplate.slug == n.get("module_slug")
-            ).first()
-            capacity = n.get("capacity") or (template.default_capacity if template else 20)
+        for (location, week), group in groups.items():
+            group.sort(key=lambda r: r["start_at"])
+            first = group[0]
+            last_end = max(r["end_at"] for r in group)
 
             event = Event(
                 owner_id=imp.uploaded_by,
-                title=f"{template.name if template else n['module_slug']} - {n.get('location', 'TBD')}",
-                description=f"Imported from CSV (import {import_id})",
-                location=n.get("location", ""),
-                start_date=n["start_at"],
-                end_date=n["end_at"],
-                module_slug=n.get("module_slug"),
+                title=template.name,
+                description=template.description,
+                location=location,
+                start_date=first["start_at"],
+                end_date=last_end,
+                module_slug=template.slug,
+                quarter=first["quarter"],
+                year=first["year"],
+                week_number=week,
+                school=location or None,
             )
             db.add(event)
             db.flush()  # get event.id
 
-            slot = Slot(
-                event_id=event.id,
-                start_time=n["start_at"],
-                end_time=n["end_at"],
-                capacity=capacity,
-            )
-            db.add(slot)
+            for r in group:
+                slot = Slot(
+                    event_id=event.id,
+                    start_time=r["start_at"],
+                    end_time=r["end_at"],
+                    capacity=r["capacity"],
+                    slot_type=SlotType.PERIOD,
+                    date=r["start_at"].date(),
+                    location=location or None,
+                )
+                db.add(slot)
+
             created_events.append({
                 "event_id": str(event.id),
                 "title": event.title,
                 "location": event.location,
-                "start_date": n["start_at"],
-                "end_date": n["end_at"],
+                "start_date": first["start_at"].isoformat(),
+                "end_date": last_end.isoformat(),
+                "quarter": first["quarter"].value if first["quarter"] else None,
+                "year": first["year"],
+                "week_number": week,
+                "slot_count": len(group),
             })
 
         # Update import status

@@ -189,6 +189,15 @@ function RowEditForm({ row, importId, onSave, onCancel }) {
 
 function ImportDetail({ imp }) {
   const [editingRowIndex, setEditingRowIndex] = useState(null);
+  const queryClient = useQueryClient();
+  const revalidateMut = useMutation({
+    mutationFn: () => api.admin.imports.revalidate(imp.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adminImports"] });
+      toast.success("Conflicts re-checked.");
+    },
+    onError: (err) => toast.error(err?.message || "Re-check failed"),
+  });
 
   const status = imp.status;
   const payload = imp.result_payload || {};
@@ -322,7 +331,16 @@ function ImportDetail({ imp }) {
       </div>
 
       {/* Commit footer */}
-      <div className="px-4 py-3 bg-gray-50 border-t flex items-center gap-3">
+      <div className="px-4 py-3 bg-gray-50 border-t flex flex-wrap items-center gap-3">
+        <Button
+          variant="ghost"
+          className="text-xs"
+          disabled={revalidateMut.isPending}
+          onClick={() => revalidateMut.mutate()}
+          title="Re-check conflicts against the current events list."
+        >
+          {revalidateMut.isPending ? "Re-checking…" : "Re-check conflicts"}
+        </Button>
         <Button
           disabled={!canCommit}
           title={
@@ -365,6 +383,16 @@ export default function ImportsSection() {
   const fileInputRef = useRef(null);
   const [commitTarget, setCommitTarget] = useState(null);
   const [selectedImportId, setSelectedImportId] = useState(null);
+  const [commitTemplateSlug, setCommitTemplateSlug] = useState("");
+
+  // Module templates — needed to populate the "apply to template" dropdown
+  // shown in the Commit modal (Option A workflow: admin picks the module
+  // when committing, not when uploading).
+  const templatesQ = useQuery({
+    queryKey: ["adminModuleTemplates"],
+    queryFn: () => api.getModuleTemplates(),
+  });
+  const templates = templatesQ.data || [];
 
   // Listen for commit requests from the detail panel
   React.useEffect(() => {
@@ -400,12 +428,14 @@ export default function ImportsSection() {
   });
 
   const commitMut = useMutation({
-    mutationFn: (id) => api.admin.imports.commit(id),
-    onSuccess: () => {
+    mutationFn: ({ id, slug }) => api.admin.imports.commit(id, slug),
+    onSuccess: (data) => {
+      const n = data?.created_count ?? 0;
       setCommitTarget(null);
+      setCommitTemplateSlug("");
       setSelectedImportId(null);
       queryClient.invalidateQueries({ queryKey: ["adminImports"] });
-      toast.success("Import committed.");
+      toast.success(`Created ${n} event${n === 1 ? "" : "s"}.`);
     },
     onError: (err) => toast.error(err?.message || "Commit failed"),
   });
@@ -426,6 +456,18 @@ export default function ImportsSection() {
 
   const imports = importsQ.data || [];
   const selectedImport = imports.find((imp) => imp.id === selectedImportId) || null;
+
+  // Auto re-check conflicts whenever the admin opens a ready import — keeps
+  // the preview honest after they delete conflicting events elsewhere.
+  React.useEffect(() => {
+    if (!selectedImport || selectedImport.status !== "ready") return;
+    api.admin.imports
+      .revalidate(selectedImport.id)
+      .then(() =>
+        queryClient.invalidateQueries({ queryKey: ["adminImports"] }),
+      )
+      .catch(() => {});
+  }, [selectedImportId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Build commit modal copy from payload summary
   const commitSummary = commitTarget?.result_payload?.summary;
@@ -548,19 +590,58 @@ export default function ImportsSection() {
       {/* Commit confirm modal */}
       <Modal
         open={!!commitTarget}
-        onClose={() => setCommitTarget(null)}
-        title="Commit Import"
+        onClose={() => {
+          setCommitTarget(null);
+          setCommitTemplateSlug("");
+        }}
+        title="Commit import"
       >
         <p className="text-sm">{commitModalBody}</p>
+
+        <div className="mt-4">
+          <Label htmlFor="commit-template">
+            Apply this schedule to module template
+          </Label>
+          <select
+            id="commit-template"
+            value={commitTemplateSlug}
+            onChange={(e) => setCommitTemplateSlug(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
+          >
+            <option value="">Select a module…</option>
+            {templates.map((t) => (
+              <option key={t.slug} value={t.slug}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500 mt-1">
+            Each row in the preview becomes one event titled with this module
+            and using its description.
+          </p>
+        </div>
+
         <div className="flex justify-end gap-2 mt-4">
-          <Button variant="ghost" onClick={() => setCommitTarget(null)}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setCommitTarget(null);
+              setCommitTemplateSlug("");
+            }}
+          >
             Cancel
           </Button>
           <Button
-            disabled={commitMut.isPending}
-            onClick={() => commitTarget && commitMut.mutate(commitTarget.id)}
+            disabled={commitMut.isPending || !commitTemplateSlug}
+            onClick={() =>
+              commitTarget &&
+              commitMut.mutate({
+                id: commitTarget.id,
+                slug: commitTemplateSlug,
+              })
+            }
           >
-            {commitMut.isPending ? "Committing..." : "Commit"}
+            {commitMut.isPending ? "Committing…" : "Create events"}
           </Button>
         </div>
       </Modal>

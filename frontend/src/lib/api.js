@@ -591,6 +591,28 @@ export const api = {
         downloadBlob("/admin/analytics/attendance-rates.csv", "attendance-rates.csv", { params }),
       noShowRatesCsv: (params = {}) =>
         downloadBlob("/admin/analytics/no-show-rates.csv", "no-show-rates.csv", { params }),
+
+      // Phase 18 Plan 03 — extra SciTrek-focused reports
+      eventFillRates: (params = {}) =>
+        request("/admin/analytics/event-fill-rates", { method: "GET", params }),
+      eventFillRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/event-fill-rates.csv", "event-fill-rates.csv", { params }),
+      hoursBySchool: (params = {}) =>
+        request("/admin/analytics/hours-by-school", { method: "GET", params }),
+      hoursBySchoolCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/hours-by-school.csv", "hours-by-school.csv", { params }),
+      uniqueVolunteers: (params = {}) =>
+        request("/admin/analytics/unique-volunteers", { method: "GET", params }),
+      uniqueVolunteersCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/unique-volunteers.csv", "unique-volunteers.csv", { params }),
+      cancellationRates: (params = {}) =>
+        request("/admin/analytics/cancellation-rates", { method: "GET", params }),
+      cancellationRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/cancellation-rates.csv", "cancellation-rates.csv", { params }),
+      modulePopularity: (params = {}) =>
+        request("/admin/analytics/module-popularity", { method: "GET", params }),
+      modulePopularityCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/module-popularity.csv", "module-popularity.csv", { params }),
     },
     templates: {
       list: (params) => request("/admin/module-templates", { params }),
@@ -619,8 +641,14 @@ export const api = {
           return res.json();
         });
       },
-      commit: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
+      commit: (importId, moduleTemplateSlug) =>
+        request(`/admin/imports/${importId}/commit`, {
+          method: "POST",
+          body: { module_template_slug: moduleTemplateSlug },
+        }),
       retry: (importId) => request(`/admin/imports/${importId}/retry`, { method: "POST" }),
+      revalidate: (importId) =>
+        request(`/admin/imports/${importId}/revalidate`, { method: "POST" }),
       updateRow: (importId, rowIndex, data) =>
         request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
     },

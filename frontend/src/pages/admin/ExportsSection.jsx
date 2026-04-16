@@ -155,6 +155,98 @@ export default function ExportsSection() {
           </>
         )}
       />
+
+      <AnalyticsPanel
+        title="Event fill rate"
+        explainer="How full each event is. Useful for spotting under-enrolled sessions to promote."
+        fetchFn={(p) => api.admin.analytics.eventFillRates(p)}
+        csvFn={(p) => api.admin.analytics.eventFillRatesCsv(p)}
+        queryKey="eventFillRates"
+        columns={["Event", "School", "Capacity", "Filled", "Fill Rate"]}
+        renderRow={(r) => (
+          <>
+            <td className="py-2 pr-3">{r.name}</td>
+            <td className="py-2 pr-3">{r.school}</td>
+            <td className="py-2 pr-3">{r.capacity}</td>
+            <td className="py-2 pr-3">{r.filled}</td>
+            <td className="py-2 pr-3">
+              {typeof r.rate === "number" ? `${Math.round(r.rate * 100)}%` : "--"}
+            </td>
+          </>
+        )}
+      />
+
+      <AnalyticsPanel
+        title="Hours by school"
+        explainer="Total attended hours split by partner high school. Drop this straight into partner or grant reports."
+        fetchFn={(p) => api.admin.analytics.hoursBySchool(p)}
+        csvFn={(p) => api.admin.analytics.hoursBySchoolCsv(p)}
+        queryKey="hoursBySchool"
+        columns={["School", "Hours", "Events", "Unique Volunteers"]}
+        renderRow={(r) => (
+          <>
+            <td className="py-2 pr-3">{r.school}</td>
+            <td className="py-2 pr-3">{r.hours}</td>
+            <td className="py-2 pr-3">{r.events}</td>
+            <td className="py-2 pr-3">{r.volunteers}</td>
+          </>
+        )}
+      />
+
+      <AnalyticsPanel
+        title="Unique volunteers per quarter"
+        explainer="Distinct number of volunteers who attended at least one event in each quarter."
+        fetchFn={(p) => api.admin.analytics.uniqueVolunteers(p)}
+        csvFn={(p) => api.admin.analytics.uniqueVolunteersCsv(p)}
+        queryKey="uniqueVolunteers"
+        columns={["Year", "Quarter", "Unique Volunteers"]}
+        renderRow={(r) => (
+          <>
+            <td className="py-2 pr-3">{r.year}</td>
+            <td className="py-2 pr-3 capitalize">{r.quarter}</td>
+            <td className="py-2 pr-3">{r.unique_volunteers}</td>
+          </>
+        )}
+      />
+
+      <AnalyticsPanel
+        title="Cancellation rates"
+        explainer="Share of signups that were cancelled before the event. High rates suggest schedule instability."
+        fetchFn={(p) => api.admin.analytics.cancellationRates(p)}
+        csvFn={(p) => api.admin.analytics.cancellationRatesCsv(p)}
+        queryKey="cancellationRates"
+        columns={["Event", "Total Signups", "Cancelled", "Rate"]}
+        renderRow={(r) => (
+          <>
+            <td className="py-2 pr-3">{r.name}</td>
+            <td className="py-2 pr-3">{r.total_signups}</td>
+            <td className="py-2 pr-3">{r.cancelled}</td>
+            <td className="py-2 pr-3">
+              {typeof r.rate === "number" ? `${Math.round(r.rate * 100)}%` : "--"}
+            </td>
+          </>
+        )}
+      />
+
+      <AnalyticsPanel
+        title="Module popularity"
+        explainer="Which modules are most in demand, by seats filled vs. seats offered."
+        fetchFn={(p) => api.admin.analytics.modulePopularity(p)}
+        csvFn={(p) => api.admin.analytics.modulePopularityCsv(p)}
+        queryKey="modulePopularity"
+        columns={["Module", "Events", "Capacity", "Filled", "Fill Rate"]}
+        renderRow={(r) => (
+          <>
+            <td className="py-2 pr-3">{r.module_name}</td>
+            <td className="py-2 pr-3">{r.events}</td>
+            <td className="py-2 pr-3">{r.capacity}</td>
+            <td className="py-2 pr-3">{r.filled}</td>
+            <td className="py-2 pr-3">
+              {typeof r.fill_rate === "number" ? `${Math.round(r.fill_rate * 100)}%` : "--"}
+            </td>
+          </>
+        )}
+      />
     </div>
   );
 }

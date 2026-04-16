@@ -1370,6 +1370,322 @@ def export_no_show_rates_csv(
 
 
 # =========================
+# ADMIN ANALYTICS — extended reports (Phase 18 Plan 03)
+# =========================
+
+
+def _apply_date_filter(query, from_date, to_date):
+    if from_date:
+        query = query.filter(models.Event.start_date >= from_date)
+    if to_date:
+        query = query.filter(models.Event.start_date <= to_date)
+    return query
+
+
+@router.get("/analytics/event-fill-rates")
+def analytics_event_fill_rates(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Per-event: total capacity across slots, seats filled, % filled."""
+    q = _apply_date_filter(db.query(models.Event), from_date, to_date)
+    events = q.all()
+    result = []
+    for event in events:
+        slot_ids = [s.id for s in event.slots]
+        capacity = sum((s.capacity or 0) for s in event.slots)
+        if capacity == 0:
+            continue
+        filled = 0
+        if slot_ids:
+            filled = (
+                db.query(models.Signup)
+                .filter(
+                    models.Signup.slot_id.in_(slot_ids),
+                    models.Signup.status.in_([
+                        models.SignupStatus.confirmed,
+                        models.SignupStatus.checked_in,
+                        models.SignupStatus.attended,
+                    ]),
+                )
+                .count()
+            )
+        result.append({
+            "event_id": str(event.id),
+            "name": event.title,
+            "school": event.school or event.location or "",
+            "capacity": capacity,
+            "filled": filled,
+            "rate": round(filled / capacity, 4) if capacity else 0.0,
+        })
+    log_action(db, admin_user, "admin_analytics_event_fill_rates", "Analytics", None)
+    db.commit()
+    return result
+
+
+@router.get("/analytics/event-fill-rates.csv")
+def export_event_fill_rates_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    rows = analytics_event_fill_rates(from_date, to_date, db, admin_user)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Event", "School", "Capacity", "Filled", "Fill Rate"])
+    for r in rows:
+        writer.writerow([_csv_safe(r["name"]), _csv_safe(r["school"]), r["capacity"], r["filled"], f"{r['rate']:.2%}"])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="event-fill-rates.csv"'},
+    )
+
+
+@router.get("/analytics/hours-by-school")
+def analytics_hours_by_school(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Total attended volunteer hours grouped by partner school."""
+    q = (
+        db.query(models.Signup, models.Slot, models.Event)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(models.Signup.status == models.SignupStatus.attended)
+    )
+    q = _apply_date_filter(q, from_date, to_date)
+
+    from collections import defaultdict
+    by_school: dict = defaultdict(lambda: {"hours": 0.0, "events": set(), "volunteers": set()})
+    for signup, slot, event in q.all():
+        school = event.school or event.location or "(unspecified)"
+        hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
+        by_school[school]["hours"] += hours
+        by_school[school]["events"].add(event.id)
+        by_school[school]["volunteers"].add(signup.volunteer_id)
+
+    result = [
+        {
+            "school": school,
+            "hours": round(data["hours"], 2),
+            "events": len(data["events"]),
+            "volunteers": len(data["volunteers"]),
+        }
+        for school, data in sorted(by_school.items(), key=lambda kv: -kv[1]["hours"])
+    ]
+    log_action(db, admin_user, "admin_analytics_hours_by_school", "Analytics", None)
+    db.commit()
+    return result
+
+
+@router.get("/analytics/hours-by-school.csv")
+def export_hours_by_school_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    rows = analytics_hours_by_school(from_date, to_date, db, admin_user)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["School", "Hours", "Events", "Unique Volunteers"])
+    for r in rows:
+        writer.writerow([_csv_safe(r["school"]), r["hours"], r["events"], r["volunteers"]])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="hours-by-school.csv"'},
+    )
+
+
+@router.get("/analytics/unique-volunteers")
+def analytics_unique_volunteers(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Unique volunteers per quarter (distinct volunteer_id among attended signups)."""
+    q = (
+        db.query(models.Signup, models.Event)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(models.Signup.status == models.SignupStatus.attended)
+    )
+    q = _apply_date_filter(q, from_date, to_date)
+
+    from collections import defaultdict
+    by_qtr: dict = defaultdict(set)
+    for signup, event in q.all():
+        if event.quarter and event.year:
+            key = (event.year, event.quarter.value)
+        else:
+            key = (event.start_date.year if event.start_date else 0, "unknown")
+        by_qtr[key].add(signup.volunteer_id)
+
+    result = [
+        {"year": y, "quarter": qtr, "unique_volunteers": len(vols)}
+        for (y, qtr), vols in sorted(by_qtr.items())
+    ]
+    log_action(db, admin_user, "admin_analytics_unique_volunteers", "Analytics", None)
+    db.commit()
+    return result
+
+
+@router.get("/analytics/unique-volunteers.csv")
+def export_unique_volunteers_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    rows = analytics_unique_volunteers(from_date, to_date, db, admin_user)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Year", "Quarter", "Unique Volunteers"])
+    for r in rows:
+        writer.writerow([r["year"], r["quarter"], r["unique_volunteers"]])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="unique-volunteers.csv"'},
+    )
+
+
+@router.get("/analytics/cancellation-rates")
+def analytics_cancellation_rates(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Per event: signups made vs cancelled, % cancelled."""
+    q = _apply_date_filter(db.query(models.Event), from_date, to_date)
+    events = q.all()
+    result = []
+    for event in events:
+        slot_ids = [s.id for s in event.slots]
+        if not slot_ids:
+            continue
+        signups = db.query(models.Signup).filter(models.Signup.slot_id.in_(slot_ids)).all()
+        total = len(signups)
+        cancelled = sum(1 for s in signups if s.status == models.SignupStatus.cancelled)
+        if total == 0:
+            continue
+        result.append({
+            "event_id": str(event.id),
+            "name": event.title,
+            "total_signups": total,
+            "cancelled": cancelled,
+            "rate": round(cancelled / total, 4),
+        })
+    log_action(db, admin_user, "admin_analytics_cancellation_rates", "Analytics", None)
+    db.commit()
+    return result
+
+
+@router.get("/analytics/cancellation-rates.csv")
+def export_cancellation_rates_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    rows = analytics_cancellation_rates(from_date, to_date, db, admin_user)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Event", "Total Signups", "Cancelled", "Cancellation Rate"])
+    for r in rows:
+        writer.writerow([_csv_safe(r["name"]), r["total_signups"], r["cancelled"], f"{r['rate']:.2%}"])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="cancellation-rates.csv"'},
+    )
+
+
+@router.get("/analytics/module-popularity")
+def analytics_module_popularity(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Per module: how many events scheduled, how many signups, fill rate."""
+    q = _apply_date_filter(db.query(models.Event), from_date, to_date)
+    events = q.all()
+
+    from collections import defaultdict
+    by_mod: dict = defaultdict(lambda: {"events": 0, "capacity": 0, "filled": 0})
+    for event in events:
+        slug = event.module_slug or "(no module)"
+        by_mod[slug]["events"] += 1
+        slot_ids = [s.id for s in event.slots]
+        by_mod[slug]["capacity"] += sum((s.capacity or 0) for s in event.slots)
+        if slot_ids:
+            filled = (
+                db.query(models.Signup)
+                .filter(
+                    models.Signup.slot_id.in_(slot_ids),
+                    models.Signup.status.in_([
+                        models.SignupStatus.confirmed,
+                        models.SignupStatus.checked_in,
+                        models.SignupStatus.attended,
+                    ]),
+                )
+                .count()
+            )
+            by_mod[slug]["filled"] += filled
+
+    # Resolve slug → friendly name
+    slugs = [s for s in by_mod.keys() if s != "(no module)"]
+    templates = db.query(models.ModuleTemplate).filter(models.ModuleTemplate.slug.in_(slugs)).all()
+    name_by_slug = {t.slug: t.name for t in templates}
+
+    result = []
+    for slug, data in by_mod.items():
+        cap = data["capacity"]
+        result.append({
+            "module_slug": slug,
+            "module_name": name_by_slug.get(slug, slug),
+            "events": data["events"],
+            "capacity": cap,
+            "filled": data["filled"],
+            "fill_rate": round(data["filled"] / cap, 4) if cap else 0.0,
+        })
+    result.sort(key=lambda r: -r["filled"])
+    log_action(db, admin_user, "admin_analytics_module_popularity", "Analytics", None)
+    db.commit()
+    return result
+
+
+@router.get("/analytics/module-popularity.csv")
+def export_module_popularity_csv(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    rows = analytics_module_popularity(from_date, to_date, db, admin_user)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Module", "Events Scheduled", "Total Capacity", "Seats Filled", "Fill Rate"])
+    for r in rows:
+        writer.writerow([_csv_safe(r["module_name"]), r["events"], r["capacity"], r["filled"], f"{r['fill_rate']:.2%}"])
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="module-popularity.csv"'},
+    )
+
+
+# =========================
 # ADMIN USER MANAGEMENT
 # =========================
 
@@ -1627,14 +1943,30 @@ def update_import_row(
     return import_service.update_preview_row(db, import_id, row_index, updates)
 
 
-@router.post("/imports/{import_id}/commit")
-def commit_csv_import(
+@router.post("/imports/{import_id}/revalidate")
+def revalidate_csv_import(
     import_id: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Atomically commit all validated rows as events."""
-    return import_service.commit_import(db, import_id)
+    """Re-run conflict detection against the current DB state."""
+    return import_service.revalidate_import(db, import_id)
+
+
+@router.post("/imports/{import_id}/commit")
+def commit_csv_import(
+    import_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Atomically commit all validated rows as events.
+
+    Body: { "module_template_slug": "<slug>" } — every committed row uses this
+    template's title/description and the slug for week-bucket filtering.
+    """
+    slug = (payload or {}).get("module_template_slug")
+    return import_service.commit_import(db, import_id, module_template_slug=slug)
 
 
 @router.post("/imports/{import_id}/retry")

@@ -40,7 +40,6 @@ const allNavItems = [
   { to: "/admin", label: "Overview", end: true, roles: ["admin", "organizer"] },
   { to: "/admin/events", label: "Events", roles: ["admin", "organizer"] },
   { to: "/admin/users", label: "Users", roles: ["admin"] },
-  { to: "/admin/portals", label: "Portals", roles: ["admin"] },
   { to: "/admin/audit-logs", label: "Audit Logs", roles: ["admin"] },
   { to: "/admin/exports", label: "Exports", roles: ["admin"] },
   { to: "/admin/templates", label: "Templates", roles: ["admin"] },
