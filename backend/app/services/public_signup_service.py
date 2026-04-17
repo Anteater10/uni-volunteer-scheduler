@@ -11,16 +11,61 @@ Returns PublicSignupResponse with volunteer_id, signup_ids, magic_link_sent=True
 When EXPOSE_TOKENS_FOR_TESTING=1, also returns confirm_token (dev/test only).
 """
 import os
+from datetime import datetime, timezone
+
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from ..models import MagicLinkPurpose, Signup, SignupStatus, Slot
+from ..models import Event, MagicLinkPurpose, Signup, SignupStatus, Slot
 from ..schemas import PublicSignupCreate, PublicSignupResponse, PublicSignupResultItem
 from . import form_schema_service
 from .phone_service import InvalidPhoneError, normalize_us_phone
 from .volunteer_service import upsert_volunteer
 from .waitlist_service import compute_waitlist_position
+
+
+# Phase 29 (LOCK-01) — PT-localized copy for participant-facing errors. We
+# store UTC and format the timezone label as "PT" because users don't
+# mentally distinguish PST/PDT on signup copy.
+try:
+    from zoneinfo import ZoneInfo  # py >= 3.9
+    _PT = ZoneInfo("America/Los_Angeles")
+except Exception:  # pragma: no cover — defensive fallback
+    _PT = None
+
+
+def _fmt_pt(dt: datetime) -> str:
+    """Format a UTC-aware datetime in Pacific Time (or raw ISO as fallback)."""
+    if _PT is None or dt is None:
+        return dt.isoformat() if dt else ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_PT).strftime("%b %d %Y %I:%M %p PT")
+
+
+def _ensure_signup_window(db: Session, event_id, bypass: bool = False) -> None:
+    """Phase 29 (LOCK-01) — reject public signups outside the event window.
+
+    Organizer/admin flows pass ``bypass=True`` so SciTrek staff can always
+    add a walk-in (matches the "organizers are ultimate authority" thesis).
+    """
+    if bypass:
+        return
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if event is None:
+        return  # let the downstream slot lookup produce the 404
+    now = datetime.now(timezone.utc)
+    if event.signup_open_at and now < event.signup_open_at:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Signup opens at {_fmt_pt(event.signup_open_at)}",
+        )
+    if event.signup_close_at and now > event.signup_close_at:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Signup closed at {_fmt_pt(event.signup_close_at)}",
+        )
 
 
 def create_public_signup(
@@ -71,6 +116,7 @@ def create_public_signup(
 
     # 3. Load slots, lock them, check capacity, create one Signup per slot
     signups = []
+    checked_events: set = set()
     for slot_id in payload.slot_ids:
         slot = (
             db.query(Slot)
@@ -80,6 +126,12 @@ def create_public_signup(
         )
         if slot is None:
             raise HTTPException(status_code=404, detail=f"slot {slot_id} not found")
+        # Phase 29 (LOCK-01) — enforce event signup window before capacity.
+        # Public path always enforces; organizer/admin paths bypass via
+        # other router endpoints that don't go through this service.
+        if slot.event_id not in checked_events:
+            _ensure_signup_window(db, slot.event_id)
+            checked_events.add(slot.event_id)
         # Phase 25 (WAIT-01): at-capacity signups go to waitlist instead of 409.
         at_capacity = slot.current_count >= slot.capacity
         # Duplicate guard: UNIQUE(volunteer_id, slot_id) — catch IntegrityError → 409
