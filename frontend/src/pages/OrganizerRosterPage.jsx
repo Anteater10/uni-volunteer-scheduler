@@ -2,9 +2,110 @@ import React, { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchRoster, checkInSignup } from "../api/roster";
-import { PageHeader, Button, Skeleton } from "../components/ui";
+import api from "../lib/api";
+import { PageHeader, Button, Skeleton, Modal, Input, Label } from "../components/ui";
 import { toast } from "../state/toast";
 import ResolveEventModal from "../components/ResolveEventModal";
+
+// Phase 22 — organizer quick-add custom field modal
+function QuickAddFieldModal({ open, onClose, onSubmit, saving }) {
+  const [label, setLabel] = useState("");
+  const [type, setType] = useState("text");
+  const [required, setRequired] = useState(false);
+  const [options, setOptions] = useState("");
+  function reset() {
+    setLabel("");
+    setType("text");
+    setRequired(false);
+    setOptions("");
+  }
+  function handleClose() {
+    reset();
+    onClose && onClose();
+  }
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (!label.trim()) return;
+    const id = label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 48);
+    const field = { id, label: label.trim(), type, required };
+    if (["select", "radio", "checkbox"].includes(type)) {
+      field.options = options
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (field.options.length === 0) {
+        toast.error("Options are required for this field type.");
+        return;
+      }
+    }
+    onSubmit(field, () => reset());
+  }
+  return (
+    <Modal open={open} onClose={handleClose} title="Add a custom question">
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div>
+          <Label htmlFor="qaf-label">Question</Label>
+          <Input
+            id="qaf-label"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. Parking pass needed?"
+            required
+          />
+        </div>
+        <div>
+          <Label htmlFor="qaf-type">Answer type</Label>
+          <select
+            id="qaf-type"
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+          >
+            <option value="text">Short text</option>
+            <option value="textarea">Long text</option>
+            <option value="select">Dropdown</option>
+            <option value="radio">Radio</option>
+            <option value="checkbox">Checkboxes</option>
+            <option value="phone">Phone</option>
+            <option value="email">Email</option>
+          </select>
+        </div>
+        {["select", "radio", "checkbox"].includes(type) && (
+          <div>
+            <Label htmlFor="qaf-options">Options (comma-separated)</Label>
+            <Input
+              id="qaf-options"
+              value={options}
+              onChange={(e) => setOptions(e.target.value)}
+              placeholder="yes, no"
+              required
+            />
+          </div>
+        )}
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={required}
+            onChange={(e) => setRequired(e.target.checked)}
+          />
+          Required
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="ghost" onClick={handleClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={saving}>
+            {saving ? "Adding..." : "Add field"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
 // TODO(brand): final status chip palette
 const STATUS_CHIP = {
@@ -21,6 +122,18 @@ export default function OrganizerRosterPage() {
   const { eventId } = useParams();
   const qc = useQueryClient();
   const [resolveOpen, setResolveOpen] = useState(false);
+  const [quickFieldOpen, setQuickFieldOpen] = useState(false);
+
+  // Phase 22 — organizer quick-add field
+  const quickFieldMut = useMutation({
+    mutationFn: (field) => api.organizer.appendEventField(eventId, field),
+    onSuccess: () => {
+      toast.success("Question added to this event's signup form.");
+      setQuickFieldOpen(false);
+      qc.invalidateQueries({ queryKey: ["publicEventFormSchema", eventId] });
+    },
+    onError: (err) => toast.error(err?.message || "Failed to add field"),
+  });
 
   const rosterQ = useQuery({
     queryKey: ["roster", eventId],
@@ -106,6 +219,16 @@ export default function OrganizerRosterPage() {
         )}
       </div>
 
+      <div className="flex items-center justify-end px-1 mb-2">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setQuickFieldOpen(true)}
+        >
+          Add a question
+        </Button>
+      </div>
+
       <ul className="space-y-1">
         {roster.rows.map((row) => (
           <li key={row.signup_id}>
@@ -157,6 +280,13 @@ export default function OrganizerRosterPage() {
         onResolved={() => {
           qc.invalidateQueries({ queryKey: ["roster", eventId] });
         }}
+      />
+
+      <QuickAddFieldModal
+        open={quickFieldOpen}
+        onClose={() => setQuickFieldOpen(false)}
+        saving={quickFieldMut.isPending}
+        onSubmit={(field) => quickFieldMut.mutate(field)}
       />
     </div>
   );

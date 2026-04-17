@@ -10,6 +10,7 @@ import api from "../../lib/api";
 import { useAdminPageTitle } from "./AdminLayout";
 import SideDrawer from "../../components/admin/SideDrawer";
 import Pagination from "../../components/admin/Pagination";
+import FormFieldsDrawer from "../../components/admin/FormFieldsDrawer";
 import {
   Button,
   Modal,
@@ -85,7 +86,7 @@ function templateToForm(t) {
 // TemplateForm — shared create/edit form rendered inside SideDrawer
 // ---------------------------------------------------------------------------
 
-function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onCancel, submitting }) {
+function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onCancel, onEditFormFields, submitting }) {
   function handleNameChange(e) {
     const name = e.target.value;
     setForm((prev) => ({
@@ -223,6 +224,19 @@ function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onCancel, 
         </p>
       </div>
 
+      {/* Form fields (Phase 22) — edit-only */}
+      {!isCreate && onEditFormFields && (
+        <div className="pt-2 border-t border-[var(--color-border)]">
+          <Button type="button" variant="secondary" onClick={onEditFormFields}>
+            Edit form fields
+          </Button>
+          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+            Custom signup questions volunteers answer for every event created
+            from this template.
+          </p>
+        </div>
+      )}
+
       {/* Footer */}
       <div className="flex items-center gap-2 pt-2">
         {!isCreate && (
@@ -268,6 +282,7 @@ export default function TemplatesSection() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [archiveConfirm, setArchiveConfirm] = useState(null); // slug or null
+  const [formFieldsFor, setFormFieldsFor] = useState(null); // template (with slug + default_form_schema) being edited
 
   // --- Form state for create/edit ---
   const [form, setForm] = useState(emptyForm());
@@ -319,6 +334,18 @@ export default function TemplatesSection() {
       toast.success("Template restored");
     },
     onError: (e) => toast.error(e?.message || "Failed to restore template"),
+  });
+
+  // Phase 22 — default form schema persistence
+  const defaultSchemaM = useMutation({
+    mutationFn: ({ slug, schema }) =>
+      api.admin.templates.setDefaultFormSchema(slug, schema),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      setFormFieldsFor(null);
+      toast.success("Form fields saved");
+    },
+    onError: (e) => toast.error(e?.message || "Failed to save form fields"),
   });
 
   // --- Client-side filtering + pagination ---
@@ -593,10 +620,26 @@ export default function TemplatesSection() {
             onSubmit={handleUpdate}
             onArchive={() => setArchiveConfirm(drawerTemplate.slug)}
             onCancel={() => setDrawerTemplate(null)}
+            onEditFormFields={() => setFormFieldsFor(drawerTemplate)}
             submitting={updateM.isPending}
           />
         )}
       </SideDrawer>
+
+      {/* Phase 22 — default form schema drawer */}
+      <FormFieldsDrawer
+        open={!!formFieldsFor}
+        onClose={() => setFormFieldsFor(null)}
+        title={`Form fields — ${formFieldsFor?.name || ""}`}
+        schema={formFieldsFor?.default_form_schema || []}
+        saving={defaultSchemaM.isPending}
+        onSave={(nextSchema) =>
+          defaultSchemaM.mutate({
+            slug: formFieldsFor.slug,
+            schema: nextSchema,
+          })
+        }
+      />
 
       {/* Archive confirmation Modal */}
       <Modal
