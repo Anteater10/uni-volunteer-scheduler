@@ -453,6 +453,19 @@ async function adminSendReminderNow(signupId, kind) {
   });
 }
 
+// Phase 27 — SMS reminders + no-show nudges
+async function publicGetConfig() {
+  return request("/public/config", { method: "GET", auth: false });
+}
+async function organizerSmsNudgeNoShows(eventId) {
+  return request(`/organizer/events/${eventId}/sms-nudge-no-shows`, {
+    method: "POST",
+  });
+}
+async function adminListUpcomingSms(days = 7) {
+  return request("/admin/sms/upcoming", { method: "GET", params: { days } });
+}
+
 // Phase 26 — broadcast messages (organizer + admin).
 // Returns the recipient-count preview for the modal.
 async function getBroadcastRecipientCount(eventId) {
@@ -603,6 +616,8 @@ export const api = {
     getPreferences: (manageToken) => publicGetPreferences(manageToken),
     updatePreferences: (manageToken, patch) =>
       publicUpdatePreferences(manageToken, patch),
+    // Phase 27 — public runtime config (feature flags)
+    getConfig: () => publicGetConfig(),
   },
 
   // --- Module Templates (Phase 5) ---
@@ -657,6 +672,8 @@ export const api = {
       getBroadcastRecipientCount(eventId),
     sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
     listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
+    // Phase 27 — SMS nudge no-shows
+    smsNudgeNoShows: (eventId) => organizerSmsNudgeNoShows(eventId),
   },
 
   admin: {
@@ -772,6 +789,10 @@ export const api = {
     reminders: {
       listUpcoming: (days = 7) => adminListUpcomingReminders(days),
       sendNow: (signupId, kind) => adminSendReminderNow(signupId, kind),
+    },
+    // Phase 27 — SMS reminders preview
+    sms: {
+      listUpcoming: (days = 7) => adminListUpcomingSms(days),
     },
     // Phase 26 — broadcast messages
     broadcastRecipientCount: (eventId) =>

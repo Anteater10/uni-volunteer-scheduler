@@ -445,6 +445,26 @@ export default function EventDetailPage() {
   const formSchema = formSchemaQ.data?.schema || [];
   const [responses, setResponses] = useState({}); // { field_id: value }
 
+  // Phase 27 — public runtime config (sms_enabled). Cached for the session.
+  // Guard the call site so tests that mock api.public without getConfig don't
+  // crash — missing config just means sms_enabled=false (safe default).
+  const configQ = useQuery({
+    queryKey: ["publicConfig"],
+    queryFn: async () => {
+      if (typeof api.public.getConfig !== "function") {
+        return { sms_enabled: false };
+      }
+      try {
+        return await api.public.getConfig();
+      } catch {
+        return { sms_enabled: false };
+      }
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const smsEnabled = !!configQ.data?.sms_enabled;
+  const [smsOptIn, setSmsOptIn] = useState(false);
+
   // Build slot lookup and group slots by date
   const { slotMap, orientationSlots, periodSlotsByDate } = useMemo(() => {
     const slots = eventQ.data?.slots || [];
@@ -694,6 +714,8 @@ export default function EventDetailPage() {
         ...identity,
         slot_ids: [...selectedSlotIds],
         responses: buildResponsesArray(),
+        // Phase 27 — only send when the flag is on and the user consented.
+        sms_opt_in: smsEnabled && smsOptIn,
       });
       // Phase 25 (WAIT-01): if any selected slot was at capacity the server
       // puts the signup on the waitlist instead of rejecting. Surface that
@@ -796,6 +818,7 @@ export default function EventDetailPage() {
     setSuccessData(null);
     setHighlightOrientation(false);
     setResponses({});
+    setSmsOptIn(false);
   }
 
   function handleOrientationYes() {
@@ -1134,6 +1157,26 @@ export default function EventDetailPage() {
               />
               <FieldError>{formErrors.phone}</FieldError>
             </div>
+            {/* Phase 27 — SMS opt-in (TCPA). Hidden entirely when the feature
+                flag is off, so the form copy matches reality. */}
+            {smsEnabled && (
+              <div className="flex items-start gap-2">
+                <input
+                  id="sms_opt_in"
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={smsOptIn}
+                  onChange={(e) => setSmsOptIn(e.target.checked)}
+                />
+                <label
+                  htmlFor="sms_opt_in"
+                  className="text-sm text-[var(--color-fg-muted)]"
+                >
+                  Text me reminders about this event. Message and data rates
+                  may apply. Reply STOP to opt out, HELP for help.
+                </label>
+              </div>
+            )}
             {/* Phase 22 — dynamic custom form fields */}
             {formSchema.length > 0 && (
               <div className="pt-2 border-t border-[var(--color-border)] flex flex-col gap-4">

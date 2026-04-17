@@ -138,6 +138,37 @@ export default function OrganizerRosterPage() {
     onError: (err) => toast.error(err?.message || "Failed to add field"),
   });
 
+  // Phase 27 — SMS no-show nudge (button visible only when flag is on).
+  const configQ = useQuery({
+    queryKey: ["publicConfig"],
+    queryFn: async () => {
+      if (typeof api.public?.getConfig !== "function") {
+        return { sms_enabled: false };
+      }
+      try {
+        return await api.public.getConfig();
+      } catch {
+        return { sms_enabled: false };
+      }
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const smsEnabled = !!configQ.data?.sms_enabled;
+  const smsNudgeMut = useMutation({
+    mutationFn: () => api.organizer.smsNudgeNoShows(eventId),
+    onSuccess: (data) => {
+      if (data?.flag_off) {
+        toast.error("SMS is disabled. Contact an admin to enable.");
+        return;
+      }
+      toast.success(
+        `Nudge sent to ${data.sent} volunteer${data.sent === 1 ? "" : "s"}. ` +
+          `Skipped ${data.skipped}.`,
+      );
+    },
+    onError: (err) => toast.error(err?.message || "Failed to nudge no-shows"),
+  });
+
   const rosterQ = useQuery({
     queryKey: ["roster", eventId],
     queryFn: () => fetchRoster(eventId),
@@ -230,6 +261,17 @@ export default function OrganizerRosterPage() {
         >
           Message volunteers
         </Button>
+        {/* Phase 27 — only render when flag is on. Manual no-show nudge. */}
+        {smsEnabled && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => smsNudgeMut.mutate()}
+            disabled={smsNudgeMut.isPending}
+          >
+            {smsNudgeMut.isPending ? "Sending..." : "Nudge no-shows"}
+          </Button>
+        )}
         <Button
           type="button"
           variant="secondary"
