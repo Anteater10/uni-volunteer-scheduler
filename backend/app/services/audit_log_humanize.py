@@ -40,6 +40,9 @@ ACTION_LABELS: dict[str, str] = {
     "template_delete": "Archived a module template",
     "import_upload": "Uploaded a CSV import",
     "import_commit": "Committed a CSV import",
+    # Phase 21 — orientation credit engine
+    "orientation_credit_grant": "Granted orientation credit",
+    "orientation_credit_revoke": "Revoked orientation credit",
 }
 
 
@@ -125,6 +128,17 @@ def _resolve_entity(
         if not t:
             return f"(deleted) #{_short(entity_id)}"
         return t.name
+
+    # Phase 21 — orientation credit
+    if et in ("orientationcredit", "orientation_credit"):
+        c = (
+            db.query(models.OrientationCredit)
+            .filter(models.OrientationCredit.id == entity_id)
+            .first()
+        )
+        if not c:
+            return f"(deleted) #{_short(entity_id)}"
+        return f"{c.volunteer_email} ({c.family_key})"
 
     return f"#{_short(entity_id)}"
 
