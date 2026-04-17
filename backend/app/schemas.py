@@ -371,11 +371,15 @@ class EventNotifyRequest(BaseModel):
 class SiteSettingsRead(ORMBase):
     default_privacy_mode: PrivacyMode
     allowed_email_domain: Optional[str] = None
+    # Phase 29 (HIDE-01)
+    hide_past_events_from_public: bool = True
 
 
 class SiteSettingsUpdate(BaseModel):
-    default_privacy_mode: PrivacyMode
+    default_privacy_mode: Optional[PrivacyMode] = None
     allowed_email_domain: Optional[str] = None
+    # Phase 29 (HIDE-01) — optional so existing callers can PATCH other fields.
+    hide_past_events_from_public: Optional[bool] = None
 
 
 # =========================
