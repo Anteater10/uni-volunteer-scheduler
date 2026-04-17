@@ -1,270 +1,258 @@
-# Roadmap — v1.2-prod Production-ready by role
+# Roadmap — v1.3 Feature expansion (SciTrek parity)
 
 **Project:** UCSB Sci Trek volunteer scheduler
-**Milestone:** v1.2-prod Production-ready by role
-**Opened:** 2026-04-14
+**Milestone:** v1.3 feature expansion (scheduling parity for SciTrek)
+**Opened:** 2026-04-17
 **Deadline:** before June 2026 (graduation handoff)
-**Source of truth:** `.planning/REQUIREMENTS-v1.2-prod.md`
-**Continues from:** v1.0 phases 00–07 (shipped 2026-04-08) and v1.1 phases 08–13 (shipped 2026-04-10). Both prior milestone phase dirs are preserved as reference, not archived.
+**Source of truth:** `.planning/REQUIREMENTS-v1.3.md` (backed by seed `.planning/seeds/v1.3-feature-expansion.md`)
+**Continues from:** v1.2-prod phases 14–20 (shipped 2026-04-16). Prior-milestone phase directories are preserved as reference.
 
 ## Goal
 
-Take the v1.1 base from "works" to "production-ready and handoff-grade" by walking each user role end-to-end — participant, admin, organizer — auditing functionality, polishing UX, filling missing features, then proving the three roles work together. Set up a parallel collaboration workflow so Andy and Hung can both run Claude Code + GSD on the repo without stepping on each other.
+Replace SignUpGenius for SciTrek's scheduling workflow by closing the parity gaps that actually matter for the domain. Custom questions. Reminder emails + SMS. Recurring event duplication. Waitlist + auto-promote. Broadcast messages. QR check-in. Slot swap. Past-event hiding + signup locking. And — the load-bearing piece that no off-the-shelf tool can do — cross-week/cross-module orientation credit. Every surface keeps the v1.2 rule that organizers are the ultimate authority with one-tap overrides.
 
-Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Phase 14.
+Phase numbering continues from v1.2-prod (ended at 20); v1.3 starts at Phase 21.
 
 ## Phases
 
-- [ ] **Phase 14: Collaboration setup** — git-worktree workflow, role-owned long-lived branches, COLLABORATION.md + CLAUDE.md updates, file-ownership conventions, conflict playbook. Must ship before Andy and Hung run parallel pillars.
-- [ ] **Phase 15: Participant role audit + UX polish** — end-to-end audit of public flows, fixes, WCAG AA + 375px verification, loading/empty/error states, cross-browser smoke, one new audit-surfaced feature.
-- [x] **Phase 16: Admin shell + retirement + Overview/Audit/Users/Exports** — retire `Overrides`, audit every admin route, polish admin shell, ship live Overview + filtered Audit Log + Users CRUD + Exports + UX polish across all admin pages. (completed 2026-04-15)
-- [x] **Phase 17: Admin Templates CRUD** — full CRUD on `module_templates` (list, create, edit, delete/archive). Smaller scoped phase that can land independently between admin shell and the LLM import. (completed 2026-04-16)
-- [x] **Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)** — upload UI, single-shot LLM extraction → Pydantic, preview screen, atomic commit, eval-corpus logging, low-confidence flagging. (completed 2026-04-16)
-- [x] **Phase 19: Organizer role audit + UX polish** — **Rescoped 2026-04-16.** Organiser is "admin shell with scoped nav + phone-first `/organizer` landing". Route normalization + ORG-AUDIT + dashboard shipped. Roster polish, end-of-event prompt, WCAG AA + 375px audit, and ORG-14 feature deferred to v1.3.
-- [x] **Phase 20: Cross-role integration** — cross-role E2E (admin creates → organizer runs → participant signs up → admin sees in audit log), 4+ new Playwright scenarios, manual smoke checklist, doc sweep. (completed 2026-04-17)
+- [ ] **Phase 21 — Orientation credit engine** — cross-week/cross-module orientation credit tracked by `(volunteer, module_family)`. Organizer override + admin grant/revoke UI.
+- [ ] **Phase 22 — Custom form fields** — organizer-editable signup questions per event (with module-template defaults). SideDrawer CRUD, dynamic participant form, responses on roster + CSV export.
+- [ ] **Phase 23 — Recurring event duplication** — admin "Duplicate this event to weeks N…M" with atomic commit, slot pattern preservation, conflict warning.
+- [ ] **Phase 24 — Scheduled reminder emails** — Celery Beat kickoff + 24h + 2h pre-event email reminders with idempotency, opt-out, quiet hours.
+- [ ] **Phase 25 — Waitlist + auto-promote** — wire up existing `waitlisted` enum, cancel-triggers-promote atomic path, organizer manual promote, admin reorder.
+- [ ] **Phase 26 — Broadcast messages** — organizer/admin → email all signups for an event with rate-limit + audit + preview.
+- [ ] **Phase 27 — SMS reminders + no-show nudges** — AWS SNS integration behind feature flag, TCPA opt-in, 2h pre-event + 30min-after no-show nudges, organizer manual nudge.
+- [ ] **Phase 28 — QR check-in** — per-signup QR on confirmation email, organizer camera scan flow, reuses existing self check-in magic link.
+- [ ] **Phase 29 — Slot swap + signup locking + past-event hiding + final integration** — atomic slot swap, `signup_opens_at`/`signup_closes_at`, past-event hiding toggle, v1.3 cross-feature Playwright + milestone audit.
 
-## Dependency Graph
+## Dependency graph
 
 ```
-                 ┌──────────────────────────────────────────────┐
-                 │              14 (collab setup)               │
-                 │  worktrees, role branches, CLAUDE.md update  │
-                 └───────────────────────┬──────────────────────┘
-                                         │
-              ┌──────────────────────────┼──────────────────────────┐
-              ▼                          ▼                          
-   ┌────────────────────┐     ┌──────────────────────┐       
-   │ 15 (participant)   │     │ 16 (admin shell +    │   
-   │  Andy or Hung      │     │  retire + overview/  │ 
-   │  PART-01..14       │     │  audit/users/exports)│
-   └─────────┬──────────┘     └──────────┬───────────┘
-             │                           │           
-             │                           ▼          
-             │                ┌──────────────────────┐
-             │                │ 17 (admin templates) │
-             │                │      CRUD            │
-             │                └──────────┬───────────┘
-             │                           │
-             │                           ▼
-             │                ┌──────────────────────┐
-             │                │ 18 (admin LLM CSV    │
-             │                │  imports — 5.07)     │
-             │                └──────────┬───────────┘
-             │                           │
-             │                           ▼
-             │                ┌──────────────────────┐
-             │                │ 19 (organizer audit  │
-             │                │  + UX polish)        │
-             │                └──────────┬───────────┘
-             │                           │
-             └──────────────┬────────────┘
-                            ▼
-                ┌────────────────────────┐
-                │ 20 (cross-role         │
-                │  integration + E2E)    │
-                └────────────────────────┘
+                             ┌──────────────────────────────┐
+                             │ Phase 21 — Orientation engine│
+                             │ (domain model first)         │
+                             └──────────────┬───────────────┘
+                                            │
+                ┌───────────────────────────┼───────────────────────────┐
+                ▼                           ▼                           ▼
+   ┌────────────────────────┐  ┌────────────────────────┐  ┌─────────────────────────┐
+   │ Phase 22 — Custom form │  │ Phase 23 — Duplicate   │  │ Phase 24 — Reminder     │
+   │ fields                 │  │ events                 │  │ emails (Celery Beat)    │
+   └────────────┬───────────┘  └────────────┬───────────┘  └────────────┬────────────┘
+                │                           │                           │
+                └──────────────┬────────────┴─────────┬─────────────────┘
+                               ▼                      ▼
+                   ┌─────────────────────┐  ┌─────────────────────┐
+                   │ Phase 25 — Waitlist │  │ Phase 26 — Broadcast│
+                   │ + auto-promote      │  │ messages            │
+                   └─────────┬───────────┘  └─────────┬───────────┘
+                             │                        │
+                             └──────────┬─────────────┘
+                                        ▼
+                        ┌──────────────────────────────┐
+                        │ Phase 27 — SMS reminders     │
+                        │ + no-show nudges (SNS)       │
+                        └──────────────┬───────────────┘
+                                       │
+                                       ▼
+                        ┌──────────────────────────────┐
+                        │ Phase 28 — QR check-in       │
+                        │ (uses reminder email surface)│
+                        └──────────────┬───────────────┘
+                                       │
+                                       ▼
+                        ┌──────────────────────────────┐
+                        │ Phase 29 — Swap + lock +     │
+                        │ hide past + final integration│
+                        └──────────────────────────────┘
 ```
 
-**Parallelism (the whole point of Phase 14):**
-- Phase 15 (participant) and Phase 16 (admin shell) run in PARALLEL on different worktrees once Phase 14 ships. Andy and Hung pick a pillar each in COLLAB-02.
-- Phases 17 and 18 are admin-pillar continuations and stay on the admin worktree; they are sequential because they share the admin shell from Phase 16.
-- Phase 19 (organizer) starts after the admin pillar reaches a stable point (Phase 18 merged) because organizer and admin share event create/edit + magic-link infra (see Notes — sequencing risk).
-- Phase 20 (integration) is strictly last; it requires every role pillar shipped.
+**Sequencing rationale:**
+- Phase 21 (orientation engine) lands first because it reshapes the domain model (module family, credit table) that every later phase either touches or assumes.
+- Phase 22 (custom form fields) is independent of 23/24 and could run in parallel; we sequence it right after 21 because the form-field surfaces need organizer override polish that's consistent with the v1.3 thesis.
+- Phases 23 (duplicate) and 24 (reminders) can run in parallel after 21 — different subsystems (admin CRUD vs Celery Beat). In autonomous mode we run them sequentially to keep context coherent, but nothing blocks parallelization on separate worktrees.
+- Phase 25 (waitlist) needs the reminder surface (Phase 24) to tell promoted volunteers they're in, and benefits from custom fields (Phase 22) so promotion emails can include answers. Sequence after 22 + 24.
+- Phase 26 (broadcast) reuses the reminder infra; sequences after 24/25.
+- Phase 27 (SMS) layers on top of 24/26 — same pattern, different transport.
+- Phase 28 (QR) needs the confirmation email template (already shipped) + reminder templates (Phase 24) to embed QR.
+- Phase 29 wraps everything and adds the cross-feature integration gate.
 
-## Phase Details
+## Phase details
 
-### Phase 14: Collaboration setup
-**Goal:** Produce the git-worktree + role-branch contract that lets Andy and Hung each run Claude Code + GSD on a different role pillar without stepping on each other. No code changes to the app — this is the workflow ground truth.
-**Depends on:** Nothing (first phase of v1.2-prod; starts from current `main`).
-**Pillar:** 1 — Collaboration
-**Requirements:** COLLAB-01, COLLAB-02, COLLAB-03, COLLAB-04, COLLAB-05, COLLAB-06, COLLAB-07
-**Success Criteria** (what must be TRUE):
-  1. `COLLABORATION.md` documents the worktree + role-branch workflow with concrete commands and Andy and Hung know which role pillar they own.
-  2. Andy and Hung each have a working worktree on a long-lived role branch (`feature/v1.2-participant`, `feature/v1.2-admin`, `feature/v1.2-organizer`) and can each boot the docker stack + run tests independently.
-  3. CLAUDE.md tells future Claude Code sessions which branch they should be on for any given pillar.
-  4. The file-ownership table (which files require a PR vs which can be edited directly on a role branch) is written and agreed.
-  5. Both devs run a one-day parallel test: each opens a Claude Code session on a different pillar branch, completes one trivial change, merges to main without conflict.
-**Plans:** 3/4 plans executed
-**UI hint:** no
-**Touches:** `COLLABORATION.md`, `CLAUDE.md`, `.gitignore` (worktree dirs if needed), no app code.
+### Phase 21: Orientation credit engine
 
-### Phase 15: Participant role audit + UX polish
-**Goal:** Walk every logged-out participant flow end-to-end on a fresh DB, fix everything broken, polish UX to production-grade, hit WCAG AA and 375px mobile-first across every public page, and add one audit-surfaced feature real students would expect.
-**Depends on:** Phase 14 (worktree workflow must be in place).
-**Pillar:** 2 — Participant
-**Runs in parallel with:** Phase 16 (different worktree)
-**Requirements:** PART-01, PART-02, PART-03, PART-04, PART-05, PART-06, PART-07, PART-08, PART-09, PART-10, PART-11, PART-12, PART-13, PART-14
-**In-scope routes:** `/events`, `/events/:eventId`, `/signup/confirm`, `/signup/manage`, `/check-in/:signupId`, `/portals/:slug`
-**Success Criteria** (what must be TRUE):
-  1. A new student can open the app on their phone, browse this week's events, open an event, and sign up — without hitting a single bug, layout glitch, or accessibility violation.
-  2. The orientation-warning modal fires correctly in the period-only no-prior-attendance case and is suppressed when the DB confirms prior attendance.
-  3. The confirmation email arrives reliably and the magic link works on Safari iOS and Chrome Android; the manage-my-signup page lists everything with per-row + cancel-all controls.
-  4. Self check-in via `/check-in/:signupId` works inside the time window and is clearly rejected outside it.
-  5. axe-core in CI passes on every public page; every page passes a 375px audit (no horizontal scroll, ≥44px touch targets, thumb-zone CTAs); loading/empty/error states present everywhere; one new feature picked from PART-13 is shipped.
-**Plans:** 6/7 plans executed
-  - [x] 15-01-PLAN.md — PR-only bundle: ErrorState primitive + ui barrel + playwright cross-browser matrix + ci.yml install-all
-  - [x] 15-02-PLAN.md — calendar.js .ics util + test + a11y.spec.js skeleton + PART-AUDIT.md scaffold
-  - [x] 15-03-PLAN.md — EventsBrowsePage + PortalPage polish (UI-SPEC states + copy)
-  - [x] 15-04-PLAN.md — EventDetailPage polish + E.164 validation + Add-to-Calendar button (PART-13 surface A)
-  - [x] 15-05-PLAN.md — ConfirmSignupPage + ManageSignupsPage + SignupSuccessCard polish (PART-13 surface B)
-  - [x] 15-06-PLAN.md — SelfCheckInPage polish + OrientationWarningModal copy alignment
-  - [ ] 15-07-PLAN.md — console-error assertion + full matrix green + copy-drift + PART-AUDIT fill-in (D-05 checkpoint)
+**Goal:** Orientation credit becomes cross-week and cross-event within the same module family. Today's warning modal only checks same-event attendance — that misses SciTrek's load-bearing rule (week-4 CRISPR orientation satisfies week-6 CRISPR). Ship a service that answers `has_orientation_credit(volunteer, module_family)` and wire it through the participant modal + organizer/admin override surfaces.
+
+**Depends on:** v1.2-prod shipped (phases 14–20 complete).
+**Pillar:** Domain model.
+**Requirements:** ORIENT-01..ORIENT-08
+**In-scope routes/code:** `backend/app/services/orientation_credit.py` (new), `backend/app/models.py` (add `family_key` on `module_templates`, optional new `orientation_credit` table if needed), `backend/app/routers/signups.py` (warning-check endpoint), `backend/app/routers/admin.py` (grant/revoke), `backend/app/routers/organizer.py` (override), `frontend/src/pages/admin/OrientationCreditsSection.jsx` (new), `frontend/src/components/OrientationWarningModal.jsx` (rewire).
+**Success criteria:**
+  1. A volunteer who has `attended` an orientation for module family X in any prior event does NOT see the warning modal when they sign up for another event in the same family.
+  2. A volunteer with NO prior attendance for family X still sees the warning modal (unchanged behavior for new volunteers).
+  3. Organizer can grant orientation credit from the roster drawer with one tap; action writes an audit row.
+  4. Admin can view + grant + revoke credits on a new Orientation Credits page; every action writes audit.
+  5. Unit tests cover the 5 cases from ORIENT-07; Playwright e2e covers the cross-week CRISPR scenario.
+
+**UI hint:** yes (admin page + organizer drawer + participant modal rewire)
+**Touches:** backend models + services + routers + alembic migration + frontend admin section + organizer drawer + participant modal + tests.
+
+### Phase 22: Custom form fields
+
+**Goal:** Replace SignUpGenius's "custom questions" feature. Admins define the default set of signup questions on a module template. Organizers can tweak per event for last-minute additions. Participants see a dynamic form. Responses land on roster + CSV export. Organizer override remains: if a field is required but a volunteer skipped it, organizer can still accept.
+
+**Depends on:** Phase 21 (shared admin shell from v1.2; unrelated feature but sequenced for context coherence).
+**Pillar:** Admin + participant + organizer.
+**Requirements:** FORM-01..FORM-09
+**In-scope routes/code:** `backend/app/models.py` (form_schema JSONB + signup_responses table), new `backend/app/services/form_schema.py`, `backend/app/routers/events.py` (edit schema), `frontend/src/components/admin/FormFieldsDrawer.jsx` (new), `frontend/src/pages/organizer/OrganizerEventPage.jsx` (quick-add ad-hoc field), `frontend/src/pages/public/EventDetailPage.jsx` (render dynamic form), `frontend/src/pages/admin/TemplatesSection.jsx` (default schema CRUD).
+**Success criteria:**
+  1. Admin lands on the Templates page, opens a template, edits the default form fields (add/remove/reorder), saves — the next event created from that template inherits the schema.
+  2. Organizer opens an event and adds a one-off field (e.g., "parking pass needed?") — the signup form for that event picks it up immediately.
+  3. Participant signs up, fills the dynamic form, and their answers appear on the organizer roster detail drawer.
+  4. CSV export of the event has one column per field; free-text is escaped correctly.
+  5. SciTrek defaults ("dietary restrictions", "T-shirt size", "emergency contact") ship out of the box and can be disabled.
+  6. All the standard v1.2 bars hold (a11y, 375px, loading/empty/error).
+
 **UI hint:** yes
-**Touches:** `frontend/src/pages/public/*`, `frontend/src/pages/{SelfCheckInPage,PortalPage}.jsx`, `frontend/src/components/{OrientationWarningModal,SignupSuccessCard}.jsx`, `frontend/src/components/ui/ErrorState.jsx`, `frontend/src/components/ui/index.js`, `frontend/src/lib/calendar.js`, `e2e/{a11y,public-signup,orientation-modal}.spec.js`, `playwright.config.js`, `.github/workflows/ci.yml`, `frontend/package.json`. **Hard bar:** `frontend/src/lib/api.js` and `frontend/src/App.jsx` are UNTOUCHED (read-only per D-14; no new public routes per D-15).
+**Touches:** backend models + migration + services + routers + frontend admin + organizer + participant + tests.
 
-### Phase 16: Admin shell + retirement + Overview/Audit/Users/Exports
-**Goal:** Bring the admin shell to production grade — retire the `Overrides` lingering tab, audit every admin route, ship the live Overview + filtered Audit Log + Users CRUD + Exports surfaces, and hold WCAG AA + 375px-or-graceful-mobile across every admin page. Templates and LLM Imports are intentionally split into Phase 17 and 18.
-**Depends on:** Phase 14 (worktree workflow).
-**Pillar:** 3 — Admin (part A)
-**Runs in parallel with:** Phase 15 (different worktree)
-**Requirements:** ADMIN-01, ADMIN-02, ADMIN-03, ADMIN-04, ADMIN-05, ADMIN-06, ADMIN-07, ADMIN-18, ADMIN-19, ADMIN-20, ADMIN-21, ADMIN-22, ADMIN-23, ADMIN-24, ADMIN-25, ADMIN-26, ADMIN-27
-**In-scope routes:** `/admin`, `/admin/events/:eventId`, `/admin/users`, `/admin/portals`, `/admin/audit-logs`, `/admin/exports`
-**Success Criteria** (what must be TRUE):
-  1. The `Overrides` admin sidebar item, its (any) backend route, and any test references are gone — closing the v1.1 Phase 12 retirement loop. `git grep` returns no live references.
-  2. Admin shell layout is consistent across every section (sidebar, breadcrumbs, mobile-responsive collapse), with no mid-stream layout shift; the audit doc `ADMIN-AUDIT.md` lists every route's status.
-  3. The Overview page shows live stats (Users, Events, Slots, Signups, Confirmed signups) sourced from the live DB plus a Recent Activity feed of the last N audit entries with clear actor + timestamp formatting.
-  4. The Audit Log page paginates every audit entry and supports filters by kind, actor, date range, and free-text search; the Users page supports list/create/edit/deactivate for organizer + admin users (no participant accounts).
-  5. Admin can export volunteer hours + attendance + no-show CSVs and the CCPA export flow is polished and tested; every admin page meets WCAG AA, passes a 375px audit (or has a graceful "desktop-only" mobile message), and shows loading/empty/error states.
-**Plans:** 7/7 plans complete
-Plans:
-- [x] 16-01-PLAN.md — Wave 0 backend foundation: Alembic 0011/0012, humanization service, Overrides retirement
-- [x] 16-02-PLAN.md — Backend endpoints: users invite/deactivate, expanded summary, humanized audit, 2 new CSV endpoints
-- [x] 16-03-PLAN.md — Frontend primitives + AdminLayout rework + HelpSection + api.js batch (PR-only)
-- [x] 16-04-PLAN.md — Overview page rewire + Audit Log page in-place rewrite
-- [x] 16-05-PLAN.md — Users page fix + rewrite (table, drawer, invite, deactivate, CCPA)
-- [x] 16-06-PLAN.md — Exports polish + Imports cleanups + AdminEventPage + PortalsAdminPage
-- [x] 16-07-PLAN.md — ADMIN-AUDIT.md + Playwright a11y spec + final gate verification
+### Phase 23: Recurring event duplication
+
+**Goal:** One-click duplicate an event across multiple weeks, preserving slots, form schema, and title pattern. Admin action; atomic commit; warn on conflicts; audit every run.
+
+**Depends on:** Phase 21, 22 (form schema must exist to be copied).
+**Pillar:** Admin.
+**Requirements:** DUP-01..DUP-07
+**In-scope routes/code:** `backend/app/services/event_duplication.py` (new), `backend/app/routers/admin.py`, `frontend/src/pages/admin/AdminEventPage.jsx` (Duplicate action + drawer).
+**Success criteria:**
+  1. Admin opens an event, clicks "Duplicate…", picks weeks 5,6,7,8 — four new events are created with the same module, slot pattern, and form schema.
+  2. If week 7 already has an event for this module, the admin sees a warning and can proceed (skip existing) or cancel.
+  3. All-or-nothing: if any target week fails, nothing is created.
+  4. Each duplication writes one audit row with source + targets.
+  5. Playwright verifies the 4-week duplication flow end-to-end.
+
 **UI hint:** yes
-**Touches:** `frontend/src/pages/admin/*`, `frontend/src/components/admin/*`, `frontend/src/lib/api.js` (write — coordinate with participant worktree per ownership rules), `backend/app/routers/admin.py`, `backend/app/routers/users.py`, audit log services, CCPA export router.
+**Touches:** backend service + router + frontend admin page + tests.
 
-### Phase 17: Admin Templates CRUD
-**Goal:** Ship full CRUD on `module_templates` from the admin Templates page — list, create, edit, delete/archive — with form validation, optimistic UI, and the Phase 16 polish standards.
-**Depends on:** Phase 16 (admin shell + layout patterns).
-**Pillar:** 3 — Admin (part B)
-**Requirements:** ADMIN-08, ADMIN-09, ADMIN-10, ADMIN-11
-**In-scope routes:** `/admin/templates`
-**Success Criteria** (what must be TRUE):
-  1. Admin lands on `/admin/templates` and sees every module template with slug, name, capacity, and duration in a sortable list.
-  2. Admin can create a new module template via a form with client-side validation; the row appears in the list immediately.
-  3. Admin can edit an existing module template and see the change reflected in the list and in any downstream consumers.
-  4. Admin can delete or soft-archive a module template; the row disappears from the active list and is preserved if soft-archived.
-  5. The Templates page meets the Phase 16 standards (WCAG AA, 375px audit or graceful desktop-only message, loading/empty/error states).
-**Plans:** 2/2 plans complete
-Plans:
-- [x] 17-01-PLAN.md — Backend foundation: Alembic 0013 (type enum + session_count + duration fix), model/schema/service updates, restore endpoint, backend tests, api.js restore method
-- [x] 17-02-PLAN.md — Frontend rewrite: TemplatesSection.jsx SideDrawer CRUD pattern + tests + visual checkpoint
+### Phase 24: Scheduled reminder emails
+
+**Goal:** Automatic reminder emails at kickoff (Monday 07:00 PT of event week), 24h pre-event, and 2h pre-event. Idempotent (no double sends). Opt-out per-volunteer. Quiet hours 21:00–07:00 PT.
+
+**Depends on:** Phase 21.
+**Pillar:** Notifications / Celery Beat.
+**Requirements:** REM-01..REM-07
+**In-scope routes/code:** `backend/app/tasks/reminders.py` (new), `backend/celery_app.py` (Beat schedule), `backend/app/services/reminder_service.py` (idempotency + quiet-hours logic), `backend/app/models.py` (volunteer_preferences + reminder_log tables), `frontend/src/pages/public/ManageSignupsPage.jsx` (opt-out toggle), new admin Reminders page.
+**Success criteria:**
+  1. A test signup for an event Wednesday 10am PT receives: kickoff email (Monday 07:00 PT), 24h reminder (Tuesday 10:00 PT), 2h reminder (Wednesday 08:00 PT).
+  2. Running Beat twice sends exactly one reminder per `(signup_id, reminder_kind)`.
+  3. A volunteer who opts out on the manage page stops receiving reminders within one Beat tick.
+  4. Admin Reminders page lists upcoming sends and supports "send now."
+  5. Quiet-hours rule holds: no email sent between 21:00–07:00 PT.
+
+**UI hint:** yes (Manage opt-out + admin Reminders)
+**Touches:** Celery Beat + tasks + service + model + frontend manage + admin + tests.
+
+### Phase 25: Waitlist + auto-promote
+
+**Goal:** When a slot is full, new signups enter `waitlisted` state (not rejected). On cancel, the oldest waitlister auto-promotes and gets an email. Organizer can manually promote; admin can reorder.
+
+**Depends on:** Phase 22 (custom fields must carry over on promotion), Phase 24 (promotion email template).
+**Pillar:** Signup core.
+**Requirements:** WAIT-01..WAIT-06
+**In-scope routes/code:** `backend/app/services/waitlist.py` (new), `backend/app/routers/signups.py` (status = waitlisted branch), `backend/app/routers/admin.py` (reorder), `backend/app/routers/organizer.py` (promote), `frontend/src/pages/public/*` (waitlist position copy), `frontend/src/pages/organizer/OrganizerEventPage.jsx` + `admin/AdminEventPage.jsx`.
+**Success criteria:**
+  1. When a slot is at capacity, a new signup lands in `waitlisted` state and the participant sees their position in the confirmation email + manage page.
+  2. When a confirmed signup cancels, the oldest waitlister is promoted atomically and receives a "You're in!" email.
+  3. Organizer can manually promote a specific waitlister past the queue; admin can drag to reorder.
+  4. Playwright scenario: 3 waitlisters queue, confirmed cancels, #1 promotes; organizer promotes #3 manually; admin reorders remaining.
+
 **UI hint:** yes
-**Touches:** `frontend/src/pages/admin/TemplatesSection.jsx`, `backend/app/routers/admin.py`, `backend/app/models.py`, `backend/app/schemas.py`, `backend/app/services/template_service.py`, `frontend/src/lib/api.js`.
+**Touches:** backend services + routers + frontend public + organizer + admin + tests.
 
-### Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)
-**Goal:** Finally unblock and ship the LLM CSV extraction surface — Andy holds the Sci Trek CSV. Single-shot LLM call (Haiku default), structured Pydantic output, preview screen, atomic commit, eval-corpus logging, low-confidence flagging. This is the biggest net-new admin feature in v1.2-prod.
-**Depends on:** Phase 16 (admin shell), Phase 17 (templates exist before events can be imported against them).
-**Pillar:** 3 — Admin (part C)
-**Requirements:** ADMIN-12, ADMIN-13, ADMIN-14, ADMIN-15, ADMIN-16, ADMIN-17
-**In-scope routes:** `/admin/imports`
-**Success Criteria** (what must be TRUE):
-  1. Admin uploads a Sci Trek quarterly CSV file via the Imports page and sees a clear progress indicator while the backend processes it.
-  2. The backend single-shot LLM extraction (Haiku default, structured Pydantic output) returns canonical normalized JSON; every raw-CSV → normalized-JSON pair is logged for the eval corpus.
-  3. The Imports page shows a preview of the parsed events ("N events will be created, M skipped") with a confirm/cancel choice; low-confidence rows are flagged for manual review rather than silently guessed.
-  4. Confirming the import is atomic — all rows commit or none do; any error during commit triggers a full rollback and a clear error message.
-  5. A real Sci Trek quarterly CSV (the one Andy holds) imports cleanly end-to-end against the docker stack and the resulting events are visible in the public events-by-week browse.
-**Plans:** 2/2 plans complete
+### Phase 26: Broadcast messages
+
+**Goal:** Organizer or admin can email all confirmed signups for an event in one shot ("parking moved to Lot 22"). Rate-limited, audited, markdown body.
+
+**Depends on:** Phase 24 (email infra).
+**Pillar:** Organizer + admin.
+**Requirements:** BCAST-01..BCAST-06
+**In-scope routes/code:** `backend/app/routers/events.py` (new `POST /events/:id/broadcast`), `backend/app/services/broadcast.py`, rate-limit middleware, `frontend/src/components/BroadcastModal.jsx` (new), wired into organizer + admin event pages.
+**Success criteria:**
+  1. Organizer opens the event page, clicks "Message volunteers," writes a subject + markdown body, previews recipient count, sends.
+  2. All confirmed signups receive plain-text + HTML versions with an event context footer.
+  3. More than 5 broadcasts per hour per event returns 429 with a clear message.
+  4. Every send writes one audit row with actor + recipient count.
+
 **UI hint:** yes
-**Touches:** `frontend/src/pages/admin/AdminImportsPage.jsx`, new `backend/app/services/llm_import.py`, new `backend/app/routers/imports.py`, Pydantic schemas for canonical event JSON, eval-corpus storage, `module_templates` lookup.
+**Touches:** backend router + service + frontend modal + organizer + admin pages + tests.
 
-### Phase 19: Organizer role audit + UX polish
+### Phase 27: SMS reminders + no-show nudges
 
-**Rescoped 2026-04-16.** Product decision: the organiser is a scoped admin role — no dedicated organiser UI beyond the phone-first landing dashboard and the existing roster page. No per-event organiser ownership in the data model. Roster polish / end-of-event prompt / ORG-14 feature deferred to v1.3; they are nice-to-haves, not milestone blockers.
+**Goal:** AWS SNS for SMS reminders (2h pre-event) + no-show nudges (30 min after event start). TCPA-compliant opt-in on signup; STOP/HELP footer. Feature-flagged behind `SMS_ENABLED`. Placeholder creds fine during dev.
 
-**Goal (delivered):** Organisers have a clean phone-first entrypoint, route paths are normalized, and the scoped-admin model is documented.
-**Depends on:** Phase 18.
-**Pillar:** 4 — Organizer
-**Requirements delivered:** ORG-01 (route normalize), ORG-02 (landing dashboard).
-**Requirements deferred to v1.3:** ORG-03..14 (roster polish, end-of-event prompt, WCAG AA audit, 375px audit, ORG-14 audit-surfaced feature).
-**In-scope routes:** `/organizer`, `/organizer/events/:eventId/roster` (legacy `/organize/...` redirects here).
-**Success Criteria (delivered):**
-  1. ✓ `/organize/*` legacy routes redirect to `/organizer/*`; tests updated; `docs/ORG-AUDIT.md` documents the before/after.
-  2. ✓ `/organizer` is a phone-first dashboard listing all events (Today / Upcoming / Past tabs) with a tap-target "Open roster" button per event; organisers land here instead of `/admin/events`.
-  3. ✓ Organisers reuse the admin shell for event/template/import surfaces; admin-only surfaces (Users, Audit Logs, Exports) are hidden by RBAC.
-**Plans delivered:** 19-01 (route normalize + audit doc), 19-02 (organizer dashboard).
-**Plans deferred to v1.3:** 19-03 (roster polish), 19-04 (end-of-event prompt), 19-05 (WCAG AA / 375px audit / ORG-14).
+**Depends on:** Phase 24 (reminder infra patterns) + Phase 26 (broadcast patterns).
+**Pillar:** Notifications.
+**Requirements:** SMS-01..SMS-07
+**In-scope routes/code:** `backend/app/services/sms_service.py` (new; SNS client), `backend/app/tasks/sms_reminders.py` (new; Celery Beat), new migration for `volunteer_preferences.sms_opt_in`, frontend signup form opt-in checkbox, organizer roster "nudge no-shows" button.
+**Success criteria:**
+  1. A volunteer who opts in to SMS receives a text 2h before their event start time.
+  2. A volunteer with status `confirmed` who isn't marked attended within 30 min of event start time receives a nudge text.
+  3. Feature flag off → no SMS sends at all (safe default).
+  4. Organizer "nudge no-shows" button fires one SMS to currently-unmarked attendees.
+  5. SNS bounces / delivery statuses write to audit log.
+
+**UI hint:** yes (opt-in checkbox + organizer nudge button)
+**Touches:** SNS client + Celery tasks + service + migration + frontend signup form + organizer roster + tests.
+
+### Phase 28: QR check-in
+
+**Goal:** Per-signup QR code embedded in the confirmation email. Organizer scans at the venue to mark attended fast. Reuses existing self-check-in magic-link URL — no new security surface.
+
+**Depends on:** Phase 24 (email surface).
+**Pillar:** Organizer.
+**Requirements:** QR-01..QR-06
+**In-scope routes/code:** `backend/app/services/qr_service.py` (new; `qrcode` lib), confirmation email template includes QR (inline PNG), `frontend/src/pages/organizer/RosterPage.jsx` (new "Scan QR" button + camera modal), `frontend/src/components/QRScanner.jsx` (new; `@zxing/browser`).
+**Success criteria:**
+  1. Confirmation email includes a scannable QR that encodes the existing self-check-in URL.
+  2. Organizer taps "Scan QR" on the roster page, grants camera permission, scans the QR — the roster row for that signup auto-selects and prompts mark-attended.
+  3. Manual mark-attended fallback is available if camera fails.
+  4. No new auth token shapes; QR just encodes existing HMAC URL.
+
 **UI hint:** yes
-**Touches (delivered):** `frontend/src/pages/organizer/OrganizerDashboard.jsx` (new), `frontend/src/App.jsx`, `frontend/tests/OrganizerRosterPage.test.jsx`, `e2e/organizer-check-in.spec.js`, `docs/ORG-AUDIT.md` (new).
+**Touches:** qrcode lib + email template + QR service + roster page + new QR scanner component + tests.
 
-### Phase 20: Cross-role integration
-**Goal:** Prove the three roles work together end-to-end with new Playwright scenarios + a manual smoke checklist + a final doc sweep. This is the v1.2-prod acceptance gate — if Phase 20 ships green, the milestone is done.
-**Depends on:** Phase 15, Phase 18, Phase 19 (every pillar must be shipped before integration tests can exercise them).
-**Pillar:** 5 — Integration
-**Requirements:** INTEG-01, INTEG-02, INTEG-03, INTEG-04, INTEG-05, INTEG-06
-**Success Criteria** (what must be TRUE):
-  1. A cross-role Playwright scenario runs the full loop in CI: admin creates an event → organizer manages the roster → participant signs up via the public flow → admin sees both the signup and the resulting check-in in the audit log.
-  2. The Playwright suite has at least 4 new cross-role scenarios on top of the 16 from v1.1, and the full suite is green in CI on every PR.
-  3. A manual smoke pass against the docker stack drives all three roles in one sitting following `docs/smoke-checklist.md`, with no manual DB nudges and no failed requests.
-  4. Any cross-role bugs surfaced during integration are fixed (or filed as explicit out-of-scope follow-ups) before sign-off.
-  5. PROJECT.md, README, CLAUDE.md, and in-app copy reflect the v1.2-prod state — no stale "yearly CSV", "student account", or `/organize` references remain.
-**Plans:** 3/3 plans complete
-Plans:
-- [x] 20-01-PLAN.md — Cross-role Playwright scenarios (5 scenarios × 6 projects = 42 green runs)
-- [x] 20-02-PLAN.md — Manual smoke checklist (`docs/smoke-checklist.md`)
-- [x] 20-03-PLAN.md — Doc sweep + milestone close-out + INTEG-05 bug triage
-**UI hint:** no
-**Touches:** `e2e/cross-role.spec.js` (new), `docs/smoke-checklist.md` (new), `README.md`, `CLAUDE.md`, `IDEAS.md`, `.planning/ROADMAP.md`, `.planning/STATE.md`, `.planning/phases/20-cross-role-integration/20-bugs-log.md`.
+### Phase 29: Slot swap + signup locking + past-event hiding + final integration
 
-## Progress Table
+**Goal:** Close out v1.3 with the three small gaps (swap between slots, signup windows, hide past events) and the cross-feature integration gate that proves all v1.3 features compose without breaking.
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 14. Collaboration setup | 3/4 | In Progress |  |
-| 15. Participant role audit + UX polish | 7/7 | Complete    | 2026-04-16 |
-| 16. Admin shell + retirement + Overview/Audit/Users/Exports | 7/7 | Complete    | 2026-04-15 |
-| 17. Admin Templates CRUD | 2/2 | Complete    | 2026-04-16 |
-| 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 2/2 | Complete    | 2026-04-16 |
-| 19. Organizer role audit + UX polish | 2/2 (rescoped) | Complete    | 2026-04-16 |
-| 20. Cross-role integration | 3/3 | Complete    | 2026-04-17 |
+**Depends on:** Phases 21–28 all shipped.
+**Pillar:** Mixed + integration.
+**Requirements:** SWAP-01..04, LOCK-01..02, HIDE-01, INTEG-01..05
+**In-scope routes/code:** new swap service + participant manage-page action + organizer/admin drag-between-slots, events table `signup_opens_at` + `signup_closes_at`, admin `hide_past_events_from_public` toggle, new Playwright `v1.3-integration.spec.js`, `docs/smoke-checklist.md` + `README.md` updates.
+**Success criteria:**
+  1. Participant swaps their signup from slot A to slot B via the manage page; orientation credit preserved; audit row written.
+  2. Organizer + admin can move signups between slots from roster + admin event page.
+  3. Events with a `signup_opens_at` in the future show "Opens on…" copy to participants; past `signup_closes_at` disables the signup form (organizer/admin still can add).
+  4. Past events are hidden from public browse when the toggle is on; visible to admin always.
+  5. v1.3 cross-feature Playwright scenario passes: admin duplicates event → organizer adds a custom field → volunteer signs up (goes to waitlist) → other volunteer cancels → promoted volunteer gets email → organizer scans QR at check-in.
+  6. `/gsd-audit-milestone` passes without blockers.
 
-## Coverage
+**UI hint:** yes
+**Touches:** a little of everywhere + Playwright + docs.
 
-All 68 v1.2-prod requirements are mapped to exactly one phase:
+## Cross-cutting bars (every phase must hold)
 
-| Pillar | Requirements | Count | Phase(s) |
-|---|---|---:|---|
-| 1. Collaboration | COLLAB-01..07 | 7 | 14 |
-| 2. Participant | PART-01..14 | 14 | 15 |
-| 3a. Admin shell + retirement | ADMIN-01, 02, 03 | 3 | 16 |
-| 3b. Admin Overview | ADMIN-04, 05 | 2 | 16 |
-| 3c. Admin Audit Log | ADMIN-06, 07 | 2 | 16 |
-| 3d. Admin Templates | ADMIN-08, 09, 10, 11 | 4 | 17 |
-| 3e. Admin LLM Imports | ADMIN-12, 13, 14, 15, 16, 17 | 6 | 18 |
-| 3f. Admin Users | ADMIN-18, 19, 20, 21 | 4 | 16 |
-| 3g. Admin Exports | ADMIN-22, 23, 24 | 3 | 16 |
-| 3h. Admin UX polish | ADMIN-25, 26, 27 | 3 | 16 |
-| 4. Organizer | ORG-01..14 | 14 | 19 |
-| 5. Integration | INTEG-01..06 | 6 | 20 |
-| **Total** |  | **68** |  |
+- WCAG 2.1 AA on every new surface. axe-core clean in CI.
+- 375px first. Thumb-zone CTAs. ≥44px targets.
+- Organizer override with audit on every new state.
+- Loading / empty / error states on every data-fetching page.
+- Tests: service unit tests + Playwright e2e where user-facing.
+- No participant accounts. No multi-tenant. No payments.
 
-No orphaned requirements. No duplicates.
+## Out of scope (from seed)
 
-## Out of Scope (explicit)
-
-- **UCSB production deployment** — Phase 8 stays deferred; v1.2-prod is feature-completeness only. Deploy is its own milestone after v1.2-prod.
-- **Participant accounts / login / OAuth** — locked out from v1.1.
-- **AI matching, recommendation engine, agentic event creation** — locked out from v1.0.
-- **Real-time WebSockets** — 5s polling is sufficient.
-- **i18n / Spanish support** — deferred.
-- **Multi-tenant / SaaS features** — single Sci Trek org only.
-- **Net-new product capabilities** beyond what's listed in PART-13 / ORG-14 — this milestone is audit + polish + targeted fills, not a v2 feature push.
-
-## Notes
-
-- **v1.0 + v1.1 phase dirs preserved as reference, not archived.** `.planning/phases/00-*` through `.planning/phases/13-*` stay on disk so v1.2-prod work can grep for prior decisions, schemas, and patterns. Same convention v1.1 used for v1.0.
-- **Parallelism is the whole point of Phase 14.** Phases 15 and 16 are designed to run on different worktrees by Andy and Hung. The COLLAB-03 file-ownership table must call out `frontend/src/lib/api.js`, `frontend/src/App.jsx` (routes), and any shared component files as PR-only edits to keep the two worktrees from colliding.
-- **Sequencing risk: admin and organizer share code surface.** Both pillars touch event create/edit and magic-link infrastructure (admin manages events; organizer can edit their own; self check-in via magic link spans both). To avoid two worktrees fighting over the same files, organizer (Phase 19) waits until admin has reached a stable point at the end of Phase 18. This is a deliberate sequencing choice — the alternative is more merge conflicts than two devs can absorb in a 6-week window.
-- **Phase 18 (LLM CSV import) is the milestone's biggest net-new feature.** Everything else is audit + polish + targeted fills. If Phase 18 slips, plan a focused recovery rather than spreading the LLM work across other phases.
-- **Cross-cutting standards** (mobile-first 375px, WCAG AA, docker-network test pattern, atomic commits, PR per phase, loginless for participants) apply to every phase per `REQUIREMENTS-v1.2-prod.md` "Cross-Cutting" section. The success criteria of each phase reference these — they are non-negotiable, not optional polish.
-- **PART-13 and ORG-14 deliberately defer their scope to discuss-phase.** "One new audit-surfaced feature" is a known-unknown; the candidate list (e.g. add-to-calendar, roster CSV export, broadcast message) is locked when planning the phase, not when writing the roadmap.
-- **`/gsd-plan-phase 14` is the next action.** Phase 14 ships first because everything else depends on the worktree workflow being defined and tested.
-
----
-*Roadmap created: 2026-04-14 — v1.2-prod milestone opened*
-*Milestone closed: 2026-04-17 — v1.2-prod shipped (Phases 14–20, except Phase 14 which carries one plan deferred to v1.3 and Phase 19 which was rescoped with ORG-03..14 deferred to v1.3)*
-*Next: TBD — v1.2-prod complete; next milestone (deployment / v1.3 organizer polish) decision pending*
+- Payments, donations, tickets, auctions.
+- Billing, quotas, seat limits.
+- SSO, custom domains, branded portals.
+- Multi-tenant / SaaS.
+- UCSB production deployment (separate milestone after v1.3).
