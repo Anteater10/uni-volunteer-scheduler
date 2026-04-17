@@ -66,6 +66,11 @@ export default function ManageSignupsPage({ tokenOverride }) {
   const [canceling, setCanceling] = useState(false);
   const [cancelAllOpen, setCancelAllOpen] = useState(false);
   const [cancelingAll, setCancelingAll] = useState(false);
+  // Phase 29 (SWAP-02) — swap target state.
+  const [swapSource, setSwapSource] = useState(null); // {signup_id}
+  const [swapping, setSwapping] = useState(false);
+  const [eventSlots, setEventSlots] = useState([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["manage-signups", token],
@@ -147,6 +152,44 @@ export default function ManageSignupsPage({ tokenOverride }) {
     } finally {
       setCanceling(false);
       setCancelTarget(null);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Swap to different slot (Phase 29 SWAP-02)
+  // ------------------------------------------------------------------
+  async function openSwap(signup) {
+    setSwapSource(signup);
+    setLoadingSlots(true);
+    try {
+      const ev = await api.public.getEvent(data.event_id);
+      setEventSlots(ev.slots || []);
+    } catch (err) {
+      toast.error(err?.message || "Failed to load slots.");
+      setSwapSource(null);
+    } finally {
+      setLoadingSlots(false);
+    }
+  }
+
+  async function handleSwapConfirm(targetSlotId) {
+    if (!swapSource || !targetSlotId) return;
+    setSwapping(true);
+    try {
+      await api.public.swapSignup(swapSource.signup_id, targetSlotId, token);
+      toast.success("Moved to new slot.");
+      setSwapSource(null);
+      refetch();
+    } catch (err) {
+      if (err?.status === 409) {
+        toast.error("That slot is full.");
+      } else if (err?.status === 400) {
+        toast.error(err?.message || "Slot not available for this event.");
+      } else {
+        toast.error(err?.message || "Failed to move signup.");
+      }
+    } finally {
+      setSwapping(false);
     }
   }
 
@@ -261,14 +304,27 @@ export default function ManageSignupsPage({ tokenOverride }) {
               )}
             </div>
 
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => setCancelTarget(signup.signup_id)}
-              disabled={canceling || cancelingAll}
-            >
-              Cancel
-            </Button>
+            <div className="flex flex-col gap-2 items-end">
+              {/* Phase 29 (SWAP-02) — move to a different slot in the same event */}
+              {signup.status !== "cancelled" && signup.status !== "waitlisted" && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => openSwap(signup)}
+                  disabled={canceling || cancelingAll || swapping}
+                >
+                  Move
+                </Button>
+              )}
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => setCancelTarget(signup.signup_id)}
+                disabled={canceling || cancelingAll}
+              >
+                Cancel
+              </Button>
+            </div>
           </div>
         </Card>
       ))}
@@ -313,6 +369,63 @@ export default function ManageSignupsPage({ tokenOverride }) {
             {canceling ? "Canceling…" : "Yes, cancel"}
           </Button>
         </div>
+      </Modal>
+
+      {/* Phase 29 (SWAP-02) — Move-to-different-slot drawer modal */}
+      <Modal
+        open={!!swapSource}
+        onClose={() => !swapping && setSwapSource(null)}
+        title="Move to different slot"
+      >
+        {loadingSlots ? (
+          <Skeleton className="h-24 rounded" />
+        ) : (
+          <>
+            <p className="text-sm text-gray-600 mb-3">
+              Pick another slot in the same event. Full slots are disabled.
+            </p>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {eventSlots
+                .filter((s) => s.id !== swapSource?.slot?.id)
+                .map((s) => {
+                  const remaining = (s.capacity || 0) - (s.filled || 0);
+                  const disabled = remaining <= 0 || swapping;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => handleSwapConfirm(s.id)}
+                      className={
+                        "w-full text-left border rounded-lg p-3 transition " +
+                        (disabled
+                          ? "opacity-50 cursor-not-allowed bg-gray-50"
+                          : "hover:border-blue-500 hover:bg-blue-50")
+                      }
+                    >
+                      <div className="text-sm font-medium text-gray-900">
+                        {formatDate(s.date)} · {formatTime(s.start_time)}–
+                        {formatTime(s.end_time)}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {s.location || "TBD"} ·{" "}
+                        {disabled ? "Full" : `${remaining} open`}
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+            <div className="flex justify-end pt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setSwapSource(null)}
+                disabled={swapping}
+              >
+                Cancel
+              </Button>
+            </div>
+          </>
+        )}
       </Modal>
 
       {/* Cancel all modal — UI-SPEC §Destructive confirmations row 2 */}
