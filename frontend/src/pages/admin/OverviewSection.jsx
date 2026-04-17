@@ -12,6 +12,7 @@ import { api } from "../../lib/api";
 import { Card, Button, Skeleton, EmptyState } from "../../components/ui";
 import StatCard from "../../components/admin/StatCard";
 import RoleBadge from "../../components/admin/RoleBadge";
+import SiteSettingsCard from "../../components/admin/SiteSettingsCard";
 import { useAdminPageTitle } from "./AdminLayout";
 
 // ---------------------------------------------------------------------------
@@ -295,6 +296,9 @@ export default function OverviewSection() {
           </ul>
         )}
       </Card>
+
+      {/* Phase 29 (HIDE-01) — Site settings toggle (admin-only; card handles role gating implicitly via the endpoint's admin require_role). */}
+      <SiteSettingsCard />
 
       {/* ---------------- Last updated footer ---------------- */}
       <p className="text-right text-xs text-gray-500">
