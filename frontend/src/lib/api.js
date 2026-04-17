@@ -523,6 +523,12 @@ export const api = {
     orientationStatus: (email) => publicOrientationStatus(email),
     // Phase 21
     orientationCheck: (email, eventId) => publicOrientationCheck(email, eventId),
+    // Phase 22
+    getFormSchema: (eventId) =>
+      request(`/public/events/${eventId}/form-schema`, {
+        method: "GET",
+        auth: false,
+      }),
     confirmSignup: (token) => publicConfirmSignup(token),
     getManageSignups: (token) => publicGetManageSignups(token),
     cancelSignup: (signupId, token) => publicCancelSignup(signupId, token),
@@ -563,6 +569,12 @@ export const api = {
         `/organizer/events/${eventId}/signups/${signupId}/grant-orientation`,
         { method: "POST" },
       ),
+    // Phase 22 — quick-add form field from roster page
+    appendEventField: (eventId, field) =>
+      request(`/organizer/events/${eventId}/form-fields`, {
+        method: "POST",
+        body: field,
+      }),
   },
 
   admin: {
@@ -642,7 +654,19 @@ export const api = {
       delete: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
       bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/module-templates/${s}`, { method: "DELETE" }))),
       restore: (slug) => request(`/admin/module-templates/${slug}/restore`, { method: "POST" }),
+      // Phase 22 — default form schema on template
+      setDefaultFormSchema: (slug, schema) =>
+        request(`/admin/templates/${slug}/default-form-schema`, {
+          method: "PUT",
+          body: { schema },
+        }),
     },
+    // Phase 22 — per-event form schema override
+    setEventFormSchema: (eventId, schema) =>
+      request(`/admin/events/${eventId}/form-schema`, {
+        method: "PUT",
+        body: { schema },
+      }),
     // Phase 21 — orientation credit engine
     orientationCredits: {
       list: (params = {}) =>

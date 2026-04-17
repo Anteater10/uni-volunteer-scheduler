@@ -14,6 +14,7 @@ import {
   EmptyState,
   Skeleton,
 } from "../components/ui";
+import FormFieldsDrawer from "../components/admin/FormFieldsDrawer";
 import { toast } from "../state/toast";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 
@@ -57,6 +58,8 @@ export default function AdminEventPage() {
   const [privacy, setPrivacy] = useState("full");
   const [confirmExport, setConfirmExport] = useState(false);
   const [err, setErr] = useState("");
+  // Phase 22 — form fields drawer
+  const [formFieldsOpen, setFormFieldsOpen] = useState(false);
 
   const analyticsQ = useQuery({
     queryKey: ["adminEventAnalytics", eventId],
@@ -94,6 +97,22 @@ export default function AdminEventPage() {
     onError: (err) => {
       toast.error(err?.message || "Grant failed");
     },
+  });
+
+  // Phase 22 — effective form schema + save
+  const formSchemaQ = useQuery({
+    queryKey: ["eventFormSchema", eventId],
+    queryFn: () => api.public.getFormSchema(eventId),
+  });
+  const setEventSchemaMut = useMutation({
+    mutationFn: (schema) => api.admin.setEventFormSchema(eventId, schema),
+    onSuccess: () => {
+      toast.success("Form fields saved");
+      setFormFieldsOpen(false);
+      qc.invalidateQueries({ queryKey: ["eventFormSchema", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
+    },
+    onError: (e) => toast.error(e?.message || "Save failed"),
   });
 
   const grouped = useMemo(() => {
@@ -219,6 +238,30 @@ export default function AdminEventPage() {
 
       <section>
         <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+          Form fields
+        </h2>
+        <Card>
+          {formSchemaQ.isPending ? (
+            <Skeleton className="h-10" />
+          ) : (
+            <>
+              <p className="text-sm text-[var(--color-fg-muted)] mb-2">
+                {(formSchemaQ.data?.schema || []).length === 0
+                  ? "No custom signup questions configured. Volunteers will see only the standard name / email / phone fields."
+                  : `${(formSchemaQ.data?.schema || []).length} custom question${
+                      (formSchemaQ.data?.schema || []).length === 1 ? "" : "s"
+                    } on the signup form.`}
+              </p>
+              <Button onClick={() => setFormFieldsOpen(true)}>
+                Edit form fields
+              </Button>
+            </>
+          )}
+        </Card>
+      </section>
+
+      <section>
+        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
           Signed-up volunteers
         </h2>
         {rosterQ.isPending ? (
@@ -263,29 +306,46 @@ export default function AdminEventPage() {
                     return (
                       <li
                         key={r.signup_id || r.id}
-                        className="text-sm flex flex-wrap items-center justify-between gap-2"
+                        className="text-sm py-1"
                       >
-                        <span>
-                          {name}
-                          {email && email !== name ? (
-                            <span className="text-[var(--color-fg-muted)] ml-2">
-                              ({email})
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="flex items-center gap-2">
-                          <span className="text-[var(--color-fg-muted)]">{r.status}</span>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            onClick={() =>
-                              grantOrientationMut.mutate(r.signup_id || r.id)
-                            }
-                            disabled={grantOrientationMut.isPending}
-                          >
-                            Grant orientation
-                          </Button>
-                        </span>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span>
+                            {name}
+                            {email && email !== name ? (
+                              <span className="text-[var(--color-fg-muted)] ml-2">
+                                ({email})
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="flex items-center gap-2">
+                            <span className="text-[var(--color-fg-muted)]">{r.status}</span>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() =>
+                                grantOrientationMut.mutate(r.signup_id || r.id)
+                              }
+                              disabled={grantOrientationMut.isPending}
+                            >
+                              Grant orientation
+                            </Button>
+                          </span>
+                        </div>
+                        {Array.isArray(r.responses) && r.responses.length > 0 && (
+                          <dl className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-[var(--color-fg-muted)]">
+                            {r.responses.map((resp) => (
+                              <div key={resp.field_id} className="flex gap-1">
+                                <dt className="font-medium">{resp.label}:</dt>
+                                <dd>
+                                  {resp.value_text ??
+                                    (resp.value_json
+                                      ? JSON.stringify(resp.value_json)
+                                      : "—")}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        )}
                       </li>
                     );
                   })}
@@ -295,6 +355,16 @@ export default function AdminEventPage() {
           </div>
         )}
       </section>
+
+      {/* Phase 22 — event form schema drawer */}
+      <FormFieldsDrawer
+        open={formFieldsOpen}
+        onClose={() => setFormFieldsOpen(false)}
+        title="Form fields — this event"
+        schema={formSchemaQ.data?.schema || []}
+        saving={setEventSchemaMut.isPending}
+        onSave={(nextSchema) => setEventSchemaMut.mutate(nextSchema)}
+      />
 
       <Modal
         open={confirmExport}

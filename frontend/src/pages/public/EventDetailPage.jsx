@@ -439,6 +439,15 @@ export default function EventDetailPage() {
     enabled: !!eventId,
   });
 
+  // Phase 22 — effective custom form schema
+  const formSchemaQ = useQuery({
+    queryKey: ["publicEventFormSchema", eventId],
+    queryFn: () => api.public.getFormSchema(eventId),
+    enabled: !!eventId,
+  });
+  const formSchema = formSchemaQ.data?.schema || [];
+  const [responses, setResponses] = useState({}); // { field_id: value }
+
   // Build slot lookup and group slots by date
   const { slotMap, orientationSlots, periodSlotsByDate } = useMemo(() => {
     const slots = eventQ.data?.slots || [];
@@ -518,9 +527,165 @@ export default function EventDetailPage() {
     } else if (!isValidPhone(identity.phone)) {
       errors.phone = "Use a US format: (805) 555-1234 or +18055551234";
     }
+    // Phase 22 — validate required custom fields. Server accepts missing
+    // (organizer override), but we block client-side unless the volunteer
+    // explicitly confirms skip. For v1.3 we just block at submit: organizer
+    // can still add the volunteer later.
+    for (const f of formSchema) {
+      if (!f.required) continue;
+      const v = responses[f.id];
+      const isBlank =
+        v === undefined ||
+        v === null ||
+        (typeof v === "string" && !v.trim()) ||
+        (Array.isArray(v) && v.length === 0);
+      if (isBlank) {
+        errors[`custom_${f.id}`] = `Please answer: ${f.label}`;
+      }
+    }
     // Touch fullName so the helper isn't dead code if a future linter trims it.
     void fullName;
     return errors;
+  }
+
+  // Phase 22 — dynamic form renderer
+  function renderFormField(field) {
+    const fieldErrKey = `custom_${field.id}`;
+    const value = responses[field.id];
+    function setValue(v) {
+      setResponses((prev) => ({ ...prev, [field.id]: v }));
+      if (formErrors[fieldErrKey]) {
+        setFormErrors((prev) => {
+          const n = { ...prev };
+          delete n[fieldErrKey];
+          return n;
+        });
+      }
+    }
+    const fid = `ff-${field.id}`;
+    let input;
+    switch (field.type) {
+      case "textarea":
+        input = (
+          <textarea
+            id={fid}
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+            className="w-full min-h-16 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+          />
+        );
+        break;
+      case "select":
+        input = (
+          <select
+            id={fid}
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+          >
+            <option value="">— select —</option>
+            {(field.options || []).map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        );
+        break;
+      case "radio":
+        input = (
+          <div className="space-y-1" role="radiogroup" aria-labelledby={`${fid}-label`}>
+            {(field.options || []).map((o) => (
+              <label key={o} className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={fid}
+                  value={o}
+                  checked={value === o}
+                  onChange={() => setValue(o)}
+                />
+                {o}
+              </label>
+            ))}
+          </div>
+        );
+        break;
+      case "checkbox": {
+        const selected = new Set(Array.isArray(value) ? value : []);
+        input = (
+          <div className="space-y-1">
+            {(field.options || []).map((o) => (
+              <label key={o} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selected.has(o)}
+                  onChange={(e) => {
+                    const next = new Set(selected);
+                    if (e.target.checked) next.add(o);
+                    else next.delete(o);
+                    setValue(Array.from(next));
+                  }}
+                />
+                {o}
+              </label>
+            ))}
+          </div>
+        );
+        break;
+      }
+      case "phone":
+        input = (
+          <Input
+            id={fid}
+            type="tel"
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        );
+        break;
+      case "email":
+        input = (
+          <Input
+            id={fid}
+            type="email"
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        );
+        break;
+      case "text":
+      default:
+        input = (
+          <Input
+            id={fid}
+            type="text"
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        );
+    }
+    return (
+      <div key={field.id}>
+        <Label htmlFor={fid} id={`${fid}-label`}>
+          {field.label}
+          {field.required ? " *" : ""}
+        </Label>
+        {input}
+        {field.help_text && (
+          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+            {field.help_text}
+          </p>
+        )}
+        <FieldError>{formErrors[fieldErrKey]}</FieldError>
+      </div>
+    );
+  }
+
+  // Phase 22 — build the response array from state
+  function buildResponsesArray() {
+    return Object.entries(responses)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([field_id, value]) => ({ field_id, value }));
   }
 
   // Submit signup
@@ -531,6 +696,7 @@ export default function EventDetailPage() {
       const response = await api.public.createSignup({
         ...identity,
         slot_ids: [...selectedSlotIds],
+        responses: buildResponsesArray(),
       });
       setSuccessData({ ...response, slots: selectedSlots });
       setStep("success");
@@ -616,6 +782,7 @@ export default function EventDetailPage() {
     setSubmitError(null);
     setSuccessData(null);
     setHighlightOrientation(false);
+    setResponses({});
   }
 
   function handleOrientationYes() {
@@ -954,6 +1121,15 @@ export default function EventDetailPage() {
               />
               <FieldError>{formErrors.phone}</FieldError>
             </div>
+            {/* Phase 22 — dynamic custom form fields */}
+            {formSchema.length > 0 && (
+              <div className="pt-2 border-t border-[var(--color-border)] flex flex-col gap-4">
+                <h3 className="text-sm font-semibold">
+                  A few more questions
+                </h3>
+                {formSchema.map((f) => renderFormField(f))}
+              </div>
+            )}
             <Button
               type="submit"
               variant="primary"
