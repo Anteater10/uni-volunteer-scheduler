@@ -9,6 +9,7 @@ from .. import models, schemas
 from ..celery_app import send_email_notification
 from ..database import get_db
 from ..deps import get_current_user, log_action
+from ..services.swap_service import swap_signup as _swap_signup
 from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/signups", tags=["signups"])
@@ -187,3 +188,32 @@ def signup_ics(
 
     headers = {"Content-Disposition": f'attachment; filename="signup_{signup.id}.ics"'}
     return Response(content=ics, media_type="text/calendar", headers=headers)
+
+
+@router.post("/{signup_id}/swap", response_model=schemas.SignupRead)
+def swap_signup_authed(
+    signup_id: str,
+    payload: schemas.SignupMoveRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Phase 29 (SWAP-01/03/04) — staff-initiated swap.
+
+    Admin/organizer move a signup between slots in the same event. Reuses
+    the shared ``swap_service.swap_signup`` which hard-fails on target
+    full (409) and cross-event (400). Participant swap goes through the
+    token-gated ``/public/signups/{id}/swap`` endpoint instead.
+    """
+    if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    updated = _swap_signup(
+        db,
+        signup_id=signup_id,
+        target_slot_id=payload.target_slot_id,
+        actor=current_user,
+        actor_label=current_user.role.value,
+    )
+    db.commit()
+    db.refresh(updated)
+    return updated
