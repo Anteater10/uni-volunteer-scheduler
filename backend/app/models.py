@@ -204,6 +204,9 @@ class Event(Base):
     week_number = Column(Integer, nullable=True)
     school = Column(String(255), nullable=True)
 
+    # Phase 22: per-event form schema override. NULL means "use template default".
+    form_schema = Column(JSONB, nullable=True, server_default=None)
+
     # Relationships
     owner = relationship("User", back_populates="events")
     slots = relationship("Slot", back_populates="event", cascade="all, delete-orphan")
@@ -282,6 +285,12 @@ class Signup(Base):
     slot = relationship("Slot", back_populates="signups")
     answers = relationship("CustomAnswer", back_populates="signup", cascade="all, delete-orphan")
     sent_notifications = relationship("SentNotification", back_populates="signup", cascade="all, delete-orphan")
+    # Phase 22: dynamic form responses (replaces CustomAnswer going forward).
+    responses = relationship(
+        "SignupResponse",
+        back_populates="signup",
+        cascade="all, delete-orphan",
+    )
 
 
 # -------------------------
@@ -524,6 +533,11 @@ class ModuleTemplate(Base):
     # an orientation family without merging slugs. Nullable; defaults to `slug` on
     # backfill — resolver prefers family_key when set.
     family_key = Column(String, nullable=True)
+    # Phase 22: default form schema for every event created from this template.
+    # JSONB list of field descriptors; see backend/app/services/form_schema_service.py.
+    default_form_schema = Column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -642,6 +656,56 @@ class SentNotification(Base):
     )
 
     signup = relationship("Signup", back_populates="sent_notifications")
+
+# -------------------------
+# Signup responses (Phase 22 — custom form fields)
+# -------------------------
+
+
+class SignupResponse(Base):
+    """One per (signup, field_id). Free-text in ``value_text``; structured
+    answers (multi-select, arrays) in ``value_json``. The effective schema
+    lives on the event (``Event.form_schema``) or template
+    (``ModuleTemplate.default_form_schema``); responses are snapshotted by
+    ``field_id`` so schema edits don't retroactively break old signups.
+    """
+
+    __tablename__ = "signup_responses"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("signups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field_id = Column(String(128), nullable=False)
+    value_text = Column(Text, nullable=True)
+    value_json = Column(JSONB, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_signup_responses_signup_field",
+            "signup_id",
+            "field_id",
+            unique=True,
+        ),
+    )
+
+    signup = relationship("Signup", back_populates="responses")
+
 
 # Phase 08: PrereqOverride model REMOVED (D-05).
 # The legacy table was dropped in migration 0009. Router/service cleanup
