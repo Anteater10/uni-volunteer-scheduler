@@ -52,6 +52,8 @@ ACTION_LABELS: dict[str, str] = {
     # Phase 25 — waitlist manual override surfaces
     "waitlist_promote_manual": "Promoted from waitlist (manual override)",
     "waitlist_reorder": "Reordered the waitlist",
+    # Phase 26 — broadcast messages
+    "broadcast_sent": "Sent a broadcast message",
 }
 
 
