@@ -474,6 +474,8 @@ class ModuleTemplateRead(ORMBase):
     materials: List[str] = []
     description: Optional[str] = None
     metadata: dict = Field(default={}, validation_alias="metadata_")
+    # Phase 22: default form schema list (used by FormFieldsDrawer)
+    default_form_schema: List[dict] = []
     deleted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -529,6 +531,10 @@ class VolunteerRead(BaseModel):
 
 class PublicSignupCreate(VolunteerCreate):
     slot_ids: List[UUID] = Field(min_length=1, max_length=20)
+    # Phase 22: optional dynamic form responses keyed by field_id. Soft-warn:
+    # backend does NOT raise if a required field is skipped — just records
+    # the missing field_ids in the response for organizer display.
+    responses: Optional[List["SignupResponseCreate"]] = None
 
 
 class PublicSignupResponse(BaseModel):
@@ -536,6 +542,10 @@ class PublicSignupResponse(BaseModel):
     signup_ids: List[UUID]
     magic_link_sent: bool
     confirm_token: str | None = None
+    # Phase 22: soft-warn list of field_ids that were required but left blank.
+    # Clients can surface these to the participant without blocking the signup
+    # (organizer remains the ultimate authority on missing answers).
+    missing_required: List[str] = []
 
 
 class SlotSignupRead(BaseModel):
@@ -623,3 +633,57 @@ class TokenedManageRead(BaseModel):
     volunteer_last_name: str
     event_id: UUID
     signups: List[TokenedSignupRead]
+
+
+# =========================
+# CUSTOM FORM FIELDS (Phase 22)
+# =========================
+# The form schema is a JSON array of field descriptors stored on
+# ``module_templates.default_form_schema`` and ``events.form_schema``.
+# Responses land in the ``signup_responses`` table.
+
+FormFieldType = Literal[
+    "text",
+    "textarea",
+    "select",
+    "radio",
+    "checkbox",
+    "phone",
+    "email",
+]
+
+
+class FormFieldSchema(BaseModel):
+    """One field descriptor in a form schema.
+
+    - ``id`` must be a stable, unique, URL-safe slug. Never changes once
+      used — responses are snapshotted by it.
+    - ``options`` is required when ``type`` is select/radio/checkbox.
+    """
+
+    id: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=255)
+    type: FormFieldType
+    required: bool = False
+    help_text: Optional[str] = None
+    options: Optional[List[str]] = None
+    order: int = 0
+
+
+class SignupResponseCreate(BaseModel):
+    """Inbound payload: one response per field_id from the participant."""
+
+    field_id: str = Field(min_length=1, max_length=64)
+    # ``value`` can be a string (free text) OR list/dict (multi-select,
+    # structured) — the service decides how to persist it.
+    value: Any = None
+
+
+class SignupResponseRead(ORMBase):
+    field_id: str
+    value_text: Optional[str] = None
+    value_json: Optional[Any] = None
+    # Decorated by the service with the field's current label when joined
+    # against the event's effective schema. Optional so raw ORM loads still
+    # validate.
+    label: Optional[str] = None
