@@ -35,3 +35,6 @@ backend/.coverage
 .claude/
 .gsd/
 .continue-here.md
+
+# --- local scratch ---
+screenshots/

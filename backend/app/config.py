@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://redis:6379/2"
 
     # Email / SMS
+    # email_mode: "smtp" routes via smtplib (dev: Mailpit; prod: AWS SES SMTP).
+    #             "sendgrid" routes via the SendGrid HTTPS API.
+    email_mode: str = "smtp"
+    smtp_host: str = "mailpit"
+    smtp_port: int = 1025
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = False
     sendgrid_api_key: str | None = None
     email_from_address: str | None = None
     twilio_account_sid: str | None = None
