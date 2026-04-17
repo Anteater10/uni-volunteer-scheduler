@@ -16,6 +16,7 @@ import {
 } from "../components/ui";
 import FormFieldsDrawer from "../components/admin/FormFieldsDrawer";
 import DuplicateEventDrawer from "../components/admin/DuplicateEventDrawer";
+import BroadcastModal from "../components/BroadcastModal";
 import { toast } from "../state/toast";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 import { useAuth } from "../state/useAuth";
@@ -68,6 +69,8 @@ export default function AdminEventPage() {
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   // Phase 25 — waitlist reorder modal
   const [reorderState, setReorderState] = useState(null); // { slotId, ids: [...] }
+  // Phase 26 — broadcast messages
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
 
   const analyticsQ = useQuery({
     queryKey: ["adminEventAnalytics", eventId],
@@ -238,6 +241,9 @@ export default function AdminEventPage() {
           <div className="flex gap-2">
             <Button as={Link} to={`/organizer/events/${eventId}/roster`}>
               Live roster (check-in)
+            </Button>
+            <Button variant="secondary" onClick={() => setBroadcastOpen(true)}>
+              Message volunteers
             </Button>
             <Button variant="secondary" onClick={() => setDuplicateOpen(true)}>
               Duplicate…
@@ -621,6 +627,14 @@ export default function AdminEventPage() {
           </div>
         )}
       </Modal>
+
+      {/* Phase 26 — broadcast messages */}
+      <BroadcastModal
+        open={broadcastOpen}
+        onClose={() => setBroadcastOpen(false)}
+        eventId={eventId}
+        scope={isAdmin ? "admin" : "organizer"}
+      />
     </div>
   );
 }
