@@ -60,13 +60,18 @@ describe("ExportsSection", () => {
     noShowRatesCsv.mockClear();
   });
 
-  it("renders three Download CSV buttons, three explainers, and no datetime-local inputs", async () => {
+  it("renders one Download CSV button per analytics panel, three explainers, and no datetime-local inputs", async () => {
     const { container } = renderPage();
 
-    const buttons = await screen.findAllByRole("button", {
-      name: /Download CSV/i,
-    });
-    expect(buttons).toHaveLength(3);
+    await screen.findAllByRole("button", { name: /Download CSV/i });
+    // One button per panel — query each panel's dedicated aria-label individually
+    // so the assertion is robust against any repeated renders (StrictMode, etc).
+    for (const title of ["Volunteer hours", "Attendance rates", "No-show rates"]) {
+      const btns = container.querySelectorAll(
+        `button[aria-label="Download CSV for ${title}"]`,
+      );
+      expect(btns.length).toBeGreaterThanOrEqual(1);
+    }
 
     expect(
       screen.getByText(

@@ -29,19 +29,21 @@ function renderAtDesktop(width = 1200) {
 }
 
 describe("AdminLayout", () => {
-  it("renders the expected sidebar nav items (no Overrides)", () => {
+  it("renders the expected sidebar nav items (no Overrides, no Portals)", () => {
     renderAtDesktop();
     for (const label of [
       "Overview",
       "Events",
       "Users",
-      "Portals",
       "Audit Logs",
       "Exports",
+      "Templates",
+      "Imports",
     ]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
     expect(screen.queryByRole("link", { name: /overrides/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /portals/i })).toBeNull();
   });
 
   it("renders the child outlet when window width >= 768px", () => {

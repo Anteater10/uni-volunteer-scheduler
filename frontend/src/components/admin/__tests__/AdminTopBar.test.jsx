@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import AdminTopBar from "../AdminTopBar";
 
@@ -9,8 +9,6 @@ function renderBar(props = {}) {
       { label: "Admin", to: "/admin" },
       { label: "Users" },
     ],
-    user: { name: "Andy", email: "andy@example.com", role: "admin" },
-    onSignOut: vi.fn(),
   };
   return render(
     <MemoryRouter>
@@ -20,24 +18,19 @@ function renderBar(props = {}) {
 }
 
 describe("AdminTopBar", () => {
-  it("renders breadcrumbs, help link, and user name", () => {
+  it("renders breadcrumbs with the leading crumb as a link and the last as the current page", () => {
     renderBar();
-    // "Admin" appears in breadcrumb AND as RoleBadge text — just assert the breadcrumb link
-    expect(screen.getByRole("link", { name: "Admin" })).toHaveAttribute("href", "/admin");
-    expect(screen.getByText("Users")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /help/i })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Admin" })).toHaveAttribute(
       "href",
-      "/admin/help",
+      "/admin",
     );
-    expect(screen.getByText("Andy")).toBeInTheDocument();
+    const currentCrumb = screen.getByText("Users");
+    expect(currentCrumb).toBeInTheDocument();
+    expect(currentCrumb).toHaveAttribute("aria-current", "page");
   });
 
-  it("opens account menu and calls onSignOut", () => {
-    const onSignOut = vi.fn();
-    renderBar({ onSignOut });
-    fireEvent.click(screen.getByText("Andy"));
-    const signOutBtn = screen.getByRole("menuitem", { name: /sign out/i });
-    fireEvent.click(signOutBtn);
-    expect(onSignOut).toHaveBeenCalledTimes(1);
+  it("renders the optional centerSlot when provided", () => {
+    renderBar({ centerSlot: <span data-testid="center">CENTER</span> });
+    expect(screen.getByTestId("center")).toBeInTheDocument();
   });
 });

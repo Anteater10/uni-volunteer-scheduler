@@ -20,6 +20,7 @@ vi.mock("../../../lib/api", () => {
     commit: vi.fn(),
     retry: vi.fn(),
     updateRow: vi.fn(),
+    revalidate: vi.fn().mockResolvedValue({}),
   };
   return {
     default: { admin: { imports } },

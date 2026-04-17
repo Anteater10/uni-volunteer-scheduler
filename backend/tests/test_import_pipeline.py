@@ -67,6 +67,10 @@ def test_get_import_status(client, db_session, admin_user_and_headers):
 def test_commit_rejects_unresolved_low_confidence(client, db_session, admin_user_and_headers):
     """POST /admin/imports/{id}/commit rejects if low_confidence rows remain."""
     admin, hdrs = admin_user_and_headers
+    # Commit endpoint requires a valid module_template_slug before it evaluates
+    # the low-confidence guard, so seed a template and pass its slug.
+    tmpl = models.ModuleTemplate(slug="dna-extraction", name="DNA Extraction")
+    db_session.add(tmpl)
     imp = CsvImport(
         id=uuid.uuid4(),
         uploaded_by=admin.id,
@@ -78,7 +82,17 @@ def test_commit_rejects_unresolved_low_confidence(client, db_session, admin_user
                 {
                     "index": 0,
                     "status": "low_confidence",
-                    "normalized": {},
+                    "normalized": {
+                        "module_slug": "dna-extraction",
+                        "location": "Room A",
+                        "start_at": "2026-09-15T09:00:00",
+                        "end_at": "2026-09-15T11:00:00",
+                        "capacity": 20,
+                        "instructor_name": "",
+                    },
+                    # Low confidence survives revalidate_import(), which is what
+                    # the commit guard is checking for.
+                    "confidence": 0.4,
                     "warnings": ["Low confidence"],
                 }
             ],
@@ -87,7 +101,11 @@ def test_commit_rejects_unresolved_low_confidence(client, db_session, admin_user
     )
     db_session.add(imp)
     db_session.commit()
-    resp = client.post(f"/api/v1/admin/imports/{imp.id}/commit", headers=hdrs)
+    resp = client.post(
+        f"/api/v1/admin/imports/{imp.id}/commit",
+        json={"module_template_slug": "dna-extraction"},
+        headers=hdrs,
+    )
     assert resp.status_code == 400
     assert "low-confidence" in resp.json()["detail"].lower()
 
@@ -114,6 +132,9 @@ def test_commit_rollback_on_integrity_error(db_session, admin_user_and_headers):
     from app.services.import_service import commit_import
 
     admin, _ = admin_user_and_headers
+    # commit_import requires a valid template slug before evaluating rows.
+    tmpl = models.ModuleTemplate(slug="rollback-template", name="Rollback Template")
+    db_session.add(tmpl)
     imp = CsvImport(
         id=uuid.uuid4(),
         uploaded_by=admin.id,
@@ -154,7 +175,7 @@ def test_commit_rollback_on_integrity_error(db_session, admin_user_and_headers):
     db_session.add = failing_add
     try:
         with pytest.raises(FastAPIHTTPException) as exc_info:
-            commit_import(db_session, str(imp.id))
+            commit_import(db_session, str(imp.id), module_template_slug="rollback-template")
         assert exc_info.value.status_code == 422
     finally:
         db_session.add = original_add

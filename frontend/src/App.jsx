@@ -7,6 +7,11 @@ function RedirectEventToAdmin() {
   return <Navigate to={`/admin/events/${eventId}`} replace />;
 }
 
+function RedirectOrganizeRoster() {
+  const { eventId } = useParams();
+  return <Navigate to={`/organizer/events/${eventId}/roster`} replace />;
+}
+
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -18,6 +23,7 @@ import NotificationsPage from "./pages/NotificationsPage";
 import ProfilePage from "./pages/ProfilePage";
 
 import OrganizerRosterPage from "./pages/OrganizerRosterPage";
+import OrganizerDashboard from "./pages/organizer/OrganizerDashboard";
 
 import AdminLayout from "./pages/admin/AdminLayout";
 import OverviewSection from "./pages/admin/OverviewSection";
@@ -25,7 +31,7 @@ import { useAuth } from "./state/useAuth";
 
 function AdminIndexRoute() {
   const { role } = useAuth();
-  if (role === "organizer") return <Navigate to="/admin/events" replace />;
+  if (role === "organizer") return <Navigate to="/organizer" replace />;
   return <OverviewSection />;
 }
 import AdminEventPage from "./pages/AdminEventPage";
@@ -65,11 +71,11 @@ export default function App() {
 
         {/* Organizer roster — mobile check-in surface */}
         <Route element={<ProtectedRoute roles={["organizer", "admin"]} />}>
-          <Route path="organizer" element={<Navigate to="/admin/events" replace />} />
+          <Route path="organizer" element={<OrganizerDashboard />} />
           <Route path="organizer/events/:eventId" element={<RedirectEventToAdmin />} />
           <Route path="organizer/events/:eventId/roster" element={<OrganizerRosterPage />} />
-          {/* Legacy typo path */}
-          <Route path="organize/events/:eventId/roster" element={<OrganizerRosterPage />} />
+          {/* Legacy typo path — preserved as redirect for old bookmarks/tests */}
+          <Route path="organize/events/:eventId/roster" element={<RedirectOrganizeRoster />} />
         </Route>
 
         {/* Admin shell — shared surfaces (admin + organizer) */}
