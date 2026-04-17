@@ -69,7 +69,7 @@ def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     if existing and existing.deleted_at is None:
         raise HTTPException(status_code=409, detail=f"Template '{slug}' already exists")
     if existing and existing.deleted_at is not None:
-        # Re-activate soft-deleted template
+        # Re-activate soft-deleted template (preserve any existing form schema)
         for k, v in data.items():
             if k == "metadata":
                 setattr(existing, "metadata_", v)
@@ -80,9 +80,19 @@ def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
         db.commit()
         db.refresh(existing)
         return existing
-    tpl = ModuleTemplate(slug=slug, **{k: v for k, v in data.items() if k != "metadata"})
+    # Phase 22: seed SciTrek opinionated defaults into NEW templates only.
+    # Import locally to avoid a circular import at module load.
+    from .form_schema_service import DEFAULT_SCITREK_FIELDS
+
+    payload = {k: v for k, v in data.items() if k not in ("metadata", "default_form_schema")}
+    tpl = ModuleTemplate(slug=slug, **payload)
     if "metadata" in data:
         tpl.metadata_ = data["metadata"]
+    if "default_form_schema" in data and data["default_form_schema"] is not None:
+        tpl.default_form_schema = data["default_form_schema"]
+    else:
+        # Deep-ish copy so later mutation in callers doesn't alias the module constant.
+        tpl.default_form_schema = [dict(f) for f in DEFAULT_SCITREK_FIELDS]
     db.add(tpl)
     db.commit()
     db.refresh(tpl)
