@@ -753,3 +753,31 @@ class ReminderSendNowResponse(BaseModel):
     kind: ReminderKind
     sent: bool
     reason: Optional[str] = None  # "already_sent" | "opted_out" | "ok"
+
+
+# -------------------------
+# Phase 26 — Broadcast messages
+# -------------------------
+
+
+class BroadcastCreate(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=200)
+    body_markdown: str = Field(..., min_length=1, max_length=20000)
+
+
+class BroadcastResult(BaseModel):
+    broadcast_id: str
+    recipient_count: int
+    sent_at: datetime
+
+
+class BroadcastSummary(BaseModel):
+    broadcast_id: str
+    subject: str
+    recipient_count: int
+    actor_label: Optional[str] = None
+    sent_at: datetime
+
+
+class BroadcastRecipientCount(BaseModel):
+    recipient_count: int

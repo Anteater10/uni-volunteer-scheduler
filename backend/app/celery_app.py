@@ -368,6 +368,50 @@ def weekly_digest() -> None:
         db.close()
 
 
+@celery.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+    name="app.celery_app.send_broadcast_email",
+)
+def send_broadcast_email(
+    self,
+    signup_id: str,
+    to_email: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+) -> None:
+    """Phase 26 — deliver a single broadcast message.
+
+    The caller (broadcast_service.send_broadcast) has already performed
+    the atomic dedup insert on ``sent_notifications(signup_id, kind)``
+    before enqueuing this task, so we only deliver here. Retries from
+    the Celery framework are worker-level guards; any persistent failure
+    surfaces in docker logs.
+
+    Broadcasts are operational — they intentionally bypass
+    ``volunteer_preferences.email_reminders_enabled``.
+    """
+    db: Session = SessionLocal()
+    try:
+        if not _check_daily_send_limit(db):
+            return
+        if not to_email:
+            return
+        _send_email(to_email, subject, text_body or "", html_body=html_body)
+        logger.info(
+            "broadcast_email_sent signup_id=%s to=%s",
+            signup_id,
+            to_email,
+        )
+    finally:
+        db.close()
+
+
 @celery.task(name="app.send_signup_confirmation_email")
 def send_signup_confirmation_email(
     volunteer_id: str,
