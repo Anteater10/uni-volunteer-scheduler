@@ -453,6 +453,45 @@ async function adminSendReminderNow(signupId, kind) {
   });
 }
 
+// Phase 26 — broadcast messages (organizer + admin).
+// Returns the recipient-count preview for the modal.
+async function getBroadcastRecipientCount(eventId) {
+  return request(`/events/${eventId}/broadcast-recipients`, {
+    method: "GET",
+  });
+}
+// Sends a broadcast. On 429 the Error carries .status and .retryAfter.
+async function sendBroadcast(eventId, { subject, body_markdown }) {
+  const url = `${API_BASE}/events/${eventId}/broadcast`;
+  const token = authStorage.getToken();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ subject, body_markdown }),
+  });
+  const json = await safeReadJson(res);
+  if (!res.ok) {
+    const err = new Error(
+      extractErrorMessage(json, `Broadcast failed (${res.status})`),
+    );
+    err.status = res.status;
+    if (res.status === 429) {
+      err.retryAfter = Number(res.headers.get("Retry-After") || 0) || null;
+    }
+    throw err;
+  }
+  return json;
+}
+async function listBroadcasts(eventId, days = 30) {
+  return request(`/events/${eventId}/broadcasts`, {
+    method: "GET",
+    params: { days },
+  });
+}
+
 // --------------------
 // MAGIC LINK
 // --------------------
@@ -613,6 +652,11 @@ export const api = {
         `/organizer/events/${eventId}/signups/${signupId}/promote`,
         { method: "POST" },
       ),
+    // Phase 26 — broadcast messages (organizer reuse of same endpoints)
+    broadcastRecipientCount: (eventId) =>
+      getBroadcastRecipientCount(eventId),
+    sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
+    listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
   },
 
   admin: {
@@ -729,6 +773,11 @@ export const api = {
       listUpcoming: (days = 7) => adminListUpcomingReminders(days),
       sendNow: (signupId, kind) => adminSendReminderNow(signupId, kind),
     },
+    // Phase 26 — broadcast messages
+    broadcastRecipientCount: (eventId) =>
+      getBroadcastRecipientCount(eventId),
+    sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
+    listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
     // Phase 21 — orientation credit engine
     orientationCredits: {
       list: (params = {}) =>

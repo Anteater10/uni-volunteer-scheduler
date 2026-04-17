@@ -6,6 +6,7 @@ import api from "../lib/api";
 import { PageHeader, Button, Skeleton, Modal, Input, Label } from "../components/ui";
 import { toast } from "../state/toast";
 import ResolveEventModal from "../components/ResolveEventModal";
+import BroadcastModal from "../components/BroadcastModal";
 
 // Phase 22 — organizer quick-add custom field modal
 function QuickAddFieldModal({ open, onClose, onSubmit, saving }) {
@@ -123,6 +124,8 @@ export default function OrganizerRosterPage() {
   const qc = useQueryClient();
   const [resolveOpen, setResolveOpen] = useState(false);
   const [quickFieldOpen, setQuickFieldOpen] = useState(false);
+  // Phase 26 — broadcast modal
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
 
   // Phase 22 — organizer quick-add field
   const quickFieldMut = useMutation({
@@ -219,7 +222,14 @@ export default function OrganizerRosterPage() {
         )}
       </div>
 
-      <div className="flex items-center justify-end px-1 mb-2">
+      <div className="flex items-center justify-end gap-2 px-1 mb-2">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setBroadcastOpen(true)}
+        >
+          Message volunteers
+        </Button>
         <Button
           type="button"
           variant="secondary"
@@ -287,6 +297,14 @@ export default function OrganizerRosterPage() {
         onClose={() => setQuickFieldOpen(false)}
         saving={quickFieldMut.isPending}
         onSubmit={(field) => quickFieldMut.mutate(field)}
+      />
+
+      {/* Phase 26 — broadcast messages from the roster surface */}
+      <BroadcastModal
+        open={broadcastOpen}
+        onClose={() => setBroadcastOpen(false)}
+        eventId={eventId}
+        scope="organizer"
       />
     </div>
   );
