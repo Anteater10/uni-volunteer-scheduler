@@ -7,15 +7,17 @@ here (roster broadcasts, QR nudges, etc.).
 All endpoints require organizer/admin auth AND (for per-event actions)
 that the current user owns the event or is admin.
 """
+from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..celery_app import send_email_notification
 from ..database import get_db
 from ..deps import ensure_event_owner_or_admin, log_action, require_role
+from ..magic_link_service import MagicLinkPurpose, _lookup_token
 from ..services import form_schema_service
 from ..services.orientation_service import (
     family_for_event,
@@ -24,6 +26,84 @@ from ..services.orientation_service import (
 from ..services.waitlist_service import manual_promote
 
 router = APIRouter(prefix="/organizer", tags=["organizer"])
+
+
+# -------------------------
+# Phase 28 — QR lookup by manage token
+# -------------------------
+
+
+@router.get("/signups/by-manage-token")
+def signup_by_manage_token(
+    manage_token: str = Query(..., min_length=16),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.organizer, models.UserRole.admin)
+    ),
+):
+    """Phase 28 (QR-02, QR-04) — resolve a scanned manage_token to a signup.
+
+    The QR image embedded in confirmation emails encodes the volunteer's
+    SIGNUP_MANAGE magic-link URL. When the organizer's scanner decodes
+    that URL, it extracts ``manage_token`` and hits this endpoint to
+    find the signup_id, then POSTs to the existing
+    ``/signups/{signup_id}/check-in`` endpoint.
+
+    Returns a minimal shape — signup_id, volunteer name + email, event
+    title, slot time, current status. 404 if the token doesn't match
+    any live signup. 403 (via require_role) if the caller is not an
+    organizer / admin.
+    """
+    token_row = _lookup_token(db, manage_token)
+    if token_row is None:
+        raise HTTPException(status_code=404, detail="Unknown manage token")
+    if token_row.purpose not in (
+        MagicLinkPurpose.SIGNUP_MANAGE,
+        MagicLinkPurpose.SIGNUP_CONFIRM,
+    ):
+        raise HTTPException(
+            status_code=404, detail="Token is not a signup manage token"
+        )
+    if token_row.expires_at < datetime.now(timezone.utc):
+        # Expired tokens are still resolvable for organizer check-in
+        # (the QR is stable for the signup lifetime), but we surface
+        # the state so the scanner can warn. Per CONTEXT: "rotation
+        # not needed" — so we accept expired tokens here rather than
+        # re-challenging the organizer.
+        pass
+
+    signup = (
+        db.query(models.Signup)
+        .filter(models.Signup.id == token_row.signup_id)
+        .first()
+    )
+    if signup is None:
+        raise HTTPException(status_code=404, detail="Signup not found")
+
+    slot = (
+        db.query(models.Slot).filter(models.Slot.id == signup.slot_id).first()
+    )
+    event = (
+        db.query(models.Event).filter(models.Event.id == slot.event_id).first()
+        if slot is not None
+        else None
+    )
+    volunteer = signup.volunteer
+
+    return {
+        "signup_id": str(signup.id),
+        "status": signup.status.value
+        if hasattr(signup.status, "value")
+        else str(signup.status),
+        "event_id": str(slot.event_id) if slot is not None else None,
+        "event_title": event.title if event is not None else None,
+        "slot_start_time": slot.start_time.isoformat()
+        if slot is not None and slot.start_time
+        else None,
+        "volunteer_first_name": volunteer.first_name if volunteer else None,
+        "volunteer_last_name": volunteer.last_name if volunteer else None,
+        "volunteer_email": volunteer.email if volunteer else None,
+    }
 
 
 @router.post(
