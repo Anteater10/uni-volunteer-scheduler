@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     twilio_auth_token: str | None = None
     twilio_from_number: str | None = None
 
+    # Phase 27 — SMS via AWS SNS. Feature-flagged so production can enable
+    # after ops handoff lands real creds. When sms_enabled is False every
+    # SMS path short-circuits (service, Celery task, frontend checkbox).
+    sms_enabled: bool = False
+    aws_region: str = "us-west-2"
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+
     # OIDC SSO (for SAML/OIDC via Authlib)
     oidc_client_id: str | None = None
     oidc_client_secret: str | None = None

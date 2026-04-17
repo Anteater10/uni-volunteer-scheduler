@@ -222,3 +222,101 @@ def organizer_promote_signup(
     )
 
     return signup
+
+
+# -------------------------
+# Phase 27 — SMS nudge no-shows
+# -------------------------
+
+
+@router.post("/events/{event_id}/sms-nudge-no-shows")
+def organizer_sms_nudge_no_shows(
+    event_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.organizer, models.UserRole.admin)
+    ),
+):
+    """Phase 27 (SMS-05) — fire ``sms_no_show`` to everyone unmarked.
+
+    Loops confirmed+pending signups that are NOT ``checked_in``; asks the
+    SMS service whether each one is eligible (feature flag, opt-in, phone,
+    quiet hours); dispatches via ``send_and_record`` (idempotent per kind).
+
+    Returns ``{sent, skipped, flag_off}``. Audits ``sms_nudge_batch`` with
+    the counts regardless of outcome so the history shows intent.
+    """
+    from ..services import sms_service
+    from ..config import settings
+
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_owner_or_admin(event, current_user)
+
+    if not settings.sms_enabled:
+        log_action(
+            db,
+            current_user,
+            "sms_nudge_batch",
+            "Event",
+            str(event.id),
+            extra={"sent": 0, "skipped": 0, "flag_off": True},
+        )
+        db.commit()
+        return {"sent": 0, "skipped": 0, "flag_off": True}
+
+    signups = (
+        db.query(models.Signup)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .filter(
+            models.Slot.event_id == event.id,
+            models.Signup.status.in_(
+                [models.SignupStatus.confirmed, models.SignupStatus.pending]
+            ),
+        )
+        .all()
+    )
+
+    sent = 0
+    skipped = 0
+    for s in signups:
+        if s.status == models.SignupStatus.checked_in:
+            skipped += 1
+            continue
+        ok, _reason = sms_service.should_send_sms(db, s)
+        if not ok:
+            skipped += 1
+            continue
+        slot = s.slot
+        if slot is None:
+            skipped += 1
+            continue
+        vol = s.volunteer
+        body = sms_service.format_no_show_body(
+            first_name=(vol.first_name if vol else "") or "",
+            event_title=event.title or "",
+            start_time=slot.start_time,
+        )
+        result = sms_service.send_and_record(
+            db,
+            signup=s,
+            kind="sms_no_show",
+            body=body,
+            actor=current_user,
+        )
+        if result.get("status") == "sent":
+            sent += 1
+        else:
+            skipped += 1
+
+    log_action(
+        db,
+        current_user,
+        "sms_nudge_batch",
+        "Event",
+        str(event.id),
+        extra={"sent": sent, "skipped": skipped, "flag_off": False},
+    )
+    db.commit()
+    return {"sent": sent, "skipped": skipped, "flag_off": False}

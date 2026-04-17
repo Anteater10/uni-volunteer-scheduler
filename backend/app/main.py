@@ -14,6 +14,7 @@ from .routers import auth, users, events, slots, signups, notifications, admin, 
 from .routers.public import events as public_events
 from .routers.public import signups as public_signups
 from .routers.public import orientation as public_orientation
+from .routers.public import config as public_config
 # Phase 24 — token-gated reminder preferences
 from .routers import preferences as public_preferences
 # Phase 26 — broadcast messages (organizer/admin → confirmed signups)
@@ -108,6 +109,8 @@ app.include_router(organizer.router, prefix="/api/v1")
 app.include_router(public_events.router, prefix="/api/v1")
 app.include_router(public_signups.router, prefix="/api/v1")
 app.include_router(public_orientation.router, prefix="/api/v1")
+# Phase 27 — public runtime feature flags (sms_enabled, ...)
+app.include_router(public_config.router, prefix="/api/v1")
 # Phase 24 — volunteer reminder opt-out endpoints (token-gated)
 app.include_router(public_preferences.router, prefix="/api/v1")
 # Phase 26 — broadcast messages (organizer/admin → confirmed signups)

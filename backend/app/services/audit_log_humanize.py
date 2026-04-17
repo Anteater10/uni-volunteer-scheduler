@@ -54,6 +54,9 @@ ACTION_LABELS: dict[str, str] = {
     "waitlist_reorder": "Reordered the waitlist",
     # Phase 26 — broadcast messages
     "broadcast_sent": "Sent a broadcast message",
+    # Phase 27 — SMS reminders / no-show nudges
+    "sms_nudge_batch": "Sent SMS nudge to no-shows",
+    "sms_send_failed": "SMS delivery failed",
 }
 
 

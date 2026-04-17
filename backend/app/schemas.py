@@ -532,6 +532,10 @@ class PublicSignupCreate(VolunteerCreate):
     # backend does NOT raise if a required field is skipped — just records
     # the missing field_ids in the response for organizer display.
     responses: Optional[List["SignupResponseCreate"]] = None
+    # Phase 27 — optional TCPA opt-in from the signup form. When True and
+    # ``sms_enabled`` is on, we persist this on volunteer_preferences so
+    # scheduled SMS reminders can flow. Default False (opt-in, never assumed).
+    sms_opt_in: Optional[bool] = False
 
 
 class PublicSignupResultItem(BaseModel):

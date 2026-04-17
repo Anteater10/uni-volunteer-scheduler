@@ -39,7 +39,11 @@ celery.conf.update(
     beat_scheduler="redbeat.RedBeatScheduler",
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    include=["app.tasks.import_csv", "app.tasks.reminders"],
+    include=[
+        "app.tasks.import_csv",
+        "app.tasks.reminders",
+        "app.tasks.sms_reminders",  # Phase 27
+    ],
 )
 
 
@@ -527,6 +531,14 @@ celery.conf.beat_schedule = {
     # ±15 min drift window per send.
     "check-reminders": {
         "task": "app.tasks.reminders.check_and_send_reminders",
+        "schedule": 900.0,
+    },
+    # Phase 27 — SMS reminders + no-show nudges. Mirrors Phase 24's 15-min
+    # cadence. The task itself short-circuits when settings.sms_enabled
+    # is False, so keeping this in the schedule is safe even when SMS
+    # is disabled.
+    "check-sms": {
+        "task": "app.tasks.sms_reminders.check_and_send_sms",
         "schedule": 900.0,
     },
 }

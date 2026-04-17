@@ -2409,3 +2409,63 @@ def admin_send_reminder_now(
         sent=result.sent,
         reason=result.reason,
     )
+
+
+# =========================
+# PHASE 27 — SMS REMINDERS (admin preview)
+# =========================
+
+
+@router.get("/sms/upcoming")
+def admin_list_upcoming_sms(
+    days: int = Query(7, ge=1, le=30),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Preview the SMS sends scheduled in the next ``days`` days.
+
+    Rows are computed from slot start times + the Phase 27 window math.
+    Includes already_sent + opted_in + phone_on_file so the admin can spot
+    volunteers who would be skipped.
+    """
+    from ..services import sms_service
+    from ..config import settings
+
+    rows = sms_service.list_upcoming_sms(db, days=days)
+    # Normalize UUID + datetime into primitives the default JSON encoder
+    # handles without a custom response_model (we skip the model here so
+    # this endpoint is forward-compatible with preview-only fields).
+    serialized = [
+        {
+            **r,
+            "signup_id": str(r["signup_id"]),
+            "event_id": str(r["event_id"]),
+            "slot_id": str(r["slot_id"]),
+            "slot_start_time": r["slot_start_time"].isoformat()
+            if r.get("slot_start_time")
+            else None,
+            "scheduled_for": r["scheduled_for"].isoformat()
+            if r.get("scheduled_for")
+            else None,
+        }
+        for r in rows
+    ]
+    log_action(
+        db,
+        admin_user,
+        "admin_list_upcoming_sms",
+        "Sms",
+        None,
+        extra={
+            "days": days,
+            "row_count": len(serialized),
+            "sms_enabled": bool(settings.sms_enabled),
+        },
+    )
+    db.commit()
+    return {
+        "sms_enabled": bool(settings.sms_enabled),
+        "rows": serialized,
+    }

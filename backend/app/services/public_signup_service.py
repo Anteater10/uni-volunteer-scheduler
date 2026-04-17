@@ -56,6 +56,19 @@ def create_public_signup(
         phone_e164=phone_e164,
     )
 
+    # Phase 27 — persist SMS opt-in + phone on volunteer_preferences when
+    # the participant ticked the TCPA consent box. We only *set* the field
+    # when True; we never silently revoke a prior opt-in on re-signup.
+    if getattr(payload, "sms_opt_in", False):
+        from . import reminder_service  # local import avoids cycle
+
+        reminder_service.update_preferences(
+            db,
+            volunteer.email,
+            sms_opt_in=True,
+            phone_e164=phone_e164,
+        )
+
     # 3. Load slots, lock them, check capacity, create one Signup per slot
     signups = []
     for slot_id in payload.slot_ids:
