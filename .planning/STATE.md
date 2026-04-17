@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.2
-milestone_name: milestone
-status: executing
-last_updated: "2026-04-16T23:39:00.000Z"
-last_activity: 2026-04-16
+milestone_name: v1.2-prod Production-ready by role
+status: complete
+last_updated: "2026-04-17T20:30:00Z"
+last_activity: 2026-04-17
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 22
-  completed_plans: 21
-  percent: 95
+  completed_phases: 7
+  total_plans: 25
+  completed_plans: 25
+  percent: 100
 ---
 
 # Project State
@@ -22,70 +22,65 @@ progress:
 
 ## Current Position
 
-Phase: 19 (organizer-role-audit-ux-polish) — NEXT (Phase 15 + 16 + 17 + 18 all shipped)
-Plan: Not started
-**Milestone:** v1.2-prod Production-ready by role
-Status: Ready to execute Phase 19; v1.2-final merge branch produced 2026-04-16
-**Last activity:** 2026-04-16
+Phase: 20 (cross-role-integration) — **COMPLETE**
+Plan: 3 of 3 — **COMPLETE**
+**Milestone:** v1.2-prod Production-ready by role — **SHIPPED 2026-04-17**
+Status: v1.2-prod milestone closed
+**Last activity:** 2026-04-17
 
 ## Current Status
 
-- ✓ v1.0 phases 0–7 shipped (2026-04-08) — drifted from no-accounts thesis, then realigned in v1.1
+- ✓ v1.0 phases 0–7 shipped (2026-04-08)
 - ✓ v1.1 phases 08–13 shipped (2026-04-10) — account-less realignment + admin shell + 16/16 Playwright E2E green
 - ✓ v1.2-prod ROADMAP.md created (2026-04-14) — 7 phases, 68 requirements mapped, parallel collab structure locked
-- ▶ Phase 14 (Collaboration setup) is the next action
+- ✓ Phase 14 (Collaboration setup) shipped — worktree/branch workflow + COLLABORATION.md
+- ✓ Phase 15 (Participant audit + UX polish) shipped (2026-04-16) — 7/7 plans
+- ✓ Phase 16 (Admin shell + retirement + Overview/Audit/Users/Exports) shipped (2026-04-15) — 7/7 plans
+- ✓ Phase 17 (Admin Templates CRUD) shipped (2026-04-16) — 2/2 plans
+- ✓ Phase 18 (Admin LLM CSV Imports) shipped (2026-04-16) — 2/2 plans, Phase 5.07 unblocked
+- ✓ Phase 19 (Organizer audit + UX polish) shipped rescoped (2026-04-16) — 2/2 plans; ORG-03..14 deferred to v1.3
+- ✓ Phase 20 (Cross-role integration) shipped (2026-04-17) — 3/3 plans
 
-**v1.2-prod phase plan (7 phases, 14–20):**
+**v1.2-prod delivery summary:**
 
-- Phase 14: Collaboration setup — git-worktree workflow, role-owned branches, COLLABORATION.md + CLAUDE.md updates
-- Phase 15: Participant audit + UX polish (PART-01..14) — runs in PARALLEL with Phase 16
-- Phase 16: Admin shell + retire Overrides + Overview + Audit Log + Users + Exports + UX polish (ADMIN-01..07, 18..27) — runs in PARALLEL with Phase 15
-- Phase 17: Admin Templates CRUD (ADMIN-08..11)
-- Phase 18: Admin LLM CSV Imports (ADMIN-12..17) — Phase 5.07 finally unblocked, Andy holds the CSV
-- Phase 19: Organizer audit + UX polish (ORG-01..14) — sequenced after admin pillar to avoid shared-code conflicts
-- Phase 20: Cross-role integration (INTEG-01..06) — strictly last
+- Phase 20-01: `e2e/cross-role.spec.js` — 5 scenarios × 6 browser projects = 42 green runs
+- Phase 20-02: `docs/smoke-checklist.md` — manual three-window smoke pass
+- Phase 20-03: README rewrite, IDEAS yearly→quarterly sweep, CLAUDE.md Planning harness update, ROADMAP + STATE close-out, INTEG-05 bug triage in `.planning/phases/20-cross-role-integration/20-bugs-log.md`
 
-**Out of scope:** UCSB production deployment (next milestone).
+**Out of scope (carried forward):** UCSB production deployment (Phase 8, separate milestone), ORG-03..14 organizer polish (v1.3), one Phase 14 plan deferred to v1.3.
 
 ## Next Action
 
-`/gsd-plan-phase 14` — start Phase 14 (Collaboration setup). This phase MUST ship first because every later phase depends on the worktree workflow being defined and tested. After Phase 14 merges, Andy and Hung can run Phase 15 (participant) and Phase 16 (admin) in parallel on different worktrees.
+**TBD — v1.2-prod milestone closed; next milestone decision pending.**
 
-**v1.1 closing notes (still relevant for v1.2-prod handoff):**
+Candidate next milestones (user to choose):
 
-- Test-helper backend endpoints (`seed-cleanup`, `event-signups-cleanup`) gated by `EXPOSE_TOKENS_FOR_TESTING=1` enable idempotent Playwright reruns despite UNIQUE(volunteer_id, slot_id) constraint
-- Rate-limit bypass when `EXPOSE_TOKENS_FOR_TESTING=1` is required so parallel Playwright workers (sharing localhost IP) don't exhaust the 10/min limit
-- Slot capacity 200 for E2E events prevents exhaustion across 4 parallel workers
+- **Deployment (Phase 8 unblock)** — ship the app to a real UCSB environment. Biggest missing piece for production use.
+- **v1.3 organizer polish** — ORG-03..14 roster polish, end-of-event prompt, WCAG AA / 375px audit, ORG-14 audit-surfaced feature.
+- **v1.3 follow-ups** — items filed in `.planning/phases/20-cross-role-integration/20-bugs-log.md` during INTEG-05 triage.
+
+The Phase 20 PR bundles all PR-only file edits (README.md, CLAUDE.md,
+.planning/STATE.md, .planning/ROADMAP.md) — coordinate with Hung before
+merging to `main` per `docs/COLLABORATION.md`.
 
 ## Accumulated Context
 
-### v1.2-prod sequencing risks (flagged in ROADMAP.md notes)
+### v1.2-prod sequencing risks (flagged in ROADMAP.md notes) — now historical
 
-- **Admin and organizer share code surface** — both pillars touch event create/edit and magic-link infrastructure. Phase 19 (organizer) waits until Phase 18 (admin LLM imports) lands so the two worktrees don't fight over shared files. Deliberate sequencing choice; alternative is more merge conflicts than two devs can absorb in a 6-week window.
-- **`frontend/src/lib/api.js`, `frontend/src/App.jsx` (routes), and shared component files are PR-only edits** — must be called out in COLLAB-03 file-ownership table to keep the participant + admin worktrees from colliding during the parallel Phase 15 + 16 window.
-- **Phase 18 (LLM CSV import) is the milestone's biggest net-new feature.** Everything else is audit + polish + targeted fills. If Phase 18 slips, plan a focused recovery rather than spreading the LLM work across other phases.
+- **Admin and organizer share code surface** — handled by sequencing Phase 19 after Phase 18. Resolved.
+- **`frontend/src/lib/api.js`, `frontend/src/App.jsx` (routes), and shared component files are PR-only edits** — enforced via COLLABORATION.md, held up cleanly through the parallel Phase 15 + 16 window.
+- **Phase 18 (LLM CSV import) was the milestone's biggest net-new feature.** Shipped 2026-04-16.
 
-### Stage 0 findings (still relevant for v1.2-prod phases)
+### Stage 0 findings (still relevant)
 
 - Alembic chain uses slug-style revision IDs; `alembic/env.py` pre-widens `version_num` to VARCHAR(128). Do not regress.
-- ~~Enum downgrade leak~~ RESOLVED in Phase 08 — `2465a60b9dbc_initial_schema.py` now drops `signupstatus`, `userrole`, `notificationtype`, `privacymode`. Round-trip gate passes.
+- ~~Enum downgrade leak~~ RESOLVED in Phase 08.
 - Docker stack quirk: db/redis not exposed to host. Tests run via one-off container on `uni-volunteer-scheduler_default` network. See CLAUDE.md.
-- Phase 5.07 LLM CSV extraction: **NO LONGER BLOCKED** — Andy holds the CSV file. Ships in Phase 18.
+- Phase 5.07 LLM CSV extraction: shipped in Phase 18.
 
-### Phase 08 handoff for Phase 09 / 12 (historical, still relevant for context)
+### Cross-role audit-write finding (Phase 20-01)
 
-- App does **not boot** cleanly until Phase 09 wires the new volunteer-keyed code paths.
-- Test baseline: 76 passed / 74 skipped / 0 failed (was 185/185). The 74 skips are runtime breakages at `signup.user` sites, marked with "Phase 09" reasons.
-- `backend/app/schemas.py` keeps `PrereqOverrideRead` as stubs for `admin.py` compatibility — Phase 12 removes both.
-- `backend/app/services/prereqs.py` has a try/except import guard for the same reason.
-- `SlotFactory.slot_type` defaults to `SlotType.PERIOD`; Slot model has no `server_default` on `slot_type` (migration handles it).
-- See `08-SUMMARY.md` + `08-VERIFICATION.md` for the full handoff list.
-
-### v1.0 surface map
-
-- **Retired in v1.1:** Phase 2 account-confirmation flow (repurposed magic-link infra), Phase 4 prereq enforcement, Phase 7 override UI, student login/register frontend pages.
-- **Lingering for v1.2-prod cleanup:** `Overrides` admin sidebar nav item — closes the v1.1 Phase 12 retirement loop. ADMIN-01 in Phase 16.
-- **Keeping:** Phase 0 schema scaffolding, Phase 1 Tailwind design system + components, Phase 3 check-in state machine + organizer roster, Phase 5 CSV template import (deterministic parts), Phase 6 notifications, Phase 7 audit log / analytics / CCPA export.
+Only ADMIN-initiated actions + public cancel are audited (`backend/app/services/audit_log_humanize.py` ACTION_LABELS). `signup.created` (public) and organizer check-in are NOT audited. If full cross-role audit trail is wanted, filed as v1.3 candidate in 20-bugs-log.md.
 
 ## Key Decisions Log
 
@@ -93,7 +88,7 @@ See `.planning/PROJECT.md` → Key Decisions.
 
 ## Open Questions
 
-See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-prod.md` → Open Questions (to resolve during planning).
+See `.planning/PROJECT.md` → Open Questions.
 
 ---
-*Last updated: 2026-04-14 — v1.2-prod ROADMAP.md written; 7 phases (14–20); 68/68 requirements mapped; next action is `/gsd-plan-phase 14`*
+*Last updated: 2026-04-17 — v1.2-prod milestone closed; 7/7 phases complete; 25/25 plans complete; next milestone TBD*

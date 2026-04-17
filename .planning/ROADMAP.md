@@ -20,8 +20,8 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
 - [x] **Phase 16: Admin shell + retirement + Overview/Audit/Users/Exports** — retire `Overrides`, audit every admin route, polish admin shell, ship live Overview + filtered Audit Log + Users CRUD + Exports + UX polish across all admin pages. (completed 2026-04-15)
 - [x] **Phase 17: Admin Templates CRUD** — full CRUD on `module_templates` (list, create, edit, delete/archive). Smaller scoped phase that can land independently between admin shell and the LLM import. (completed 2026-04-16)
 - [x] **Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)** — upload UI, single-shot LLM extraction → Pydantic, preview screen, atomic commit, eval-corpus logging, low-confidence flagging. (completed 2026-04-16)
-- [ ] **Phase 19: Organizer role audit + UX polish** — route normalization (`/organize` → `/organizer`), audit, fixes, roster polish, end-of-event prompts, WCAG AA + 375px verification, one new audit-surfaced feature.
-- [ ] **Phase 20: Cross-role integration** — cross-role E2E (admin creates → organizer runs → participant signs up → admin sees in audit log), 4+ new Playwright scenarios, manual smoke checklist, doc sweep.
+- [x] **Phase 19: Organizer role audit + UX polish** — **Rescoped 2026-04-16.** Organiser is "admin shell with scoped nav + phone-first `/organizer` landing". Route normalization + ORG-AUDIT + dashboard shipped. Roster polish, end-of-event prompt, WCAG AA + 375px audit, and ORG-14 feature deferred to v1.3.
+- [x] **Phase 20: Cross-role integration** — cross-role E2E (admin creates → organizer runs → participant signs up → admin sees in audit log), 4+ new Playwright scenarios, manual smoke checklist, doc sweep. (completed 2026-04-17)
 
 ## Dependency Graph
 
@@ -173,20 +173,23 @@ Plans:
 **Touches:** `frontend/src/pages/admin/AdminImportsPage.jsx`, new `backend/app/services/llm_import.py`, new `backend/app/routers/imports.py`, Pydantic schemas for canonical event JSON, eval-corpus storage, `module_templates` lookup.
 
 ### Phase 19: Organizer role audit + UX polish
-**Goal:** Walk every organizer flow end-to-end (login → dashboard → roster → check-in), normalize the `/organize` → `/organizer` typo from v1.0, fix everything broken, polish the roster for venue use on a phone, ship end-of-event prompts, hit WCAG AA + 375px (organizers run events from their phone, this is critical), and add one audit-surfaced feature.
-**Depends on:** Phase 18 (admin pillar reaches a stable point — admin and organizer share event create/edit + magic-link infra; admin lands first to keep the shared surface stable).
+
+**Rescoped 2026-04-16.** Product decision: the organiser is a scoped admin role — no dedicated organiser UI beyond the phone-first landing dashboard and the existing roster page. No per-event organiser ownership in the data model. Roster polish / end-of-event prompt / ORG-14 feature deferred to v1.3; they are nice-to-haves, not milestone blockers.
+
+**Goal (delivered):** Organisers have a clean phone-first entrypoint, route paths are normalized, and the scoped-admin model is documented.
+**Depends on:** Phase 18.
 **Pillar:** 4 — Organizer
-**Requirements:** ORG-01, ORG-02, ORG-03, ORG-04, ORG-05, ORG-06, ORG-07, ORG-08, ORG-09, ORG-10, ORG-11, ORG-12, ORG-13, ORG-14
-**In-scope routes:** `/login`, `/organizer`, `/organizer/events/:eventId`, `/organizer/events/:eventId/roster` (post-rename)
-**Success Criteria** (what must be TRUE):
-  1. The organizer route paths are normalized (`/organize` → `/organizer`), every link and test is updated, and `ORG-AUDIT.md` documents what was broken before and after.
-  2. An organizer logs in on their phone, lands on a dashboard listing their assigned events, opens an event, and sees the full slot list with current signup counts.
-  3. The roster page has large tap-friendly check-in toggles, polls every 5s with a clear polling indicator, supports `checked_in → attended` and `→ no_show` with optimistic UI, and resolves first-write-wins conflicts between organizer and self check-in.
-  4. The end-of-event prompt fires for unmarked attendees ("You have N unmarked — mark them now?"), and an organizer can create or edit an event from the organizer surface (or via admin if that ownership decision lands there).
-  5. Every organizer page meets WCAG AA, passes a 375px audit, has loading/empty/error states, and one new audit-surfaced feature from ORG-14 ships.
-**Plans:** TBD
+**Requirements delivered:** ORG-01 (route normalize), ORG-02 (landing dashboard).
+**Requirements deferred to v1.3:** ORG-03..14 (roster polish, end-of-event prompt, WCAG AA audit, 375px audit, ORG-14 audit-surfaced feature).
+**In-scope routes:** `/organizer`, `/organizer/events/:eventId/roster` (legacy `/organize/...` redirects here).
+**Success Criteria (delivered):**
+  1. ✓ `/organize/*` legacy routes redirect to `/organizer/*`; tests updated; `docs/ORG-AUDIT.md` documents the before/after.
+  2. ✓ `/organizer` is a phone-first dashboard listing all events (Today / Upcoming / Past tabs) with a tap-target "Open roster" button per event; organisers land here instead of `/admin/events`.
+  3. ✓ Organisers reuse the admin shell for event/template/import surfaces; admin-only surfaces (Users, Audit Logs, Exports) are hidden by RBAC.
+**Plans delivered:** 19-01 (route normalize + audit doc), 19-02 (organizer dashboard).
+**Plans deferred to v1.3:** 19-03 (roster polish), 19-04 (end-of-event prompt), 19-05 (WCAG AA / 375px audit / ORG-14).
 **UI hint:** yes
-**Touches:** `frontend/src/pages/organizer/*`, `frontend/src/App.jsx` (route rename), `frontend/src/lib/api.js`, `backend/app/routers/organizer.py`, `backend/app/routers/events.py`, magic-link self check-in code.
+**Touches (delivered):** `frontend/src/pages/organizer/OrganizerDashboard.jsx` (new), `frontend/src/App.jsx`, `frontend/tests/OrganizerRosterPage.test.jsx`, `e2e/organizer-check-in.spec.js`, `docs/ORG-AUDIT.md` (new).
 
 ### Phase 20: Cross-role integration
 **Goal:** Prove the three roles work together end-to-end with new Playwright scenarios + a manual smoke checklist + a final doc sweep. This is the v1.2-prod acceptance gate — if Phase 20 ships green, the milestone is done.
@@ -199,9 +202,13 @@ Plans:
   3. A manual smoke pass against the docker stack drives all three roles in one sitting following `docs/smoke-checklist.md`, with no manual DB nudges and no failed requests.
   4. Any cross-role bugs surfaced during integration are fixed (or filed as explicit out-of-scope follow-ups) before sign-off.
   5. PROJECT.md, README, CLAUDE.md, and in-app copy reflect the v1.2-prod state — no stale "yearly CSV", "student account", or `/organize` references remain.
-**Plans:** TBD
+**Plans:** 3/3 plans complete
+Plans:
+- [x] 20-01-PLAN.md — Cross-role Playwright scenarios (5 scenarios × 6 projects = 42 green runs)
+- [x] 20-02-PLAN.md — Manual smoke checklist (`docs/smoke-checklist.md`)
+- [x] 20-03-PLAN.md — Doc sweep + milestone close-out + INTEG-05 bug triage
 **UI hint:** no
-**Touches:** `frontend/tests/e2e/*` (new spec files), `docs/smoke-checklist.md` (new), `README.md`, `PROJECT.md`, `CLAUDE.md`, in-app copy sweep.
+**Touches:** `e2e/cross-role.spec.js` (new), `docs/smoke-checklist.md` (new), `README.md`, `CLAUDE.md`, `IDEAS.md`, `.planning/ROADMAP.md`, `.planning/STATE.md`, `.planning/phases/20-cross-role-integration/20-bugs-log.md`.
 
 ## Progress Table
 
@@ -212,8 +219,8 @@ Plans:
 | 16. Admin shell + retirement + Overview/Audit/Users/Exports | 7/7 | Complete    | 2026-04-15 |
 | 17. Admin Templates CRUD | 2/2 | Complete    | 2026-04-16 |
 | 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 2/2 | Complete    | 2026-04-16 |
-| 19. Organizer role audit + UX polish | 0/? | Not started | - |
-| 20. Cross-role integration | 0/? | Not started | - |
+| 19. Organizer role audit + UX polish | 2/2 (rescoped) | Complete    | 2026-04-16 |
+| 20. Cross-role integration | 3/3 | Complete    | 2026-04-17 |
 
 ## Coverage
 
@@ -259,4 +266,5 @@ No orphaned requirements. No duplicates.
 
 ---
 *Roadmap created: 2026-04-14 — v1.2-prod milestone opened*
-*Next: `/gsd-plan-phase 14` to decompose the collaboration setup phase into executable plans*
+*Milestone closed: 2026-04-17 — v1.2-prod shipped (Phases 14–20, except Phase 14 which carries one plan deferred to v1.3 and Phase 19 which was rescoped with ORG-03..14 deferred to v1.3)*
+*Next: TBD — v1.2-prod complete; next milestone (deployment / v1.3 organizer polish) decision pending*
