@@ -674,6 +674,16 @@ export const api = {
     listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
     // Phase 27 — SMS nudge no-shows
     smsNudgeNoShows: (eventId) => organizerSmsNudgeNoShows(eventId),
+    // Phase 28 — QR check-in: scanner decodes the manage URL, extracts
+    // `manage_token`, calls this lookup to resolve signup_id, then POSTs
+    // the existing /signups/{id}/check-in endpoint.
+    lookupByManageToken: (manageToken) =>
+      request("/organizer/signups/by-manage-token", {
+        method: "GET",
+        params: { manage_token: manageToken },
+      }),
+    checkInSignup: (signupId) =>
+      request(`/signups/${signupId}/check-in`, { method: "POST" }),
   },
 
   admin: {

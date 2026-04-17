@@ -7,6 +7,8 @@ import { PageHeader, Button, Skeleton, Modal, Input, Label } from "../components
 import { toast } from "../state/toast";
 import ResolveEventModal from "../components/ResolveEventModal";
 import BroadcastModal from "../components/BroadcastModal";
+// Phase 28 — QR check-in scanner for on-site roster.
+import QRScanner from "../components/organizer/QRScanner";
 
 // Phase 22 — organizer quick-add custom field modal
 function QuickAddFieldModal({ open, onClose, onSubmit, saving }) {
@@ -126,6 +128,8 @@ export default function OrganizerRosterPage() {
   const [quickFieldOpen, setQuickFieldOpen] = useState(false);
   // Phase 26 — broadcast modal
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  // Phase 28 — QR check-in scanner
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   // Phase 22 — organizer quick-add field
   const quickFieldMut = useMutation({
@@ -257,6 +261,14 @@ export default function OrganizerRosterPage() {
         <Button
           type="button"
           variant="secondary"
+          onClick={() => setScannerOpen(true)}
+          data-testid="organizer-scan-qr"
+        >
+          Scan QR to check-in
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
           onClick={() => setBroadcastOpen(true)}
         >
           Message volunteers
@@ -347,6 +359,15 @@ export default function OrganizerRosterPage() {
         onClose={() => setBroadcastOpen(false)}
         eventId={eventId}
         scope="organizer"
+      />
+
+      {/* Phase 28 — QR check-in scanner. */}
+      <QRScanner
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onCheckedIn={() =>
+          qc.invalidateQueries({ queryKey: ["roster", eventId] })
+        }
       />
     </div>
   );
