@@ -1,55 +1,57 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: milestone
+milestone: v1.3
+milestone_name: feature-expansion
 status: executing
-last_updated: "2026-04-16T23:39:00.000Z"
-last_activity: 2026-04-16
+last_updated: "2026-04-17T00:00:00.000Z"
+last_activity: 2026-04-17
 progress:
-  total_phases: 7
-  completed_phases: 4
-  total_plans: 22
-  completed_plans: 21
-  percent: 95
+  total_phases: 9
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 **Project:** Uni Volunteer Scheduler (UCSB Sci Trek)
 **Initialized:** 2026-04-08
-**Mode:** YOLO · Standard granularity · Parallel execution · Research/Plan-Check/Verifier all ON
+**Mode:** Autonomous · Standard granularity · Sequential execution · Research/Plan-Check/Verifier all ON
 **Deadline:** Before June 2026
 
 ## Current Position
 
-Phase: 19 (organizer-role-audit-ux-polish) — NEXT (Phase 15 + 16 + 17 + 18 all shipped)
+Phase: 21 (orientation-credit-engine) — NEXT
 Plan: Not started
-**Milestone:** v1.2-prod Production-ready by role
-Status: Ready to execute Phase 19; v1.2-final merge branch produced 2026-04-16
-**Last activity:** 2026-04-16
+**Milestone:** v1.3 feature expansion (SciTrek parity)
+Status: Ready to plan Phase 21; v1.3 branch active, roadmap written 2026-04-17
+**Last activity:** 2026-04-17
 
 ## Current Status
 
 - ✓ v1.0 phases 0–7 shipped (2026-04-08) — drifted from no-accounts thesis, then realigned in v1.1
 - ✓ v1.1 phases 08–13 shipped (2026-04-10) — account-less realignment + admin shell + 16/16 Playwright E2E green
-- ✓ v1.2-prod ROADMAP.md created (2026-04-14) — 7 phases, 68 requirements mapped, parallel collab structure locked
-- ▶ Phase 14 (Collaboration setup) is the next action
+- ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
+- ▶ v1.3 feature expansion milestone seeded + roadmap written 2026-04-17 (Phase 21 next)
 
-**v1.2-prod phase plan (7 phases, 14–20):**
+**v1.3 phase plan (9 phases, 21–29):**
 
-- Phase 14: Collaboration setup — git-worktree workflow, role-owned branches, COLLABORATION.md + CLAUDE.md updates
-- Phase 15: Participant audit + UX polish (PART-01..14) — runs in PARALLEL with Phase 16
-- Phase 16: Admin shell + retire Overrides + Overview + Audit Log + Users + Exports + UX polish (ADMIN-01..07, 18..27) — runs in PARALLEL with Phase 15
-- Phase 17: Admin Templates CRUD (ADMIN-08..11)
-- Phase 18: Admin LLM CSV Imports (ADMIN-12..17) — Phase 5.07 finally unblocked, Andy holds the CSV
-- Phase 19: Organizer audit + UX polish (ORG-01..14) — sequenced after admin pillar to avoid shared-code conflicts
-- Phase 20: Cross-role integration (INTEG-01..06) — strictly last
+- Phase 21: Orientation credit engine — cross-week/cross-module tracked by (volunteer, module_family)
+- Phase 22: Custom form fields — organizer-editable signup questions with template defaults
+- Phase 23: Recurring event duplication — admin "Duplicate to weeks N…M"
+- Phase 24: Scheduled reminder emails — Celery Beat kickoff + 24h + 2h with idempotency
+- Phase 25: Waitlist + auto-promote — wire up waitlisted enum end-to-end
+- Phase 26: Broadcast messages — organizer/admin → email all signups
+- Phase 27: SMS reminders + no-show nudges — AWS SNS behind feature flag
+- Phase 28: QR check-in — per-signup QR on confirmation email
+- Phase 29: Slot swap + signup locking + past-event hiding + integration gate
 
-**Out of scope:** UCSB production deployment (next milestone).
+**Out of scope:** UCSB production deployment (next milestone), payments/donations, SSO, multi-tenant, branding.
 
 ## Next Action
 
-`/gsd-plan-phase 14` — start Phase 14 (Collaboration setup). This phase MUST ship first because every later phase depends on the worktree workflow being defined and tested. After Phase 14 merges, Andy and Hung can run Phase 15 (participant) and Phase 16 (admin) in parallel on different worktrees.
+`/gsd-plan-phase 21` — start Phase 21 (Orientation credit engine). This phase MUST ship first because it reshapes the domain model (module family, credit table) that every later phase either touches or assumes.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
