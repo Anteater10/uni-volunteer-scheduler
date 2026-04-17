@@ -17,9 +17,9 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
 
 - [ ] **Phase 14: Collaboration setup** — git-worktree workflow, role-owned long-lived branches, COLLABORATION.md + CLAUDE.md updates, file-ownership conventions, conflict playbook. Must ship before Andy and Hung run parallel pillars.
 - [ ] **Phase 15: Participant role audit + UX polish** — end-to-end audit of public flows, fixes, WCAG AA + 375px verification, loading/empty/error states, cross-browser smoke, one new audit-surfaced feature.
-- [ ] **Phase 16: Admin shell + retirement + Overview/Audit/Users/Exports** — retire `Overrides`, audit every admin route, polish admin shell, ship live Overview + filtered Audit Log + Users CRUD + Exports + UX polish across all admin pages.
-- [ ] **Phase 17: Admin Templates CRUD** — full CRUD on `module_templates` (list, create, edit, delete/archive). Smaller scoped phase that can land independently between admin shell and the LLM import.
-- [ ] **Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)** — upload UI, single-shot LLM extraction → Pydantic, preview screen, atomic commit, eval-corpus logging, low-confidence flagging.
+- [x] **Phase 16: Admin shell + retirement + Overview/Audit/Users/Exports** — retire `Overrides`, audit every admin route, polish admin shell, ship live Overview + filtered Audit Log + Users CRUD + Exports + UX polish across all admin pages. (completed 2026-04-15)
+- [x] **Phase 17: Admin Templates CRUD** — full CRUD on `module_templates` (list, create, edit, delete/archive). Smaller scoped phase that can land independently between admin shell and the LLM import. (completed 2026-04-16)
+- [x] **Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)** — upload UI, single-shot LLM extraction → Pydantic, preview screen, atomic commit, eval-corpus logging, low-confidence flagging. (completed 2026-04-16)
 - [ ] **Phase 19: Organizer role audit + UX polish** — route normalization (`/organize` → `/organizer`), audit, fixes, roster polish, end-of-event prompts, WCAG AA + 375px verification, one new audit-surfaced feature.
 - [ ] **Phase 20: Cross-role integration** — cross-role E2E (admin creates → organizer runs → participant signs up → admin sees in audit log), 4+ new Playwright scenarios, manual smoke checklist, doc sweep.
 
@@ -125,7 +125,15 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
   3. The Overview page shows live stats (Users, Events, Slots, Signups, Confirmed signups) sourced from the live DB plus a Recent Activity feed of the last N audit entries with clear actor + timestamp formatting.
   4. The Audit Log page paginates every audit entry and supports filters by kind, actor, date range, and free-text search; the Users page supports list/create/edit/deactivate for organizer + admin users (no participant accounts).
   5. Admin can export volunteer hours + attendance + no-show CSVs and the CCPA export flow is polished and tested; every admin page meets WCAG AA, passes a 375px audit (or has a graceful "desktop-only" mobile message), and shows loading/empty/error states.
-**Plans:** TBD
+**Plans:** 7/7 plans complete
+Plans:
+- [x] 16-01-PLAN.md — Wave 0 backend foundation: Alembic 0011/0012, humanization service, Overrides retirement
+- [x] 16-02-PLAN.md — Backend endpoints: users invite/deactivate, expanded summary, humanized audit, 2 new CSV endpoints
+- [x] 16-03-PLAN.md — Frontend primitives + AdminLayout rework + HelpSection + api.js batch (PR-only)
+- [x] 16-04-PLAN.md — Overview page rewire + Audit Log page in-place rewrite
+- [x] 16-05-PLAN.md — Users page fix + rewrite (table, drawer, invite, deactivate, CCPA)
+- [x] 16-06-PLAN.md — Exports polish + Imports cleanups + AdminEventPage + PortalsAdminPage
+- [x] 16-07-PLAN.md — ADMIN-AUDIT.md + Playwright a11y spec + final gate verification
 **UI hint:** yes
 **Touches:** `frontend/src/pages/admin/*`, `frontend/src/components/admin/*`, `frontend/src/lib/api.js` (write — coordinate with participant worktree per ownership rules), `backend/app/routers/admin.py`, `backend/app/routers/users.py`, audit log services, CCPA export router.
 
@@ -141,9 +149,12 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
   3. Admin can edit an existing module template and see the change reflected in the list and in any downstream consumers.
   4. Admin can delete or soft-archive a module template; the row disappears from the active list and is preserved if soft-archived.
   5. The Templates page meets the Phase 16 standards (WCAG AA, 375px audit or graceful desktop-only message, loading/empty/error states).
-**Plans:** TBD
+**Plans:** 2/2 plans complete
+Plans:
+- [x] 17-01-PLAN.md — Backend foundation: Alembic 0013 (type enum + session_count + duration fix), model/schema/service updates, restore endpoint, backend tests, api.js restore method
+- [x] 17-02-PLAN.md — Frontend rewrite: TemplatesSection.jsx SideDrawer CRUD pattern + tests + visual checkpoint
 **UI hint:** yes
-**Touches:** `frontend/src/pages/admin/AdminTemplatesPage.jsx`, `backend/app/routers/templates.py` (or admin.py), `backend/app/models/module_template.py`, `backend/app/schemas/module_template.py`.
+**Touches:** `frontend/src/pages/admin/TemplatesSection.jsx`, `backend/app/routers/admin.py`, `backend/app/models.py`, `backend/app/schemas.py`, `backend/app/services/template_service.py`, `frontend/src/lib/api.js`.
 
 ### Phase 18: Admin LLM CSV Imports (Phase 5.07 unblocked)
 **Goal:** Finally unblock and ship the LLM CSV extraction surface — Andy holds the Sci Trek CSV. Single-shot LLM call (Haiku default), structured Pydantic output, preview screen, atomic commit, eval-corpus logging, low-confidence flagging. This is the biggest net-new admin feature in v1.2-prod.
@@ -157,7 +168,7 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
   3. The Imports page shows a preview of the parsed events ("N events will be created, M skipped") with a confirm/cancel choice; low-confidence rows are flagged for manual review rather than silently guessed.
   4. Confirming the import is atomic — all rows commit or none do; any error during commit triggers a full rollback and a clear error message.
   5. A real Sci Trek quarterly CSV (the one Andy holds) imports cleanly end-to-end against the docker stack and the resulting events are visible in the public events-by-week browse.
-**Plans:** TBD
+**Plans:** 2/2 plans complete
 **UI hint:** yes
 **Touches:** `frontend/src/pages/admin/AdminImportsPage.jsx`, new `backend/app/services/llm_import.py`, new `backend/app/routers/imports.py`, Pydantic schemas for canonical event JSON, eval-corpus storage, `module_templates` lookup.
 
@@ -196,11 +207,11 @@ Phase numbering continues from v1.1 (which ended at 13); v1.2-prod starts at Pha
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 14. Collaboration setup | 3/4 | In Progress|  |
-| 15. Participant role audit + UX polish | 6/7 | In Progress|  |
-| 16. Admin shell + retirement + Overview/Audit/Users/Exports | 0/? | Not started | - |
-| 17. Admin Templates CRUD | 0/? | Not started | - |
-| 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 0/? | Not started | - |
+| 14. Collaboration setup | 3/4 | In Progress |  |
+| 15. Participant role audit + UX polish | 7/7 | Complete    | 2026-04-16 |
+| 16. Admin shell + retirement + Overview/Audit/Users/Exports | 7/7 | Complete    | 2026-04-15 |
+| 17. Admin Templates CRUD | 2/2 | Complete    | 2026-04-16 |
+| 18. Admin LLM CSV Imports (Phase 5.07 unblocked) | 2/2 | Complete    | 2026-04-16 |
 | 19. Organizer role audit + UX polish | 0/? | Not started | - |
 | 20. Cross-role integration | 0/? | Not started | - |
 

@@ -85,6 +85,12 @@ class SlotType(str, enum.Enum):
     PERIOD = "period"
 
 
+class ModuleType(str, enum.Enum):
+    seminar = "seminar"
+    orientation = "orientation"
+    module = "module"
+
+
 # -------------------------
 # Volunteer table (Phase 08 — v1.1 account-less pivot)
 # -------------------------
@@ -119,7 +125,8 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    # Phase 16 Plan 01: nullable so magic-link-only invites can create users
+    hashed_password = Column(String(255), nullable=True)
 
     # ✅ lock enum name to match Alembic migration
     role = Column(
@@ -133,6 +140,9 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     # Added in Phase 7 for CCPA soft-delete
     deleted_at = Column(DateTime(timezone=True), nullable=True, default=None)
+    # Phase 16 Plan 01: admin Users page surface
+    is_active = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True, default=None)
 
     # Relationships
     events = relationship("Event", back_populates="owner")
@@ -489,6 +499,12 @@ class ModuleTemplate(Base):
     # Phase 08: prereq_slugs column dropped (D-05)
     default_capacity = Column(Integer, nullable=False, server_default="20")
     duration_minutes = Column(Integer, nullable=False, server_default="90")
+    type = Column(
+        SqlEnum(ModuleType, values_callable=lambda x: [e.value for e in x], name="moduletype", create_type=False),
+        nullable=False,
+        server_default="module",
+    )
+    session_count = Column(Integer, nullable=False, server_default="1")
     materials = Column(ARRAY(String), nullable=False, server_default="{}")
     description = Column(Text, nullable=True)
     metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
@@ -549,5 +565,5 @@ class SentNotification(Base):
     signup = relationship("Signup", back_populates="sent_notifications")
 
 # Phase 08: PrereqOverride model REMOVED (D-05).
-# The prereq_overrides table was dropped in migration 0009.
-# Router/service cleanup is Phase 12 scope.
+# The legacy table was dropped in migration 0009. Router/service cleanup
+# is Phase 12 scope, Phase 16 Plan 01 finished the admin-shell retirement.

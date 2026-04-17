@@ -38,3 +38,7 @@ backend/.coverage
 
 # --- local scratch ---
 screenshots/
+Untitled
+Untitled.*
+# Sample CSVs in repo root (use backend/seeds/ or backend/tests/fixtures/ instead)
+/*.csv

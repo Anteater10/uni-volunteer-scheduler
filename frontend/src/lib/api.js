@@ -210,6 +210,17 @@ function logout() {
   authStorage.clearAll();
 }
 
+async function setPasswordFromInvite(token, password) {
+  const json = await request("/auth/set-password", {
+    method: "POST",
+    auth: false,
+    body: { token, password },
+  });
+  if (json?.access_token) authStorage.setToken(json.access_token);
+  if (json?.refresh_token) authStorage.setRefreshToken(json.refresh_token);
+  return json;
+}
+
 // --------------------
 // USERS
 // --------------------
@@ -428,6 +439,7 @@ export const api = {
   // auth
   login,
   logout,
+  setPasswordFromInvite,
 
   // users
   me,
@@ -535,10 +547,18 @@ export const api = {
   admin: {
     summary: () => adminSummary(),
     users: {
-      list: (params) => adminListUsers(params),
+      // Phase 16 Plan 03 (ADMIN-18..21): invite / deactivate / reactivate wire
+      // up to Plan 02's backend endpoints. Legacy create/update/delete kept for
+      // compatibility but the UI flow prefers invite + soft-delete.
+      list: (params = {}) => request("/users/", { method: "GET", params }),
       create: (payload) => adminCreateUser(payload),
       update: (id, payload) => adminUpdateUser(id, payload),
       delete: (id) => adminDeleteUser(id),
+      invite: (body) => request("/users/invite", { method: "POST", body }),
+      deactivate: (id) =>
+        request(`/users/${id}/deactivate`, { method: "POST", body: {} }),
+      reactivate: (id) =>
+        request(`/users/${id}/reactivate`, { method: "POST", body: {} }),
       ccpaExport: (userId, reason) =>
         request(`/admin/users/${userId}/ccpa-export`, { method: "GET", params: { reason } }),
       ccpaDelete: (userId, reason) =>
@@ -557,16 +577,50 @@ export const api = {
       resend: (id) => adminResendSignup(id),
     },
     analytics: {
-      volunteerHours: (params) => request("/admin/analytics/volunteer-hours", { method: "GET", params }),
-      attendanceRates: (params) => request("/admin/analytics/attendance-rates", { method: "GET", params }),
-      noShowRates: (params) => request("/admin/analytics/no-show-rates", { method: "GET", params }),
+      // JSON read helpers — consumed by ExportsSection panels in Plan 06
+      volunteerHours: (params = {}) =>
+        request("/admin/analytics/volunteer-hours", { method: "GET", params }),
+      attendanceRates: (params = {}) =>
+        request("/admin/analytics/attendance-rates", { method: "GET", params }),
+      noShowRates: (params = {}) =>
+        request("/admin/analytics/no-show-rates", { method: "GET", params }),
+      // CSV download helpers — consumed by ExportsSection Download CSV buttons in Plan 06
+      volunteerHoursCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/volunteer-hours.csv", "volunteer-hours.csv", { params }),
+      attendanceRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/attendance-rates.csv", "attendance-rates.csv", { params }),
+      noShowRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/no-show-rates.csv", "no-show-rates.csv", { params }),
+
+      // Phase 18 Plan 03 — extra SciTrek-focused reports
+      eventFillRates: (params = {}) =>
+        request("/admin/analytics/event-fill-rates", { method: "GET", params }),
+      eventFillRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/event-fill-rates.csv", "event-fill-rates.csv", { params }),
+      hoursBySchool: (params = {}) =>
+        request("/admin/analytics/hours-by-school", { method: "GET", params }),
+      hoursBySchoolCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/hours-by-school.csv", "hours-by-school.csv", { params }),
+      uniqueVolunteers: (params = {}) =>
+        request("/admin/analytics/unique-volunteers", { method: "GET", params }),
+      uniqueVolunteersCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/unique-volunteers.csv", "unique-volunteers.csv", { params }),
+      cancellationRates: (params = {}) =>
+        request("/admin/analytics/cancellation-rates", { method: "GET", params }),
+      cancellationRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/cancellation-rates.csv", "cancellation-rates.csv", { params }),
+      modulePopularity: (params = {}) =>
+        request("/admin/analytics/module-popularity", { method: "GET", params }),
+      modulePopularityCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/module-popularity.csv", "module-popularity.csv", { params }),
     },
     templates: {
-      list: () => request("/admin/module-templates"),
+      list: (params) => request("/admin/module-templates", { params }),
       create: (payload) => request("/admin/module-templates", { method: "POST", body: payload }),
       update: (slug, payload) => request(`/admin/module-templates/${slug}`, { method: "PATCH", body: payload }),
       delete: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
       bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/module-templates/${s}`, { method: "DELETE" }))),
+      restore: (slug) => request(`/admin/module-templates/${slug}/restore`, { method: "POST" }),
     },
     imports: {
       list: () => request("/admin/imports", { method: "GET" }),
@@ -587,8 +641,16 @@ export const api = {
           return res.json();
         });
       },
-      commit: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
+      commit: (importId, moduleTemplateSlug) =>
+        request(`/admin/imports/${importId}/commit`, {
+          method: "POST",
+          body: { module_template_slug: moduleTemplateSlug },
+        }),
       retry: (importId) => request(`/admin/imports/${importId}/retry`, { method: "POST" }),
+      revalidate: (importId) =>
+        request(`/admin/imports/${importId}/revalidate`, { method: "POST" }),
+      updateRow: (importId, rowIndex, data) =>
+        request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
     },
   },
 };

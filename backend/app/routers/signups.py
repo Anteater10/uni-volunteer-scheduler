@@ -112,7 +112,7 @@ def cancel_signup(
         promoted_signups.append(promoted)
 
     # Audit log before commit
-    log_action(db, current_user, "signup_cancel", "Signup", str(signup.id))
+    log_action(db, current_user, "signup_cancelled", "Signup", str(signup.id))
 
     db.commit()
     db.refresh(signup)

@@ -110,7 +110,8 @@ def test_admin_summary_requires_admin(client, db_session):
     resp = client.get("/api/v1/admin/summary", headers=auth_headers(client, admin))
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    for key in ("total_users", "total_events", "total_slots", "total_signups"):
+    # Phase 16 Plan 02: summary shape expanded per D-14..D-29.
+    for key in ("users_total", "events_total", "slots_total", "signups_total"):
         assert key in body
 
 

@@ -25,13 +25,16 @@ def _validate_metadata(metadata: dict | None) -> None:
         raise HTTPException(status_code=422, detail="Metadata exceeds 10KB limit")
 
 
-def list_templates(db: Session) -> list[ModuleTemplate]:
-    return (
-        db.query(ModuleTemplate)
-        .filter(ModuleTemplate.deleted_at.is_(None))
-        .order_by(ModuleTemplate.name)
-        .all()
-    )
+def _validate_session_count(session_count: int | None) -> None:
+    if session_count is not None and (session_count < 1 or session_count > 10):
+        raise HTTPException(status_code=422, detail="Session count must be between 1 and 10")
+
+
+def list_templates(db: Session, include_archived: bool = False) -> list[ModuleTemplate]:
+    q = db.query(ModuleTemplate)
+    if not include_archived:
+        q = q.filter(ModuleTemplate.deleted_at.is_(None))
+    return q.order_by(ModuleTemplate.name).all()
 
 
 def get_template(db: Session, slug: str) -> ModuleTemplate:
@@ -45,9 +48,23 @@ def get_template(db: Session, slug: str) -> ModuleTemplate:
     return tpl
 
 
+def restore_template(db: Session, slug: str) -> ModuleTemplate:
+    tpl = db.query(ModuleTemplate).filter(ModuleTemplate.slug == slug).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail=f"Template '{slug}' not found")
+    if tpl.deleted_at is None:
+        raise HTTPException(status_code=409, detail=f"Template '{slug}' is not archived")
+    tpl.deleted_at = None
+    tpl.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(tpl)
+    return tpl
+
+
 def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     _validate_slug(slug)
     _validate_metadata(data.get("metadata"))
+    _validate_session_count(data.get("session_count"))
     existing = db.query(ModuleTemplate).filter(ModuleTemplate.slug == slug).first()
     if existing and existing.deleted_at is None:
         raise HTTPException(status_code=409, detail=f"Template '{slug}' already exists")
@@ -74,6 +91,7 @@ def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
 
 def update_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     _validate_metadata(data.get("metadata"))
+    _validate_session_count(data.get("session_count"))
     tpl = get_template(db, slug)
     for k, v in data.items():
         if v is not None:
