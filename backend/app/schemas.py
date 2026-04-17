@@ -597,6 +597,10 @@ class PublicEventRead(BaseModel):
     module_slug: Optional[str] = None
     start_date: datetime  # Event.start_date is DateTime not Date in model
     end_date: datetime
+    # Phase 29 (LOCK-01) — expose signup window so the public UI can render
+    # an opens/closes banner and disable the submit outside the window.
+    signup_open_at: Optional[datetime] = None
+    signup_close_at: Optional[datetime] = None
     slots: List[PublicSlotRead] = []
     model_config = ConfigDict(from_attributes=True)
 

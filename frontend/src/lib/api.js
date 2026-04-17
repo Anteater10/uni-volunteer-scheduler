@@ -425,6 +425,16 @@ async function publicCancelSignup(signupId, token) {
   return request(`/public/signups/${signupId}`, { method: "DELETE", auth: false, params: { token } });
 }
 
+// Phase 29 (SWAP-02) — participant swap to a different slot in the same event.
+async function publicSwapSignup(signupId, targetSlotId, token) {
+  return request(`/public/signups/${signupId}/swap`, {
+    method: "POST",
+    auth: false,
+    params: { token },
+    body: { target_slot_id: targetSlotId },
+  });
+}
+
 // Phase 24 — volunteer reminder preferences (token-gated)
 async function publicGetPreferences(manageToken) {
   return request("/public/preferences", {
@@ -612,6 +622,9 @@ export const api = {
     confirmSignup: (token) => publicConfirmSignup(token),
     getManageSignups: (token) => publicGetManageSignups(token),
     cancelSignup: (signupId, token) => publicCancelSignup(signupId, token),
+    // Phase 29 (SWAP-02) — participant swap via manage_token.
+    swapSignup: (signupId, targetSlotId, token) =>
+      publicSwapSignup(signupId, targetSlotId, token),
     // Phase 24 — reminder preferences
     getPreferences: (manageToken) => publicGetPreferences(manageToken),
     updatePreferences: (manageToken, patch) =>
@@ -688,6 +701,12 @@ export const api = {
 
   admin: {
     summary: () => adminSummary(),
+    // Phase 29 (HIDE-01) — site-wide settings singleton
+    siteSettings: {
+      get: () => request("/admin/site-settings", { method: "GET" }),
+      update: (patch) =>
+        request("/admin/site-settings", { method: "PATCH", body: patch }),
+    },
     users: {
       // Phase 16 Plan 03 (ADMIN-18..21): invite / deactivate / reactivate wire
       // up to Plan 02's backend endpoints. Legacy create/update/delete kept for
