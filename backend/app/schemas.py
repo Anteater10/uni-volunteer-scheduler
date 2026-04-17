@@ -582,6 +582,33 @@ class CurrentWeekRead(BaseModel):
 class OrientationStatusRead(BaseModel):
     has_attended_orientation: bool
     last_attended_at: Optional[datetime] = None
+    # Phase 21: has_credit is the cross-week/cross-module answer the modal uses.
+    # has_attended_orientation is kept for legacy callers. For the legacy
+    # endpoint both remain true together.
+    has_credit: bool = False
+    source: Optional[Literal["attendance", "grant"]] = None
+    family_key: Optional[str] = None
+
+
+# =========================
+# ORIENTATION CREDIT (Phase 21)
+# =========================
+class OrientationCreditCreate(BaseModel):
+    volunteer_email: EmailStr
+    family_key: str = Field(min_length=1, max_length=255)
+    notes: Optional[str] = None
+
+
+class OrientationCreditRead(ORMBase):
+    id: UUID
+    volunteer_email: str
+    family_key: str
+    source: Literal["attendance", "grant"]
+    granted_by_user_id: Optional[UUID] = None
+    granted_by_label: Optional[str] = None
+    granted_at: datetime
+    revoked_at: Optional[datetime] = None
+    notes: Optional[str] = None
 
 
 class TokenedSignupRead(BaseModel):
