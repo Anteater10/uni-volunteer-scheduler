@@ -232,21 +232,33 @@ export default function ManageSignupsPage({ tokenOverride }) {
                 <p className="text-sm text-gray-500">{signup.slot.location}</p>
               )}
 
-              {/* Status badge — icon + label so color isn't the sole signal */}
-              <span
-                className={
-                  signup.status === "confirmed"
-                    ? "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700"
-                    : "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700"
-                }
-              >
-                {signup.status === "confirmed" ? (
-                  <CheckCircle size={12} aria-hidden="true" />
-                ) : (
+              {/* Status badge — icon + label so color isn't the sole signal.
+                  Phase 25 (WAIT-01): waitlisted rows carry a distinct orange
+                  badge with their current FIFO position. */}
+              {signup.status === "waitlisted" ? (
+                <span
+                  className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700"
+                  data-testid="waitlist-badge"
+                >
                   <Clock size={12} aria-hidden="true" />
-                )}
-                {signup.status === "confirmed" ? "Confirmed" : "Pending"}
-              </span>
+                  Waitlist #{signup.waitlist_position ?? "—"}
+                </span>
+              ) : (
+                <span
+                  className={
+                    signup.status === "confirmed"
+                      ? "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700"
+                      : "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700"
+                  }
+                >
+                  {signup.status === "confirmed" ? (
+                    <CheckCircle size={12} aria-hidden="true" />
+                  ) : (
+                    <Clock size={12} aria-hidden="true" />
+                  )}
+                  {signup.status === "confirmed" ? "Confirmed" : "Pending"}
+                </span>
+              )}
             </div>
 
             <Button

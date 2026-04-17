@@ -16,10 +16,11 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from ..models import MagicLinkPurpose, Signup, SignupStatus, Slot
-from ..schemas import PublicSignupCreate, PublicSignupResponse
+from ..schemas import PublicSignupCreate, PublicSignupResponse, PublicSignupResultItem
 from . import form_schema_service
 from .phone_service import InvalidPhoneError, normalize_us_phone
 from .volunteer_service import upsert_volunteer
+from .waitlist_service import compute_waitlist_position
 
 
 def create_public_signup(
@@ -66,17 +67,25 @@ def create_public_signup(
         )
         if slot is None:
             raise HTTPException(status_code=404, detail=f"slot {slot_id} not found")
-        if slot.current_count >= slot.capacity:
-            raise HTTPException(status_code=409, detail=f"slot {slot_id} is full")
+        # Phase 25 (WAIT-01): at-capacity signups go to waitlist instead of 409.
+        at_capacity = slot.current_count >= slot.capacity
         # Duplicate guard: UNIQUE(volunteer_id, slot_id) — catch IntegrityError → 409
         try:
             signup = Signup(
                 volunteer_id=volunteer.id,
                 slot_id=slot.id,
-                status=SignupStatus.pending,  # D-01: pending on creation
+                # D-01: pending on creation (counts against capacity). When
+                # the slot is already full we create a waitlisted row instead,
+                # which does NOT touch current_count.
+                status=(
+                    SignupStatus.waitlisted
+                    if at_capacity
+                    else SignupStatus.pending
+                ),
             )
             db.add(signup)
-            slot.current_count += 1  # D-02: pending counts against capacity
+            if not at_capacity:
+                slot.current_count += 1  # D-02: pending counts against capacity
             db.flush()
         except IntegrityError:
             db.rollback()
@@ -125,11 +134,28 @@ def create_public_signup(
                 f["id"] for f in effective_schema if f.get("required")
             ]
 
+    # Phase 25 — compute per-signup status + waitlist position so the public
+    # caller can branch on "you're in" vs "you're on the waitlist".
+    result_items: list[PublicSignupResultItem] = []
+    for s in signups:
+        if s.status == SignupStatus.waitlisted:
+            position = compute_waitlist_position(db, s.slot_id, s.id)
+        else:
+            position = None
+        result_items.append(
+            PublicSignupResultItem(
+                signup_id=s.id,
+                status=s.status,
+                position=position,
+            )
+        )
+
     response_kwargs: dict = dict(
         volunteer_id=volunteer.id,
         signup_ids=[s.id for s in signups],
         magic_link_sent=True,
         missing_required=missing_required,
+        signups=result_items,
     )
     if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
         response_kwargs["confirm_token"] = raw_token

@@ -306,4 +306,38 @@ describe("ManageSignupsPage", () => {
       expect(screen.getByText("Your signups")).toBeInTheDocument();
     });
   });
+
+  // Phase 25 (WAIT-01) — waitlist position badge renders with the FIFO rank.
+  it("10. shows 'Waitlist #N' badge for waitlisted signups", async () => {
+    const WAITLISTED_SIGNUP = {
+      signup_id: "sig-wait",
+      status: "waitlisted",
+      waitlist_position: 3,
+      slot: {
+        id: "slot-wait",
+        slot_type: "period",
+        date: "2026-04-24",
+        start_time: "2026-04-24T10:00:00",
+        end_time: "2026-04-24T12:00:00",
+        location: "Room 303",
+        capacity: 5,
+        filled: 5,
+      },
+    };
+    api.public.getManageSignups.mockResolvedValue({
+      volunteer_id: "vol-abc",
+      volunteer_first_name: "Hung",
+      volunteer_last_name: "Khuu",
+      event_id: "evt-xyz",
+      signups: [WAITLISTED_SIGNUP],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Waitlist #3/i)).toBeInTheDocument();
+    });
+    const badge = screen.getByTestId("waitlist-badge");
+    expect(badge).toHaveTextContent(/Waitlist #3/i);
+  });
 });

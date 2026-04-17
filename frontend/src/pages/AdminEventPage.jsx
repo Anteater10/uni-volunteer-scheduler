@@ -18,6 +18,7 @@ import FormFieldsDrawer from "../components/admin/FormFieldsDrawer";
 import DuplicateEventDrawer from "../components/admin/DuplicateEventDrawer";
 import { toast } from "../state/toast";
 import { useAdminPageTitle } from "./admin/AdminLayout";
+import { useAuth } from "../state/useAuth";
 
 function fmtDateTime(iso) {
   if (!iso) return "—";
@@ -56,6 +57,8 @@ function DetailRow({ label, value }) {
 export default function AdminEventPage() {
   const { eventId } = useParams();
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [privacy, setPrivacy] = useState("full");
   const [confirmExport, setConfirmExport] = useState(false);
   const [err, setErr] = useState("");
@@ -63,6 +66,8 @@ export default function AdminEventPage() {
   const [formFieldsOpen, setFormFieldsOpen] = useState(false);
   // Phase 23 — duplicate drawer
   const [duplicateOpen, setDuplicateOpen] = useState(false);
+  // Phase 25 — waitlist reorder modal
+  const [reorderState, setReorderState] = useState(null); // { slotId, ids: [...] }
 
   const analyticsQ = useQuery({
     queryKey: ["adminEventAnalytics", eventId],
@@ -99,6 +104,34 @@ export default function AdminEventPage() {
     },
     onError: (err) => {
       toast.error(err?.message || "Grant failed");
+    },
+  });
+
+  // Phase 25 — organizer manual waitlist promote (WAIT-03).
+  const promoteMut = useMutation({
+    mutationFn: (signupId) =>
+      api.organizer.promoteSignup(eventId, signupId),
+    onSuccess: () => {
+      toast.success("Promoted from waitlist.");
+      qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventAnalytics", eventId] });
+    },
+    onError: (e) => {
+      toast.error(e?.message || "Promote failed");
+    },
+  });
+
+  // Phase 25 — admin reorder waitlist (WAIT-05).
+  const reorderMut = useMutation({
+    mutationFn: ({ slotId, orderedIds }) =>
+      api.admin.reorderWaitlist(eventId, slotId, orderedIds),
+    onSuccess: () => {
+      toast.success("Waitlist order saved.");
+      qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
+      setReorderState(null);
+    },
+    onError: (e) => {
+      toast.error(e?.message || "Reorder failed");
     },
   });
 
@@ -347,11 +380,40 @@ export default function AdminEventPage() {
           />
         ) : (
           <div className="space-y-3">
-            {grouped.map(({ slot, rows }) => (
+            {grouped.map(({ slot, rows }) => {
+              const waitlistedRows = rows.filter((r) => r.status === "waitlisted");
+              return (
               <Card key={slot.id}>
-                <p className="text-sm font-medium">
-                  Slot: {fmtDateTime(slot.start)} → {fmtDateTime(slot.end)}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">
+                    Slot: {fmtDateTime(slot.start)} → {fmtDateTime(slot.end)}
+                  </p>
+                  {/* Phase 25 — admin-only reorder waitlist button per slot. */}
+                  {isAdmin && waitlistedRows.length >= 2 && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() =>
+                        setReorderState({
+                          slotId: slot.id,
+                          ids: waitlistedRows
+                            .slice()
+                            .sort(
+                              (a, b) =>
+                                (a.waitlist_position ?? 0) -
+                                (b.waitlist_position ?? 0),
+                            )
+                            .map((r) => ({
+                              signup_id: r.signup_id || r.id,
+                              name: r.user_name || r.user_email || r.user_id,
+                            })),
+                        })
+                      }
+                    >
+                      Reorder waitlist
+                    </Button>
+                  )}
+                </div>
                 <ul className="mt-2 space-y-1">
                   {rows.map((r) => (
                     <li
@@ -362,8 +424,25 @@ export default function AdminEventPage() {
                         <span>{r.user_name || r.user_email || r.user_id}</span>
                         <span className="flex items-center gap-2">
                           <span className="text-[var(--color-fg-muted)]">
-                            {r.status}
+                            {r.status === "waitlisted" && r.waitlist_position
+                              ? `waitlist #${r.waitlist_position}`
+                              : r.status}
                           </span>
+                          {/* Phase 25 — organizer/admin manual promote. Shown
+                              only for waitlisted rows. */}
+                          {r.status === "waitlisted" && (
+                            <Button
+                              type="button"
+                              variant="primary"
+                              data-testid="promote-btn"
+                              onClick={() =>
+                                promoteMut.mutate(r.signup_id || r.id)
+                              }
+                              disabled={promoteMut.isPending}
+                            >
+                              Promote
+                            </Button>
+                          )}
                           {/* Phase 21 — one-tap orientation credit grant */}
                           <Button
                             type="button"
@@ -397,7 +476,8 @@ export default function AdminEventPage() {
                   ))}
                 </ul>
               </Card>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
@@ -451,6 +531,95 @@ export default function AdminEventPage() {
             Download CSV
           </Button>
         </div>
+      </Modal>
+
+      {/* Phase 25 — admin reorder waitlist modal (WAIT-05). Up / down arrows
+          reorder the waitlist; drag-and-drop is deferred to keep the phase
+          scoped (context decision). */}
+      <Modal
+        open={!!reorderState}
+        onClose={() => !reorderMut.isPending && setReorderState(null)}
+        title="Reorder waitlist"
+      >
+        {reorderState && (
+          <div className="space-y-3" data-testid="reorder-modal">
+            <p className="text-sm text-[var(--color-fg-muted)]">
+              Rearrange the waitlist to decide who gets promoted next. The top
+              row is promoted first.
+            </p>
+            <ol className="space-y-1">
+              {reorderState.ids.map((row, idx) => (
+                <li
+                  key={row.signup_id}
+                  className="flex items-center justify-between gap-2 rounded border border-[var(--color-border)] px-2 py-1 text-sm"
+                >
+                  <span>
+                    #{idx + 1} {row.name}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={idx === 0 || reorderMut.isPending}
+                      onClick={() =>
+                        setReorderState((prev) => {
+                          if (!prev) return prev;
+                          const next = prev.ids.slice();
+                          [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                          return { ...prev, ids: next };
+                        })
+                      }
+                      aria-label="Move up"
+                    >
+                      Up
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={
+                        idx === reorderState.ids.length - 1 ||
+                        reorderMut.isPending
+                      }
+                      onClick={() =>
+                        setReorderState((prev) => {
+                          if (!prev) return prev;
+                          const next = prev.ids.slice();
+                          [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
+                          return { ...prev, ids: next };
+                        })
+                      }
+                      aria-label="Move down"
+                    >
+                      Down
+                    </Button>
+                  </span>
+                </li>
+              ))}
+            </ol>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => setReorderState(null)}
+                disabled={reorderMut.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() =>
+                  reorderMut.mutate({
+                    slotId: reorderState.slotId,
+                    orderedIds: reorderState.ids.map((r) => r.signup_id),
+                  })
+                }
+                disabled={reorderMut.isPending}
+              >
+                {reorderMut.isPending ? "Saving…" : "Save order"}
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

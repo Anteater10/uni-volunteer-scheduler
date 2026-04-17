@@ -534,6 +534,16 @@ class PublicSignupCreate(VolunteerCreate):
     responses: Optional[List["SignupResponseCreate"]] = None
 
 
+class PublicSignupResultItem(BaseModel):
+    """Phase 25 — per-signup result so the UI can branch confirmed vs waitlisted."""
+
+    signup_id: UUID
+    status: SignupStatus
+    # 1-indexed position within the waitlist when status == waitlisted. None
+    # otherwise. Ordering matches promote_waitlist_fifo (timestamp ASC, id ASC).
+    position: Optional[int] = None
+
+
 class PublicSignupResponse(BaseModel):
     volunteer_id: UUID
     signup_ids: List[UUID]
@@ -543,6 +553,9 @@ class PublicSignupResponse(BaseModel):
     # Clients can surface these to the participant without blocking the signup
     # (organizer remains the ultimate authority on missing answers).
     missing_required: List[str] = []
+    # Phase 25 — per-signup status + waitlist position. Empty for legacy test
+    # fixtures that construct this schema directly.
+    signups: List[PublicSignupResultItem] = []
 
 
 class SlotSignupRead(BaseModel):
@@ -622,6 +635,9 @@ class TokenedSignupRead(BaseModel):
     signup_id: UUID
     status: SignupStatus
     slot: PublicSlotRead
+    # Phase 25 — 1-indexed waitlist position when status == waitlisted. Null
+    # otherwise. Computed live per read; no DB column.
+    waitlist_position: Optional[int] = None
 
 
 class TokenedManageRead(BaseModel):
