@@ -15,6 +15,7 @@ import {
   Skeleton,
 } from "../components/ui";
 import FormFieldsDrawer from "../components/admin/FormFieldsDrawer";
+import DuplicateEventDrawer from "../components/admin/DuplicateEventDrawer";
 import { toast } from "../state/toast";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 
@@ -60,6 +61,8 @@ export default function AdminEventPage() {
   const [err, setErr] = useState("");
   // Phase 22 — form fields drawer
   const [formFieldsOpen, setFormFieldsOpen] = useState(false);
+  // Phase 23 — duplicate drawer
+  const [duplicateOpen, setDuplicateOpen] = useState(false);
 
   const analyticsQ = useQuery({
     queryKey: ["adminEventAnalytics", eventId],
@@ -96,6 +99,60 @@ export default function AdminEventPage() {
     },
     onError: (err) => {
       toast.error(err?.message || "Grant failed");
+    },
+  });
+
+  // Phase 23 — list sibling events in the same quarter/module so the
+  // drawer can highlight conflict weeks.
+  const siblingEventsQ = useQuery({
+    queryKey: [
+      "adminSiblingEvents",
+      eventQ.data?.quarter,
+      eventQ.data?.year,
+      eventQ.data?.module_slug,
+    ],
+    enabled: !!eventQ.data?.quarter && !!eventQ.data?.year,
+    queryFn: async () => {
+      // Reuse public list endpoint across each week 1..11; cheap enough.
+      const quarter = eventQ.data.quarter;
+      const year = eventQ.data.year;
+      const results = [];
+      for (let w = 1; w <= 11; w += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const weekEvents = await api.public.listEvents({
+          quarter,
+          year,
+          week_number: w,
+        });
+        for (const e of weekEvents || []) {
+          if (e.module_slug === eventQ.data.module_slug) {
+            results.push({
+              id: e.id,
+              module_slug: e.module_slug,
+              week_number: e.week_number,
+              year: e.year,
+            });
+          }
+        }
+      }
+      return results;
+    },
+  });
+
+  const duplicateMut = useMutation({
+    mutationFn: (payload) => api.admin.duplicateEvent(eventId, payload),
+    onSuccess: (result) => {
+      const created = result?.created?.length || 0;
+      const skipped = result?.skipped_conflicts?.length || 0;
+      toast.success(
+        `Created ${created} event${created === 1 ? "" : "s"}` +
+          (skipped > 0 ? `, skipped ${skipped} conflict${skipped === 1 ? "" : "s"}.` : "."),
+      );
+      setDuplicateOpen(false);
+      qc.invalidateQueries({ queryKey: ["adminSiblingEvents"] });
+    },
+    onError: (e) => {
+      toast.error(e?.message || "Duplicate failed");
     },
   });
 
@@ -148,6 +205,9 @@ export default function AdminEventPage() {
           <div className="flex gap-2">
             <Button as={Link} to={`/organizer/events/${eventId}/roster`}>
               Live roster (check-in)
+            </Button>
+            <Button variant="secondary" onClick={() => setDuplicateOpen(true)}>
+              Duplicate…
             </Button>
             <Button variant="secondary" onClick={() => setConfirmExport(true)}>
               Download roster CSV
@@ -341,6 +401,27 @@ export default function AdminEventPage() {
           </div>
         )}
       </section>
+
+      {/* Phase 23 — duplicate event drawer */}
+      <DuplicateEventDrawer
+        open={duplicateOpen}
+        onClose={() => setDuplicateOpen(false)}
+        sourceEvent={
+          eventQ.data
+            ? {
+                id: eventQ.data.id,
+                title: eventQ.data.title,
+                module_slug: eventQ.data.module_slug,
+                quarter: eventQ.data.quarter,
+                year: eventQ.data.year,
+                week_number: eventQ.data.week_number,
+              }
+            : null
+        }
+        existingEvents={siblingEventsQ.data || []}
+        submitting={duplicateMut.isPending}
+        onSubmit={(payload) => duplicateMut.mutateAsync(payload)}
+      />
 
       {/* Phase 22 — event form schema drawer */}
       <FormFieldsDrawer

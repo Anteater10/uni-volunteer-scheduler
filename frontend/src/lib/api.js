@@ -667,6 +667,16 @@ export const api = {
         method: "PUT",
         body: { schema },
       }),
+    // Phase 23 — recurring event duplication
+    duplicateEvent: (eventId, { target_weeks, target_year, skip_conflicts }) =>
+      request(`/admin/events/${eventId}/duplicate`, {
+        method: "POST",
+        body: {
+          target_weeks,
+          target_year,
+          skip_conflicts,
+        },
+      }),
     // Phase 21 — orientation credit engine
     orientationCredits: {
       list: (params = {}) =>
