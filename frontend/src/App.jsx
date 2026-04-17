@@ -40,6 +40,7 @@ import AuditLogsPage from "./pages/AuditLogsPage";
 import ExportsSection from "./pages/admin/ExportsSection";
 import TemplatesSection from "./pages/admin/TemplatesSection";
 import ImportsSection from "./pages/admin/ImportsSection";
+import OrientationCreditsSection from "./pages/admin/OrientationCreditsSection";
 import EventsSection from "./pages/admin/EventsSection";
 import HelpSection from "./pages/admin/HelpSection";
 
@@ -92,6 +93,11 @@ export default function App() {
               <Route path="users" element={<UsersAdminPage />} />
               <Route path="audit-logs" element={<AuditLogsPage />} />
               <Route path="exports" element={<ExportsSection />} />
+              {/* Phase 21 */}
+              <Route
+                path="orientation-credits"
+                element={<OrientationCreditsSection />}
+              />
             </Route>
           </Route>
         </Route>

@@ -1,7 +1,7 @@
 // AdminEventPage.jsx
 import React, { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, downloadBlob } from "../lib/api";
 import {
   PageHeader,
@@ -80,6 +80,21 @@ export default function AdminEventPage() {
   useAdminPageTitle(eventTitle);
 
   const roster = rosterQ.data || [];
+
+  // Phase 21 — one-tap orientation credit grant from roster.
+  const grantOrientationMut = useMutation({
+    mutationFn: (signupId) =>
+      api.organizer.grantOrientation(eventId, signupId),
+    onSuccess: () => {
+      toast.success("Orientation credit granted.");
+      qc.invalidateQueries({
+        queryKey: ["adminEventRoster", eventId],
+      });
+    },
+    onError: (err) => {
+      toast.error(err?.message || "Grant failed");
+    },
+  });
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -248,7 +263,7 @@ export default function AdminEventPage() {
                     return (
                       <li
                         key={r.signup_id || r.id}
-                        className="text-sm flex justify-between gap-2"
+                        className="text-sm flex flex-wrap items-center justify-between gap-2"
                       >
                         <span>
                           {name}
@@ -258,7 +273,19 @@ export default function AdminEventPage() {
                             </span>
                           ) : null}
                         </span>
-                        <span className="text-[var(--color-fg-muted)]">{r.status}</span>
+                        <span className="flex items-center gap-2">
+                          <span className="text-[var(--color-fg-muted)]">{r.status}</span>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() =>
+                              grantOrientationMut.mutate(r.signup_id || r.id)
+                            }
+                            disabled={grantOrientationMut.isPending}
+                          >
+                            Grant orientation
+                          </Button>
+                        </span>
                       </li>
                     );
                   })}

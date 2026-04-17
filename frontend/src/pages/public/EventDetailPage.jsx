@@ -586,8 +586,16 @@ export default function EventDetailPage() {
     if (hasPeriod && !hasOrientation) {
       setStep("checking-orientation");
       try {
-        const result = await api.public.orientationStatus(identity.email);
-        if (!result.has_attended_orientation) {
+        // Phase 21: credit check is cross-week / cross-module within the same
+        // module family. Pass eventId so the backend can resolve the family.
+        const result = await api.public.orientationCheck(
+          identity.email,
+          eventId,
+        );
+        // `has_credit` is the new field; fall back to `has_attended_orientation`
+        // so the check still works if we ever point at the legacy endpoint.
+        const hasCredit = result?.has_credit ?? result?.has_attended_orientation;
+        if (!hasCredit) {
           setStep("orientation-warning");
           return;
         }

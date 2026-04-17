@@ -405,6 +405,16 @@ async function publicCreateSignup(body) {
 async function publicOrientationStatus(email) {
   return request("/public/orientation-status", { method: "GET", auth: false, params: { email } });
 }
+// Phase 21: cross-week/cross-module credit check. Pass eventId so the backend
+// can resolve the module family from the event. Response shape adds
+// has_credit + source + family_key.
+async function publicOrientationCheck(email, eventId) {
+  return request("/public/orientation-check", {
+    method: "GET",
+    auth: false,
+    params: { email, event_id: eventId },
+  });
+}
 async function publicConfirmSignup(token) {
   return request("/public/signups/confirm", { method: "POST", auth: false, params: { token } });
 }
@@ -511,6 +521,8 @@ export const api = {
     getEvent: (id) => publicGetEvent(id),
     createSignup: (body) => publicCreateSignup(body),
     orientationStatus: (email) => publicOrientationStatus(email),
+    // Phase 21
+    orientationCheck: (email, eventId) => publicOrientationCheck(email, eventId),
     confirmSignup: (token) => publicConfirmSignup(token),
     getManageSignups: (token) => publicGetManageSignups(token),
     cancelSignup: (signupId, token) => publicCancelSignup(signupId, token),
@@ -543,6 +555,15 @@ export const api = {
   updateImportRow: (importId, rowIndex, data) =>
     request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
   commitCsvImport: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
+
+  // Phase 21 — organizer-scoped helpers
+  organizer: {
+    grantOrientation: (eventId, signupId) =>
+      request(
+        `/organizer/events/${eventId}/signups/${signupId}/grant-orientation`,
+        { method: "POST" },
+      ),
+  },
 
   admin: {
     summary: () => adminSummary(),
@@ -621,6 +642,18 @@ export const api = {
       delete: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
       bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/module-templates/${s}`, { method: "DELETE" }))),
       restore: (slug) => request(`/admin/module-templates/${slug}/restore`, { method: "POST" }),
+    },
+    // Phase 21 — orientation credit engine
+    orientationCredits: {
+      list: (params = {}) =>
+        request("/admin/orientation-credits", { method: "GET", params }),
+      create: ({ volunteer_email, family_key, notes = null }) =>
+        request("/admin/orientation-credits", {
+          method: "POST",
+          body: { volunteer_email, family_key, notes },
+        }),
+      revoke: (creditId) =>
+        request(`/admin/orientation-credits/${creditId}`, { method: "DELETE" }),
     },
     imports: {
       list: () => request("/admin/imports", { method: "GET" }),
