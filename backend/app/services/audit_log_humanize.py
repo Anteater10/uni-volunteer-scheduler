@@ -43,6 +43,12 @@ ACTION_LABELS: dict[str, str] = {
     # Phase 21 — orientation credit engine
     "orientation_credit_grant": "Granted orientation credit",
     "orientation_credit_revoke": "Revoked orientation credit",
+    # Phase 22 — custom form fields
+    "form_schema_set": "Updated event form fields",
+    "form_schema_template_set": "Updated template default form fields",
+    "form_schema_field_append": "Added a form field to an event",
+    # Phase 23 — recurring event duplication
+    "event_duplicate": "Duplicated an event",
 }
 
 
