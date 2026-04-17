@@ -23,7 +23,10 @@ vi.mock("../../lib/api", () => ({
     public: {
       getEvent: vi.fn(),
       createSignup: vi.fn(),
+      // Legacy — kept for any test that still exercises the old flow.
       orientationStatus: vi.fn(),
+      // Phase 21 — cross-week/cross-module credit check.
+      orientationCheck: vi.fn(),
     },
   },
 }));
@@ -330,9 +333,11 @@ describe("EventDetailPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("calls orientationStatus when only a period slot is selected (no orientation slot)", async () => {
-    api.public.orientationStatus.mockResolvedValue({
+  it("calls orientationCheck with the event id when only a period slot is selected (Phase 21)", async () => {
+    api.public.orientationCheck.mockResolvedValue({
+      has_credit: true,
       has_attended_orientation: true,
+      source: "attendance",
     });
     api.public.createSignup.mockResolvedValue({
       volunteer_id: "vol-1",
@@ -353,8 +358,9 @@ describe("EventDetailPage", () => {
     clickFormSubmitButton(container);
 
     await waitFor(() => {
-      expect(api.public.orientationStatus).toHaveBeenCalledWith(
-        "alice@example.com"
+      expect(api.public.orientationCheck).toHaveBeenCalledWith(
+        "alice@example.com",
+        expect.any(String),
       );
     });
   });
