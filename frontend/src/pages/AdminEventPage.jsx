@@ -1,6 +1,6 @@
 // AdminEventPage.jsx
 import React, { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, downloadBlob } from "../lib/api";
 import {
@@ -111,9 +111,14 @@ export default function AdminEventPage() {
       <PageHeader
         title={eventTitle}
         action={
-          <Button variant="danger" onClick={() => setConfirmExport(true)}>
-            Download roster CSV
-          </Button>
+          <div className="flex gap-2">
+            <Button as={Link} to={`/organizer/events/${eventId}/roster`}>
+              Live roster (check-in)
+            </Button>
+            <Button variant="secondary" onClick={() => setConfirmExport(true)}>
+              Download roster CSV
+            </Button>
+          </div>
         }
       />
 

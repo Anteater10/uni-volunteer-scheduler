@@ -37,12 +37,12 @@ export function useAdminPageTitle(title) {
 // Phase 17/18 still own Templates + Imports — they stay visible because they
 // route to existing sections, but Phase 16 does not redesign them.
 const allNavItems = [
-  { to: "/admin", label: "Overview", end: true, roles: ["admin", "organizer"] },
+  { to: "/admin", label: "Overview", end: true, roles: ["admin"] },
   { to: "/admin/events", label: "Events", roles: ["admin", "organizer"] },
   { to: "/admin/users", label: "Users", roles: ["admin"] },
   { to: "/admin/audit-logs", label: "Audit Logs", roles: ["admin"] },
   { to: "/admin/exports", label: "Exports", roles: ["admin"] },
-  { to: "/admin/templates", label: "Templates", roles: ["admin"] },
+  { to: "/admin/templates", label: "Templates", roles: ["admin", "organizer"] },
   { to: "/admin/imports", label: "Imports", roles: ["admin", "organizer"] },
 ];
 
@@ -52,7 +52,7 @@ function NavItem({ to, label, end }) {
       to={to}
       end={end}
       className={({ isActive }) =>
-        `block px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+        `block px-4 py-3 rounded-lg text-base font-medium transition-colors ${
           isActive
             ? "bg-slate-700 text-white"
             : "text-slate-300 hover:bg-slate-800 hover:text-white"
@@ -73,8 +73,10 @@ export default function AdminLayout() {
 
   const navItems = allNavItems.filter((item) => item.roles.includes(role));
 
+  const rootLabel = role === "organizer" ? "Organizer" : "Admin";
+  const rootTarget = role === "organizer" ? "/admin/events" : "/admin";
   const crumbs = [
-    { label: "Admin", to: "/admin" },
+    { label: rootLabel, to: rootTarget },
     pageTitle ? { label: pageTitle } : null,
   ].filter(Boolean);
 
@@ -88,9 +90,9 @@ export default function AdminLayout() {
       value={{ title: pageTitle, setTitle: setPageTitle }}
     >
       <div className="min-h-screen flex bg-gray-50">
-        <aside className="hidden md:flex flex-col w-64 bg-slate-900 text-slate-100 p-4 gap-1">
-          <div className="px-3 py-3 text-lg font-semibold tracking-tight">
-            SciTrek Admin
+        <aside className="hidden md:flex flex-col w-72 bg-slate-900 text-slate-100 p-5 gap-2">
+          <div className="px-4 py-4 text-xl font-semibold tracking-tight">
+            {role === "organizer" ? "SciTrek Organizer" : "SciTrek Admin"}
           </div>
           <nav className="flex flex-col gap-1">
             {navItems.map((item) => (

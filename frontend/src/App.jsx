@@ -1,6 +1,11 @@
 // src/App.jsx
 import React from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
+
+function RedirectEventToAdmin() {
+  const { eventId } = useParams();
+  return <Navigate to={`/admin/events/${eventId}`} replace />;
+}
 
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -12,12 +17,17 @@ import SetPasswordPage from "./pages/SetPasswordPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import ProfilePage from "./pages/ProfilePage";
 
-import OrganizerDashboardPage from "./pages/OrganizerDashboardPage";
-import OrganizerEventPage from "./pages/OrganizerEventPage";
 import OrganizerRosterPage from "./pages/OrganizerRosterPage";
 
 import AdminLayout from "./pages/admin/AdminLayout";
 import OverviewSection from "./pages/admin/OverviewSection";
+import { useAuth } from "./state/useAuth";
+
+function AdminIndexRoute() {
+  const { role } = useAuth();
+  if (role === "organizer") return <Navigate to="/admin/events" replace />;
+  return <OverviewSection />;
+}
 import AdminEventPage from "./pages/AdminEventPage";
 import UsersAdminPage from "./pages/UsersAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
@@ -53,25 +63,30 @@ export default function App() {
           <Route path="profile" element={<ProfilePage />} />
         </Route>
 
-        {/* Organizer/Admin */}
+        {/* Organizer roster — mobile check-in surface */}
         <Route element={<ProtectedRoute roles={["organizer", "admin"]} />}>
-          <Route path="organizer" element={<OrganizerDashboardPage />} />
-          <Route path="organizer/events/:eventId" element={<OrganizerEventPage />} />
+          <Route path="organizer" element={<Navigate to="/admin/events" replace />} />
+          <Route path="organizer/events/:eventId" element={<RedirectEventToAdmin />} />
+          <Route path="organizer/events/:eventId/roster" element={<OrganizerRosterPage />} />
+          {/* Legacy typo path */}
           <Route path="organize/events/:eventId/roster" element={<OrganizerRosterPage />} />
         </Route>
 
-        {/* Admin/Organizer — nested under AdminLayout */}
+        {/* Admin shell — shared surfaces (admin + organizer) */}
         <Route element={<ProtectedRoute roles={["admin", "organizer"]} />}>
           <Route path="admin" element={<AdminLayout />}>
-            <Route index element={<OverviewSection />} />
+            <Route index element={<AdminIndexRoute />} />
             <Route path="events" element={<EventsSection />} />
             <Route path="events/:eventId" element={<AdminEventPage />} />
-            <Route path="users" element={<UsersAdminPage />} />
-            <Route path="audit-logs" element={<AuditLogsPage />} />
-            <Route path="templates" element={<TemplatesSection />} />
             <Route path="imports" element={<ImportsSection />} />
-            <Route path="exports" element={<ExportsSection />} />
+            <Route path="templates" element={<TemplatesSection />} />
             <Route path="help" element={<HelpSection />} />
+            {/* Admin-only surfaces */}
+            <Route element={<ProtectedRoute roles={["admin"]} />}>
+              <Route path="users" element={<UsersAdminPage />} />
+              <Route path="audit-logs" element={<AuditLogsPage />} />
+              <Route path="exports" element={<ExportsSection />} />
+            </Route>
           </Route>
         </Route>
 

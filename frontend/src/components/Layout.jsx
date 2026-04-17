@@ -7,11 +7,9 @@ import ToastHost from "./ui/Toast";
 import BottomNav from "./ui/BottomNav";
 
 const organizerNavItems = [
-  // TODO(copy)
-  { to: "/organizer", label: "Dashboard", icon: <LayoutDashboard className="h-5 w-5" /> },
-  // TODO(copy)
-  { to: "/events", label: "Events", icon: <Calendar className="h-5 w-5" /> },
-  // TODO(copy)
+  { to: "/admin/events", label: "Events", icon: <Calendar className="h-5 w-5" /> },
+  { to: "/admin/templates", label: "Templates", icon: <ClipboardList className="h-5 w-5" /> },
+  { to: "/admin/imports", label: "Imports", icon: <LayoutDashboard className="h-5 w-5" /> },
   { to: "/profile", label: "Profile", icon: <User className="h-5 w-5" /> },
 ];
 
@@ -42,7 +40,11 @@ export default function Layout() {
   const isAdminRoute = pathname.startsWith("/admin");
   const containerWidth = isAdminRoute ? "max-w-none" : "max-w-screen-md";
   const brandTarget =
-    isAuthed && (role === "admin" || role === "organizer") ? "/admin" : "/events";
+    isAuthed && role === "admin"
+      ? "/admin"
+      : isAuthed && role === "organizer"
+        ? "/admin/events"
+        : "/events";
   const helpTarget =
     role === "admin" || role === "organizer" ? "/admin/help" : "/help";
 

@@ -1836,7 +1836,7 @@ def ccpa_delete(
 def list_module_templates(
     include_archived: bool = False,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     return template_service.list_templates(db, include_archived=include_archived)
 
@@ -1845,7 +1845,7 @@ def list_module_templates(
 def create_module_template(
     payload: ModuleTemplateCreate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     data = payload.model_dump(exclude={"slug"})
     return template_service.create_template(db, payload.slug, data)
@@ -1856,7 +1856,7 @@ def update_module_template(
     slug: str,
     payload: ModuleTemplateUpdate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     data = payload.model_dump(exclude_unset=True)
     return template_service.update_template(db, slug, data)
@@ -1866,7 +1866,7 @@ def update_module_template(
 def delete_module_template(
     slug: str,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     template_service.soft_delete_template(db, slug)
 
@@ -1875,7 +1875,7 @@ def delete_module_template(
 def restore_module_template(
     slug: str,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     return template_service.restore_template(db, slug)
 
@@ -1888,7 +1888,7 @@ def restore_module_template(
 @router.get("/imports", response_model=List[CsvImportRead])
 def list_csv_imports(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+    current_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     """List all CSV imports, most recent first."""
     return (
@@ -1903,7 +1903,7 @@ def list_csv_imports(
 async def upload_csv_import(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+    current_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     """Upload CSV and start async import processing."""
     if not file.filename.endswith(".csv"):
@@ -1925,7 +1925,7 @@ async def upload_csv_import(
 def get_csv_import(
     import_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+    current_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     """Poll import status and preview."""
     return import_service.get_import(db, import_id)
@@ -1937,7 +1937,7 @@ def update_import_row(
     row_index: int,
     updates: dict,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+    current_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     """Edit a single row in the import preview before commit."""
     return import_service.update_preview_row(db, import_id, row_index, updates)
@@ -1947,7 +1947,7 @@ def update_import_row(
 def revalidate_csv_import(
     import_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+    current_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     """Re-run conflict detection against the current DB state."""
     return import_service.revalidate_import(db, import_id)
@@ -1958,7 +1958,7 @@ def commit_csv_import(
     import_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+    current_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     """Atomically commit all validated rows as events.
 
@@ -1973,7 +1973,7 @@ def commit_csv_import(
 def retry_csv_import(
     import_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_role(models.UserRole.admin)),
+    current_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     """Re-run a failed import. Resets status to pending and re-queues the Celery task."""
     imp = import_service.get_import(db, import_id)
