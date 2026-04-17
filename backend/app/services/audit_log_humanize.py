@@ -49,6 +49,9 @@ ACTION_LABELS: dict[str, str] = {
     "form_schema_field_append": "Added a form field to an event",
     # Phase 23 — recurring event duplication
     "event_duplicate": "Duplicated an event",
+    # Phase 25 — waitlist manual override surfaces
+    "waitlist_promote_manual": "Promoted from waitlist (manual override)",
+    "waitlist_reorder": "Reordered the waitlist",
 }
 
 

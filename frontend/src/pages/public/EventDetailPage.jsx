@@ -698,6 +698,22 @@ export default function EventDetailPage() {
         slot_ids: [...selectedSlotIds],
         responses: buildResponsesArray(),
       });
+      // Phase 25 (WAIT-01): if any selected slot was at capacity the server
+      // puts the signup on the waitlist instead of rejecting. Surface that
+      // explicitly so the volunteer knows what happened.
+      const waitlistedItems = (response.signups || []).filter(
+        (s) => s.status === "waitlisted",
+      );
+      if (waitlistedItems.length > 0) {
+        const minPosition = waitlistedItems.reduce(
+          (acc, s) => (s.position != null && (acc == null || s.position < acc) ? s.position : acc),
+          null,
+        );
+        const positionText = minPosition != null ? ` — position ${minPosition}` : "";
+        toast.info
+          ? toast.info(`You're on the waitlist${positionText}.`)
+          : toast.success(`You're on the waitlist${positionText}.`);
+      }
       setSuccessData({ ...response, slots: selectedSlots });
       setStep("success");
     } catch (err) {

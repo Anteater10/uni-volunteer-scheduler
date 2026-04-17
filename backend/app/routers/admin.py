@@ -733,6 +733,76 @@ def admin_promote_signup(
     return signup
 
 
+# =========================
+# PHASE 25 — ADMIN WAITLIST REORDER (WAIT-05)
+# =========================
+
+
+@router.patch(
+    "/events/{event_id}/slots/{slot_id}/waitlist-order",
+)
+def admin_reorder_waitlist(
+    event_id: str,
+    slot_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Phase 25 (WAIT-05): admin rewrites the waitlist FIFO order for a slot.
+
+    Body: ``{"ordered_signup_ids": ["<uuid>", "<uuid>", ...]}``. The list must
+    contain exactly the currently-waitlisted signups for the slot — no more,
+    no fewer. ``Signup.timestamp`` is rewritten to spread 1 ms apart so
+    subsequent FIFO promotions match the new order.
+    """
+    from ..services.waitlist_service import reorder_waitlist
+
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    slot = (
+        db.query(models.Slot)
+        .filter(models.Slot.id == slot_id)
+        .with_for_update()
+        .first()
+    )
+    if not slot or str(slot.event_id) != str(event.id):
+        raise HTTPException(
+            status_code=404, detail="Slot not found for this event"
+        )
+
+    ordered = payload.get("ordered_signup_ids") if isinstance(payload, dict) else None
+    if not isinstance(ordered, list):
+        raise HTTPException(
+            status_code=422, detail="ordered_signup_ids must be a list of UUIDs"
+        )
+
+    try:
+        rows = reorder_waitlist(db, slot.id, ordered)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    log_action(
+        db,
+        actor,
+        "waitlist_reorder",
+        "Slot",
+        str(slot.id),
+        extra={
+            "event_id": str(event.id),
+            "slot_id": str(slot.id),
+            "ordered_signup_ids": [str(s) for s in ordered],
+        },
+    )
+    db.commit()
+
+    return {
+        "slot_id": str(slot.id),
+        "ordered_signup_ids": [str(r.id) for r in rows],
+    }
+
+
 @router.post("/signups/{signup_id}/move", response_model=schemas.SignupRead)
 def admin_move_signup(
     signup_id: str,

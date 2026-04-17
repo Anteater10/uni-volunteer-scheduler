@@ -320,6 +320,27 @@ def send_reminder_pre_2h(signup: "models.Signup") -> dict:
     return {"to": ctx["to"], "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
+def send_waitlist_promote(signup: models.Signup) -> dict:
+    """Phase 25 — branded "you're in from the waitlist" follow-up email.
+
+    Shares layout with ``send_confirmation`` so we don't spin up a new
+    template; only the subject line is overridden to make the state
+    transition legible. The dedup kind (``waitlist_promote``) is distinct
+    from the original ``confirmation`` kind so repeat promotions across
+    multiple cancel/promote cycles each earn one email.
+
+    The magic-link confirm URL itself ships via ``send_magic_link``
+    from ``promote_waitlist_fifo`` / ``waitlist_service.manual_promote``.
+    """
+    payload = send_confirmation(signup)
+    event = signup.slot.event
+    payload["subject"] = (
+        "You're in from the waitlist — confirm your spot for "
+        f"'{event.title}'"
+    )
+    return payload
+
+
 BUILDERS = {
     "confirmation": send_confirmation,
     "cancellation": send_cancellation,
@@ -331,6 +352,8 @@ BUILDERS = {
     "reminder_kickoff": send_reminder_kickoff,
     "reminder_pre_24h": send_reminder_pre_24h,
     "reminder_pre_2h": send_reminder_pre_2h,
+    # Phase 25 — waitlist promotion (organizer manual + admin override paths).
+    "waitlist_promote": send_waitlist_promote,
 }
 
 

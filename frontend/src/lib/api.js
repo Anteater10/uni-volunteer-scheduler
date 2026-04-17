@@ -607,6 +607,12 @@ export const api = {
         method: "POST",
         body: field,
       }),
+    // Phase 25 — organizer manual waitlist promote (WAIT-03)
+    promoteSignup: (eventId, signupId) =>
+      request(
+        `/organizer/events/${eventId}/signups/${signupId}/promote`,
+        { method: "POST" },
+      ),
   },
 
   admin: {
@@ -709,6 +715,15 @@ export const api = {
           skip_conflicts,
         },
       }),
+    // Phase 25 — admin reorder waitlist (WAIT-05)
+    reorderWaitlist: (eventId, slotId, orderedIds) =>
+      request(
+        `/admin/events/${eventId}/slots/${slotId}/waitlist-order`,
+        {
+          method: "PATCH",
+          body: { ordered_signup_ids: orderedIds },
+        },
+      ),
     // Phase 24 — scheduled reminder emails
     reminders: {
       listUpcoming: (days = 7) => adminListUpcomingReminders(days),

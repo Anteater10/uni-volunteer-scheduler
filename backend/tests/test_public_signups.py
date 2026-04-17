@@ -159,7 +159,8 @@ class TestCreatePublicSignup:
         resp = client.post("/api/v1/public/signups", json=_signup_payload(uuid.uuid4()))
         assert resp.status_code == 404, resp.text
 
-    def test_full_slot_returns_409(self, client, db_session, monkeypatch):
+    def test_full_slot_goes_to_waitlist(self, client, db_session, monkeypatch):
+        """Phase 25 (WAIT-01): at-capacity signups are waitlisted, not rejected."""
         monkeypatch.setattr(
             "app.celery_app.send_signup_confirmation_email.delay",
             lambda *a, **k: None,
@@ -169,7 +170,18 @@ class TestCreatePublicSignup:
         db_session.commit()
 
         resp = client.post("/api/v1/public/signups", json=_signup_payload(slot.id))
-        assert resp.status_code == 409, resp.text
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["signups"], "response should include per-signup result items"
+        item = data["signups"][0]
+        assert item["status"] == "waitlisted"
+        assert item["position"] == 1
+
+        # Slot current_count must stay at capacity — waitlisted signups don't hold a seat.
+        db_session.expire_all()
+        from app import models as _m
+        slot_row = db_session.query(_m.Slot).filter(_m.Slot.id == slot.id).one()
+        assert slot_row.current_count == 1
 
     def test_duplicate_signup_returns_409(self, client, db_session, monkeypatch):
         monkeypatch.setattr(
