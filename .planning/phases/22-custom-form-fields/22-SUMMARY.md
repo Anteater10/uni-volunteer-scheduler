@@ -4,12 +4,12 @@ plan: 01
 status: complete
 branch: v1.3
 commits:
-  - <pending> — feat(22): migration 0015 + models for custom form fields
-  - <pending> — feat(22): form_schema_service with SciTrek defaults + tests
-  - <pending> — feat(22): admin/organizer/public routers + signup persistence
-  - <pending> — feat(22): FormFieldsDrawer component + unit tests
-  - <pending> — feat(22): wire form fields into admin/organizer/participant UIs
-  - <pending> — docs(22): PLAN + SUMMARY
+  - 7aa5529 — feat(22): migration 0015 + models for custom form fields
+  - 6174d86 — feat(22): form_schema_service with SciTrek defaults + tests
+  - cb5a727 — feat(22): admin/organizer/public routers + signup persistence
+  - 3c03a31 — feat(22): FormFieldsDrawer component + unit tests
+  - 4d04b09 — feat(22): wire form fields into admin/organizer/participant UIs
+  - bbd6023 — docs(22): add PLAN + SUMMARY for custom form fields
 ---
 
 # Phase 22 — Custom form fields — SUMMARY
