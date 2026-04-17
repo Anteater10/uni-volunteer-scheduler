@@ -148,6 +148,9 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
         module_slug=event.module_slug,
         start_date=event.start_date,
         end_date=event.end_date,
+        # Phase 29 (LOCK-01) — expose signup window for client-side banner.
+        signup_open_at=event.signup_open_at,
+        signup_close_at=event.signup_close_at,
         slots=slot_reads,
     )
 

@@ -836,6 +836,19 @@ export default function EventDetailPage() {
     selectedSlotIds.size > 0 && (step === "form" || step === "checking-orientation");
   const isSubmitting = step === "submitting" || step === "checking-orientation";
 
+  // Phase 29 (LOCK-01) — compute signup-window state for banner + submit gate.
+  const now = new Date();
+  const opensAt = event?.signup_open_at ? new Date(event.signup_open_at) : null;
+  const closesAt = event?.signup_close_at ? new Date(event.signup_close_at) : null;
+  const beforeWindow = !!(opensAt && now < opensAt);
+  const afterWindow = !!(closesAt && now > closesAt);
+  const outsideWindow = beforeWindow || afterWindow;
+  const windowBannerText = beforeWindow
+    ? `Signup opens ${opensAt?.toLocaleString("en-US", { timeZone: "America/Los_Angeles", dateStyle: "medium", timeStyle: "short" })} PT`
+    : afterWindow
+      ? `Signup closed ${closesAt?.toLocaleString("en-US", { timeZone: "America/Los_Angeles", dateStyle: "medium", timeStyle: "short" })} PT`
+      : null;
+
   const dateKeys = Object.keys(periodSlotsByDate).sort();
 
   return (
@@ -859,6 +872,17 @@ export default function EventDetailPage() {
           Times shown in Pacific Time.
         </p>
       </div>
+
+      {/* Phase 29 (LOCK-01) — signup window banner */}
+      {outsideWindow && (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+          data-testid="signup-window-banner"
+        >
+          {windowBannerText}
+        </div>
+      )}
 
       {/* Event description (auto-generated + any custom admin text) */}
       <EventDescription event={event} orientationSlots={orientationSlots} />
@@ -1150,9 +1174,17 @@ export default function EventDetailPage() {
               type="submit"
               variant="primary"
               className="w-full min-h-11"
-              disabled={isSubmitting}
+              disabled={isSubmitting || outsideWindow}
+              title={outsideWindow ? windowBannerText : undefined}
+              data-testid="signup-submit"
             >
-              {isSubmitting ? "Submitting..." : "Sign up"}
+              {isSubmitting
+                ? "Submitting..."
+                : outsideWindow
+                  ? beforeWindow
+                    ? "Signup not open yet"
+                    : "Signup closed"
+                  : "Sign up"}
             </Button>
           </form>
         </Card>
