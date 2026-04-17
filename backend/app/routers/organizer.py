@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import ensure_event_owner_or_admin, log_action, require_role
+from ..services import form_schema_service
 from ..services.orientation_service import (
     family_for_event,
     grant_orientation_credit,
@@ -107,3 +108,33 @@ def grant_orientation_for_signup(
         revoked_at=credit.revoked_at,
         notes=credit.notes,
     )
+
+
+@router.post(
+    "/events/{event_id}/form-fields",
+    status_code=201,
+)
+def append_event_form_field(
+    event_id: UUID,
+    field: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.organizer, models.UserRole.admin)
+    ),
+):
+    """Phase 22 — organizer quick-add: append a single field to an event's
+    form schema override. Seeds the override from the template default if the
+    event doesn't have one yet, so this doesn't blow away admin-configured
+    fields.
+
+    Body: a ``FormFieldSchema`` dict (id, label, type, required, options?).
+    """
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_owner_or_admin(event, current_user)
+
+    schema = form_schema_service.append_event_field(
+        db, event_id, field, actor=current_user
+    )
+    return {"event_id": str(event_id), "schema": schema}
