@@ -433,6 +433,12 @@ class SiteSettings(Base):
 
     allowed_email_domain = Column(String(255), nullable=True)
 
+    # Phase 29 (HIDE-01) — hide events whose last slot has ended from the
+    # public browse page. Admin/organizer views always show past events.
+    hide_past_events_from_public = Column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
+
 
 # -------------------------
 # Portals (tabbed / grouped signups)

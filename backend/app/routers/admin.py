@@ -2469,3 +2469,54 @@ def admin_list_upcoming_sms(
         "sms_enabled": bool(settings.sms_enabled),
         "rows": serialized,
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 29 (HIDE-01) — site settings singleton (hide past events toggle, ...)
+# ---------------------------------------------------------------------------
+
+@router.get("/site-settings", response_model=schemas.SiteSettingsRead)
+def get_site_settings(
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Return the singleton site settings row (creates it lazily)."""
+    from ..services.settings_service import get_app_settings
+
+    return get_app_settings(db)
+
+
+@router.patch("/site-settings", response_model=schemas.SiteSettingsRead)
+def update_site_settings(
+    payload: schemas.SiteSettingsUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Partial update — only non-None fields overwrite. Writes an audit row."""
+    from ..services.settings_service import get_app_settings
+
+    row = get_app_settings(db)
+    changes: dict = {}
+    if payload.default_privacy_mode is not None:
+        changes["default_privacy_mode"] = payload.default_privacy_mode.value
+        row.default_privacy_mode = payload.default_privacy_mode
+    if payload.allowed_email_domain is not None:
+        changes["allowed_email_domain"] = payload.allowed_email_domain
+        row.allowed_email_domain = payload.allowed_email_domain
+    if payload.hide_past_events_from_public is not None:
+        changes["hide_past_events_from_public"] = payload.hide_past_events_from_public
+        row.hide_past_events_from_public = payload.hide_past_events_from_public
+
+    log_action(
+        db,
+        actor,
+        "site_settings_updated",
+        "SiteSettings",
+        "1",
+        extra={"changes": changes},
+    )
+    db.commit()
+    db.refresh(row)
+    return row

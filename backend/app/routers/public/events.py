@@ -4,7 +4,7 @@ GET /public/events  — list events filtered by quarter, year, week_number; opti
 GET /public/events/{event_id}  — single event detail with slots + filled counts
 GET /public/current-week  — returns the current UCSB quarter, year, and week_number
 """
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from ... import models, schemas
 from ...database import get_db
 from ...deps import rate_limit
+from ...services.settings_service import get_app_settings
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -150,6 +151,22 @@ def list_events(
     if school:
         q = q.filter(models.Event.school == school)
     events = q.order_by(models.Event.school, models.Event.start_date).all()
+
+    # Phase 29 (HIDE-01): optionally hide events whose last slot end is in
+    # the past. Uses slot end, not event date — an event "ends" when its
+    # final slot ends. Admin/organizer routes never call this filter.
+    settings = get_app_settings(db)
+    if settings.hide_past_events_from_public and events:
+        now = datetime.now(timezone.utc)
+        visible: list[models.Event] = []
+        for e in events:
+            slot_ends = [s.end_time for s in e.slots] if e.slots else []
+            # Fallback to event.end_date if the event has no slots.
+            last_end = max(slot_ends) if slot_ends else e.end_date
+            if last_end is None or last_end >= now:
+                visible.append(e)
+        events = visible
+
     return [_build_event_response(db, e) for e in events]
 
 
