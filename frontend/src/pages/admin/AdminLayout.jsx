@@ -44,6 +44,12 @@ const allNavItems = [
   { to: "/admin/exports", label: "Exports", roles: ["admin"] },
   { to: "/admin/templates", label: "Templates", roles: ["admin", "organizer"] },
   { to: "/admin/imports", label: "Imports", roles: ["admin", "organizer"] },
+  // Phase 21 — orientation credit engine
+  {
+    to: "/admin/orientation-credits",
+    label: "Orientation Credits",
+    roles: ["admin"],
+  },
 ];
 
 function NavItem({ to, label, end }) {
