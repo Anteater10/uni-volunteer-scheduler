@@ -91,6 +91,18 @@ class ModuleType(str, enum.Enum):
     module = "module"
 
 
+class OrientationCreditSource(str, enum.Enum):
+    """Phase 21: how a volunteer earned orientation credit.
+
+    - attendance: derived from a Signup with slot_type=ORIENTATION and
+      status in (attended, checked_in). Implicit.
+    - grant: explicit row written by an organizer/admin via the
+      orientation_credits table.
+    """
+    attendance = "attendance"
+    grant = "grant"
+
+
 # -------------------------
 # Volunteer table (Phase 08 — v1.1 account-less pivot)
 # -------------------------
@@ -508,9 +520,76 @@ class ModuleTemplate(Base):
     materials = Column(ARRAY(String), nullable=False, server_default="{}")
     description = Column(Text, nullable=True)
     metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    # Phase 21: optional grouping key so CRISPR-intro + CRISPR-advanced can share
+    # an orientation family without merging slugs. Nullable; defaults to `slug` on
+    # backfill — resolver prefers family_key when set.
+    family_key = Column(String, nullable=True)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+# -------------------------
+# Orientation credits (Phase 21)
+# -------------------------
+
+
+class OrientationCredit(Base):
+    """Explicit grant/revoke trail of orientation credit by (volunteer_email, family_key).
+
+    Signup-based attendance is still the primary source; this table covers cases
+    where an organizer/admin vouches for a volunteer outside the normal flow
+    (walk-ins, historical records, corrections). See
+    backend/app/services/orientation_service.py for the unified lookup.
+    """
+
+    __tablename__ = "orientation_credits"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    volunteer_email = Column(String(255), nullable=False, index=True)
+    family_key = Column(String, nullable=False)
+    source = Column(
+        SqlEnum(
+            OrientationCreditSource,
+            values_callable=lambda x: [e.value for e in x],
+            name="orientationcreditsource",
+            create_type=False,
+        ),
+        nullable=False,
+    )
+    granted_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    granted_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_orientation_credits_email_family",
+            "volunteer_email",
+            "family_key",
+        ),
+    )
+
+    granted_by = relationship("User")
 
 
 # -------------------------
