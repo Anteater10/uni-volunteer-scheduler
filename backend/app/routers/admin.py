@@ -459,10 +459,20 @@ def event_roster(
             key=lambda s: (status_order.get(s.status, 99), s.timestamp, str(s.id)),
         )
 
+        # Phase 22 — preload effective schema for label decoration.
+        from ..services import form_schema_service
+
+        effective_schema = form_schema_service.get_effective_schema(db, event.id)
+
         for signup in signups_sorted:
             # Phase 09: signup.user removed; use signup.volunteer
             v = signup.volunteer
             answers = {ans.question.prompt: ans.value for ans in signup.answers}
+
+            # Phase 22: join form responses (SignupResponse rows).
+            decorated_responses = form_schema_service.decorate_responses_with_labels(
+                effective_schema, signup.responses or []
+            )
 
             rows.append(
                 {
@@ -477,6 +487,7 @@ def event_roster(
                     "status": signup.status.value,
                     "waitlist_position": waitlist_positions.get(signup.id),
                     "answers": answers,
+                    "responses": decorated_responses,
                 }
             )
 
@@ -507,6 +518,12 @@ def export_event_csv(
     questions = event.questions
     question_headers = [q.prompt for q in questions]
 
+    # Phase 22 — custom form fields get one column each, prefixed custom_.
+    from ..services import form_schema_service
+
+    effective_schema = form_schema_service.get_effective_schema(db, event.id)
+    custom_headers = [f"custom_{f['id']}" for f in effective_schema]
+
     output = io.StringIO()
     writer = csv.writer(output)
 
@@ -523,9 +540,21 @@ def export_event_csv(
             "Waitlist Position",
         ]
         + question_headers
+        + custom_headers
     )
 
     slots_sorted = sorted(event.slots, key=lambda s: s.start_time)
+
+    def _response_to_cell(resp: models.SignupResponse | None) -> str:
+        if resp is None:
+            return ""
+        if resp.value_text is not None:
+            return resp.value_text
+        if resp.value_json is not None:
+            # Flatten list of str, else JSON-ish
+            import json
+            return json.dumps(resp.value_json, separators=(",", ":"))
+        return ""
 
     for slot in slots_sorted:
         waitlisted_sorted = sorted(
@@ -542,6 +571,7 @@ def export_event_csv(
             # Phase 09: signup.user removed; use signup.volunteer
             v = signup.volunteer
             answers_by_q = {a.question_id: a.value for a in signup.answers}
+            responses_by_fid = {r.field_id: r for r in (signup.responses or [])}
 
             row = [
                 str(slot.id),
@@ -557,6 +587,9 @@ def export_event_csv(
 
             for q in questions:
                 row.append(answers_by_q.get(q.id, ""))
+
+            for f in effective_schema:
+                row.append(_csv_safe(_response_to_cell(responses_by_fid.get(f["id"]))))
 
             writer.writerow(row)
 
@@ -1878,6 +1911,55 @@ def restore_module_template(
     admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     return template_service.restore_template(db, slug)
+
+
+# =========================
+# PHASE 22 — CUSTOM FORM FIELDS
+# =========================
+
+
+@router.put("/templates/{slug}/default-form-schema")
+def set_template_default_form_schema(
+    slug: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Replace the template's default form schema (admin only).
+
+    Body: ``{"schema": [<FormFieldSchema>, ...]}``.
+    """
+    from ..services import form_schema_service
+
+    schema = body.get("schema") if isinstance(body, dict) else body
+    result = form_schema_service.set_template_default_schema(
+        db, slug, schema, actor=admin_user
+    )
+    return {"slug": slug, "schema": result}
+
+
+@router.put("/events/{event_id}/form-schema")
+def set_event_form_schema(
+    event_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Replace the event's form schema override (admin only).
+
+    Body: ``{"schema": [...]}`` to set or ``{"schema": null}`` to clear and
+    inherit the template default.
+    """
+    from ..services import form_schema_service
+
+    if isinstance(body, dict):
+        schema = body.get("schema")
+    else:
+        schema = body
+    result = form_schema_service.set_event_schema(
+        db, event_id, schema, actor=admin_user
+    )
+    return {"event_id": str(event_id), "schema": result}
 
 
 # =========================

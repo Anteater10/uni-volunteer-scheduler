@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from ..models import MagicLinkPurpose, Signup, SignupStatus, Slot
 from ..schemas import PublicSignupCreate, PublicSignupResponse
+from . import form_schema_service
 from .phone_service import InvalidPhoneError, normalize_us_phone
 from .volunteer_service import upsert_volunteer
 
@@ -103,10 +104,32 @@ def create_public_signup(
         event_id=str(event_id),
     )
 
+    # 6. Phase 22 — persist custom-form responses on every created signup and
+    # compute the soft-warn list of missing-required field_ids. We do NOT
+    # raise on missing requireds; organizer is the ultimate authority.
+    missing_required: list[str] = []
+    responses_in = [r.model_dump() for r in (payload.responses or [])]
+    if responses_in:
+        for signup in signups:
+            form_schema_service.persist_responses(db, signup.id, responses_in)
+        effective_schema = form_schema_service.get_effective_schema(db, event_id)
+        missing_required = form_schema_service.validate_responses(
+            effective_schema, responses_in
+        )
+    else:
+        # Still compute missing_required in case the event has required fields
+        # and the participant sent nothing.
+        effective_schema = form_schema_service.get_effective_schema(db, event_id)
+        if effective_schema:
+            missing_required = [
+                f["id"] for f in effective_schema if f.get("required")
+            ]
+
     response_kwargs: dict = dict(
         volunteer_id=volunteer.id,
         signup_ids=[s.id for s in signups],
         magic_link_sent=True,
+        missing_required=missing_required,
     )
     if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
         response_kwargs["confirm_token"] = raw_token
