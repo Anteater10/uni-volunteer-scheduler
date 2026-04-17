@@ -2009,3 +2009,131 @@ def recent_notifications(
         .limit(100)
         .all()
     )
+
+
+# =========================
+# ORIENTATION CREDITS (Phase 21)
+# =========================
+
+
+def _serialize_orientation_credit(
+    db: Session, credit: models.OrientationCredit
+) -> schemas.OrientationCreditRead:
+    label = None
+    if credit.granted_by_user_id:
+        granter = (
+            db.query(models.User)
+            .filter(models.User.id == credit.granted_by_user_id)
+            .first()
+        )
+        if granter:
+            label = granter.name or granter.email
+    return schemas.OrientationCreditRead(
+        id=credit.id,
+        volunteer_email=credit.volunteer_email,
+        family_key=credit.family_key,
+        source=credit.source.value,
+        granted_by_user_id=credit.granted_by_user_id,
+        granted_by_label=label,
+        granted_at=credit.granted_at,
+        revoked_at=credit.revoked_at,
+        notes=credit.notes,
+    )
+
+
+@router.get(
+    "/orientation-credits",
+    response_model=List[schemas.OrientationCreditRead],
+)
+def admin_list_orientation_credits(
+    email: str | None = Query(None),
+    family_key: str | None = Query(None),
+    active_only: bool = Query(False, description="Exclude revoked rows"),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Admin view of all explicit orientation_credits rows.
+
+    Does NOT synthesize attendance-based credits — those stay derived. The admin
+    surface is for the explicit grants/revokes only.
+    """
+    q = db.query(models.OrientationCredit)
+    if email:
+        q = q.filter(
+            models.OrientationCredit.volunteer_email == email.lower().strip()
+        )
+    if family_key:
+        q = q.filter(models.OrientationCredit.family_key == family_key)
+    if active_only:
+        q = q.filter(models.OrientationCredit.revoked_at.is_(None))
+    q = q.order_by(models.OrientationCredit.granted_at.desc()).limit(500)
+    rows = q.all()
+    return [_serialize_orientation_credit(db, r) for r in rows]
+
+
+@router.post(
+    "/orientation-credits",
+    response_model=schemas.OrientationCreditRead,
+    status_code=201,
+)
+def admin_create_orientation_credit(
+    payload: schemas.OrientationCreditCreate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Admin manual grant — e.g. vouched-for volunteer, pre-existing records."""
+    from ..services.orientation_service import grant_orientation_credit
+
+    credit = grant_orientation_credit(
+        db,
+        email=str(payload.volunteer_email),
+        family_key=payload.family_key,
+        granted_by_user_id=admin_user.id,
+        notes=payload.notes,
+    )
+    log_action(
+        db,
+        admin_user,
+        "orientation_credit_grant",
+        "OrientationCredit",
+        str(credit.id),
+        extra={
+            "volunteer_email": credit.volunteer_email,
+            "family_key": credit.family_key,
+            "via": "admin_page",
+        },
+    )
+    db.commit()
+    db.refresh(credit)
+    return _serialize_orientation_credit(db, credit)
+
+
+@router.delete(
+    "/orientation-credits/{credit_id}",
+    response_model=schemas.OrientationCreditRead,
+)
+def admin_revoke_orientation_credit(
+    credit_id: str,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Admin revoke — sets ``revoked_at``. Idempotent."""
+    from ..services.orientation_service import revoke_orientation_credit
+
+    credit = revoke_orientation_credit(db, credit_id)
+    if credit is None:
+        raise HTTPException(status_code=404, detail="Credit not found")
+    log_action(
+        db,
+        admin_user,
+        "orientation_credit_revoke",
+        "OrientationCredit",
+        str(credit.id),
+        extra={
+            "volunteer_email": credit.volunteer_email,
+            "family_key": credit.family_key,
+        },
+    )
+    db.commit()
+    db.refresh(credit)
+    return _serialize_orientation_credit(db, credit)
