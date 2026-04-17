@@ -65,6 +65,16 @@ const ALLOWED_CONSOLE_PATTERNS = [
   // denial as an in-page error state ("Couldn't load imports — Insufficient
   // permissions") with a Retry button. This is correct cross-role UX.
   /Failed to load resource.*403.*Forbidden/i,
+  // WebKit-only pageerror artifact: when a navigation (e.g. to /signup/manage
+  // or /admin/audit-logs) aborts in-flight fetches that were initiated by the
+  // previous page, WebKit raises a pageerror of the form:
+  //   "<url> due to access control checks."
+  // This is not a CORS failure in the product — it is Safari/WebKit reporting
+  // an aborted fetch as a pageerror where Chromium/Firefox stay silent. The
+  // cross-role scenarios that navigate between public + admin surfaces
+  // reproduce this reliably on webkit / Mobile Safari / iPhone SE 375.
+  // See: https://bugs.webkit.org/show_bug.cgi?id=245629 (upstream).
+  /due to access control checks\.?$/i,
 ];
 
 // Force a desktop viewport for scenarios that touch the admin shell. The
@@ -80,7 +90,9 @@ async function ensureAdminViewport(page) {
 function installErrorCapture(page, testInfo) {
   testInfo.errors = [];
   page.on('pageerror', (err) => {
-    testInfo.errors.push(`pageerror: ${err.message}`);
+    const text = err.message || String(err);
+    if (ALLOWED_CONSOLE_PATTERNS.some((re) => re.test(text))) return;
+    testInfo.errors.push(`pageerror: ${text}`);
   });
   page.on('console', (msg) => {
     if (msg.type() !== 'error') return;
