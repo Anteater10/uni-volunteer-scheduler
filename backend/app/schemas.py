@@ -684,3 +684,53 @@ class SignupResponseRead(ORMBase):
     # against the event's effective schema. Optional so raw ORM loads still
     # validate.
     label: Optional[str] = None
+
+
+# =========================
+# VOLUNTEER PREFERENCES (Phase 24 — reminder opt-out)
+# =========================
+class VolunteerPreferenceRead(ORMBase):
+    volunteer_email: str
+    email_reminders_enabled: bool
+    sms_opt_in: bool
+    phone_e164: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class VolunteerPreferenceUpdate(BaseModel):
+    email_reminders_enabled: Optional[bool] = None
+    sms_opt_in: Optional[bool] = None
+    phone_e164: Optional[str] = None
+
+
+# =========================
+# REMINDERS (Phase 24 — admin preview + send-now)
+# =========================
+ReminderKind = Literal["kickoff", "pre_24h", "pre_2h"]
+
+
+class UpcomingReminderRow(BaseModel):
+    signup_id: UUID
+    volunteer_email: str
+    volunteer_name: str
+    event_id: UUID
+    event_title: str
+    slot_id: UUID
+    slot_start_time: datetime
+    kind: ReminderKind
+    scheduled_for: datetime  # UTC — when the window opens
+    already_sent: bool
+    opted_out: bool
+
+
+class ReminderSendNowRequest(BaseModel):
+    signup_id: UUID
+    kind: ReminderKind
+
+
+class ReminderSendNowResponse(BaseModel):
+    signup_id: UUID
+    kind: ReminderKind
+    sent: bool
+    reason: Optional[str] = None  # "already_sent" | "opted_out" | "ok"

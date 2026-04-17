@@ -31,6 +31,7 @@ import {
   Modal,
   PageHeader,
 } from "../../components/ui";
+import ReminderPreferencesCard from "../../components/ReminderPreferencesCard";
 
 // Slot datetimes arrive as UTC ISO strings (e.g. "2026-04-16T09:00:00Z").
 // Render them in SciTrek's venue timezone so all viewers see wall-clock at UCSB.
@@ -271,6 +272,9 @@ export default function ManageSignupsPage({ tokenOverride }) {
           </Button>
         </div>
       )}
+
+      {/* Phase 24 — reminder opt-out toggle (REM-03) */}
+      <ReminderPreferencesCard manageToken={token} />
 
       {/* Cancel single modal — UI-SPEC §Destructive confirmations row 1 */}
       <Modal

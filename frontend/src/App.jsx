@@ -37,6 +37,8 @@ import ImportsSection from "./pages/admin/ImportsSection";
 import OrientationCreditsSection from "./pages/admin/OrientationCreditsSection";
 import EventsSection from "./pages/admin/EventsSection";
 import HelpSection from "./pages/admin/HelpSection";
+// Phase 24 — scheduled reminder emails admin page
+import AdminRemindersPage from "./pages/admin/AdminRemindersPage";
 
 import SelfCheckInPage from "./pages/SelfCheckInPage";
 import NotFoundPage from "./pages/NotFoundPage";
@@ -92,6 +94,8 @@ export default function App() {
                 path="orientation-credits"
                 element={<OrientationCreditsSection />}
               />
+              {/* Phase 24 — scheduled reminder emails */}
+              <Route path="reminders" element={<AdminRemindersPage />} />
             </Route>
           </Route>
         </Route>

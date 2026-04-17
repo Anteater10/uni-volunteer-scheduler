@@ -39,7 +39,7 @@ celery.conf.update(
     beat_scheduler="redbeat.RedBeatScheduler",
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    include=["app.tasks.import_csv"],
+    include=["app.tasks.import_csv", "app.tasks.reminders"],
 )
 
 
@@ -477,5 +477,12 @@ celery.conf.beat_schedule = {
     "expire-pending-signups-daily-3am": {
         "task": "app.celery_app.expire_pending_signups",
         "schedule": crontab(hour=3, minute=0),
+    },
+    # Phase 24 — kickoff + 24h + 2h reminders. The task is idempotent via
+    # sent_notifications(signup_id, kind); running every 15 min leaves a
+    # ±15 min drift window per send.
+    "check-reminders": {
+        "task": "app.tasks.reminders.check_and_send_reminders",
+        "schedule": 900.0,
     },
 }

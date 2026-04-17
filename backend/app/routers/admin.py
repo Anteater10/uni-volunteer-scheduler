@@ -2270,3 +2270,72 @@ def admin_revoke_orientation_credit(
     db.commit()
     db.refresh(credit)
     return _serialize_orientation_credit(db, credit)
+
+
+# =========================
+# PHASE 24 — SCHEDULED REMINDERS (admin preview + send-now)
+# =========================
+
+
+@router.get(
+    "/reminders/upcoming",
+    response_model=List[schemas.UpcomingReminderRow],
+)
+def admin_list_upcoming_reminders(
+    days: int = Query(7, ge=1, le=30),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Preview the reminders that will fire in the next ``days`` days.
+
+    Rows are computed — nothing is written. Includes already_sent + opted_out
+    flags so the admin can see the full picture per REM-05.
+    """
+    from ..services import reminder_service
+
+    rows = reminder_service.list_upcoming_reminders(db, days=days)
+    log_action(db, admin_user, "admin_list_upcoming_reminders", "Reminder", None,
+               extra={"days": days, "row_count": len(rows)})
+    db.commit()
+    return rows
+
+
+@router.post(
+    "/reminders/send-now",
+    response_model=schemas.ReminderSendNowResponse,
+)
+def admin_send_reminder_now(
+    payload: schemas.ReminderSendNowRequest,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Ad-hoc fire a reminder outside its normal window.
+
+    Still honors opt-out and idempotency — only quiet-hours is bypassed so
+    admins can hand-send at 22:00 PT if something urgent comes up. Writes an
+    audit row regardless of send outcome.
+    """
+    from ..services import reminder_service
+
+    result = reminder_service.send_reminder(
+        db, payload.signup_id, payload.kind, force=True
+    )
+    log_action(
+        db,
+        admin_user,
+        "admin_reminder_send_now",
+        "Signup",
+        str(payload.signup_id),
+        extra={"kind": payload.kind, "sent": result.sent, "reason": result.reason},
+    )
+    db.commit()
+    return schemas.ReminderSendNowResponse(
+        signup_id=payload.signup_id,
+        kind=payload.kind,
+        sent=result.sent,
+        reason=result.reason,
+    )

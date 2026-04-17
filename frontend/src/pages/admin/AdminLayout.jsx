@@ -50,6 +50,12 @@ const allNavItems = [
     label: "Orientation Credits",
     roles: ["admin"],
   },
+  // Phase 24 — scheduled reminder emails
+  {
+    to: "/admin/reminders",
+    label: "Reminders",
+    roles: ["admin", "organizer"],
+  },
 ];
 
 function NavItem({ to, label, end }) {
