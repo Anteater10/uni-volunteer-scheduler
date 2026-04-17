@@ -1938,6 +1938,57 @@ def set_template_default_form_schema(
     return {"slug": slug, "schema": result}
 
 
+# Phase 23 — recurring event duplication
+@router.post("/events/{event_id}/duplicate")
+def duplicate_event(
+    event_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """Duplicate a source event into a list of target weeks.
+
+    Body shape::
+
+        {
+            "target_weeks": [5, 6, 7],
+            "target_year": 2026,
+            "skip_conflicts": true
+        }
+
+    Response::
+
+        {
+            "created": [{"id", "week_number", "start_date"}, ...],
+            "skipped_conflicts": [{"week", "existing_event_id"}, ...]
+        }
+
+    Copies event basics + all slots + ``events.form_schema`` verbatim.
+    Atomic: with ``skip_conflicts=false`` any conflict aborts the whole
+    batch with HTTP 409. Writes one audit row per call. See
+    ``services/event_duplication_service.py`` for the decisions.
+    """
+    from ..services import event_duplication_service
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="body must be an object")
+    target_weeks = body.get("target_weeks") or []
+    target_year = body.get("target_year")
+    skip_conflicts = bool(body.get("skip_conflicts", True))
+    if not isinstance(target_weeks, list):
+        raise HTTPException(status_code=422, detail="target_weeks must be a list")
+    if not isinstance(target_year, int):
+        raise HTTPException(status_code=422, detail="target_year must be an int")
+    return event_duplication_service.duplicate_event(
+        db,
+        source_event_id=event_id,
+        target_weeks=[int(w) for w in target_weeks],
+        target_year=target_year,
+        skip_conflicts=skip_conflicts,
+        actor=admin_user,
+    )
+
+
 @router.put("/events/{event_id}/form-schema")
 def set_event_form_schema(
     event_id: str,
