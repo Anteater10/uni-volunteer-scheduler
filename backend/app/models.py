@@ -710,3 +710,38 @@ class SignupResponse(Base):
 # Phase 08: PrereqOverride model REMOVED (D-05).
 # The legacy table was dropped in migration 0009. Router/service cleanup
 # is Phase 12 scope, Phase 16 Plan 01 finished the admin-shell retirement.
+
+
+# -------------------------
+# Volunteer preferences (Phase 24)
+# -------------------------
+
+
+class VolunteerPreference(Base):
+    """Per-volunteer notification preferences, keyed by email (stable identity).
+
+    Mirrors the orientation_credits pattern — no FK to volunteers because a
+    consent record must outlive volunteer deletions and predate the first
+    signup. ``phone_e164`` is stored here so Phase 27 (SMS) has a persistent
+    home without touching the volunteers row.
+    """
+
+    __tablename__ = "volunteer_preferences"
+
+    volunteer_email = Column(String(255), primary_key=True, nullable=False)
+    email_reminders_enabled = Column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
+    sms_opt_in = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    phone_e164 = Column(String(20), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

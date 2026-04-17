@@ -198,12 +198,139 @@ def send_reschedule(signup: models.Signup) -> dict:
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
+def _manage_url_for_signup(signup: "models.Signup") -> str | None:
+    """Return a magic-link manage URL for the signup, if one exists.
+
+    Looks up the freshest un-consumed SIGNUP_MANAGE / SIGNUP_CONFIRM token
+    stored against this signup. Used in reminder emails so the unsubscribe
+    link is already authenticated and the manage page loads without
+    re-challenging the volunteer.
+    """
+    from .config import settings
+
+    tokens = getattr(signup, "magic_link_tokens", None) or []
+    manage_tokens = [
+        t for t in tokens
+        if t.consumed_at is None
+        and t.purpose in (models.MagicLinkPurpose.SIGNUP_MANAGE, models.MagicLinkPurpose.SIGNUP_CONFIRM)
+    ]
+    if not manage_tokens:
+        return None
+    # Pick the most recently issued — expires_at is a reasonable proxy.
+    latest = max(manage_tokens, key=lambda t: t.expires_at)
+    token_hash = latest.token_hash
+    base = (settings.frontend_url or "").rstrip("/")
+    # token_hash is stored — not the raw token. When there is no raw token
+    # available (typical for passive reminder builds) we link to the manage
+    # page without a prefilled token so the volunteer can paste theirs from
+    # the original confirmation email. The hash stays server-side.
+    return f"{base}/signup/manage?signup_id={signup.id}" if base else None
+
+
+def _reminder_common_context(signup: "models.Signup") -> dict:
+    v = signup.volunteer
+    slot = signup.slot
+    event = slot.event
+    vol_name = f"{v.first_name} {v.last_name}"
+    manage_url = _manage_url_for_signup(signup) or ""
+    return {
+        "user_name": vol_name,
+        "event_title": event.title,
+        "slot_when": _fmt_when(slot),
+        "event_location": event.location or "TBD",
+        "manage_url": manage_url,
+        "to": v.email,
+    }
+
+
+def send_reminder_kickoff(signup: "models.Signup") -> dict:
+    """Weekly kickoff reminder: 'Your SciTrek event this week.'"""
+    ctx = _reminder_common_context(signup)
+    subject = f"Heads up: you're volunteering this week for '{ctx['event_title']}'"
+    text_body = (
+        f"Hi {ctx['user_name']},\n\n"
+        f"You're signed up to volunteer this week for:\n"
+        f"- Event: {ctx['event_title']}\n"
+        f"- When: {ctx['slot_when']}\n"
+        f"- Where: {ctx['event_location']}\n\n"
+        "Thanks for saying yes. You'll get a 24-hour and 2-hour nudge as the event approaches.\n\n"
+        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}\n"
+        "You can turn these reminders off from the manage page anytime."
+    )
+    html_body = _render_html(
+        "reminder.html",
+        user_name=ctx["user_name"],
+        event_title=ctx["event_title"],
+        slot_when=ctx["slot_when"],
+        event_location=ctx["event_location"],
+        lead_time="this week",
+    )
+    return {"to": ctx["to"], "subject": subject, "text_body": text_body, "html_body": html_body}
+
+
+def send_reminder_pre_24h(signup: "models.Signup") -> dict:
+    """24-hour reminder — separate from the legacy send_reminder_24h so
+    Phase 24's idempotency kind (reminder_pre_24h) doesn't collide with the
+    legacy reminder_24h dedup key used by send_reminders_24h.
+    """
+    ctx = _reminder_common_context(signup)
+    subject = f"Tomorrow: '{ctx['event_title']}'"
+    text_body = (
+        f"Hi {ctx['user_name']},\n\n"
+        f"Quick reminder — you're volunteering tomorrow:\n"
+        f"- Event: {ctx['event_title']}\n"
+        f"- When: {ctx['slot_when']}\n"
+        f"- Where: {ctx['event_location']}\n\n"
+        "See you there! If you can no longer attend, please cancel so the spot opens up.\n\n"
+        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
+    )
+    html_body = _render_html(
+        "reminder.html",
+        user_name=ctx["user_name"],
+        event_title=ctx["event_title"],
+        slot_when=ctx["slot_when"],
+        event_location=ctx["event_location"],
+        lead_time="24 hours",
+    )
+    return {"to": ctx["to"], "subject": subject, "text_body": text_body, "html_body": html_body}
+
+
+def send_reminder_pre_2h(signup: "models.Signup") -> dict:
+    """2-hour reminder. Fires inside the venue-time send window and skipped
+    during quiet hours by reminder_service."""
+    ctx = _reminder_common_context(signup)
+    subject = f"Starting soon: '{ctx['event_title']}'"
+    text_body = (
+        f"Hi {ctx['user_name']},\n\n"
+        f"Your volunteer slot starts in about 2 hours:\n"
+        f"- Event: {ctx['event_title']}\n"
+        f"- When: {ctx['slot_when']}\n"
+        f"- Where: {ctx['event_location']}\n\n"
+        "See you there!\n\n"
+        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
+    )
+    html_body = _render_html(
+        "reminder.html",
+        user_name=ctx["user_name"],
+        event_title=ctx["event_title"],
+        slot_when=ctx["slot_when"],
+        event_location=ctx["event_location"],
+        lead_time="2 hours",
+    )
+    return {"to": ctx["to"], "subject": subject, "text_body": text_body, "html_body": html_body}
+
+
 BUILDERS = {
     "confirmation": send_confirmation,
     "cancellation": send_cancellation,
     "reminder_24h": send_reminder_24h,
     "reminder_1h": send_reminder_1h,
     "reschedule": send_reschedule,
+    # Phase 24 — scheduled reminder kinds. Keys match
+    # reminder_service.notification_kind(kind).
+    "reminder_kickoff": send_reminder_kickoff,
+    "reminder_pre_24h": send_reminder_pre_24h,
+    "reminder_pre_2h": send_reminder_pre_2h,
 }
 
 

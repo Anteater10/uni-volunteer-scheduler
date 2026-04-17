@@ -425,6 +425,34 @@ async function publicCancelSignup(signupId, token) {
   return request(`/public/signups/${signupId}`, { method: "DELETE", auth: false, params: { token } });
 }
 
+// Phase 24 — volunteer reminder preferences (token-gated)
+async function publicGetPreferences(manageToken) {
+  return request("/public/preferences", {
+    method: "GET",
+    auth: false,
+    params: { manage_token: manageToken },
+  });
+}
+async function publicUpdatePreferences(manageToken, patch) {
+  return request("/public/preferences", {
+    method: "PUT",
+    auth: false,
+    params: { manage_token: manageToken },
+    body: patch,
+  });
+}
+
+// Phase 24 — admin reminders page
+async function adminListUpcomingReminders(days = 7) {
+  return request("/admin/reminders/upcoming", { method: "GET", params: { days } });
+}
+async function adminSendReminderNow(signupId, kind) {
+  return request("/admin/reminders/send-now", {
+    method: "POST",
+    body: { signup_id: signupId, kind },
+  });
+}
+
 // --------------------
 // MAGIC LINK
 // --------------------
@@ -532,6 +560,10 @@ export const api = {
     confirmSignup: (token) => publicConfirmSignup(token),
     getManageSignups: (token) => publicGetManageSignups(token),
     cancelSignup: (signupId, token) => publicCancelSignup(signupId, token),
+    // Phase 24 — reminder preferences
+    getPreferences: (manageToken) => publicGetPreferences(manageToken),
+    updatePreferences: (manageToken, patch) =>
+      publicUpdatePreferences(manageToken, patch),
   },
 
   // --- Module Templates (Phase 5) ---
@@ -677,6 +709,11 @@ export const api = {
           skip_conflicts,
         },
       }),
+    // Phase 24 — scheduled reminder emails
+    reminders: {
+      listUpcoming: (days = 7) => adminListUpcomingReminders(days),
+      sendNow: (signupId, kind) => adminSendReminderNow(signupId, kind),
+    },
     // Phase 21 — orientation credit engine
     orientationCredits: {
       list: (params = {}) =>
