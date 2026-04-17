@@ -72,7 +72,13 @@ def _check_daily_send_limit(db: Session) -> bool:
     return True
 
 
-def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+def _send_via_smtp(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    inline_attachments: list[dict] | None = None,
+) -> None:
     """Send an email via SMTP (stdlib smtplib).
 
     Used in two places:
@@ -81,6 +87,11 @@ def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None
 
     Both paths share this single code path; prod vs dev is a pure config
     question (smtp_host, smtp_username, smtp_password, smtp_use_tls).
+
+    ``inline_attachments`` (Phase 28): list of dicts with keys
+    ``cid`` (string, no angle brackets), ``content`` (bytes),
+    ``subtype`` (default ``"png"``). Each is attached as an inline
+    image referenced by ``<img src="cid:{cid}">`` in ``html_body``.
     """
     if not settings.email_from_address:
         logger.warning("email_from_address not configured; skipping send to=%s", to_email)
@@ -93,6 +104,16 @@ def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None
     msg.set_content(body or "")
     if html_body:
         msg.add_alternative(html_body, subtype="html")
+    if inline_attachments and html_body:
+        html_part = msg.get_payload()[-1]
+        for att in inline_attachments:
+            html_part.add_related(
+                att["content"],
+                maintype="image",
+                subtype=att.get("subtype", "png"),
+                cid=f"<{att['cid']}>",
+                filename=att.get("filename") or f"{att['cid']}.png",
+            )
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
         if settings.smtp_use_tls:
@@ -102,8 +123,18 @@ def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None
         smtp.send_message(msg)
 
 
-def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
-    """Send an email via SendGrid HTTPS API. Prod fallback; dev uses SMTP."""
+def _send_via_sendgrid(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    inline_attachments: list[dict] | None = None,
+) -> None:
+    """Send an email via SendGrid HTTPS API. Prod fallback; dev uses SMTP.
+
+    ``inline_attachments`` are rendered as SendGrid inline Attachment
+    objects with ``disposition=inline`` + ``content_id=<cid>``.
+    """
     if not settings.sendgrid_api_key or not settings.email_from_address:
         logger.warning(
             "sendgrid_api_key or email_from_address missing; skipping send to=%s",
@@ -119,6 +150,28 @@ def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | 
     )
     if html_body:
         message.html_content = html_body
+    if inline_attachments:
+        import base64
+
+        from sendgrid.helpers.mail import (
+            Attachment,
+            Disposition,
+            FileContent,
+            FileName,
+            FileType,
+            ContentId,
+        )
+
+        for att in inline_attachments:
+            encoded = base64.b64encode(att["content"]).decode("ascii")
+            sg_att = Attachment(
+                FileContent(encoded),
+                FileName(att.get("filename") or f"{att['cid']}.png"),
+                FileType(f"image/{att.get('subtype', 'png')}"),
+                Disposition("inline"),
+                ContentId(att["cid"]),
+            )
+            message.add_attachment(sg_att)
     sg = SendGridAPIClient(settings.sendgrid_api_key)
     sg.send(message)
 
@@ -126,18 +179,40 @@ def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | 
 # Backward-compat alias — external callers (admin broadcast router) still
 # import `_send_email_via_sendgrid`. Resolved here at import time so renaming
 # the function didn't require cross-pillar edits.
-def _send_email(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+def _send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    inline_attachments: list[dict] | None = None,
+) -> None:
     """Single entry point for transactional email. Dispatches on settings.email_mode.
 
     Errors are logged (not swallowed). The caller is a Celery task with
     autoretry_for=(Exception,), so re-raising lets the framework retry
     transient failures; persistent failures surface in docker logs.
+
+    ``inline_attachments`` (Phase 28) carries CID-referenced images (QR
+    codes). Optional and backward-compatible — callers that don't need
+    attachments can omit it.
     """
     try:
         if settings.email_mode == "sendgrid":
-            _send_via_sendgrid(to_email, subject, body, html_body=html_body)
+            _send_via_sendgrid(
+                to_email,
+                subject,
+                body,
+                html_body=html_body,
+                inline_attachments=inline_attachments,
+            )
         else:  # "smtp" (default)
-            _send_via_smtp(to_email, subject, body, html_body=html_body)
+            _send_via_smtp(
+                to_email,
+                subject,
+                body,
+                html_body=html_body,
+                inline_attachments=inline_attachments,
+            )
     except Exception:
         # Surface the failure in logs — previous silent-swallow behaviour
         # masked misconfigured sender identities for weeks.
@@ -209,10 +284,17 @@ def send_email_notification(
             subject = payload["subject"]
             body = payload.get("text_body") or payload.get("body", "")
             html_body = payload.get("html_body")
+            inline_attachments = payload.get("inline_attachments") or None
             to_email = v.email if v else None
             if not to_email:
                 return
-            _send_email(to_email, subject, body, html_body=html_body)
+            _send_email(
+                to_email,
+                subject,
+                body,
+                html_body=html_body,
+                inline_attachments=inline_attachments,
+            )
             # Phase 09 (D-11): skip Notification row for volunteer-backed signups;
             # migration 0010 adds volunteer_id FK but this pipeline uses dedup kind pattern
             # which doesn't map cleanly. Phase 11 will add audit rows here.
@@ -442,8 +524,16 @@ def send_signup_confirmation_email(
                 "volunteer_id=%s event_id=%s", volunteer_id, event_id
             )
             return
-        subject, html = build_signup_confirmation_email(volunteer, signups, token, event)
-        _send_email(to_email=volunteer.email, subject=subject, body="", html_body=html)
+        subject, html, inline_attachments = build_signup_confirmation_email(
+            volunteer, signups, token, event, db=db
+        )
+        _send_email(
+            to_email=volunteer.email,
+            subject=subject,
+            body="",
+            html_body=html,
+            inline_attachments=inline_attachments or None,
+        )
         logger.info(
             "signup_confirmation_email_sent volunteer_id=%s event_id=%s signup_count=%d",
             volunteer_id, event_id, len(signups),

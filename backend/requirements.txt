@@ -57,6 +57,8 @@ PyYAML==6.0.3
 redis==7.1.0
 rsa==4.9.1
 sendgrid==6.12.5
+# Phase 28 — QR check-in. `[pil]` pulls Pillow for PNG rendering.
+qrcode[pil]>=7.4,<9
 six==1.17.0
 slowapi==0.1.9
 SQLAlchemy==2.0.44

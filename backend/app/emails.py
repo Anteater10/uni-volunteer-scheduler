@@ -76,14 +76,64 @@ def send_confirmation(signup: models.Signup) -> dict:
     event = slot.event
     vol_name = f"{v.first_name} {v.last_name}"
     subject = f"Your signup for '{event.title}'"
-    text_body = (
-        f"Hi {vol_name},\n\n"
-        f"You are confirmed for this volunteer slot:\n"
-        f"- Event: {event.title}\n"
-        f"- When: {_fmt_when(slot)}\n"
-        f"- Where: {event.location or 'TBD'}\n\n"
-        "Thank you for volunteering!"
-    )
+
+    # Phase 28 (QR-01, QR-03): attach a per-signup QR the organizer can
+    # scan at the venue. We only attempt when we have an active DB session
+    # (Signup still bound to one) — passive callers (unit tests building
+    # the payload without a session) get a QR-less email, which keeps the
+    # builder backwards-compatible.
+    qr_png: bytes | None = None
+    manage_url: str | None = None
+    cid = f"qr-{signup.id}"
+    try:
+        from sqlalchemy import inspect as _sa_inspect
+
+        session = _sa_inspect(signup).session if signup is not None else None
+    except Exception:  # pragma: no cover - defensive
+        session = None
+    if session is not None:
+        try:
+            from .services import qr_service
+
+            qr_png, manage_url = qr_service.generate_signup_qr(
+                session, signup.id
+            )
+        except Exception:  # pragma: no cover - defensive
+            logger.exception(
+                "qr_service.generate_signup_qr failed signup_id=%s", signup.id
+            )
+            qr_png = None
+            manage_url = None
+
+    text_body_lines = [
+        f"Hi {vol_name},",
+        "",
+        "You are confirmed for this volunteer slot:",
+        f"- Event: {event.title}",
+        f"- When: {_fmt_when(slot)}",
+        f"- Where: {event.location or 'TBD'}",
+        "",
+        "Thank you for volunteering!",
+    ]
+    if manage_url:
+        text_body_lines += [
+            "",
+            "Show this QR to the organizer when you arrive, or open your magic link:",
+            manage_url,
+        ]
+    text_body = "\n".join(text_body_lines)
+
+    qr_block = ""
+    if qr_png is not None:
+        qr_block = (
+            f'<div style="margin:16px 0;text-align:center;">'
+            f'<img src="cid:{cid}" alt="Your check-in QR" '
+            f'style="width:240px;height:240px;max-width:100%;" />'
+            f'<p style="margin:8px 0 0;font-size:14px;color:#555555;">'
+            f'Show this to the organizer when you arrive.</p>'
+            f"</div>"
+        )
+
     html_body = _render_html(
         "confirmation.html",
         user_name=vol_name,
@@ -91,7 +141,28 @@ def send_confirmation(signup: models.Signup) -> dict:
         slot_when=_fmt_when(slot),
         event_location=event.location or "TBD",
     )
-    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+    if qr_block:
+        # Post-render injection: the confirmation template is a Template
+        # with a limited variable set, and I don't want to destabilize
+        # Phase 0 copy reviews. Append the QR block right before the
+        # final paragraph by replacing the literal "Thank you" line.
+        marker = "<p style=\"margin:0;\">Thank you for volunteering!</p>"
+        if marker in html_body:
+            html_body = html_body.replace(marker, qr_block + marker)
+        else:
+            html_body = html_body + qr_block
+
+    result = {
+        "to": v.email,
+        "subject": subject,
+        "text_body": text_body,
+        "html_body": html_body,
+    }
+    if qr_png is not None:
+        result["inline_attachments"] = [
+            {"cid": cid, "content": qr_png, "subtype": "png"}
+        ]
+    return result
 
 
 def send_cancellation(signup: models.Signup) -> dict:
@@ -429,7 +500,9 @@ def build_signup_confirmation_email(
     signups: list,  # list[models.Signup], loaded with slot
     token: str,
     event: "models.Event",
-) -> tuple[str, str]:
+    *,
+    db=None,
+) -> tuple[str, str, list[dict]]:
     """Build the signup confirmation email for a public signup batch.
 
     Args:
@@ -437,13 +510,42 @@ def build_signup_confirmation_email(
         signups: List of Signup rows with slot relationship loaded.
         token: Raw magic-link token (for confirm URL).
         event: The Event the signups belong to.
+        db: Optional SQLAlchemy session. When provided, Phase 28 QR
+            images are generated per-signup and returned as inline
+            attachments.
 
     Returns:
-        (subject, html_body) tuple — no plain-text version (HTML only for this flow).
+        ``(subject, html_body, inline_attachments)``. When ``db`` is
+        None or QR generation fails, ``inline_attachments`` is ``[]``
+        and the email still sends normally.
     """
     from .config import settings
 
     confirm_url = f"{settings.frontend_url}/signup/confirm?token={token}"
+
+    # Phase 28 — per-signup QR using the same raw token. The confirm URL
+    # resolves the token → signup_id server-side via the manage lookup,
+    # so the QR encodes the manage URL rather than the one-time confirm
+    # URL.
+    inline_attachments: list[dict] = []
+    qr_url_by_signup: dict = {}
+    if db is not None:
+        try:
+            from .services import qr_service
+
+            for s in signups:
+                png, url = qr_service.generate_signup_qr(
+                    db, s.id, raw_token=token
+                )
+                cid = f"qr-{s.id}"
+                inline_attachments.append(
+                    {"cid": cid, "content": png, "subtype": "png"}
+                )
+                qr_url_by_signup[str(s.id)] = url
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("QR generation failed in build_signup_confirmation_email")
+            inline_attachments = []
+            qr_url_by_signup = {}
 
     slot_lines = []
     for s in signups:
@@ -460,5 +562,21 @@ def build_signup_confirmation_email(
         confirm_url=confirm_url,
         slot_list="\n".join(slot_lines),
     )
+    # Append a QR block per signup (if we generated any). Kept outside
+    # the Template body to avoid re-escaping.
+    if inline_attachments:
+        qr_sections = []
+        for s in signups:
+            cid = f"qr-{s.id}"
+            qr_sections.append(
+                '<div style="margin:16px 0;text-align:center;">'
+                f'<img src="cid:{cid}" alt="Your check-in QR" '
+                'style="width:200px;height:200px;max-width:100%;" />'
+                '<p style="margin:8px 0 0;font-size:14px;color:#555555;">'
+                "Show this to the organizer when you arrive.</p>"
+                "</div>"
+            )
+        html = html + "".join(qr_sections)
+
     subject = f"Confirm your SciTrek volunteer signup — {event.title}"
-    return subject, html
+    return subject, html, inline_attachments
