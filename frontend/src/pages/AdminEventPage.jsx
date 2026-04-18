@@ -127,6 +127,17 @@ export default function AdminEventPage() {
     },
   });
 
+  // Admin/organizer cancel signup (triggers Phase 25 FIFO auto-promote).
+  const cancelMut = useMutation({
+    mutationFn: (signupId) => api.admin.signups.cancel(signupId),
+    onSuccess: () => {
+      toast.success("Signup cancelled.");
+      qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventAnalytics", eventId] });
+    },
+    onError: (e) => toast.error(e?.message || "Cancel failed"),
+  });
+
   // Phase 25 — admin reorder waitlist (WAIT-05).
   const reorderMut = useMutation({
     mutationFn: ({ slotId, orderedIds }) =>
@@ -480,6 +491,24 @@ export default function AdminEventPage() {
                             >
                               Grant orientation
                             </Button>
+                            {r.status !== "cancelled" && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      `Cancel ${name}'s signup? If this was a confirmed seat, the next person on the waitlist will auto-promote.`
+                                    )
+                                  ) {
+                                    cancelMut.mutate(r.signup_id || r.id);
+                                  }
+                                }}
+                                disabled={cancelMut.isPending}
+                              >
+                                Cancel
+                              </Button>
+                            )}
                           </span>
                         </div>
                         {Array.isArray(r.responses) && r.responses.length > 0 && (

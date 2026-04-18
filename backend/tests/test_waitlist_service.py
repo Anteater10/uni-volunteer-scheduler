@@ -219,8 +219,8 @@ def test_public_cancel_promotes_oldest_waitlisted(
         db_session.expire_all()
         a = db_session.query(models.Signup).filter_by(id=wait_a.id).one()
         b = db_session.query(models.Signup).filter_by(id=wait_b.id).one()
-        # Older waitlister gets promoted to pending (must confirm via magic link).
-        assert a.status == models.SignupStatus.pending
+        # Older waitlister gets promoted directly to confirmed.
+        assert a.status == models.SignupStatus.confirmed
         assert b.status == models.SignupStatus.waitlisted
 
         # Slot stays full via the promoted row.
@@ -269,13 +269,13 @@ def test_organizer_manual_promote_bypasses_fifo(
     )
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data["status"] == "pending"
+    assert data["status"] == "confirmed"
 
     db_session.expire_all()
     old = db_session.query(models.Signup).filter_by(id=wait_old.id).one()
     new_row = db_session.query(models.Signup).filter_by(id=wait_new.id).one()
     # Newer volunteer got in ahead of the FIFO head — WAIT-03 override.
-    assert new_row.status == models.SignupStatus.pending
+    assert new_row.status == models.SignupStatus.confirmed
     assert old.status == models.SignupStatus.waitlisted
 
 
@@ -377,7 +377,7 @@ def test_admin_reorder_waitlist_persists_and_flips_fifo(
     db_session.expire_all()
     c_row = db_session.query(models.Signup).filter_by(id=wait_c.id).one()
     a_row = db_session.query(models.Signup).filter_by(id=wait_a.id).one()
-    assert c_row.status == models.SignupStatus.pending
+    assert c_row.status == models.SignupStatus.confirmed
     assert a_row.status == models.SignupStatus.waitlisted
 
 

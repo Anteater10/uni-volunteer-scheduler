@@ -145,29 +145,25 @@ function SlotRow({ slot, selected, onToggle, highlight }) {
       "border-b border-[var(--color-border)] align-top",
       highlight && !isFull && slot.slot_type === "orientation" ? "bg-blue-50/50" : "",
     ].join(" ")}>
-      {/* Sign Up button */}
+      {/* Sign Up / Join Waitlist button */}
       <td className="py-3 px-2 text-center align-top">
-        {isFull ? (
-          <span
-            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-semibold text-[var(--color-danger,#dc2626)]"
-            aria-label="Slot full"
-          >
-            <XCircle size={12} aria-hidden="true" />
-            Full
-          </span>
-        ) : (
-          <button
-            onClick={() => onToggle(slot.id)}
-            className={[
-              "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
-              selected
+        <button
+          onClick={() => onToggle(slot.id)}
+          className={[
+            "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
+            isFull
+              ? selected
+                ? "bg-amber-500 text-white"
+                : "bg-amber-600 text-white hover:bg-amber-700"
+              : selected
                 ? "bg-green-600 text-white"
                 : "bg-red-600 text-white hover:bg-red-700",
-            ].join(" ")}
-          >
-            {selected ? "Selected" : "Sign Up"}
-          </button>
-        )}
+          ].join(" ")}
+        >
+          {isFull
+            ? selected ? "On waitlist" : "Join waitlist"
+            : selected ? "Selected" : "Sign Up"}
+        </button>
       </td>
       {/* Slot name + volunteer list */}
       <td className="py-3 px-2">
@@ -250,29 +246,25 @@ function SlotRowInline({ slot, selected, onToggle, highlight }) {
   const isFull = slot.filled >= slot.capacity;
   return (
     <>
-      {/* Sign Up button */}
+      {/* Sign Up / Join Waitlist button */}
       <td className="py-3 px-2 text-center align-top w-20">
-        {isFull ? (
-          <span
-            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-semibold text-[var(--color-danger,#dc2626)]"
-            aria-label="Slot full"
-          >
-            <XCircle size={12} aria-hidden="true" />
-            Full
-          </span>
-        ) : (
-          <button
-            onClick={() => onToggle(slot.id)}
-            className={[
-              "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
-              selected
+        <button
+          onClick={() => onToggle(slot.id)}
+          className={[
+            "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
+            isFull
+              ? selected
+                ? "bg-amber-500 text-white"
+                : "bg-amber-600 text-white hover:bg-amber-700"
+              : selected
                 ? "bg-green-600 text-white"
                 : "bg-red-600 text-white hover:bg-red-700",
-            ].join(" ")}
-          >
-            {selected ? "Selected" : "Sign Up"}
-          </button>
-        )}
+          ].join(" ")}
+        >
+          {isFull
+            ? selected ? "On waitlist" : "Join waitlist"
+            : selected ? "Selected" : "Sign Up"}
+        </button>
       </td>
       {/* Slot name + volunteers */}
       <td className={[
@@ -976,29 +968,31 @@ export default function EventDetailPage() {
                         <div>{formatTime(slot.start_time)}-</div>
                         <div>{formatTime(slot.end_time)}</div>
                       </td>
-                      {/* Sign Up button */}
+                      {/* Sign Up / Join Waitlist button */}
                       <td className="py-3 px-2 text-center align-top">
-                        {slot.filled >= slot.capacity ? (
-                          <span
-                            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-semibold text-[var(--color-danger,#dc2626)]"
-                            aria-label="Slot full"
-                          >
-                            <XCircle size={12} aria-hidden="true" />
-                            Full
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => toggleSlot(slot.id)}
-                            className={[
-                              "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
-                              selectedSlotIds.has(slot.id)
-                                ? "bg-green-600 text-white"
-                                : "bg-red-600 text-white hover:bg-red-700",
-                            ].join(" ")}
-                          >
-                            {selectedSlotIds.has(slot.id) ? "Selected" : "Sign Up"}
-                          </button>
-                        )}
+                        {(() => {
+                          const isFull = slot.filled >= slot.capacity;
+                          const isSelected = selectedSlotIds.has(slot.id);
+                          return (
+                            <button
+                              onClick={() => toggleSlot(slot.id)}
+                              className={[
+                                "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
+                                isFull
+                                  ? isSelected
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-amber-600 text-white hover:bg-amber-700"
+                                  : isSelected
+                                    ? "bg-green-600 text-white"
+                                    : "bg-red-600 text-white hover:bg-red-700",
+                              ].join(" ")}
+                            >
+                              {isFull
+                                ? isSelected ? "On waitlist" : "Join waitlist"
+                                : isSelected ? "Selected" : "Sign Up"}
+                            </button>
+                          );
+                        })()}
                       </td>
                       {/* Slot label + volunteers */}
                       <td className={[
@@ -1053,29 +1047,31 @@ export default function EventDetailPage() {
                         <div>{formatTime(slot.start_time)}-</div>
                         <div>{formatTime(slot.end_time)}</div>
                       </td>
-                      {/* Sign Up button */}
+                      {/* Sign Up / Join Waitlist button */}
                       <td className="py-3 px-2 text-center align-top">
-                        {slot.filled >= slot.capacity ? (
-                          <span
-                            className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-semibold text-[var(--color-danger,#dc2626)]"
-                            aria-label="Slot full"
-                          >
-                            <XCircle size={12} aria-hidden="true" />
-                            Full
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => toggleSlot(slot.id)}
-                            className={[
-                              "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
-                              selectedSlotIds.has(slot.id)
-                                ? "bg-green-600 text-white"
-                                : "bg-red-600 text-white hover:bg-red-700",
-                            ].join(" ")}
-                          >
-                            {selectedSlotIds.has(slot.id) ? "Selected" : "Sign Up"}
-                          </button>
-                        )}
+                        {(() => {
+                          const isFull = slot.filled >= slot.capacity;
+                          const isSelected = selectedSlotIds.has(slot.id);
+                          return (
+                            <button
+                              onClick={() => toggleSlot(slot.id)}
+                              className={[
+                                "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
+                                isFull
+                                  ? isSelected
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-amber-600 text-white hover:bg-amber-700"
+                                  : isSelected
+                                    ? "bg-green-600 text-white"
+                                    : "bg-red-600 text-white hover:bg-red-700",
+                              ].join(" ")}
+                            >
+                              {isFull
+                                ? isSelected ? "On waitlist" : "Join waitlist"
+                                : isSelected ? "Selected" : "Sign Up"}
+                            </button>
+                          );
+                        })()}
                       </td>
                       {/* Slot label + volunteers */}
                       <td className="py-3 px-2 align-top">

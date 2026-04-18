@@ -233,16 +233,14 @@ describe("EventDetailPage", () => {
     expect(screen.getByText(/7 of 20 filled/i)).toBeInTheDocument();
   });
 
-  it("Full slot renders a chip with both 'Full' text AND an XCircle icon (no color-only signal)", async () => {
+  it("Full slot exposes a 'Join waitlist' button (waitlist affordance replaces the old Full chip)", async () => {
     renderDetailPage();
     await screen.findByText("CRISPR at Carpinteria HS");
 
-    // The aria-label "Slot full" identifies the chip wrapper unambiguously
-    const fullChip = await screen.findByLabelText("Slot full");
-    expect(fullChip).toBeInTheDocument();
-    expect(fullChip.textContent).toMatch(/full/i);
-    // Icon (svg from lucide-react) lives inside the chip
-    expect(fullChip.querySelector("svg")).not.toBeNull();
+    // v1.3 waitlist UX: full slots no longer show a read-only "Full" chip —
+    // they render a Join-waitlist button so users can self-enqueue.
+    const waitlistBtn = await screen.findByRole("button", { name: /join waitlist/i });
+    expect(waitlistBtn).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------

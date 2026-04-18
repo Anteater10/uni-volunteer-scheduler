@@ -147,8 +147,8 @@ def test_swap_auto_promotes_source_waitlist(db_session):
     db_session.flush()
     db_session.refresh(waitlisted)
 
-    # Waitlisted gets promoted to pending (matches promote_waitlist_fifo contract).
-    assert waitlisted.status == models.SignupStatus.pending
+    # Waitlisted gets promoted to confirmed (matches promote_waitlist_fifo contract).
+    assert waitlisted.status == models.SignupStatus.confirmed
 
 
 def test_swap_writes_audit_row(db_session):

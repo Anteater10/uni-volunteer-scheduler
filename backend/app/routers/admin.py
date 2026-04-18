@@ -383,12 +383,24 @@ def event_analytics(
     total_slots = len(event.slots)
     total_capacity = sum(s.capacity for s in event.slots)
 
+    # Count anyone still holding a seat: pending + confirmed + checked_in
+    # + attended. Pending holds capacity (just hasn't clicked the magic link
+    # yet). Otherwise the "Confirmed" card drops when someone checks in or
+    # when a waitlisted person auto-promotes into pending — both misread
+    # the state (they're more present, not less).
     confirmed = (
         db.query(func.count(models.Signup.id))
         .join(models.Slot)
         .filter(
             models.Slot.event_id == event.id,
-            models.Signup.status == models.SignupStatus.confirmed,
+            models.Signup.status.in_(
+                [
+                    models.SignupStatus.pending,
+                    models.SignupStatus.confirmed,
+                    models.SignupStatus.checked_in,
+                    models.SignupStatus.attended,
+                ]
+            ),
         )
         .scalar()
         or 0

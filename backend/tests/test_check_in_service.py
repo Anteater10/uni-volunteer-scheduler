@@ -424,6 +424,28 @@ class TestEventCheckInByEmail:
         for s in result:
             assert s.status == SignupStatus.checked_in
 
+    def test_pending_signup_auto_confirms_then_checks_in(self, db_session):
+        """QR check-in on a pending signup auto-confirms + checks in."""
+        slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
+        vol, owner, event, slot, signup = _make_event_slot_signup(
+            db_session, slot_start=slot_start, status=SignupStatus.pending
+        )
+        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email)
+        assert len(signups) == 1
+        assert signups[0].status == SignupStatus.checked_in
+
+        logs = db_session.query(AuditLog).filter(
+            AuditLog.entity_id == str(signup.id),
+            AuditLog.action == "transition",
+        ).order_by(AuditLog.timestamp).all()
+        assert len(logs) == 2
+        assert logs[0].extra["from"] == "pending"
+        assert logs[0].extra["to"] == "confirmed"
+        assert logs[0].extra["via"] == "self_qr_autoconfirm"
+        assert logs[1].extra["from"] == "confirmed"
+        assert logs[1].extra["to"] == "checked_in"
+        assert logs[1].extra["via"] == "self_qr"
+
     def test_only_in_window_slots_are_checked_in(self, db_session):
         """Volunteer has two signups: one in window, one outside. Only in-window transitions."""
         vol = _make_volunteer(db_session)

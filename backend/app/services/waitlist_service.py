@@ -108,27 +108,16 @@ def manual_promote(
     the router can translate to an HTTP status.
 
     Flow mirrors ``promote_waitlist_fifo``:
-      - waitlisted → pending (must confirm via magic link)
+      - waitlisted → confirmed (volunteer already consented at initial signup)
       - increments ``slot.current_count``
-      - dispatches magic-link confirmation email
     """
     if signup.status != models.SignupStatus.waitlisted:
         raise ValueError("only waitlisted signups can be promoted")
     if slot.current_count >= slot.capacity:
         raise ValueError("slot is full")
 
-    signup.status = models.SignupStatus.pending
+    signup.status = models.SignupStatus.confirmed
     slot.current_count += 1
     db.flush()
-
-    # Send the magic-link confirm email so the promoted signup can self-confirm.
-    from ..config import settings
-    from ..magic_link_service import dispatch_email
-
-    event = (
-        db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    )
-    if event is not None:
-        dispatch_email(db, signup, event, settings.backend_base_url)
 
     return signup

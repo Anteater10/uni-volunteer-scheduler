@@ -203,6 +203,12 @@ def event_check_in_by_email(
         if signup.status == SignupStatus.checked_in or signup.status == SignupStatus.attended:
             eligible.append(signup)
             continue
+        # Pending means the volunteer never clicked the magic link, but
+        # they're physically here scanning the QR — that IS confirmation.
+        # Walk the state machine pending -> confirmed -> checked_in so both
+        # transitions get audited individually.
+        if signup.status == SignupStatus.pending:
+            _transition(db, signup, SignupStatus.confirmed, None, "self_qr_autoconfirm")
         if signup.status == SignupStatus.confirmed:
             _transition(db, signup, SignupStatus.checked_in, None, "self_qr")
             eligible.append(signup)
