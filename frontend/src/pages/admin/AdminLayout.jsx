@@ -99,6 +99,14 @@ export default function AdminLayout() {
               <NavItem key={item.to} {...item} />
             ))}
           </nav>
+          <div className="mt-auto pt-4 border-t border-slate-800">
+            <a
+              href="/events"
+              className="block px-4 py-3 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+            >
+              ← View public events page
+            </a>
+          </div>
         </aside>
 
         <main className="flex-1 flex flex-col min-w-0">

@@ -235,12 +235,33 @@ export default function AdminEventPage() {
                   Slot: {fmtDateTime(slot.start)} → {fmtDateTime(slot.end)}
                 </p>
                 <ul className="mt-2 space-y-1">
-                  {rows.map((r) => (
-                    <li key={r.signup_id || r.id} className="text-sm flex justify-between gap-2">
-                      <span>{r.user_name || r.user_email || r.user_id}</span>
-                      <span className="text-[var(--color-fg-muted)]">{r.status}</span>
-                    </li>
-                  ))}
+                  {rows.map((r) => {
+                    const name =
+                      r.participant?.name ||
+                      r.participant?.email ||
+                      r.user_name ||
+                      r.user_email ||
+                      r.volunteer_id ||
+                      r.user_id ||
+                      "Volunteer";
+                    const email = r.participant?.email;
+                    return (
+                      <li
+                        key={r.signup_id || r.id}
+                        className="text-sm flex justify-between gap-2"
+                      >
+                        <span>
+                          {name}
+                          {email && email !== name ? (
+                            <span className="text-[var(--color-fg-muted)] ml-2">
+                              ({email})
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="text-[var(--color-fg-muted)]">{r.status}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </Card>
             ))}

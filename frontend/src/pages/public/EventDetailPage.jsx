@@ -326,26 +326,33 @@ function capitalizeQuarter(q) {
 function EventDescription({ event, orientationSlots }) {
   const moduleName = formatModuleName(event.module_slug);
   const quarter = capitalizeQuarter(event.quarter);
+  const hasCustomDescription = !!(event.description && event.description.trim());
 
   return (
     <Card className="text-sm text-[var(--color-fg)] leading-relaxed">
-      {/* Intro paragraph */}
-      <p>
-        SciTrek will be conducting the {moduleName || event.title} Module
-        {event.school ? ` at ${event.school}` : ""}
-        {event.week_number ? ` for Week ${event.week_number} of ${quarter} quarter` : ""}.
-      </p>
+      {hasCustomDescription ? (
+        <p className="whitespace-pre-wrap">{event.description}</p>
+      ) : (
+        <p>
+          SciTrek will be conducting the {moduleName || event.title} Module
+          {event.school ? ` at ${event.school}` : ""}
+          {event.week_number ? ` for Week ${event.week_number} of ${quarter} quarter` : ""}.
+        </p>
+      )}
 
-      {/* Orientation note */}
       {orientationSlots.length > 0 && (
         <>
-          <p className="mt-3 font-semibold">NOTE:</p>
-          <p>
-            You must attend one Orientation. Attending an Orientation before mentoring
-            in the classroom is required. Previously attended orientations and/or
-            training workshops that covered {moduleName || "this module"} fulfill this requirement.
-          </p>
-          <p className="mt-2">~ You must choose one of the following orientations:</p>
+          {!hasCustomDescription && (
+            <>
+              <p className="mt-3 font-semibold">NOTE:</p>
+              <p>
+                You must attend one Orientation. Attending an Orientation before mentoring
+                in the classroom is required. Previously attended orientations and/or
+                training workshops that covered {moduleName || "this module"} fulfill this requirement.
+              </p>
+            </>
+          )}
+          <p className="mt-2">Available orientation slots:</p>
           <ul className="mt-1 ml-4 list-disc">
             {orientationSlots.map((slot, i) => (
               <li key={slot.id}>
@@ -358,29 +365,25 @@ function EventDescription({ event, orientationSlots }) {
         </>
       )}
 
-      {/* Logistics */}
-      <p className="mt-3">
-        All shifts meet at the SciTrek office in room Chem 1204 and travel by van to the school.
-        We begin boarding vans at the exact start time of your shift. Please be on time
-        (we are not able to accommodate late arrivals).
-      </p>
+      {!hasCustomDescription && (
+        <>
+          <p className="mt-3">
+            All shifts meet at the SciTrek office in room Chem 1204 and travel by van to the school.
+            We begin boarding vans at the exact start time of your shift. Please be on time
+            (we are not able to accommodate late arrivals).
+          </p>
 
-      <p className="mt-3">We look forward to working with you!</p>
+          <p className="mt-3">We look forward to working with you!</p>
 
-      <p className="mt-3">
-        Please contact the SciTrek Manager at{" "}
-        <a href="mailto:chem-scitrekmanager@ucsb.edu" className="text-[var(--color-primary)] underline">
-          chem-scitrekmanager@ucsb.edu
-        </a>{" "}
-        if you have any questions. If you sign up for a shift but cannot make it,
-        please notify us as soon as possible.
-      </p>
-
-      {/* Custom admin description appended below if present */}
-      {event.description && (
-        <p className="mt-3 whitespace-pre-wrap border-t border-[var(--color-border)] pt-3">
-          {event.description}
-        </p>
+          <p className="mt-3">
+            Please contact the SciTrek Manager at{" "}
+            <a href="mailto:chem-scitrekmanager@ucsb.edu" className="text-[var(--color-primary)] underline">
+              chem-scitrekmanager@ucsb.edu
+            </a>{" "}
+            if you have any questions. If you sign up for a shift but cannot make it,
+            please notify us as soon as possible.
+          </p>
+        </>
       )}
     </Card>
   );
