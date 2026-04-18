@@ -116,6 +116,9 @@ class SlotUpdate(BaseModel):
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     capacity: Optional[int] = None
+    slot_type: Optional[SlotType] = None
+    date: Optional[DateType] = None
+    location: Optional[str] = None
 
     @field_validator("start_time", "end_time")
     @classmethod

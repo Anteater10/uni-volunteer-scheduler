@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_owner_or_admin
+from .public.events import derive_quarter_week
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -63,6 +64,17 @@ def create_event(
     signup_open_at = _normalize_dt(event_in.signup_open_at) if event_in.signup_open_at else None
     signup_close_at = _normalize_dt(event_in.signup_close_at) if event_in.signup_close_at else None
 
+    # Derive quarter/year/week_number from start_date when the caller omits them,
+    # so admin-created events remain visible through the public week filter.
+    quarter = event_in.quarter
+    year = event_in.year
+    week_number = event_in.week_number
+    if quarter is None or year is None or week_number is None:
+        d_quarter, d_year, d_week = derive_quarter_week(start_date.date())
+        quarter = quarter or d_quarter
+        year = year or d_year
+        week_number = week_number or d_week
+
     event = models.Event(
         owner_id=current_user.id,
         title=event_in.title,
@@ -75,9 +87,9 @@ def create_event(
         max_signups_per_user=event_in.max_signups_per_user,
         signup_open_at=signup_open_at,
         signup_close_at=signup_close_at,
-        quarter=event_in.quarter,
-        year=event_in.year,
-        week_number=event_in.week_number,
+        quarter=quarter,
+        year=year,
+        week_number=week_number,
         school=event_in.school,
         module_slug=event_in.module_slug,
     )

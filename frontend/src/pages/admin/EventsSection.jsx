@@ -30,6 +30,103 @@ function localInputToIso(value) {
   return new Date(value).toISOString();
 }
 
+// Combine "YYYY-MM-DD" + "HH:MM" (wall-clock) into an ISO string using the
+// browser's local timezone. The backend normalizes to UTC on receipt.
+function combineDateTime(date, time) {
+  if (!date || !time) return null;
+  return new Date(`${date}T${time}`).toISOString();
+}
+
+// Convert a loaded SlotRead (ISO strings) into form-shape (wall-clock HH:MM
+// and YYYY-MM-DD) so edits round-trip without drift.
+function loadedSlotToForm(slot) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const start = new Date(slot.start_time);
+  const end = new Date(slot.end_time);
+  const dateStr =
+    slot.date ||
+    `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`;
+  const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return {
+    id: slot.id,
+    slot_type: slot.slot_type || "period",
+    date: dateStr,
+    start_time: fmtTime(start),
+    end_time: fmtTime(end),
+    capacity: String(slot.capacity ?? ""),
+    location: slot.location || "",
+    current_count: Number(slot.current_count || 0),
+  };
+}
+
+function newEmptySlot(defaults = {}) {
+  return {
+    // no id → this is a new slot when diffing
+    slot_type: "period",
+    date: defaults.date || "",
+    start_time: "",
+    end_time: "",
+    capacity: "",
+    location: defaults.location || "",
+    current_count: 0,
+  };
+}
+
+function slotFormToApiPayload(slot) {
+  return {
+    slot_type: slot.slot_type,
+    date: slot.date || null,
+    start_time: combineDateTime(slot.date, slot.start_time),
+    end_time: combineDateTime(slot.date, slot.end_time),
+    capacity: Number(slot.capacity),
+    location: slot.location?.trim() || null,
+  };
+}
+
+function slotChanged(a, b) {
+  return (
+    a.slot_type !== b.slot_type ||
+    a.date !== b.date ||
+    a.start_time !== b.start_time ||
+    a.end_time !== b.end_time ||
+    Number(a.capacity) !== Number(b.capacity) ||
+    (a.location || "") !== (b.location || "")
+  );
+}
+
+function diffSlots(initial, draft) {
+  const initialById = new Map((initial || []).map((s) => [s.id, s]));
+  const draftIds = new Set(draft.filter((s) => s.id).map((s) => s.id));
+  const creates = draft.filter((s) => !s.id);
+  const updates = draft.filter(
+    (s) => s.id && initialById.has(s.id) && slotChanged(initialById.get(s.id), s),
+  );
+  const deletes = [...initialById.keys()].filter((id) => !draftIds.has(id));
+  return { creates, updates, deletes };
+}
+
+function localDatePart(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function validateSlot(slot, eventStartIso, eventEndIso) {
+  if (!slot.date) return "Date is required.";
+  if (!slot.start_time || !slot.end_time) return "Start and end times are required.";
+  const start = new Date(`${slot.date}T${slot.start_time}`);
+  const end = new Date(`${slot.date}T${slot.end_time}`);
+  if (!(end > start)) return "End time must be after start time.";
+  const cap = Number(slot.capacity);
+  if (!Number.isFinite(cap) || cap <= 0) return "Capacity must be a positive integer.";
+  const evStartDate = localDatePart(eventStartIso);
+  const evEndDate = localDatePart(eventEndIso);
+  if (evStartDate && slot.date < evStartDate) return "Slot date is before the event start.";
+  if (evEndDate && slot.date > evEndDate) return "Slot date is after the event end.";
+  return null;
+}
+
 const EMPTY_FORM = {
   title: "",
   description: "",
@@ -38,44 +135,103 @@ const EMPTY_FORM = {
   end_date: "",
   max_signups_per_user: "",
   visibility: "public",
+  school: "",
 };
 
-function EventForm({ initial, onSubmit, onCancel, submitting }) {
+function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
+  const isEdit = mode === "edit";
   const [form, setForm] = useState(() => ({
     ...EMPTY_FORM,
     ...(initial || {}),
     start_date: isoToLocalInput(initial?.start_date),
     end_date: isoToLocalInput(initial?.end_date),
     max_signups_per_user: initial?.max_signups_per_user ?? "",
+    school: initial?.school ?? "",
   }));
+  const [slots, setSlots] = useState(() => {
+    if (initial?.slots?.length) {
+      return initial.slots.map(loadedSlotToForm);
+    }
+    return [newEmptySlot()];
+  });
   const [error, setError] = useState(null);
+  const [slotErrors, setSlotErrors] = useState({});
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
   }
 
+  function updateSlot(index, patch) {
+    setSlots((arr) => arr.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+  }
+
+  function addSlot() {
+    setSlots((arr) => [
+      ...arr,
+      newEmptySlot({
+        date: form.start_date ? form.start_date.slice(0, 10) : "",
+        location: form.location,
+      }),
+    ]);
+  }
+
+  function removeSlot(index) {
+    setSlots((arr) => arr.filter((_, i) => i !== index));
+    setSlotErrors((errs) => {
+      const next = { ...errs };
+      delete next[index];
+      return next;
+    });
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
+    setSlotErrors({});
+
     if (!form.title.trim()) return setError("Title is required.");
     if (!form.start_date || !form.end_date)
       return setError("Start and end times are required.");
     if (new Date(form.end_date) <= new Date(form.start_date))
-      return setError("End time must be after start time.");
+      return setError("Event end time must be after start time.");
 
-    const payload = {
+    if (slots.length === 0) {
+      return setError("At least one slot is required.");
+    }
+
+    const startIso = localInputToIso(form.start_date);
+    const endIso = localInputToIso(form.end_date);
+    const perSlotErrors = {};
+    slots.forEach((s, i) => {
+      const err = validateSlot(s, startIso, endIso);
+      if (err) perSlotErrors[i] = err;
+    });
+    if (Object.keys(perSlotErrors).length) {
+      setSlotErrors(perSlotErrors);
+      return setError("Fix the slot errors below before saving.");
+    }
+
+    const metadata = {
       title: form.title.trim(),
       description: form.description?.trim() || null,
       location: form.location?.trim() || null,
       visibility: form.visibility || "public",
-      start_date: localInputToIso(form.start_date),
-      end_date: localInputToIso(form.end_date),
+      start_date: startIso,
+      end_date: endIso,
       max_signups_per_user: form.max_signups_per_user
         ? Number(form.max_signups_per_user)
         : null,
+      school: form.school?.trim() || null,
     };
+
+    const initialSlotsFormShape = (initial?.slots || []).map(loadedSlotToForm);
+
     try {
-      await onSubmit(payload);
+      await onSubmit({
+        metadata,
+        slots,
+        initialSlots: initialSlotsFormShape,
+      });
     } catch (err) {
       setError(err?.message || "Save failed");
     }
@@ -86,6 +242,7 @@ function EventForm({ initial, onSubmit, onCancel, submitting }) {
       <div>
         <label className="block text-sm font-medium mb-1">Title *</label>
         <input
+          aria-label="Title *"
           value={form.title}
           onChange={(e) => update("title", e.target.value)}
           className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -95,24 +252,39 @@ function EventForm({ initial, onSubmit, onCancel, submitting }) {
       <div>
         <label className="block text-sm font-medium mb-1">Description</label>
         <textarea
+          aria-label="Description"
           value={form.description || ""}
           onChange={(e) => update("description", e.target.value)}
           rows={3}
           className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         />
       </div>
-      <div>
-        <label className="block text-sm font-medium mb-1">Location</label>
-        <input
-          value={form.location || ""}
-          onChange={(e) => update("location", e.target.value)}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-        />
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm font-medium mb-1">Location</label>
+          <input
+            aria-label="Location"
+            value={form.location || ""}
+            onChange={(e) => update("location", e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-1">School</label>
+          <input
+            aria-label="School"
+            value={form.school || ""}
+            onChange={(e) => update("school", e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            placeholder="Optional"
+          />
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-medium mb-1">Start *</label>
           <input
+            aria-label="Start *"
             type="datetime-local"
             value={form.start_date}
             onChange={(e) => update("start_date", e.target.value)}
@@ -123,6 +295,7 @@ function EventForm({ initial, onSubmit, onCancel, submitting }) {
         <div>
           <label className="block text-sm font-medium mb-1">End *</label>
           <input
+            aria-label="End *"
             type="datetime-local"
             value={form.end_date}
             onChange={(e) => update("end_date", e.target.value)}
@@ -157,6 +330,133 @@ function EventForm({ initial, onSubmit, onCancel, submitting }) {
           </select>
         </div>
       </div>
+
+      <section className="border-t border-gray-200 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold">Slots</h3>
+          <button
+            type="button"
+            onClick={addSlot}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            + Add slot
+          </button>
+        </div>
+        {slots.length === 0 ? (
+          <p className="text-xs text-gray-500">
+            Click "+ Add slot" to add at least one slot.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {slots.map((s, i) => {
+              const removeDisabled = isEdit && s.current_count > 0;
+              return (
+                <li
+                  key={s.id || `new-${i}`}
+                  className="rounded-lg border border-gray-200 bg-gray-50 p-3"
+                  data-testid={`slot-row-${i}`}
+                >
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-2 items-end">
+                    <div className="md:col-span-1">
+                      <label className="block text-xs text-gray-600 mb-1">Type</label>
+                      <select
+                        aria-label={`Slot ${i + 1} type`}
+                        value={s.slot_type}
+                        onChange={(e) => updateSlot(i, { slot_type: e.target.value })}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm bg-white"
+                      >
+                        <option value="period">Period</option>
+                        <option value="orientation">Orientation</option>
+                      </select>
+                    </div>
+                    <div className="md:col-span-1">
+                      <label className="block text-xs text-gray-600 mb-1">Date</label>
+                      <input
+                        type="date"
+                        aria-label={`Slot ${i + 1} date`}
+                        value={s.date}
+                        onChange={(e) => updateSlot(i, { date: e.target.value })}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Start</label>
+                      <input
+                        type="time"
+                        aria-label={`Slot ${i + 1} start time`}
+                        value={s.start_time}
+                        onChange={(e) => updateSlot(i, { start_time: e.target.value })}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">End</label>
+                      <input
+                        type="time"
+                        aria-label={`Slot ${i + 1} end time`}
+                        value={s.end_time}
+                        onChange={(e) => updateSlot(i, { end_time: e.target.value })}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Capacity</label>
+                      <input
+                        type="number"
+                        min="1"
+                        aria-label={`Slot ${i + 1} capacity`}
+                        value={s.capacity}
+                        onChange={(e) => updateSlot(i, { capacity: e.target.value })}
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Location</label>
+                      <input
+                        aria-label={`Slot ${i + 1} location`}
+                        value={s.location}
+                        onChange={(e) => updateSlot(i, { location: e.target.value })}
+                        placeholder="(uses event)"
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between">
+                    {slotErrors[i] ? (
+                      <p
+                        className="text-xs text-red-700"
+                        role="alert"
+                        data-testid={`slot-error-${i}`}
+                      >
+                        {slotErrors[i]}
+                      </p>
+                    ) : (
+                      <span className="text-xs text-gray-500">
+                        {isEdit && s.current_count > 0
+                          ? `${s.current_count} signup${s.current_count === 1 ? "" : "s"}`
+                          : ""}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeSlot(i)}
+                      disabled={removeDisabled}
+                      title={
+                        removeDisabled
+                          ? `Has ${s.current_count} signup${s.current_count === 1 ? "" : "s"} — cannot remove`
+                          : "Remove this slot"
+                      }
+                      className="text-xs text-red-600 hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
       {error && (
         <p className="text-sm text-red-700" role="alert">
@@ -238,6 +538,37 @@ function Modal({ open, title, onClose, children }) {
   );
 }
 
+// Run slot-diff mutations after the metadata update has persisted. Throws
+// with a message listing failing slot indexes when any op rejects.
+async function applySlotDiff(eventId, initialSlots, draftSlots) {
+  const { creates, updates, deletes } = diffSlots(initialSlots, draftSlots);
+  const ops = [];
+  creates.forEach((s, i) => {
+    const label = `new #${i + 1}`;
+    ops.push({
+      label,
+      promise: api.slots.create(eventId, slotFormToApiPayload(s)),
+    });
+  });
+  updates.forEach((s) => {
+    ops.push({
+      label: `slot ${s.id}`,
+      promise: api.slots.update(s.id, slotFormToApiPayload(s)),
+    });
+  });
+  deletes.forEach((id) => {
+    ops.push({ label: `delete ${id}`, promise: api.slots.delete(id) });
+  });
+  if (ops.length === 0) return;
+  const results = await Promise.allSettled(ops.map((o) => o.promise));
+  const failed = results
+    .map((r, i) => (r.status === "rejected" ? ops[i].label : null))
+    .filter(Boolean);
+  if (failed.length) {
+    throw new Error(`Slot changes failed: ${failed.join(", ")}`);
+  }
+}
+
 export default function EventsSection() {
   useAdminPageTitle("Events");
   const qc = useQueryClient();
@@ -268,7 +599,11 @@ export default function EventsSection() {
   }, [events, search, scope]);
 
   const createM = useMutation({
-    mutationFn: (payload) => api.events.create(payload),
+    mutationFn: ({ metadata, slots }) =>
+      api.events.create({
+        ...metadata,
+        slots: slots.map(slotFormToApiPayload),
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["adminEventsList"] });
       setDrawerMode(null);
@@ -277,13 +612,17 @@ export default function EventsSection() {
   });
 
   const updateM = useMutation({
-    mutationFn: ({ id, payload }) => api.events.update(id, payload),
+    mutationFn: async ({ id, metadata, slots, initialSlots }) => {
+      await api.events.update(id, metadata);
+      await applySlotDiff(id, initialSlots, slots);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["adminEventsList"] });
       setDrawerMode(null);
       setEditing(null);
       toast.success("Event updated.");
     },
+    onError: (e) => toast.error(e?.message || "Update failed"),
   });
 
   const deleteM = useMutation({
@@ -418,6 +757,7 @@ export default function EventsSection() {
         onClose={() => setDrawerMode(null)}
       >
         <EventForm
+          mode="create"
           onSubmit={(payload) => createM.mutateAsync(payload)}
           onCancel={() => setDrawerMode(null)}
           submitting={createM.isPending}
@@ -434,9 +774,10 @@ export default function EventsSection() {
       >
         {editing && (
           <EventForm
+            mode="edit"
             initial={editing}
             onSubmit={(payload) =>
-              updateM.mutateAsync({ id: editing.id, payload })
+              updateM.mutateAsync({ id: editing.id, ...payload })
             }
             onCancel={() => {
               setDrawerMode(null);
@@ -458,3 +799,6 @@ export default function EventsSection() {
     </div>
   );
 }
+
+// Exports for tests
+export { diffSlots, slotFormToApiPayload, validateSlot, loadedSlotToForm };

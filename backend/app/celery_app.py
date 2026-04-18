@@ -107,14 +107,16 @@ def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | 
         )
         return
 
-    message = Mail(
-        from_email=settings.email_from_address,
-        to_emails=to_email,
-        subject=subject,
-        plain_text_content=body,
-    )
+    mail_kwargs = {
+        "from_email": settings.email_from_address,
+        "to_emails": to_email,
+        "subject": subject,
+    }
+    if body:
+        mail_kwargs["plain_text_content"] = body
     if html_body:
-        message.html_content = html_body
+        mail_kwargs["html_content"] = html_body
+    message = Mail(**mail_kwargs)
     sg = SendGridAPIClient(settings.sendgrid_api_key)
     sg.send(message)
 

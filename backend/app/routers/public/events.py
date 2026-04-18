@@ -27,6 +27,28 @@ QUARTER_START_DATES: dict[tuple[int, str], date] = {
 }
 
 
+def derive_quarter_week(for_date: date) -> tuple[str, int, int]:
+    """Derive (quarter, year, week_number) from a date using QUARTER_START_DATES.
+
+    Mirrors the current_week() selection logic. Used by the events create
+    route to populate these fields when the caller doesn't supply them, so
+    admin-created events remain visible through the quarter/week filter.
+    """
+    best: tuple[int, str] | None = None
+    best_start: date | None = None
+    for (year, quarter), start in QUARTER_START_DATES.items():
+        if start <= for_date:
+            if best_start is None or start > best_start:
+                best = (year, quarter)
+                best_start = start
+    if best is None:
+        first_key = min(QUARTER_START_DATES.keys(), key=lambda k: QUARTER_START_DATES[k])
+        return first_key[1], first_key[0], 1
+    year, quarter = best
+    week_number = ((for_date - best_start).days // 7) + 1
+    return quarter, year, max(1, min(11, week_number))
+
+
 @router.get(
     "/current-week",
     response_model=schemas.CurrentWeekRead,
