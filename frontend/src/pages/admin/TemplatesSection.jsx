@@ -1,9 +1,17 @@
 // src/pages/admin/TemplatesSection.jsx
-import React, { useState, useCallback } from "react";
+//
+// Phase 17 Plan 02 — Templates CRUD with SideDrawer pattern.
+// ADMIN-08..11: list, create, edit (update), archive (soft-delete), restore.
+// D-18: plain-English labels. D-19: humanized names. D-52/53: breadcrumbs.
+
+import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "../../lib/api";
+import { useAdminPageTitle } from "./AdminLayout";
+import SideDrawer from "../../components/admin/SideDrawer";
+import Pagination from "../../components/admin/Pagination";
+import FormFieldsDrawer from "../../components/admin/FormFieldsDrawer";
 import {
-  Card,
   Button,
   Modal,
   Input,
@@ -13,345 +21,646 @@ import {
 } from "../../components/ui";
 import { toast } from "../../state/toast";
 
-function InlineEditCell({ value, onSave, type = "text" }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
-  function handleSave() {
-    setEditing(false);
-    if (draft !== value) onSave(draft);
-  }
+const PAGE_SIZE = 10;
 
-  function handleKeyDown(e) {
-    if (e.key === "Enter") handleSave();
-    if (e.key === "Escape") {
-      setDraft(value);
-      setEditing(false);
-    }
-  }
+const TYPE_OPTIONS = [
+  { value: "module", label: "Module" },
+  { value: "seminar", label: "Seminar" },
+  { value: "orientation", label: "Orientation" },
+];
 
-  if (editing) {
-    return (
-      <input
-        type={type}
-        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-sm"
-        value={draft}
-        onChange={(e) => setDraft(type === "number" ? Number(e.target.value) : e.target.value)}
-        onBlur={handleSave}
-        onKeyDown={handleKeyDown}
-        autoFocus
-      />
-    );
-  }
+const TYPE_BADGE = {
+  seminar: "bg-blue-100 text-blue-800",
+  orientation: "bg-green-100 text-green-800",
+  module: "bg-gray-100 text-gray-700",
+};
 
-  return (
-    <span
-      className="cursor-pointer hover:bg-[var(--color-bg-active,#f3f4f6)] px-1 py-0.5 rounded inline-block"
-      onClick={() => {
-        setDraft(value);
-        setEditing(true);
-      }}
-    >
-      {String(value ?? "--")}
-    </span>
-  );
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function capitalize(str) {
+  if (!str) return "";
+  return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
-export default function TemplatesSection() {
-  const queryClient = useQueryClient();
-  const [selected, setSelected] = useState(new Set());
-  const [showCreate, setShowCreate] = useState(false);
-  const [showBulkDelete, setShowBulkDelete] = useState(false);
-  const [newTemplate, setNewTemplate] = useState({
-    slug: "",
+function slugify(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 64);
+}
+
+function emptyForm() {
+  return {
     name: "",
-    default_capacity: 20,
+    slug: "",
+    type: "module",
     duration_minutes: 90,
-    materials: "",
+    session_count: 1,
+    default_capacity: 30,
     description: "",
-  });
+    materials: "",
+  };
+}
 
-  const templatesQ = useQuery({
-    queryKey: ["adminTemplates"],
-    queryFn: () => api.admin.templates.list(),
-  });
+function templateToForm(t) {
+  return {
+    name: t.name || "",
+    slug: t.slug || "",
+    type: t.type || "module",
+    duration_minutes: t.duration_minutes ?? 90,
+    session_count: t.session_count ?? 1,
+    default_capacity: t.default_capacity ?? 30,
+    description: t.description || "",
+    materials: Array.isArray(t.materials) ? t.materials.join(", ") : (t.materials || ""),
+  };
+}
 
-  const updateMut = useMutation({
-    mutationFn: ({ slug, data }) => api.admin.templates.update(slug, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["adminTemplates"] });
-      toast.success("Template updated.");
-    },
-    onError: (err) => toast.error(err?.message || "Update failed"),
-  });
+// ---------------------------------------------------------------------------
+// TemplateForm — shared create/edit form rendered inside SideDrawer
+// ---------------------------------------------------------------------------
 
-  const createMut = useMutation({
-    mutationFn: (payload) => api.admin.templates.create(payload),
-    onSuccess: () => {
-      setShowCreate(false);
-      setNewTemplate({
-        slug: "", name: "", default_capacity: 20, duration_minutes: 90,
-        materials: "", description: "",
-      });
-      queryClient.invalidateQueries({ queryKey: ["adminTemplates"] });
-      toast.success("Template created.");
-    },
-    onError: (err) => toast.error(err?.message || "Create failed"),
-  });
-
-  const bulkDeleteMut = useMutation({
-    mutationFn: (slugs) => api.admin.templates.bulkDelete(slugs),
-    onSuccess: () => {
-      setSelected(new Set());
-      setShowBulkDelete(false);
-      queryClient.invalidateQueries({ queryKey: ["adminTemplates"] });
-      toast.success("Templates deleted.");
-    },
-    onError: (err) => toast.error(err?.message || "Delete failed"),
-  });
-
-  const templates = templatesQ.data || [];
-
-  const toggleSelect = useCallback((slug) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(slug)) next.delete(slug);
-      else next.add(slug);
-      return next;
-    });
-  }, []);
-
-  const toggleAll = useCallback(() => {
-    if (selected.size === templates.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(templates.map((t) => t.slug)));
-    }
-  }, [templates, selected.size]);
-
-  function handleInlineUpdate(slug, field, value) {
-    const data = { [field]: value };
-    updateMut.mutate({ slug, data });
+function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onCancel, onEditFormFields, submitting }) {
+  function handleNameChange(e) {
+    const name = e.target.value;
+    setForm((prev) => ({
+      ...prev,
+      name,
+      // Auto-generate slug only while creating (don't overwrite read-only slug on edit)
+      ...(isCreate ? { slug: slugify(name) } : {}),
+    }));
   }
 
-  function handleCreate(e) {
+  function handleSubmit(e) {
     e.preventDefault();
-    createMut.mutate({
-      slug: newTemplate.slug,
-      name: newTemplate.name,
-      default_capacity: Number(newTemplate.default_capacity),
-      duration_minutes: Number(newTemplate.duration_minutes),
-      materials: newTemplate.materials.split(",").map((s) => s.trim()).filter(Boolean),
-      description: newTemplate.description || null,
-    });
+    onSubmit(form);
   }
 
   return (
-    <div className="space-y-4">
-      {/* Action bar */}
-      <div className="flex flex-wrap gap-3">
-        <Button onClick={() => setShowCreate(true)}>
-          {/* TODO(copy) */}
-          Add Template
-        </Button>
-        {selected.size > 0 && (
-          <Button variant="danger" onClick={() => setShowBulkDelete(true)}>
-            Delete Selected ({selected.size})
-          </Button>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Template name */}
+      <div>
+        <Label htmlFor="tf-name">Template name</Label>
+        <Input
+          id="tf-name"
+          value={form.name}
+          onChange={handleNameChange}
+          required
+          placeholder="e.g. DNA Extraction Module"
+        />
+      </div>
+
+      {/* URL slug */}
+      <div>
+        <Label htmlFor="tf-slug">URL slug</Label>
+        <Input
+          id="tf-slug"
+          value={form.slug}
+          onChange={(e) => isCreate && setForm((p) => ({ ...p, slug: e.target.value }))}
+          readOnly={!isCreate}
+          required
+          placeholder="e.g. dna-extraction-module"
+          className={!isCreate ? "opacity-60 cursor-not-allowed" : ""}
+        />
+        {isCreate && (
+          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+            Auto-generated from name. You can edit it.
+          </p>
         )}
       </div>
 
-      {templatesQ.isPending ? (
+      {/* Type */}
+      <div>
+        <Label htmlFor="tf-type">Type</Label>
+        <select
+          id="tf-type"
+          value={form.type}
+          onChange={(e) => setForm((p) => ({ ...p, type: e.target.value }))}
+          className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+        >
+          {TYPE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Duration */}
+      <div>
+        <Label htmlFor="tf-dur">Duration (minutes)</Label>
+        <Input
+          id="tf-dur"
+          type="number"
+          min="1"
+          value={form.duration_minutes}
+          onChange={(e) => setForm((p) => ({ ...p, duration_minutes: Number(e.target.value) }))}
+          required
+        />
+      </div>
+
+      {/* Number of sessions */}
+      <div>
+        <Label htmlFor="tf-sessions">Number of sessions</Label>
+        <Input
+          id="tf-sessions"
+          type="number"
+          min="1"
+          max="10"
+          value={form.session_count}
+          onChange={(e) => setForm((p) => ({ ...p, session_count: Number(e.target.value) }))}
+          required
+        />
+        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+          How many class sessions does this module span?
+        </p>
+      </div>
+
+      {/* Default capacity */}
+      <div>
+        <Label htmlFor="tf-cap">Default capacity</Label>
+        <Input
+          id="tf-cap"
+          type="number"
+          min="1"
+          value={form.default_capacity}
+          onChange={(e) => setForm((p) => ({ ...p, default_capacity: Number(e.target.value) }))}
+          required
+        />
+        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+          Maximum students per session
+        </p>
+      </div>
+
+      {/* Description */}
+      <div>
+        <Label htmlFor="tf-desc">Description</Label>
+        <textarea
+          id="tf-desc"
+          value={form.description}
+          onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+          className="w-full min-h-16 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+          placeholder="Optional short description"
+        />
+      </div>
+
+      {/* Materials */}
+      <div>
+        <Label htmlFor="tf-mat">Materials</Label>
+        <Input
+          id="tf-mat"
+          value={form.materials}
+          onChange={(e) => setForm((p) => ({ ...p, materials: e.target.value }))}
+          placeholder="e.g. gloves, test tubes, slides"
+        />
+        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+          Comma-separated list of required materials
+        </p>
+      </div>
+
+      {/* Form fields (Phase 22) — edit-only */}
+      {!isCreate && onEditFormFields && (
+        <div className="pt-2 border-t border-[var(--color-border)]">
+          <Button type="button" variant="secondary" onClick={onEditFormFields}>
+            Edit form fields
+          </Button>
+          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+            Custom signup questions volunteers answer for every event created
+            from this template.
+          </p>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className="flex items-center gap-2 pt-2">
+        {!isCreate && (
+          <Button
+            type="button"
+            variant="danger"
+            onClick={onArchive}
+          >
+            Archive
+          </Button>
+        )}
+        <div className="flex-1" />
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={submitting}>
+          {submitting
+            ? isCreate
+              ? "Creating..."
+              : "Saving..."
+            : isCreate
+            ? "Create template"
+            : "Save changes"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TemplatesSection
+// ---------------------------------------------------------------------------
+
+export default function TemplatesSection() {
+  useAdminPageTitle("Templates");
+  const qc = useQueryClient();
+
+  // --- UI state ---
+  const [drawerTemplate, setDrawerTemplate] = useState(null); // template being edited
+  const [createOpen, setCreateOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [archiveConfirm, setArchiveConfirm] = useState(null); // slug or null
+  const [formFieldsFor, setFormFieldsFor] = useState(null); // template (with slug + default_form_schema) being edited
+
+  // --- Form state for create/edit ---
+  const [form, setForm] = useState(emptyForm());
+
+  // --- Query ---
+  const listQ = useQuery({
+    queryKey: ["adminTemplates", { include_archived: showArchived }],
+    queryFn: () =>
+      api.admin.templates.list(showArchived ? { include_archived: true } : undefined),
+  });
+
+  // --- Mutations ---
+  const createM = useMutation({
+    mutationFn: (payload) => api.admin.templates.create(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      setCreateOpen(false);
+      setForm(emptyForm());
+      toast.success("Template created");
+    },
+    onError: (e) => toast.error(e?.message || "Failed to create template"),
+  });
+
+  const updateM = useMutation({
+    mutationFn: ({ slug, payload }) => api.admin.templates.update(slug, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      setDrawerTemplate(null);
+      toast.success("Template updated");
+    },
+    onError: (e) => toast.error(e?.message || "Failed to update template"),
+  });
+
+  const archiveM = useMutation({
+    mutationFn: (slug) => api.admin.templates.delete(slug),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      setArchiveConfirm(null);
+      setDrawerTemplate(null);
+      toast.success("Template archived");
+    },
+    onError: (e) => toast.error(e?.message || "Failed to archive template"),
+  });
+
+  const restoreM = useMutation({
+    mutationFn: (slug) => api.admin.templates.restore(slug),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      toast.success("Template restored");
+    },
+    onError: (e) => toast.error(e?.message || "Failed to restore template"),
+  });
+
+  // Phase 22 — default form schema persistence
+  const defaultSchemaM = useMutation({
+    mutationFn: ({ slug, schema }) =>
+      api.admin.templates.setDefaultFormSchema(slug, schema),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      setFormFieldsFor(null);
+      toast.success("Form fields saved");
+    },
+    onError: (e) => toast.error(e?.message || "Failed to save form fields"),
+  });
+
+  // --- Client-side filtering + pagination ---
+  const filtered = useMemo(() => {
+    let result = listQ.data || [];
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter((t) => t.name.toLowerCase().includes(q));
+    }
+    if (typeFilter !== "all") {
+      result = result.filter((t) => t.type === typeFilter);
+    }
+    return result;
+  }, [listQ.data, search, typeFilter]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const pageData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // --- Handlers ---
+  function openCreate() {
+    setForm(emptyForm());
+    setCreateOpen(true);
+  }
+
+  function openEdit(t) {
+    setForm(templateToForm(t));
+    setDrawerTemplate(t);
+  }
+
+  function handleCreate(formData) {
+    createM.mutate({
+      slug: formData.slug,
+      name: formData.name,
+      type: formData.type,
+      duration_minutes: Number(formData.duration_minutes),
+      session_count: Number(formData.session_count),
+      default_capacity: Number(formData.default_capacity),
+      description: formData.description || null,
+      materials: formData.materials
+        ? formData.materials.split(",").map((s) => s.trim()).filter(Boolean)
+        : [],
+    });
+  }
+
+  function handleUpdate(formData) {
+    if (!drawerTemplate) return;
+    updateM.mutate({
+      slug: drawerTemplate.slug,
+      payload: {
+        name: formData.name,
+        type: formData.type,
+        duration_minutes: Number(formData.duration_minutes),
+        session_count: Number(formData.session_count),
+        default_capacity: Number(formData.default_capacity),
+        description: formData.description || null,
+        materials: formData.materials
+          ? formData.materials.split(",").map((s) => s.trim()).filter(Boolean)
+          : [],
+      },
+    });
+  }
+
+  // Reset to page 1 when filters change
+  function handleSearchChange(e) {
+    setSearch(e.target.value);
+    setPage(1);
+  }
+
+  function handleTypeFilterChange(e) {
+    setTypeFilter(e.target.value);
+    setPage(1);
+  }
+
+  function handleShowArchivedChange(e) {
+    setShowArchived(e.target.checked);
+    setPage(1);
+  }
+
+  // Name of template being confirmed for archive
+  const archiveTargetName = archiveConfirm
+    ? (listQ.data || []).find((t) => t.slug === archiveConfirm)?.name || archiveConfirm
+    : null;
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
+  return (
+    <div className="space-y-4">
+      {/* Page header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Templates</h1>
+          <p className="text-[var(--color-fg-muted)]">
+            Module templates define the sessions, capacity, and materials for each SciTrek module.
+          </p>
+        </div>
+        <Button onClick={openCreate}>New template</Button>
+      </div>
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1 min-w-[12rem]">
+          <Label htmlFor="tmpl-search" className="sr-only">
+            Search by name
+          </Label>
+          <Input
+            id="tmpl-search"
+            placeholder="Search by name..."
+            value={search}
+            onChange={handleSearchChange}
+          />
+        </div>
+        <div>
+          <Label htmlFor="tmpl-type" className="sr-only">
+            Filter by type
+          </Label>
+          <select
+            id="tmpl-type"
+            aria-label="Filter by type"
+            value={typeFilter}
+            onChange={handleTypeFilterChange}
+            className="min-h-11 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm"
+          >
+            <option value="all">All types</option>
+            <option value="module">Module</option>
+            <option value="seminar">Seminar</option>
+            <option value="orientation">Orientation</option>
+          </select>
+        </div>
+        <label className="flex items-center gap-2 text-sm" htmlFor="tmpl-archived">
+          <input
+            id="tmpl-archived"
+            type="checkbox"
+            checked={showArchived}
+            onChange={handleShowArchivedChange}
+          />
+          Show archived
+        </label>
+      </div>
+
+      {/* Body: loading / error / empty / table */}
+      {listQ.isPending ? (
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-12" />
           ))}
         </div>
-      ) : templatesQ.error ? (
+      ) : listQ.error ? (
         <EmptyState
           title="Couldn't load templates"
-          body={templatesQ.error.message}
-          action={<Button onClick={() => templatesQ.refetch()}>Retry</Button>}
+          body={listQ.error.message}
+          action={<Button onClick={() => listQ.refetch()}>Retry</Button>}
         />
-      ) : templates.length === 0 ? (
-        <EmptyState title="No templates" body="Create a module template to get started." />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          title="No templates yet"
+          body="Create a module template to get started."
+        />
       ) : (
         <>
-          {/* Desktop table */}
-          <div className="hidden md:block overflow-x-auto">
-            <p className="text-xs text-[var(--color-fg-muted)] mb-1">
-              {/* TODO(copy) */}
-              Click a cell to edit inline. Tab/Enter saves, Escape cancels.
-            </p>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--color-border)] text-left">
-                  <th className="py-2 pr-3">
-                    <input
-                      type="checkbox"
-                      checked={selected.size === templates.length && templates.length > 0}
-                      onChange={toggleAll}
-                    />
-                  </th>
-                  <th className="py-2 pr-3 font-medium">Slug</th>
-                  <th className="py-2 pr-3 font-medium">Name</th>
-                  <th className="py-2 pr-3 font-medium">Capacity</th>
-                  <th className="py-2 pr-3 font-medium">Duration (min)</th>
+          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-[var(--color-bg-muted)] text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
+                <tr>
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2">Duration</th>
+                  <th className="px-3 py-2">Sessions</th>
+                  <th className="px-3 py-2">Capacity</th>
+                  {showArchived && <th className="px-3 py-2">Status</th>}
+                  {showArchived && <th className="px-3 py-2" />}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
-                {templates.map((t) => (
-                  <tr key={t.slug}>
-                    <td className="py-2 pr-3">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(t.slug)}
-                        onChange={() => toggleSelect(t.slug)}
-                      />
-                    </td>
-                    <td className="py-2 pr-3 font-mono text-xs">{t.slug}</td>
-                    <td className="py-2 pr-3">
-                      <InlineEditCell
-                        value={t.name}
-                        onSave={(v) => handleInlineUpdate(t.slug, "name", v)}
-                      />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <InlineEditCell
-                        value={t.default_capacity}
-                        type="number"
-                        onSave={(v) => handleInlineUpdate(t.slug, "default_capacity", Number(v))}
-                      />
-                    </td>
-                    <td className="py-2 pr-3">
-                      <InlineEditCell
-                        value={t.duration_minutes}
-                        type="number"
-                        onSave={(v) => handleInlineUpdate(t.slug, "duration_minutes", Number(v))}
-                      />
-                    </td>
-                  </tr>
-                ))}
+              <tbody>
+                {pageData.map((t) => {
+                  const isArchived = !!t.deleted_at;
+                  return (
+                    <tr
+                      key={t.slug}
+                      className={`border-t border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-bg-muted)] ${
+                        isArchived ? "opacity-60" : ""
+                      }`}
+                      onClick={() => !isArchived && openEdit(t)}
+                    >
+                      <td className="px-3 py-2 font-medium">{t.name}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                            TYPE_BADGE[t.type] || "bg-gray-100 text-gray-700"
+                          }`}
+                        >
+                          {capitalize(t.type)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">{t.duration_minutes} min</td>
+                      <td className="px-3 py-2">
+                        {t.session_count === 1
+                          ? "1 session"
+                          : `${t.session_count} sessions`}
+                      </td>
+                      <td className="px-3 py-2">{t.default_capacity}</td>
+                      {showArchived && (
+                        <td className="px-3 py-2">
+                          {isArchived ? (
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">
+                              Archived
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">
+                              Active
+                            </span>
+                          )}
+                        </td>
+                      )}
+                      {showArchived && (
+                        <td
+                          className="px-3 py-2 text-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {isArchived && (
+                            <Button
+                              variant="secondary"
+                              onClick={() => restoreM.mutate(t.slug)}
+                              disabled={restoreM.isPending}
+                            >
+                              Restore
+                            </Button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
-          {/* Mobile: horizontal scroll hint */}
-          <div className="md:hidden">
-            <p className="text-xs text-[var(--color-fg-muted)] mb-1">
-              Open on desktop for inline editing
-            </p>
-            <div className="space-y-3">
-              {templates.map((t) => (
-                <Card key={t.slug}>
-                  <div className="flex items-baseline gap-2">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(t.slug)}
-                      onChange={() => toggleSelect(t.slug)}
-                    />
-                    <span className="font-mono text-xs">{t.slug}</span>
-                    <span className="font-medium">{t.name}</span>
-                  </div>
-                  <p className="text-sm text-[var(--color-fg-muted)] mt-1">
-                    Capacity: {t.default_capacity} | Duration: {t.duration_minutes}min
-                  </p>
-                </Card>
-              ))}
-            </div>
-          </div>
+          {totalPages > 1 && (
+            <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+          )}
         </>
       )}
 
-      {/* Create Modal */}
-      <Modal
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
-        title="Add Template"
+      {/* Create SideDrawer */}
+      <SideDrawer
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New template"
       >
-        <form onSubmit={handleCreate} className="space-y-3">
-          <div>
-            <Label htmlFor="ct-slug">Slug</Label>
-            <Input
-              id="ct-slug"
-              value={newTemplate.slug}
-              onChange={(e) => setNewTemplate((p) => ({ ...p, slug: e.target.value }))}
-              placeholder="e.g. orientation-101"
-            />
-          </div>
-          <div>
-            <Label htmlFor="ct-name">Name</Label>
-            <Input
-              id="ct-name"
-              value={newTemplate.name}
-              onChange={(e) => setNewTemplate((p) => ({ ...p, name: e.target.value }))}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="ct-cap">Capacity</Label>
-              <Input
-                id="ct-cap"
-                type="number"
-                value={newTemplate.default_capacity}
-                onChange={(e) => setNewTemplate((p) => ({ ...p, default_capacity: e.target.value }))}
-              />
-            </div>
-            <div>
-              <Label htmlFor="ct-dur">Duration (min)</Label>
-              <Input
-                id="ct-dur"
-                type="number"
-                value={newTemplate.duration_minutes}
-                onChange={(e) => setNewTemplate((p) => ({ ...p, duration_minutes: e.target.value }))}
-              />
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="ct-mat">Materials (comma-separated)</Label>
-            <Input
-              id="ct-mat"
-              value={newTemplate.materials}
-              onChange={(e) => setNewTemplate((p) => ({ ...p, materials: e.target.value }))}
-              placeholder="item-1, item-2"
-            />
-          </div>
-          <div>
-            <Label htmlFor="ct-desc">Description</Label>
-            <textarea
-              id="ct-desc"
-              className="w-full min-h-16 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
-              value={newTemplate.description}
-              onChange={(e) => setNewTemplate((p) => ({ ...p, description: e.target.value }))}
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button type="submit" disabled={!newTemplate.slug || !newTemplate.name || createMut.isPending}>
-              {createMut.isPending ? "Creating..." : "Create"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        <TemplateForm
+          form={form}
+          setForm={setForm}
+          isCreate
+          onSubmit={handleCreate}
+          onCancel={() => setCreateOpen(false)}
+          submitting={createM.isPending}
+        />
+      </SideDrawer>
 
-      {/* Bulk Delete Confirm */}
+      {/* Edit SideDrawer */}
+      <SideDrawer
+        open={!!drawerTemplate}
+        onClose={() => setDrawerTemplate(null)}
+        title="Edit template"
+      >
+        {drawerTemplate && (
+          <TemplateForm
+            form={form}
+            setForm={setForm}
+            isCreate={false}
+            onSubmit={handleUpdate}
+            onArchive={() => setArchiveConfirm(drawerTemplate.slug)}
+            onCancel={() => setDrawerTemplate(null)}
+            onEditFormFields={() => setFormFieldsFor(drawerTemplate)}
+            submitting={updateM.isPending}
+          />
+        )}
+      </SideDrawer>
+
+      {/* Phase 22 — default form schema drawer */}
+      <FormFieldsDrawer
+        open={!!formFieldsFor}
+        onClose={() => setFormFieldsFor(null)}
+        title={`Form fields — ${formFieldsFor?.name || ""}`}
+        schema={formFieldsFor?.default_form_schema || []}
+        saving={defaultSchemaM.isPending}
+        onSave={(nextSchema) =>
+          defaultSchemaM.mutate({
+            slug: formFieldsFor.slug,
+            schema: nextSchema,
+          })
+        }
+      />
+
+      {/* Archive confirmation Modal */}
       <Modal
-        open={showBulkDelete}
-        onClose={() => setShowBulkDelete(false)}
-        title="Delete Templates"
+        open={!!archiveConfirm}
+        onClose={() => setArchiveConfirm(null)}
+        title="Archive this template?"
       >
         <p className="text-sm">
-          {/* TODO(copy) */}
-          Delete {selected.size} template{selected.size !== 1 ? "s" : ""}? This cannot be undone.
+          Archiving removes <strong>{archiveTargetName}</strong> from the active list.
+          You can restore it later.
         </p>
         <div className="flex justify-end gap-2 mt-4">
-          <Button variant="ghost" onClick={() => setShowBulkDelete(false)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => setArchiveConfirm(null)}>
+            Keep it
+          </Button>
           <Button
             variant="danger"
-            disabled={bulkDeleteMut.isPending}
-            onClick={() => bulkDeleteMut.mutate([...selected])}
+            disabled={archiveM.isPending}
+            onClick={() => archiveM.mutate(archiveConfirm)}
           >
-            {bulkDeleteMut.isPending ? "Deleting..." : `Delete ${selected.size}`}
+            {archiveM.isPending ? "Archiving..." : "Yes, archive"}
           </Button>
         </div>
       </Modal>

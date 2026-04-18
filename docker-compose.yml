@@ -24,6 +24,17 @@ services:
       retries: 20
     restart: unless-stopped
 
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -35,6 +46,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -63,6 +76,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
       backend:
         condition: service_started
     command: celery -A app.celery_app.celery worker -l info
@@ -79,6 +94,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
       backend:
         condition: service_started
     command: celery -A app.celery_app.celery beat -l info -S redbeat.RedBeatScheduler

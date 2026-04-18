@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
-from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType
+from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType, ModuleType
 
 
 # -------------------------
@@ -56,6 +56,19 @@ class UserCreate(UserBase):
 class UserRead(ORMBase, UserBase):
     id: UUID
     created_at: datetime
+    # Phase 16 Plan 02: Users page surface
+    is_active: bool = True
+    last_login_at: Optional[datetime] = None
+    # Override: read responses accept any string email, including reserved
+    # test TLDs like .test/.example (RFC 2606) that EmailStr rejects.
+    email: str
+
+
+class UserInvite(BaseModel):
+    """Admin-only invite payload (D-11, D-41). Name + Email + Role only."""
+    name: str = Field(min_length=1, max_length=200)
+    email: EmailStr
+    role: Literal["admin", "organizer"]
 
 
 class UserUpdate(BaseModel):
@@ -103,6 +116,9 @@ class SlotUpdate(BaseModel):
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     capacity: Optional[int] = None
+    slot_type: Optional[SlotType] = None
+    date: Optional[DateType] = None
+    location: Optional[str] = None
 
     @field_validator("start_time", "end_time")
     @classmethod
@@ -156,6 +172,7 @@ class EventCreate(EventBase):
 class EventRead(ORMBase, EventBase):
     id: UUID
     owner_id: UUID
+    module_slug: Optional[str] = None
     slots: List[SlotRead] = []
 
 
@@ -170,6 +187,9 @@ class EventUpdate(BaseModel):
     max_signups_per_user: Optional[int] = None
     signup_open_at: Optional[datetime] = None
     signup_close_at: Optional[datetime] = None
+    # Admins can reassign / backfill an event's module. When present the
+    # router validates the slug exists. Omit to leave module unchanged.
+    module_slug: Optional[str] = None
 
     @field_validator("start_date", "end_date", "signup_open_at", "signup_close_at")
     @classmethod
@@ -355,11 +375,15 @@ class EventNotifyRequest(BaseModel):
 class SiteSettingsRead(ORMBase):
     default_privacy_mode: PrivacyMode
     allowed_email_domain: Optional[str] = None
+    # Phase 29 (HIDE-01)
+    hide_past_events_from_public: bool = True
 
 
 class SiteSettingsUpdate(BaseModel):
-    default_privacy_mode: PrivacyMode
+    default_privacy_mode: Optional[PrivacyMode] = None
     allowed_email_domain: Optional[str] = None
+    # Phase 29 (HIDE-01) — optional so existing callers can PATCH other fields.
+    hide_past_events_from_public: Optional[bool] = None
 
 
 # =========================
@@ -415,6 +439,28 @@ class ResolveEventRequest(BaseModel):
     no_show: List[UUID] = []
 
 
+class EventCheckInByEmailRequest(BaseModel):
+    email: str
+
+
+class EventCheckInByEmailSignup(BaseModel):
+    signup_id: UUID
+    slot_id: UUID
+    slot_start: datetime | None = None
+    slot_end: datetime | None = None
+    status: str
+    newly_checked_in: bool
+
+
+class EventCheckInByEmailResponse(BaseModel):
+    event_id: UUID
+    event_title: str
+    volunteer_name: str
+    count_checked_in: int
+    count_already_checked_in: int
+    signups: List[EventCheckInByEmailSignup]
+
+
 
 # =========================
 # MODULE TEMPLATE SCHEMAS (Phase 5)
@@ -424,9 +470,15 @@ class ModuleTemplateBase(BaseModel):
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
+    type: ModuleType = ModuleType.module
+    session_count: int = 1
     materials: List[str] = []
     description: Optional[str] = None
     metadata: dict = {}
+    # Per-module orientation credit grouping. When omitted on create, the
+    # service defaults it to the slug so each new module forms its own
+    # credit family.
+    family_key: Optional[str] = None
 
 
 class ModuleTemplateCreate(ModuleTemplateBase):
@@ -438,9 +490,12 @@ class ModuleTemplateUpdate(BaseModel):
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: Optional[int] = None
     duration_minutes: Optional[int] = None
+    type: Optional[ModuleType] = None
+    session_count: Optional[int] = None
     materials: Optional[List[str]] = None
     description: Optional[str] = None
     metadata: Optional[dict] = None
+    family_key: Optional[str] = None
 
 
 class ModuleTemplateRead(ORMBase):
@@ -449,9 +504,14 @@ class ModuleTemplateRead(ORMBase):
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
+    type: ModuleType = ModuleType.module
+    session_count: int = 1
     materials: List[str] = []
     description: Optional[str] = None
     metadata: dict = Field(default={}, validation_alias="metadata_")
+    # Phase 22: default form schema list (used by FormFieldsDrawer)
+    default_form_schema: List[dict] = []
+    family_key: Optional[str] = None
     deleted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -507,6 +567,20 @@ class VolunteerRead(BaseModel):
 
 class PublicSignupCreate(VolunteerCreate):
     slot_ids: List[UUID] = Field(min_length=1, max_length=20)
+    # Phase 22: optional dynamic form responses keyed by field_id. Soft-warn:
+    # backend does NOT raise if a required field is skipped — just records
+    # the missing field_ids in the response for organizer display.
+    responses: Optional[List["SignupResponseCreate"]] = None
+
+
+class PublicSignupResultItem(BaseModel):
+    """Phase 25 — per-signup result so the UI can branch confirmed vs waitlisted."""
+
+    signup_id: UUID
+    status: SignupStatus
+    # 1-indexed position within the waitlist when status == waitlisted. None
+    # otherwise. Ordering matches promote_waitlist_fifo (timestamp ASC, id ASC).
+    position: Optional[int] = None
 
 
 class PublicSignupResponse(BaseModel):
@@ -514,6 +588,13 @@ class PublicSignupResponse(BaseModel):
     signup_ids: List[UUID]
     magic_link_sent: bool
     confirm_token: str | None = None
+    # Phase 22: soft-warn list of field_ids that were required but left blank.
+    # Clients can surface these to the participant without blocking the signup
+    # (organizer remains the ultimate authority on missing answers).
+    missing_required: List[str] = []
+    # Phase 25 — per-signup status + waitlist position. Empty for legacy test
+    # fixtures that construct this schema directly.
+    signups: List[PublicSignupResultItem] = []
 
 
 class SlotSignupRead(BaseModel):
@@ -547,6 +628,10 @@ class PublicEventRead(BaseModel):
     module_slug: Optional[str] = None
     start_date: datetime  # Event.start_date is DateTime not Date in model
     end_date: datetime
+    # Phase 29 (LOCK-01) — expose signup window so the public UI can render
+    # an opens/closes banner and disable the submit outside the window.
+    signup_open_at: Optional[datetime] = None
+    signup_close_at: Optional[datetime] = None
     slots: List[PublicSlotRead] = []
     model_config = ConfigDict(from_attributes=True)
 
@@ -560,15 +645,179 @@ class CurrentWeekRead(BaseModel):
 class OrientationStatusRead(BaseModel):
     has_attended_orientation: bool
     last_attended_at: Optional[datetime] = None
+    # Phase 21: has_credit is the cross-week/cross-module answer the modal uses.
+    # has_attended_orientation is kept for legacy callers. For the legacy
+    # endpoint both remain true together.
+    has_credit: bool = False
+    source: Optional[Literal["attendance", "grant"]] = None
+    family_key: Optional[str] = None
+
+
+# =========================
+# ORIENTATION CREDIT (Phase 21)
+# =========================
+class OrientationCreditCreate(BaseModel):
+    volunteer_email: EmailStr
+    family_key: str = Field(min_length=1, max_length=255)
+    notes: Optional[str] = None
+
+
+class OrientationCreditRead(ORMBase):
+    id: UUID
+    volunteer_email: str
+    family_key: str
+    source: Literal["attendance", "grant"]
+    granted_by_user_id: Optional[UUID] = None
+    granted_by_label: Optional[str] = None
+    granted_at: datetime
+    revoked_at: Optional[datetime] = None
+    notes: Optional[str] = None
 
 
 class TokenedSignupRead(BaseModel):
     signup_id: UUID
     status: SignupStatus
     slot: PublicSlotRead
+    # Phase 25 — 1-indexed waitlist position when status == waitlisted. Null
+    # otherwise. Computed live per read; no DB column.
+    waitlist_position: Optional[int] = None
 
 
 class TokenedManageRead(BaseModel):
     volunteer_id: UUID
+    volunteer_first_name: str
+    volunteer_last_name: str
     event_id: UUID
     signups: List[TokenedSignupRead]
+
+
+# =========================
+# CUSTOM FORM FIELDS (Phase 22)
+# =========================
+# The form schema is a JSON array of field descriptors stored on
+# ``module_templates.default_form_schema`` and ``events.form_schema``.
+# Responses land in the ``signup_responses`` table.
+
+FormFieldType = Literal[
+    "text",
+    "textarea",
+    "select",
+    "radio",
+    "checkbox",
+    "phone",
+    "email",
+]
+
+
+class FormFieldSchema(BaseModel):
+    """One field descriptor in a form schema.
+
+    - ``id`` must be a stable, unique, URL-safe slug. Never changes once
+      used — responses are snapshotted by it.
+    - ``options`` is required when ``type`` is select/radio/checkbox.
+    """
+
+    id: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=255)
+    type: FormFieldType
+    required: bool = False
+    help_text: Optional[str] = None
+    options: Optional[List[str]] = None
+    order: int = 0
+
+
+class SignupResponseCreate(BaseModel):
+    """Inbound payload: one response per field_id from the participant."""
+
+    field_id: str = Field(min_length=1, max_length=64)
+    # ``value`` can be a string (free text) OR list/dict (multi-select,
+    # structured) — the service decides how to persist it.
+    value: Any = None
+
+
+class SignupResponseRead(ORMBase):
+    field_id: str
+    value_text: Optional[str] = None
+    value_json: Optional[Any] = None
+    # Decorated by the service with the field's current label when joined
+    # against the event's effective schema. Optional so raw ORM loads still
+    # validate.
+    label: Optional[str] = None
+
+
+# =========================
+# VOLUNTEER PREFERENCES (Phase 24 — reminder opt-out)
+# =========================
+class VolunteerPreferenceRead(ORMBase):
+    volunteer_email: str
+    email_reminders_enabled: bool
+    sms_opt_in: bool
+    phone_e164: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class VolunteerPreferenceUpdate(BaseModel):
+    email_reminders_enabled: Optional[bool] = None
+    sms_opt_in: Optional[bool] = None
+    phone_e164: Optional[str] = None
+
+
+# =========================
+# REMINDERS (Phase 24 — admin preview + send-now)
+# =========================
+ReminderKind = Literal["kickoff", "pre_24h", "pre_2h"]
+
+
+class UpcomingReminderRow(BaseModel):
+    signup_id: UUID
+    volunteer_email: str
+    volunteer_name: str
+    event_id: UUID
+    event_title: str
+    slot_id: UUID
+    slot_start_time: datetime
+    kind: ReminderKind
+    scheduled_for: datetime  # UTC — when the window opens
+    already_sent: bool
+    opted_out: bool
+
+
+class ReminderSendNowRequest(BaseModel):
+    signup_id: UUID
+    kind: ReminderKind
+
+
+class ReminderSendNowResponse(BaseModel):
+    signup_id: UUID
+    kind: ReminderKind
+    sent: bool
+    reason: Optional[str] = None  # "already_sent" | "opted_out" | "ok"
+
+
+# -------------------------
+# Phase 26 — Broadcast messages
+# -------------------------
+
+
+class BroadcastCreate(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=200)
+    body_markdown: str = Field(..., min_length=1, max_length=20000)
+
+
+class BroadcastResult(BaseModel):
+    broadcast_id: str
+    recipient_count: int
+    sent_at: datetime
+
+
+class BroadcastSummary(BaseModel):
+    broadcast_id: str
+    subject: str
+    recipient_count: int
+    actor_label: Optional[str] = None
+    sent_at: datetime
+
+
+class BroadcastRecipientCount(BaseModel):
+    recipient_count: int

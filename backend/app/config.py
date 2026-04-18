@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://redis:6379/2"
 
     # Email / SMS
+    # email_mode: "smtp" routes via smtplib (dev: Mailpit; prod: AWS SES SMTP).
+    #             "sendgrid" routes via the SendGrid HTTPS API.
+    email_mode: str = "smtp"
+    smtp_host: str = "mailpit"
+    smtp_port: int = 1025
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = False
     sendgrid_api_key: str | None = None
     email_from_address: str | None = None
     twilio_account_sid: str | None = None
@@ -46,10 +54,13 @@ class Settings(BaseSettings):
     # --- Phase 6: Resend monitoring ---
     resend_daily_limit: int = 100  # free-tier limit; 80% warning threshold
 
-    # --- Phase 5: LLM CSV Import ---
-    openai_api_key: str = ""  # TODO(secret): real key in local .env only
-    openai_model: str = "gpt-4o-mini"
+    # --- Phase 5 / Phase 18: LLM CSV Import (OpenRouter free tier) ---
+    openrouter_api_key: str = ""  # Set in backend/.env: OPENROUTER_API_KEY=sk-or-...
+    llm_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
     import_cost_ceiling: float = 5.0  # refuse imports estimated > $5
+    # Legacy alias kept so old code referencing openai_model doesn't crash on import
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
 
     # CORS
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"

@@ -75,8 +75,8 @@ describe("SelfCheckInPage", () => {
     // Type venue code
     await user.type(screen.getByLabelText(/4-digit venue code/i), "1234");
 
-    // Click Check in
-    await user.click(screen.getByRole("button", { name: /check in/i }));
+    // Click "Check me in"
+    await user.click(screen.getByRole("button", { name: /check me in/i }));
 
     expect(selfCheckIn).toHaveBeenCalledWith("event-1", "signup-1", "1234");
 
@@ -100,7 +100,7 @@ describe("SelfCheckInPage", () => {
     });
 
     await user.type(screen.getByLabelText(/4-digit venue code/i), "9999");
-    await user.click(screen.getByRole("button", { name: /check in/i }));
+    await user.click(screen.getByRole("button", { name: /check me in/i }));
 
     await waitFor(() => {
       expect(
@@ -109,7 +109,18 @@ describe("SelfCheckInPage", () => {
     });
   });
 
-  it("shows outside window error", async () => {
+  it("shows outside window error (not yet open)", async () => {
+    // Page heuristic compares `new Date()` to slot.start_time to distinguish
+    // "not yet open" from "closed". Use a far-future slot so the test stays
+    // deterministic regardless of system clock.
+    const futureStart = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const futureEnd = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+    getSignupEvent.mockResolvedValue({
+      ...MOCK_SIGNUP,
+      slot_start_time: futureStart,
+      slot_end_time: futureEnd,
+    });
+
     const err = new Error("Outside window");
     err.status = 403;
     err.response = { status: 403, data: { code: "OUTSIDE_WINDOW" } };
@@ -123,7 +134,7 @@ describe("SelfCheckInPage", () => {
     });
 
     await user.type(screen.getByLabelText(/4-digit venue code/i), "1234");
-    await user.click(screen.getByRole("button", { name: /check in/i }));
+    await user.click(screen.getByRole("button", { name: /check me in/i }));
 
     await waitFor(() => {
       expect(

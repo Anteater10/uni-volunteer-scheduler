@@ -163,16 +163,24 @@ describe("EventsBrowsePage", () => {
   // -------------------------------------------------------------------------
   // Test 3: Shows EmptyState when no events returned
   // -------------------------------------------------------------------------
-  it("shows EmptyState when no events returned", async () => {
+  it("shows EmptyState with UI-SPEC copy when no events returned", async () => {
     api.public.listEvents.mockResolvedValue([]);
 
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("No events this week")).toBeInTheDocument();
+      expect(
+        screen.getByText("Nothing scheduled this week")
+      ).toBeInTheDocument();
     });
     expect(
-      screen.getByText("Try browsing a different week.")
+      screen.getByText(
+        "New events go up on Mondays. Check back then, or browse next week's calendar."
+      )
+    ).toBeInTheDocument();
+    // "View next week" CTA should be present
+    expect(
+      screen.getByRole("button", { name: "View next week" })
     ).toBeInTheDocument();
   });
 

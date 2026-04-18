@@ -199,3 +199,117 @@ class TestResolveEndpoint:
         )
         assert resp.status_code == 409
         assert resp.json()["code"] == "INVALID_TRANSITION"
+
+
+def _make_in_window_event_with_signup(db_session, *, status=SignupStatus.confirmed, email=None):
+    """Create an event whose slot starts 5 min from now (inside check-in window)."""
+    from tests.fixtures.helpers import make_user
+    owner = make_user(db_session, role=UserRole.organizer)
+    now = datetime.now(timezone.utc)
+    event = Event(
+        id=uuid.uuid4(),
+        owner_id=owner.id,
+        title="QR Event",
+        start_date=now,
+        end_date=now + timedelta(days=1),
+    )
+    db_session.add(event)
+    db_session.flush()
+    slot = Slot(
+        id=uuid.uuid4(),
+        event_id=event.id,
+        start_time=now + timedelta(minutes=5),
+        end_time=now + timedelta(hours=2),
+        capacity=10,
+        slot_type=SlotType.PERIOD,
+    )
+    db_session.add(slot)
+    db_session.flush()
+    vol = _make_volunteer(db_session, email=email)
+    signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=status)
+    db_session.add(signup)
+    db_session.flush()
+    return event, slot, vol, signup
+
+
+class TestEventCheckInByEmailEndpoint:
+    def test_happy_path_transitions_and_returns_summary(self, client, db_session):
+        event, slot, vol, signup = _make_in_window_event_with_signup(
+            db_session, email="scan-happy@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "scan-happy@example.com"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["event_id"] == str(event.id)
+        assert body["event_title"] == "QR Event"
+        assert body["count_checked_in"] >= 0
+        assert len(body["signups"]) == 1
+        assert body["signups"][0]["status"] == "checked_in"
+
+    def test_no_signup_for_email_404(self, client, db_session):
+        event, slot, vol, signup = _make_in_window_event_with_signup(db_session)
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "ghost@example.com"},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "NO_SIGNUP_FOR_EMAIL"
+
+    def test_outside_window_403(self, client, db_session):
+        # Event with slot 6 hours out — outside window
+        from tests.fixtures.helpers import make_user
+        owner = make_user(db_session, role=UserRole.organizer)
+        now = datetime.now(timezone.utc)
+        event = Event(
+            id=uuid.uuid4(),
+            owner_id=owner.id,
+            title="Future",
+            start_date=now,
+            end_date=now + timedelta(days=1),
+        )
+        db_session.add(event)
+        db_session.flush()
+        slot = Slot(
+            id=uuid.uuid4(),
+            event_id=event.id,
+            start_time=now + timedelta(hours=6),
+            end_time=now + timedelta(hours=8),
+            capacity=10,
+            slot_type=SlotType.PERIOD,
+        )
+        db_session.add(slot)
+        db_session.flush()
+        vol = _make_volunteer(db_session, email="out@example.com")
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        db_session.add(signup)
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "out@example.com"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "OUTSIDE_WINDOW"
+
+    def test_event_not_found_404(self, client, db_session):
+        resp = client.post(
+            f"/api/v1/events/{uuid.uuid4()}/check-in-by-email",
+            json={"email": "x@example.com"},
+        )
+        assert resp.status_code == 404
+
+    def test_idempotent_already_checked_in(self, client, db_session):
+        event, slot, vol, signup = _make_in_window_event_with_signup(
+            db_session, status=SignupStatus.checked_in, email="already@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "already@example.com"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["signups"]) == 1
+        assert body["signups"][0]["status"] == "checked_in"

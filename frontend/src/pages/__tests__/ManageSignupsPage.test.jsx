@@ -1,6 +1,6 @@
 // src/pages/__tests__/ManageSignupsPage.test.jsx
 //
-// Component tests for ManageSignupsPage — 7 test cases.
+// Component tests for ManageSignupsPage — 9 test cases.
 
 import React from "react";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
@@ -68,6 +68,8 @@ const SIGNUP_2 = {
 
 const MANAGE_RESPONSE = {
   volunteer_id: "vol-abc",
+  volunteer_first_name: "Hung",
+  volunteer_last_name: "Khuu",
   event_id: "evt-xyz",
   signups: [SIGNUP_1, SIGNUP_2],
 };
@@ -162,7 +164,8 @@ describe("ManageSignupsPage", () => {
       expect(screen.queryByText("Room 101")).not.toBeInTheDocument();
     });
 
-    expect(toast.success).toHaveBeenCalledWith("Signup cancelled.");
+    // Phase 15-05: American spelling "canceled" (one L) per UI-SPEC.
+    expect(toast.success).toHaveBeenCalledWith("Signup canceled.");
   });
 
   it("3. cancel all — sequential loop removes both signups, success toast shown", async () => {
@@ -179,9 +182,10 @@ describe("ManageSignupsPage", () => {
     const cancelAllBtn = screen.getByRole("button", { name: /cancel all signups/i });
     fireEvent.click(cancelAllBtn);
 
-    // Modal should appear
+    // Modal should appear (Phase 15-05: title is now plain UI-SPEC copy
+    // without the dynamic count, since UI-SPEC mandates exact wording).
     await waitFor(() => {
-      expect(screen.getByText(/cancel all 2 signups/i)).toBeInTheDocument();
+      expect(screen.getByText("Cancel all signups?")).toBeInTheDocument();
     });
 
     // Confirm
@@ -197,7 +201,8 @@ describe("ManageSignupsPage", () => {
     });
 
     expect(api.public.cancelSignup).toHaveBeenCalledTimes(2);
-    expect(toast.success).toHaveBeenCalledWith("All signups cancelled.");
+    // Phase 15-05: American spelling.
+    expect(toast.success).toHaveBeenCalledWith("All signups canceled.");
   });
 
   it("4. token error — shows 'Link expired or invalid' card", async () => {
@@ -208,7 +213,8 @@ describe("ManageSignupsPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Link expired or invalid")).toBeInTheDocument();
+      // Phase 15-05: shared ErrorState with UI-SPEC network-error copy.
+      expect(screen.getByText("We couldn't load this page")).toBeInTheDocument();
     });
   });
 
@@ -226,6 +232,8 @@ describe("ManageSignupsPage", () => {
   it("6. empty state — shows 'No upcoming signups' message", async () => {
     api.public.getManageSignups.mockResolvedValue({
       volunteer_id: "vol-abc",
+      volunteer_first_name: "Hung",
+      volunteer_last_name: "Khuu",
       event_id: "evt-xyz",
       signups: [],
     });
@@ -233,8 +241,14 @@ describe("ManageSignupsPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("No upcoming signups found for this event.")).toBeInTheDocument();
+      // Phase 15-05: UI-SPEC empty-state copy + "View events" primary action.
+      expect(
+        screen.getByText("You haven't signed up for anything yet")
+      ).toBeInTheDocument();
     });
+    expect(
+      screen.getByRole("button", { name: /view events/i })
+    ).toBeInTheDocument();
   });
 
   it("7. 403 on cancel — shows permission error toast", async () => {
@@ -267,5 +281,63 @@ describe("ManageSignupsPage", () => {
         "You don't have permission to cancel this signup."
       );
     });
+  });
+
+  it("8. renders 'Signups for {first} {last}' in the page header", async () => {
+    api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Signups for Hung Khuu")).toBeInTheDocument();
+    });
+  });
+
+  it("9. falls back to 'Your signups' when name fields are absent", async () => {
+    api.public.getManageSignups.mockResolvedValue({
+      volunteer_id: "vol-abc",
+      event_id: "evt-xyz",
+      signups: [SIGNUP_1, SIGNUP_2],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Your signups")).toBeInTheDocument();
+    });
+  });
+
+  // Phase 25 (WAIT-01) — waitlist position badge renders with the FIFO rank.
+  it("10. shows 'Waitlist #N' badge for waitlisted signups", async () => {
+    const WAITLISTED_SIGNUP = {
+      signup_id: "sig-wait",
+      status: "waitlisted",
+      waitlist_position: 3,
+      slot: {
+        id: "slot-wait",
+        slot_type: "period",
+        date: "2026-04-24",
+        start_time: "2026-04-24T10:00:00",
+        end_time: "2026-04-24T12:00:00",
+        location: "Room 303",
+        capacity: 5,
+        filled: 5,
+      },
+    };
+    api.public.getManageSignups.mockResolvedValue({
+      volunteer_id: "vol-abc",
+      volunteer_first_name: "Hung",
+      volunteer_last_name: "Khuu",
+      event_id: "evt-xyz",
+      signups: [WAITLISTED_SIGNUP],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Waitlist #3/i)).toBeInTheDocument();
+    });
+    const badge = screen.getByTestId("waitlist-badge");
+    expect(badge).toHaveTextContent(/Waitlist #3/i);
   });
 });

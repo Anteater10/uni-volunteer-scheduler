@@ -85,6 +85,24 @@ class SlotType(str, enum.Enum):
     PERIOD = "period"
 
 
+class ModuleType(str, enum.Enum):
+    seminar = "seminar"
+    orientation = "orientation"
+    module = "module"
+
+
+class OrientationCreditSource(str, enum.Enum):
+    """Phase 21: how a volunteer earned orientation credit.
+
+    - attendance: derived from a Signup with slot_type=ORIENTATION and
+      status in (attended, checked_in). Implicit.
+    - grant: explicit row written by an organizer/admin via the
+      orientation_credits table.
+    """
+    attendance = "attendance"
+    grant = "grant"
+
+
 # -------------------------
 # Volunteer table (Phase 08 — v1.1 account-less pivot)
 # -------------------------
@@ -119,7 +137,8 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    # Phase 16 Plan 01: nullable so magic-link-only invites can create users
+    hashed_password = Column(String(255), nullable=True)
 
     # ✅ lock enum name to match Alembic migration
     role = Column(
@@ -133,6 +152,9 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     # Added in Phase 7 for CCPA soft-delete
     deleted_at = Column(DateTime(timezone=True), nullable=True, default=None)
+    # Phase 16 Plan 01: admin Users page surface
+    is_active = Column(Boolean, nullable=False, server_default=text("true"), default=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True, default=None)
 
     # Relationships
     events = relationship("Event", back_populates="owner")
@@ -181,6 +203,9 @@ class Event(Base):
     year = Column(Integer, nullable=True)
     week_number = Column(Integer, nullable=True)
     school = Column(String(255), nullable=True)
+
+    # Phase 22: per-event form schema override. NULL means "use template default".
+    form_schema = Column(JSONB, nullable=True, server_default=None)
 
     # Relationships
     owner = relationship("User", back_populates="events")
@@ -260,6 +285,12 @@ class Signup(Base):
     slot = relationship("Slot", back_populates="signups")
     answers = relationship("CustomAnswer", back_populates="signup", cascade="all, delete-orphan")
     sent_notifications = relationship("SentNotification", back_populates="signup", cascade="all, delete-orphan")
+    # Phase 22: dynamic form responses (replaces CustomAnswer going forward).
+    responses = relationship(
+        "SignupResponse",
+        back_populates="signup",
+        cascade="all, delete-orphan",
+    )
 
 
 # -------------------------
@@ -402,6 +433,12 @@ class SiteSettings(Base):
 
     allowed_email_domain = Column(String(255), nullable=True)
 
+    # Phase 29 (HIDE-01) — hide events whose last slot has ended from the
+    # public browse page. Admin/organizer views always show past events.
+    hide_past_events_from_public = Column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
+
 
 # -------------------------
 # Portals (tabbed / grouped signups)
@@ -489,12 +526,90 @@ class ModuleTemplate(Base):
     # Phase 08: prereq_slugs column dropped (D-05)
     default_capacity = Column(Integer, nullable=False, server_default="20")
     duration_minutes = Column(Integer, nullable=False, server_default="90")
+    type = Column(
+        SqlEnum(ModuleType, values_callable=lambda x: [e.value for e in x], name="moduletype", create_type=False),
+        nullable=False,
+        server_default="module",
+    )
+    session_count = Column(Integer, nullable=False, server_default="1")
     materials = Column(ARRAY(String), nullable=False, server_default="{}")
     description = Column(Text, nullable=True)
     metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    # Phase 21: optional grouping key so CRISPR-intro + CRISPR-advanced can share
+    # an orientation family without merging slugs. Nullable; defaults to `slug` on
+    # backfill — resolver prefers family_key when set.
+    family_key = Column(String, nullable=True)
+    # Phase 22: default form schema for every event created from this template.
+    # JSONB list of field descriptors; see backend/app/services/form_schema_service.py.
+    default_form_schema = Column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+# -------------------------
+# Orientation credits (Phase 21)
+# -------------------------
+
+
+class OrientationCredit(Base):
+    """Explicit grant/revoke trail of orientation credit by (volunteer_email, family_key).
+
+    Signup-based attendance is still the primary source; this table covers cases
+    where an organizer/admin vouches for a volunteer outside the normal flow
+    (walk-ins, historical records, corrections). See
+    backend/app/services/orientation_service.py for the unified lookup.
+    """
+
+    __tablename__ = "orientation_credits"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    volunteer_email = Column(String(255), nullable=False, index=True)
+    family_key = Column(String, nullable=False)
+    source = Column(
+        SqlEnum(
+            OrientationCreditSource,
+            values_callable=lambda x: [e.value for e in x],
+            name="orientationcreditsource",
+            create_type=False,
+        ),
+        nullable=False,
+    )
+    granted_by_user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    granted_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_orientation_credits_email_family",
+            "volunteer_email",
+            "family_key",
+        ),
+    )
+
+    granted_by = relationship("User")
 
 
 # -------------------------
@@ -548,6 +663,91 @@ class SentNotification(Base):
 
     signup = relationship("Signup", back_populates="sent_notifications")
 
+# -------------------------
+# Signup responses (Phase 22 — custom form fields)
+# -------------------------
+
+
+class SignupResponse(Base):
+    """One per (signup, field_id). Free-text in ``value_text``; structured
+    answers (multi-select, arrays) in ``value_json``. The effective schema
+    lives on the event (``Event.form_schema``) or template
+    (``ModuleTemplate.default_form_schema``); responses are snapshotted by
+    ``field_id`` so schema edits don't retroactively break old signups.
+    """
+
+    __tablename__ = "signup_responses"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("signups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    field_id = Column(String(128), nullable=False)
+    value_text = Column(Text, nullable=True)
+    value_json = Column(JSONB, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_signup_responses_signup_field",
+            "signup_id",
+            "field_id",
+            unique=True,
+        ),
+    )
+
+    signup = relationship("Signup", back_populates="responses")
+
+
 # Phase 08: PrereqOverride model REMOVED (D-05).
-# The prereq_overrides table was dropped in migration 0009.
-# Router/service cleanup is Phase 12 scope.
+# The legacy table was dropped in migration 0009. Router/service cleanup
+# is Phase 12 scope, Phase 16 Plan 01 finished the admin-shell retirement.
+
+
+# -------------------------
+# Volunteer preferences (Phase 24)
+# -------------------------
+
+
+class VolunteerPreference(Base):
+    """Per-volunteer notification preferences, keyed by email (stable identity).
+
+    Mirrors the orientation_credits pattern — no FK to volunteers because a
+    consent record must outlive volunteer deletions and predate the first
+    signup. ``phone_e164`` is stored here so Phase 27 (SMS) has a persistent
+    home without touching the volunteers row.
+    """
+
+    __tablename__ = "volunteer_preferences"
+
+    volunteer_email = Column(String(255), primary_key=True, nullable=False)
+    email_reminders_enabled = Column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
+    sms_opt_in = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    phone_e164 = Column(String(20), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
