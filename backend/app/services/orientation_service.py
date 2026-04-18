@@ -15,9 +15,10 @@ Credit sources
 Back-compat
 -----------
 ``has_attended_orientation(db, email)`` keeps its signature so existing callers
-(and the legacy ``/public/orientation-status`` endpoint) still work. It
-delegates to ``has_orientation_credit`` with ``family_key=None`` — meaning
-"any family", which matches the v1.2 behavior.
+still compile, but it now fails closed: with no ``family_key`` to anchor
+against, the answer is always ``has_credit=False``. The legacy
+``/public/orientation-status`` endpoint inherits this behavior and is
+deprecated — callers should use ``/public/orientation-check?event_id=...``.
 
 Enumeration-safe (D-08): returns identical shape regardless of whether the email
 exists. No 404 for missing emails.
@@ -154,13 +155,23 @@ def has_orientation_credit(
 ) -> OrientationStatusRead:
     """Return whether ``email`` has orientation credit for ``family_key``.
 
-    If ``family_key`` is None, any family counts (matches the legacy
-    "has attended orientation" semantic).
+    Fail-closed for ``family_key=None``: returns ``has_credit=False``. A credit
+    only exists for a specific module family, so "no module to check against"
+    means "no credit found." This prevents the legacy blanket-match behavior
+    where any orientation credit would satisfy a check for an unknown module.
 
     Source priority: attendance wins over grant when both exist. The returned
     ``last_attended_at`` is the more-recent of the two. ``has_credit`` is True
     when either source yields a row, unless the expiry env var excludes it.
     """
+    if family_key is None:
+        return OrientationStatusRead(
+            has_attended_orientation=False,
+            last_attended_at=None,
+            has_credit=False,
+            source=None,
+            family_key=None,
+        )
     cutoff = _expiry_cutoff()
     has_attended, attended_ts = _latest_attendance(db, email, family_key, cutoff)
     grant_ts = _latest_grant_ts(db, email, family_key, cutoff)
@@ -198,10 +209,12 @@ def has_orientation_credit(
 
 
 def has_attended_orientation(db: Session, email: str) -> OrientationStatusRead:
-    """Legacy back-compat wrapper — "any family" credit check.
+    """DEPRECATED — returns ``has_credit=False`` (fail-closed).
 
-    Kept so callers that don't yet know about family_key continue to work. New
-    code should prefer ``has_orientation_credit(db, email, family_key=...)``.
+    Kept so the legacy ``/public/orientation-status`` endpoint still responds
+    with the expected shape. New callers should use
+    ``has_orientation_credit(db, email, family_key=...)`` with a resolved
+    family_key.
     """
     return has_orientation_credit(db, email, family_key=None)
 

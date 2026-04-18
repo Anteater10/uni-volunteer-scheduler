@@ -255,8 +255,10 @@ class TestOrientationCreditService:
         db_session.commit()
         assert family_for_event(db_session, event.id) == "crispr"
 
-    def test_legacy_any_family_still_works(self, db_session):
-        """has_attended_orientation (legacy) should match v1.2 behavior."""
+    def test_legacy_wrapper_fails_closed(self, db_session):
+        """has_attended_orientation (deprecated) fails closed — no family_key
+        means no credit, regardless of what the volunteer has attended. Forces
+        callers to use the event-scoped check."""
         from app.services.orientation_service import has_attended_orientation
 
         owner = make_user(db_session)
@@ -268,5 +270,5 @@ class TestOrientationCreditService:
         db_session.commit()
 
         result = has_attended_orientation(db_session, "legacy@example.com")
-        assert result.has_attended_orientation is True
-        assert result.has_credit is True
+        assert result.has_credit is False
+        assert result.has_attended_orientation is False

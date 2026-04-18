@@ -136,7 +136,112 @@ const EMPTY_FORM = {
   max_signups_per_user: "",
   visibility: "public",
   school: "",
+  module_slug: "",
 };
+
+function slugify(name) {
+  return String(name || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function NewModuleDialog({ open, onCancel, onCreated }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const slug = slugify(name);
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr(null);
+    if (!name.trim()) return setErr("Name is required.");
+    if (slug.length < 2) return setErr("Name must produce a slug of at least 2 characters.");
+    setBusy(true);
+    try {
+      const created = await api.admin.templates.create({
+        slug,
+        name: name.trim(),
+        description: description.trim() || null,
+      });
+      onCreated(created);
+      setName("");
+      setDescription("");
+    } catch (e2) {
+      setErr(e2?.message || "Create failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onCancel}>
+      <div
+        className="bg-white rounded-xl w-full max-w-md shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b border-gray-200 px-5 py-3 flex justify-between items-center">
+          <h3 className="text-base font-semibold">New module</h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="Close"
+            className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+          >
+            ×
+          </button>
+        </div>
+        <form onSubmit={submit} className="px-5 py-4 space-y-3">
+          <div>
+            <label className="block text-sm font-medium mb-1">Name *</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              placeholder="e.g. CRISPR Intro"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Slug: <code className="font-mono">{slug || "—"}</code>
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Optional"
+            />
+          </div>
+          {err && <p className="text-sm text-red-700" role="alert">{err}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={busy}
+              className="px-3 py-2 text-sm text-white bg-blue-600 rounded disabled:opacity-50"
+            >
+              {busy ? "Creating…" : "Create module"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
   const isEdit = mode === "edit";
@@ -147,7 +252,16 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
     end_date: isoToLocalInput(initial?.end_date),
     max_signups_per_user: initial?.max_signups_per_user ?? "",
     school: initial?.school ?? "",
+    module_slug: initial?.module_slug ?? "",
   }));
+  const [showNewModule, setShowNewModule] = useState(false);
+
+  const modulesQ = useQuery({
+    queryKey: ["adminModuleTemplatesForEventForm"],
+    queryFn: () => api.admin.templates.list(),
+    staleTime: 30_000,
+  });
+  const modules = Array.isArray(modulesQ.data) ? modulesQ.data : [];
   const [slots, setSlots] = useState(() => {
     if (initial?.slots?.length) {
       return initial.slots.map(loadedSlotToForm);
@@ -190,6 +304,8 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
     setSlotErrors({});
 
     if (!form.title.trim()) return setError("Title is required.");
+    if (!form.module_slug)
+      return setError("Pick a module, or create one with '+ New module'.");
     if (!form.start_date || !form.end_date)
       return setError("Start and end times are required.");
     if (new Date(form.end_date) <= new Date(form.start_date))
@@ -222,6 +338,7 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
         ? Number(form.max_signups_per_user)
         : null,
       school: form.school?.trim() || null,
+      module_slug: form.module_slug,
     };
 
     const initialSlotsFormShape = (initial?.slots || []).map(loadedSlotToForm);
@@ -330,6 +447,48 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
           </select>
         </div>
       </div>
+
+      <section className="border-t border-gray-200 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold">Module *</h3>
+          <button
+            type="button"
+            onClick={() => setShowNewModule(true)}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            + New module
+          </button>
+        </div>
+        <select
+          aria-label="Module *"
+          value={form.module_slug}
+          onChange={(e) => update("module_slug", e.target.value)}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        >
+          <option value="">
+            {modulesQ.isLoading ? "Loading modules…" : "— pick a module —"}
+          </option>
+          {modules.map((m) => (
+            <option key={m.slug} value={m.slug}>
+              {m.name} ({m.slug})
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-500 mt-1">
+          Orientation credit is scoped per module — volunteers who orient for one
+          module don't automatically get credit for others.
+        </p>
+      </section>
+
+      <NewModuleDialog
+        open={showNewModule}
+        onCancel={() => setShowNewModule(false)}
+        onCreated={(m) => {
+          modulesQ.refetch();
+          update("module_slug", m.slug);
+          setShowNewModule(false);
+        }}
+      />
 
       <section className="border-t border-gray-200 pt-4">
         <div className="flex items-center justify-between mb-2">

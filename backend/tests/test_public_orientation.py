@@ -66,7 +66,9 @@ class TestOrientationStatus:
         assert data["has_attended_orientation"] is False
         assert data["last_attended_at"] is None
 
-    def test_known_email_with_attendance_returns_true(self, client, db_session):
+    def test_legacy_endpoint_fails_closed_even_with_attendance(self, client, db_session):
+        """Legacy /orientation-status is deprecated and now fails closed.
+        Callers must switch to /orientation-check?event_id=... for a real answer."""
         from tests.fixtures.helpers import make_user
         owner = make_user(db_session)
         vol = _make_volunteer(db_session, email="has_ori@example.com")
@@ -85,7 +87,7 @@ class TestOrientationStatus:
         resp = client.get("/api/v1/public/orientation-status", params={"email": "has_ori@example.com"})
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert data["has_attended_orientation"] is True
+        assert data["has_attended_orientation"] is False
 
     def test_confirmed_but_not_attended_returns_false(self, client, db_session):
         """Only 'attended' status counts as orientation completion."""

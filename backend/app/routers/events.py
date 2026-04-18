@@ -27,6 +27,32 @@ def _validate_event_dates(start_date: datetime, end_date: datetime):
         raise HTTPException(status_code=400, detail="end_date must be after start_date")
 
 
+def _validate_module_slug(db: Session, module_slug: str | None) -> None:
+    """Reject create/update when module_slug is missing or unknown.
+
+    Every event is tied to a module so orientation credit can be scoped
+    per-module (see docs/superpowers/specs/2026-04-17-per-module-orientation).
+    """
+    if not module_slug:
+        raise HTTPException(
+            status_code=422,
+            detail="module_slug is required — every event must be tied to a module",
+        )
+    exists = (
+        db.query(models.ModuleTemplate)
+        .filter(
+            models.ModuleTemplate.slug == module_slug,
+            models.ModuleTemplate.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not exists:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown module_slug '{module_slug}'",
+        )
+
+
 def _validate_slot_range_within_event(
     event: models.Event,
     start_time: datetime,
@@ -58,6 +84,7 @@ def create_event(
     ),
 ):
     _validate_event_dates(event_in.start_date, event_in.end_date)
+    _validate_module_slug(db, event_in.module_slug)
 
     start_date = _normalize_dt(event_in.start_date)
     end_date = _normalize_dt(event_in.end_date)
@@ -155,6 +182,11 @@ def update_event(
     new_start = data.get("start_date", event.start_date)
     new_end = data.get("end_date", event.end_date)
     _validate_event_dates(new_start, new_end)
+
+    # If module_slug is in the payload, validate it — admins can reassign
+    # the module or backfill a legacy NULL-module event.
+    if "module_slug" in data:
+        _validate_module_slug(db, data["module_slug"])
 
     for field, value in data.items():
         setattr(event, field, value)

@@ -34,7 +34,13 @@ vi.mock("../../../lib/api", () => {
     update: vi.fn(),
     delete: vi.fn(),
   };
-  const apiObj = { events, slots };
+  const admin = {
+    templates: {
+      list: vi.fn(),
+      create: vi.fn(),
+    },
+  };
+  const apiObj = { events, slots, admin };
   return { api: apiObj, default: apiObj };
 });
 
@@ -69,6 +75,11 @@ function renderWithQuery(ui) {
   );
 }
 
+const FIXTURE_MODULES = [
+  { slug: "crispr-intro", name: "CRISPR Intro", family_key: "crispr-intro" },
+  { slug: "glucose", name: "Glucose Sensing", family_key: "glucose" },
+];
+
 const FIXTURE_EVENT = {
   id: "evt-1",
   title: "Existing Event",
@@ -79,6 +90,7 @@ const FIXTURE_EVENT = {
   end_date: "2026-04-20T17:00:00Z",
   max_signups_per_user: null,
   school: "SciTrek HS",
+  module_slug: "crispr-intro",
   slots: [
     {
       id: "slot-1",
@@ -272,6 +284,12 @@ describe("EventsSection — create flow", () => {
     vi.clearAllMocks();
     api.events.list.mockResolvedValue([]);
     api.events.create.mockResolvedValue({ id: "new-evt" });
+    api.admin.templates.list.mockResolvedValue(FIXTURE_MODULES);
+    api.admin.templates.create.mockResolvedValue({
+      slug: "new-module",
+      name: "New Module",
+      family_key: "new-module",
+    });
   });
 
   it("renders the create form with a blank slot row and school field", async () => {
@@ -305,6 +323,11 @@ describe("EventsSection — create flow", () => {
     });
     fireEvent.change(screen.getByLabelText(/^End \*/i), {
       target: { value: "2026-04-20T17:00" },
+    });
+    // Pick a module so we clear the module-required check and actually reach slot validation.
+    await screen.findByRole("option", { name: /CRISPR Intro/i });
+    fireEvent.change(screen.getByLabelText(/Module \*/i), {
+      target: { value: "crispr-intro" },
     });
 
     const row = screen.getByTestId("slot-row-0");
@@ -342,6 +365,12 @@ describe("EventsSection — create flow", () => {
       target: { value: "2026-04-20T17:00" },
     });
 
+    // Pick a module (required) — wait for options to load.
+    await screen.findByRole("option", { name: /CRISPR Intro/i });
+    fireEvent.change(screen.getByLabelText(/Module \*/i), {
+      target: { value: "crispr-intro" },
+    });
+
     const row = screen.getByTestId("slot-row-0");
     fireEvent.change(within(row).getByLabelText(/Slot 1 date/i), {
       target: { value: "2026-04-20" },
@@ -361,10 +390,43 @@ describe("EventsSection — create flow", () => {
     await waitFor(() => expect(api.events.create).toHaveBeenCalledTimes(1));
     const payload = api.events.create.mock.calls[0][0];
     expect(payload.title).toBe("Science Fair");
+    expect(payload.module_slug).toBe("crispr-intro");
     expect(Array.isArray(payload.slots)).toBe(true);
     expect(payload.slots).toHaveLength(1);
     expect(payload.slots[0].capacity).toBe(12);
     expect(payload.slots[0].slot_type).toBe("period");
+  });
+
+  it("blocks submit when no module is picked", async () => {
+    renderWithQuery(<EventsSection />);
+    fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+
+    fireEvent.change(screen.getByLabelText(/Title \*/i), {
+      target: { value: "No Module Event" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Start \*/i), {
+      target: { value: "2026-04-20T09:00" },
+    });
+    fireEvent.change(screen.getByLabelText(/^End \*/i), {
+      target: { value: "2026-04-20T17:00" },
+    });
+    const row = screen.getByTestId("slot-row-0");
+    fireEvent.change(within(row).getByLabelText(/Slot 1 date/i), {
+      target: { value: "2026-04-20" },
+    });
+    fireEvent.change(within(row).getByLabelText(/Slot 1 start time/i), {
+      target: { value: "10:00" },
+    });
+    fireEvent.change(within(row).getByLabelText(/Slot 1 end time/i), {
+      target: { value: "11:00" },
+    });
+    fireEvent.change(within(row).getByLabelText(/Slot 1 capacity/i), {
+      target: { value: "12" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/pick a module/i);
+    expect(api.events.create).not.toHaveBeenCalled();
   });
 });
 
@@ -376,6 +438,7 @@ describe("EventsSection — edit flow diff", () => {
     api.slots.create.mockResolvedValue({});
     api.slots.update.mockResolvedValue({});
     api.slots.delete.mockResolvedValue({});
+    api.admin.templates.list.mockResolvedValue(FIXTURE_MODULES);
   });
 
   it("renders existing slots with their values and signup count", async () => {

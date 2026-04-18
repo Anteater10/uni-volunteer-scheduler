@@ -112,8 +112,26 @@ def _get_current_week() -> dict:
     return body
 
 
+def _ensure_module(admin_token: str, slug: str, name: str) -> None:
+    """Ensure a module template exists — required since event create now
+    rejects unknown module_slug (per-module orientation design, 2026-04-17)."""
+    s, _ = _req("GET", f"/admin/module-templates", token=admin_token)
+    if s != 200:
+        return
+    cs, _ = _req(
+        "POST",
+        "/admin/module-templates",
+        token=admin_token,
+        json_body={"slug": slug, "name": name},
+    )
+    # 409 = already exists (fine), 201 = created (fine).
+    if cs not in (200, 201, 409):
+        raise RuntimeError(f"module template create failed: {cs}")
+
+
 def _get_or_create_event(admin_token: str, quarter: str, year: int, week_number: int) -> dict:
     """Find existing seed event or create a new one. Returns event dict."""
+    _ensure_module(admin_token, "e2e-test", "E2E Test Module")
     s, events = _req(
         "GET",
         f"/public/events?quarter={quarter}&year={year}&week_number={week_number}",

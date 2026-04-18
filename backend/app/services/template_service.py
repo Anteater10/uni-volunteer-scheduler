@@ -85,6 +85,12 @@ def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     from .form_schema_service import DEFAULT_SCITREK_FIELDS
 
     payload = {k: v for k, v in data.items() if k not in ("metadata", "default_form_schema")}
+    # Default family_key to slug so every new module is its own orientation
+    # credit family. Callers can still pass an explicit family_key to group
+    # multiple modules (e.g. "crispr-intro" + "crispr-advanced" both under
+    # family_key="crispr").
+    if not payload.get("family_key"):
+        payload["family_key"] = slug
     tpl = ModuleTemplate(slug=slug, **payload)
     if "metadata" in data:
         tpl.metadata_ = data["metadata"]

@@ -172,6 +172,7 @@ class EventCreate(EventBase):
 class EventRead(ORMBase, EventBase):
     id: UUID
     owner_id: UUID
+    module_slug: Optional[str] = None
     slots: List[SlotRead] = []
 
 
@@ -186,6 +187,9 @@ class EventUpdate(BaseModel):
     max_signups_per_user: Optional[int] = None
     signup_open_at: Optional[datetime] = None
     signup_close_at: Optional[datetime] = None
+    # Admins can reassign / backfill an event's module. When present the
+    # router validates the slug exists. Omit to leave module unchanged.
+    module_slug: Optional[str] = None
 
     @field_validator("start_date", "end_date", "signup_open_at", "signup_close_at")
     @classmethod
@@ -471,6 +475,10 @@ class ModuleTemplateBase(BaseModel):
     materials: List[str] = []
     description: Optional[str] = None
     metadata: dict = {}
+    # Per-module orientation credit grouping. When omitted on create, the
+    # service defaults it to the slug so each new module forms its own
+    # credit family.
+    family_key: Optional[str] = None
 
 
 class ModuleTemplateCreate(ModuleTemplateBase):
@@ -487,6 +495,7 @@ class ModuleTemplateUpdate(BaseModel):
     materials: Optional[List[str]] = None
     description: Optional[str] = None
     metadata: Optional[dict] = None
+    family_key: Optional[str] = None
 
 
 class ModuleTemplateRead(ORMBase):
@@ -502,6 +511,7 @@ class ModuleTemplateRead(ORMBase):
     metadata: dict = Field(default={}, validation_alias="metadata_")
     # Phase 22: default form schema list (used by FormFieldsDrawer)
     default_form_schema: List[dict] = []
+    family_key: Optional[str] = None
     deleted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
