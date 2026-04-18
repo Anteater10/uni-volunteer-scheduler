@@ -23,9 +23,11 @@ from app.services.check_in_service import (
     CHECK_IN_WINDOW_BEFORE,
     CheckInWindowError,
     InvalidTransitionError,
+    NoSignupForEmailError,
     VenueCodeError,
     _transition,
     check_in_signup,
+    event_check_in_by_email,
     resolve_event,
     self_check_in,
 )
@@ -309,3 +311,172 @@ class TestResolveEvent:
         # Try to mark both as attended — s1 is already attended, so attended->attended is invalid
         with pytest.raises(InvalidTransitionError):
             resolve_event(db_session, event.id, owner.id, [s1.id, s2.id], [])
+
+
+class TestEventCheckInByEmail:
+    """Event-QR self-check-in: organizer displays QR, volunteer identifies by email."""
+
+    def test_no_volunteer_for_email_raises(self, db_session):
+        _, _, event, _, _ = _make_event_slot_signup(db_session)
+        with pytest.raises(NoSignupForEmailError):
+            event_check_in_by_email(db_session, event.id, "nobody@example.com")
+
+    def test_volunteer_exists_but_no_signup_on_event(self, db_session):
+        _, owner, event, _, _ = _make_event_slot_signup(db_session)
+        other_vol = _make_volunteer(db_session, email="other@example.com")
+        with pytest.raises(NoSignupForEmailError):
+            event_check_in_by_email(db_session, event.id, "other@example.com")
+
+    def test_happy_path_confirmed_to_checked_in(self, db_session):
+        slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
+        vol, owner, event, slot, signup = _make_event_slot_signup(
+            db_session, slot_start=slot_start
+        )
+        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email)
+
+        assert volunteer.id == vol.id
+        assert len(signups) == 1
+        assert signups[0].id == signup.id
+        assert signups[0].status == SignupStatus.checked_in
+        assert signups[0].checked_in_at is not None
+
+        logs = db_session.query(AuditLog).filter(
+            AuditLog.entity_id == str(signup.id),
+            AuditLog.action == "transition",
+        ).all()
+        assert len(logs) == 1
+        assert logs[0].extra["via"] == "self_qr"
+
+    def test_email_normalization_is_case_insensitive(self, db_session):
+        slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
+        vol, owner, event, slot, signup = _make_event_slot_signup(
+            db_session, slot_start=slot_start
+        )
+        volunteer, signups = event_check_in_by_email(
+            db_session, event.id, vol.email.upper()
+        )
+        assert volunteer.id == vol.id
+        assert len(signups) == 1
+
+    def test_outside_window_raises(self, db_session):
+        # Slot starts 5 hours from now — well outside check-in window
+        slot_start = datetime.now(timezone.utc) + timedelta(hours=5)
+        vol, owner, event, slot, signup = _make_event_slot_signup(
+            db_session, slot_start=slot_start
+        )
+        with pytest.raises(CheckInWindowError):
+            event_check_in_by_email(db_session, event.id, vol.email)
+
+    def test_idempotent_already_checked_in(self, db_session):
+        slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
+        vol, owner, event, slot, signup = _make_event_slot_signup(
+            db_session, slot_start=slot_start, status=SignupStatus.checked_in
+        )
+        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email)
+        assert len(signups) == 1
+        assert signups[0].status == SignupStatus.checked_in
+
+        # No new audit log — already-checked-in path doesn't re-transition
+        logs = db_session.query(AuditLog).filter(
+            AuditLog.entity_id == str(signup.id),
+            AuditLog.action == "transition",
+        ).all()
+        assert len(logs) == 0
+
+    def test_multiple_signups_same_event_all_checked_in(self, db_session):
+        vol = _make_volunteer(db_session)
+        owner = _make_user(db_session, role="organizer")
+        now = datetime.now(timezone.utc)
+        event = Event(
+            id=uuid.uuid4(),
+            owner_id=owner.id,
+            title="Multi",
+            start_date=now,
+            end_date=now + timedelta(days=1),
+        )
+        db_session.add(event)
+        db_session.flush()
+
+        signups = []
+        for _ in range(2):
+            slot = Slot(
+                id=uuid.uuid4(),
+                event_id=event.id,
+                start_time=now + timedelta(minutes=5),
+                end_time=now + timedelta(hours=2),
+                capacity=10,
+                slot_type=SlotType.PERIOD,
+            )
+            db_session.add(slot)
+            db_session.flush()
+            s = Signup(
+                id=uuid.uuid4(),
+                volunteer_id=vol.id,
+                slot_id=slot.id,
+                status=SignupStatus.confirmed,
+            )
+            db_session.add(s)
+            signups.append(s)
+        db_session.flush()
+
+        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email)
+        assert len(result) == 2
+        for s in result:
+            assert s.status == SignupStatus.checked_in
+
+    def test_only_in_window_slots_are_checked_in(self, db_session):
+        """Volunteer has two signups: one in window, one outside. Only in-window transitions."""
+        vol = _make_volunteer(db_session)
+        owner = _make_user(db_session, role="organizer")
+        now = datetime.now(timezone.utc)
+        event = Event(
+            id=uuid.uuid4(),
+            owner_id=owner.id,
+            title="Mixed",
+            start_date=now,
+            end_date=now + timedelta(days=1),
+        )
+        db_session.add(event)
+        db_session.flush()
+
+        slot_in = Slot(
+            id=uuid.uuid4(),
+            event_id=event.id,
+            start_time=now + timedelta(minutes=5),
+            end_time=now + timedelta(hours=2),
+            capacity=10,
+            slot_type=SlotType.PERIOD,
+        )
+        slot_out = Slot(
+            id=uuid.uuid4(),
+            event_id=event.id,
+            start_time=now + timedelta(hours=6),  # far outside window
+            end_time=now + timedelta(hours=8),
+            capacity=10,
+            slot_type=SlotType.PERIOD,
+        )
+        db_session.add_all([slot_in, slot_out])
+        db_session.flush()
+
+        s_in = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot_in.id,
+            status=SignupStatus.confirmed,
+        )
+        s_out = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot_out.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add_all([s_in, s_out])
+        db_session.flush()
+
+        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email)
+        assert len(result) == 1
+        assert result[0].id == s_in.id
+        assert result[0].status == SignupStatus.checked_in
+        # Out-of-window signup stays confirmed
+        db_session.refresh(s_out)
+        assert s_out.status == SignupStatus.confirmed

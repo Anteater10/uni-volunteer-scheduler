@@ -616,6 +616,14 @@ export const api = {
     getPreferences: (manageToken) => publicGetPreferences(manageToken),
     updatePreferences: (manageToken, patch) =>
       publicUpdatePreferences(manageToken, patch),
+    // Event-QR check-in (post-integration) — organizer shows a QR that points
+    // at /event-check-in/:eventId; volunteer enters email and hits this.
+    checkInByEmail: (eventId, email) =>
+      request(`/events/${eventId}/check-in-by-email`, {
+        method: "POST",
+        auth: false,
+        body: { email },
+      }),
   },
 
   // --- Module Templates (Phase 5) ---

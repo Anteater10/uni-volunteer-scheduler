@@ -47,6 +47,7 @@ import HelpSection from "./pages/admin/HelpSection";
 import AdminRemindersPage from "./pages/admin/AdminRemindersPage";
 
 import SelfCheckInPage from "./pages/SelfCheckInPage";
+import EventCheckInPage from "./pages/EventCheckInPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import ConfirmSignupPage from "./pages/public/ConfirmSignupPage";
 import ManageSignupsPage from "./pages/public/ManageSignupsPage";
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="events" element={<EventsBrowsePage />} />
         <Route path="events/:eventId" element={<EventDetailPage />} />
         <Route path="check-in/:signupId" element={<SelfCheckInPage />} />
+        <Route path="event-check-in/:eventId" element={<EventCheckInPage />} />
         <Route path="signup/confirm" element={<ConfirmSignupPage />} />
         <Route path="signup/manage" element={<ManageSignupsPage />} />
 

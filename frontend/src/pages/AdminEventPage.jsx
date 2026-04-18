@@ -17,6 +17,7 @@ import {
 import FormFieldsDrawer from "../components/admin/FormFieldsDrawer";
 import DuplicateEventDrawer from "../components/admin/DuplicateEventDrawer";
 import BroadcastModal from "../components/BroadcastModal";
+import CheckInQRModal from "../components/admin/CheckInQRModal";
 import { toast } from "../state/toast";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 import { useAuth } from "../state/useAuth";
@@ -71,6 +72,8 @@ export default function AdminEventPage() {
   const [reorderState, setReorderState] = useState(null); // { slotId, ids: [...] }
   // Phase 26 — broadcast messages
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  // Event-QR check-in (post-integration)
+  const [qrOpen, setQrOpen] = useState(false);
 
   const analyticsQ = useQuery({
     queryKey: ["adminEventAnalytics", eventId],
@@ -241,6 +244,9 @@ export default function AdminEventPage() {
           <div className="flex gap-2">
             <Button as={Link} to={`/organizer/events/${eventId}/roster`}>
               Live roster (check-in)
+            </Button>
+            <Button variant="secondary" onClick={() => setQrOpen(true)}>
+              Show check-in QR
             </Button>
             <Button variant="secondary" onClick={() => setBroadcastOpen(true)}>
               Message volunteers
@@ -648,6 +654,14 @@ export default function AdminEventPage() {
         onClose={() => setBroadcastOpen(false)}
         eventId={eventId}
         scope={isAdmin ? "admin" : "organizer"}
+      />
+
+      {/* Event-QR check-in (post-integration) */}
+      <CheckInQRModal
+        open={qrOpen}
+        onClose={() => setQrOpen(false)}
+        eventId={eventId}
+        eventTitle={eventTitle}
       />
     </div>
   );

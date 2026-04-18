@@ -435,6 +435,28 @@ class ResolveEventRequest(BaseModel):
     no_show: List[UUID] = []
 
 
+class EventCheckInByEmailRequest(BaseModel):
+    email: str
+
+
+class EventCheckInByEmailSignup(BaseModel):
+    signup_id: UUID
+    slot_id: UUID
+    slot_start: datetime | None = None
+    slot_end: datetime | None = None
+    status: str
+    newly_checked_in: bool
+
+
+class EventCheckInByEmailResponse(BaseModel):
+    event_id: UUID
+    event_title: str
+    volunteer_name: str
+    count_checked_in: int
+    count_already_checked_in: int
+    signups: List[EventCheckInByEmailSignup]
+
+
 
 # =========================
 # MODULE TEMPLATE SCHEMAS (Phase 5)

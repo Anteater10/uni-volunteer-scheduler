@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, Event, Signup, SignupStatus, Slot
+from app.models import AuditLog, Event, Signup, SignupStatus, Slot, Volunteer
 
 CHECK_IN_WINDOW_BEFORE = timedelta(minutes=15)
 CHECK_IN_WINDOW_AFTER = timedelta(minutes=30)
@@ -136,6 +136,81 @@ def self_check_in(
 
     _transition(db, signup, SignupStatus.checked_in, actor_id, "self")
     return signup
+
+
+class NoSignupForEmailError(Exception):
+    pass
+
+
+def event_check_in_by_email(
+    db: Session,
+    event_id: UUID,
+    email: str,
+    now: datetime | None = None,
+) -> tuple[Volunteer, list[Signup]]:
+    """Event-QR self-check-in. Finds volunteer by email, checks in every
+    confirmed / already checked-in signup they have on this event whose slot
+    is inside the check-in window.
+
+    Semantics:
+      - No venue code; the organizer-displayed QR is the venue attestation.
+      - Time window is evaluated per-slot (CHECK_IN_WINDOW_BEFORE /
+        _AFTER around that slot's start_time).
+      - Idempotent: already-checked-in signups are returned in the result
+        but not re-transitioned.
+      - Raises NoSignupForEmailError if the volunteer has no signups on this
+        event.
+      - Raises CheckInWindowError if the volunteer has signups but none are
+        inside any slot's check-in window.
+    """
+    now = now or datetime.now(timezone.utc)
+    email_norm = email.strip().lower()
+
+    event = db.get(Event, event_id)
+    if event is None:
+        raise LookupError(f"Event {event_id} not found")
+
+    volunteer = (
+        db.execute(select(Volunteer).where(Volunteer.email == email_norm))
+        .scalar_one_or_none()
+    )
+    if volunteer is None:
+        raise NoSignupForEmailError("No signup found for that email on this event")
+
+    signups = (
+        db.execute(
+            select(Signup)
+            .join(Slot, Slot.id == Signup.slot_id)
+            .where(Slot.event_id == event_id)
+            .where(Signup.volunteer_id == volunteer.id)
+            .with_for_update()
+        )
+        .scalars()
+        .all()
+    )
+    if not signups:
+        raise NoSignupForEmailError("No signup found for that email on this event")
+
+    eligible: list[Signup] = []
+    any_in_window = False
+    for signup in signups:
+        slot = db.get(Slot, signup.slot_id)
+        if slot is None:
+            continue
+        if now < slot.start_time - CHECK_IN_WINDOW_BEFORE or now > slot.start_time + CHECK_IN_WINDOW_AFTER:
+            continue
+        any_in_window = True
+        if signup.status == SignupStatus.checked_in or signup.status == SignupStatus.attended:
+            eligible.append(signup)
+            continue
+        if signup.status == SignupStatus.confirmed:
+            _transition(db, signup, SignupStatus.checked_in, None, "self_qr")
+            eligible.append(signup)
+
+    if not any_in_window:
+        raise CheckInWindowError("No slots are open for check-in right now")
+
+    return volunteer, eligible
 
 
 def resolve_event(
