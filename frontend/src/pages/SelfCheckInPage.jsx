@@ -112,7 +112,7 @@ export default function SelfCheckInPage() {
         action={
           <Button
             variant="secondary"
-            onClick={() => navigate(`/events/${eventId}`)}
+            onClick={() => navigate(`/volunteer/events/${eventId}`)}
           >
             View event details
           </Button>
@@ -141,7 +141,7 @@ export default function SelfCheckInPage() {
           action={
             <Button
               variant="secondary"
-              onClick={() => navigate(`/events/${eventId}`)}
+              onClick={() => navigate(`/volunteer/events/${eventId}`)}
             >
               View event details
             </Button>
@@ -156,7 +156,7 @@ export default function SelfCheckInPage() {
         action={
           <Button
             variant="secondary"
-            onClick={() => navigate(`/events/${eventId}`)}
+            onClick={() => navigate(`/volunteer/events/${eventId}`)}
           >
             View event details
           </Button>
@@ -177,15 +177,18 @@ export default function SelfCheckInPage() {
   }
 
   return (
-    <div>
-      <PageHeader title="Check in" />
-
-      <div className="mt-6 text-center">
+    <div className="max-w-md mx-auto w-full py-6">
+      <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white p-6 sm:p-8 text-center shadow-lg">
+        <p className="text-xs font-medium uppercase tracking-widest text-blue-200">
+          Self check-in
+        </p>
         {signup.event_title && (
-          <h2 className="text-lg font-semibold">{signup.event_title}</h2>
+          <h1 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight">
+            {signup.event_title}
+          </h1>
         )}
         {signup.slot_start_time && (
-          <p className="text-sm text-[var(--color-fg-muted)] mt-1">
+          <p className="mt-2 text-sm text-blue-100">
             {new Date(signup.slot_start_time).toLocaleString()}
           </p>
         )}
@@ -193,7 +196,7 @@ export default function SelfCheckInPage() {
 
       <form
         onSubmit={handleSubmit}
-        className="mt-8 max-w-xs mx-auto space-y-4"
+        className="mt-8 space-y-5 bg-white rounded-2xl border border-[var(--color-border)] p-6 shadow-sm"
       >
         <div>
           <Label htmlFor="venue-code">4-digit venue code</Label>

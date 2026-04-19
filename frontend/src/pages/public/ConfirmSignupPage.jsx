@@ -62,7 +62,7 @@ export default function ConfirmSignupPage() {
         title="This link has expired"
         body="Magic links are good for 24 hours. Open the event again and re-submit your signup to get a new one."
         action={
-          <Button variant="primary" onClick={() => navigate("/events")}>
+          <Button variant="primary" onClick={() => navigate("/volunteer")}>
             Back to events
           </Button>
         }

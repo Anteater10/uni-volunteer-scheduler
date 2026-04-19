@@ -22,8 +22,15 @@ import SideDrawer from "./SideDrawer";
 import { Button, Chip, Label } from "../ui";
 
 const WEEKS_PER_QUARTER = 11;
+const QUARTERS = ["winter", "spring", "summer", "fall"];
 
-function isConflictWeek(week, targetYear, existingEvents, sourceEvent) {
+function isConflictWeek(
+  week,
+  targetYear,
+  targetQuarter,
+  existingEvents,
+  sourceEvent,
+) {
   if (!Array.isArray(existingEvents)) return false;
   return existingEvents.some(
     (e) =>
@@ -31,6 +38,7 @@ function isConflictWeek(week, targetYear, existingEvents, sourceEvent) {
       e.id !== sourceEvent?.id &&
       Number(e.week_number) === week &&
       Number(e.year) === Number(targetYear) &&
+      (targetQuarter == null || e.quarter == null || e.quarter === targetQuarter) &&
       (sourceEvent?.module_slug == null ||
         e.module_slug === sourceEvent.module_slug),
   );
@@ -46,9 +54,11 @@ export default function DuplicateEventDrawer({
 }) {
   const sourceYear = sourceEvent?.year ?? new Date().getFullYear();
   const sourceWeek = sourceEvent?.week_number ?? null;
+  const sourceQuarter = sourceEvent?.quarter ?? null;
 
   const [selectedWeeks, setSelectedWeeks] = useState([]);
   const [targetYear, setTargetYear] = useState(sourceYear);
+  const [targetQuarter, setTargetQuarter] = useState(sourceQuarter);
   const [skipConflicts, setSkipConflicts] = useState(true);
   const [submitError, setSubmitError] = useState("");
 
@@ -57,23 +67,41 @@ export default function DuplicateEventDrawer({
     if (!open) return;
     setSelectedWeeks([]);
     setTargetYear(sourceYear);
+    setTargetQuarter(sourceQuarter);
     setSkipConflicts(true);
     setSubmitError("");
-  }, [open, sourceEvent?.id, sourceYear]);
+  }, [open, sourceEvent?.id, sourceYear, sourceQuarter]);
+
+  const crossQuarter =
+    targetQuarter != null && sourceQuarter != null && targetQuarter !== sourceQuarter;
 
   const conflictSet = useMemo(() => {
     const set = new Set();
     for (let w = 1; w <= WEEKS_PER_QUARTER; w += 1) {
-      if (isConflictWeek(w, targetYear, existingEvents, sourceEvent)) {
+      if (
+        isConflictWeek(w, targetYear, targetQuarter, existingEvents, sourceEvent)
+      ) {
         set.add(w);
       }
     }
-    // Source's own week is effectively a conflict when year matches.
-    if (Number(targetYear) === Number(sourceYear) && sourceWeek) {
+    // Source's own week is effectively a conflict when year + quarter match.
+    if (
+      !crossQuarter &&
+      Number(targetYear) === Number(sourceYear) &&
+      sourceWeek
+    ) {
       set.add(sourceWeek);
     }
     return set;
-  }, [targetYear, existingEvents, sourceEvent, sourceYear, sourceWeek]);
+  }, [
+    targetYear,
+    targetQuarter,
+    existingEvents,
+    sourceEvent,
+    sourceYear,
+    sourceWeek,
+    crossQuarter,
+  ]);
 
   function toggleWeek(w) {
     setSelectedWeeks((prev) =>
@@ -97,6 +125,7 @@ export default function DuplicateEventDrawer({
       await onSubmit({
         target_weeks: selectedWeeks,
         target_year: Number(targetYear),
+        target_quarter: targetQuarter || undefined,
         skip_conflicts: skipConflicts,
       });
     } catch (err) {
@@ -119,6 +148,29 @@ export default function DuplicateEventDrawer({
               {sourceEvent.quarter || "?"}, year {sourceYear}, week{" "}
               {sourceWeek ?? "?"}).
             </p>
+          </div>
+
+          <div>
+            <Label>Target quarter</Label>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {QUARTERS.map((q) => (
+                <Chip
+                  key={q}
+                  active={targetQuarter === q}
+                  onClick={() => setTargetQuarter(q)}
+                  data-testid={`quarter-chip-${q}`}
+                >
+                  {q.charAt(0).toUpperCase() + q.slice(1)}
+                </Chip>
+              ))}
+            </div>
+            {crossQuarter && (
+              <p className="text-xs text-amber-700 mt-2">
+                Cross-quarter copy: week dates will be shifted to the target
+                quarter's calendar. Conflict highlighting uses the target
+                quarter; the server re-checks before committing.
+              </p>
+            )}
           </div>
 
           <div>

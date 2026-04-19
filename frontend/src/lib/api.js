@@ -763,6 +763,11 @@ export const api = {
       delete: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
       bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/module-templates/${s}`, { method: "DELETE" }))),
       restore: (slug) => request(`/admin/module-templates/${slug}/restore`, { method: "POST" }),
+      clone: (slug, { new_slug, new_name }) =>
+        request(`/admin/module-templates/${slug}/clone`, {
+          method: "POST",
+          body: { new_slug, new_name },
+        }),
       // Phase 22 — default form schema on template
       setDefaultFormSchema: (slug, schema) =>
         request(`/admin/templates/${slug}/default-form-schema`, {
@@ -777,12 +782,16 @@ export const api = {
         body: { schema },
       }),
     // Phase 23 — recurring event duplication
-    duplicateEvent: (eventId, { target_weeks, target_year, skip_conflicts }) =>
+    duplicateEvent: (
+      eventId,
+      { target_weeks, target_year, target_quarter, skip_conflicts },
+    ) =>
       request(`/admin/events/${eventId}/duplicate`, {
         method: "POST",
         body: {
           target_weeks,
           target_year,
+          ...(target_quarter ? { target_quarter } : {}),
           skip_conflicts,
         },
       }),
@@ -846,6 +855,7 @@ export const api = {
         request(`/admin/imports/${importId}/revalidate`, { method: "POST" }),
       updateRow: (importId, rowIndex, data) =>
         request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
+      delete: (importId) => request(`/admin/imports/${importId}`, { method: "DELETE" }),
     },
   },
 };

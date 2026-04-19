@@ -86,7 +86,7 @@ function templateToForm(t) {
 // TemplateForm — shared create/edit form rendered inside SideDrawer
 // ---------------------------------------------------------------------------
 
-function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onCancel, onEditFormFields, submitting }) {
+function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
   function handleNameChange(e) {
     const name = e.target.value;
     setForm((prev) => ({
@@ -248,6 +248,15 @@ function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onCancel, 
             Archive
           </Button>
         )}
+        {!isCreate && onClone && (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={onClone}
+          >
+            Clone
+          </Button>
+        )}
         <div className="flex-1" />
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
@@ -335,6 +344,32 @@ export default function TemplatesSection() {
     },
     onError: (e) => toast.error(e?.message || "Failed to restore template"),
   });
+
+  const cloneM = useMutation({
+    mutationFn: ({ slug, new_slug, new_name }) =>
+      api.admin.templates.clone(slug, { new_slug, new_name }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      setDrawerTemplate(null);
+      toast.success("Template cloned");
+    },
+    onError: (e) => toast.error(e?.message || "Failed to clone template"),
+  });
+
+  function handleClone() {
+    if (!drawerTemplate) return;
+    const suggested = `${drawerTemplate.slug}-copy`;
+    const new_slug = window.prompt(
+      "Slug for the cloned template (lowercase, hyphens only):",
+      suggested,
+    );
+    if (!new_slug) return;
+    const new_name = window.prompt(
+      "Name for the cloned template:",
+      `${drawerTemplate.name} (copy)`,
+    );
+    cloneM.mutate({ slug: drawerTemplate.slug, new_slug, new_name });
+  }
 
   // Phase 22 — default form schema persistence
   const defaultSchemaM = useMutation({
@@ -438,50 +473,47 @@ export default function TemplatesSection() {
       {/* Page header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Templates</h1>
-          <p className="text-[var(--color-fg-muted)]">
+          <h1 className="text-5xl font-bold tracking-tight">Templates</h1>
+          <p className="text-xl text-[var(--color-fg-muted)] mt-3">
             Module templates define the sessions, capacity, and materials for each SciTrek module.
           </p>
         </div>
-        <Button onClick={openCreate}>New template</Button>
+        <button
+          onClick={openCreate}
+          className="px-8 py-4 text-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow"
+        >
+          + New template
+        </button>
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex-1 min-w-[12rem]">
-          <Label htmlFor="tmpl-search" className="sr-only">
-            Search by name
-          </Label>
-          <Input
-            id="tmpl-search"
-            placeholder="Search by name..."
-            value={search}
-            onChange={handleSearchChange}
-          />
-        </div>
-        <div>
-          <Label htmlFor="tmpl-type" className="sr-only">
-            Filter by type
-          </Label>
-          <select
-            id="tmpl-type"
-            aria-label="Filter by type"
-            value={typeFilter}
-            onChange={handleTypeFilterChange}
-            className="min-h-11 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm"
-          >
-            <option value="all">All types</option>
-            <option value="module">Module</option>
-            <option value="seminar">Seminar</option>
-            <option value="orientation">Orientation</option>
-          </select>
-        </div>
-        <label className="flex items-center gap-2 text-sm" htmlFor="tmpl-archived">
+      <div className="flex flex-wrap items-center gap-4">
+        <input
+          id="tmpl-search"
+          placeholder="Search by name..."
+          value={search}
+          onChange={handleSearchChange}
+          className="flex-1 min-w-[20rem] rounded-xl border border-gray-300 px-5 py-4 text-xl"
+        />
+        <select
+          id="tmpl-type"
+          aria-label="Filter by type"
+          value={typeFilter}
+          onChange={handleTypeFilterChange}
+          className="rounded-xl border border-gray-300 px-5 py-4 text-xl bg-white"
+        >
+          <option value="all">All types</option>
+          <option value="module">Module</option>
+          <option value="seminar">Seminar</option>
+          <option value="orientation">Orientation</option>
+        </select>
+        <label className="flex items-center gap-2 text-lg" htmlFor="tmpl-archived">
           <input
             id="tmpl-archived"
             type="checkbox"
             checked={showArchived}
             onChange={handleShowArchivedChange}
+            className="h-5 w-5"
           />
           Show archived
         </label>
@@ -507,76 +539,92 @@ export default function TemplatesSection() {
         />
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-[var(--color-bg-muted)] text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
+          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+            <table className="min-w-full text-2xl">
+              <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
                 <tr>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2">Duration</th>
-                  <th className="px-3 py-2">Sessions</th>
-                  <th className="px-3 py-2">Capacity</th>
-                  {showArchived && <th className="px-3 py-2">Status</th>}
-                  {showArchived && <th className="px-3 py-2" />}
+                  <th className="py-5 px-6">Name</th>
+                  <th className="py-5 px-6">Type</th>
+                  <th className="py-5 px-6">Duration</th>
+                  <th className="py-5 px-6">Sessions</th>
+                  <th className="py-5 px-6">Capacity</th>
+                  {showArchived && <th className="py-5 px-6">Status</th>}
+                  <th className="py-5 px-6 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-100">
                 {pageData.map((t) => {
                   const isArchived = !!t.deleted_at;
                   return (
                     <tr
                       key={t.slug}
-                      className={`border-t border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-bg-muted)] ${
+                      className={`cursor-pointer hover:bg-gray-50 ${
                         isArchived ? "opacity-60" : ""
                       }`}
                       onClick={() => !isArchived && openEdit(t)}
                     >
-                      <td className="px-3 py-2 font-medium">{t.name}</td>
-                      <td className="px-3 py-2">
+                      <td className="py-6 px-6 font-semibold">{t.name}</td>
+                      <td className="py-6 px-6">
                         <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          className={`inline-flex items-center rounded-full px-3 py-1 text-base font-medium ${
                             TYPE_BADGE[t.type] || "bg-gray-100 text-gray-700"
                           }`}
                         >
                           {capitalize(t.type)}
                         </span>
                       </td>
-                      <td className="px-3 py-2">{t.duration_minutes} min</td>
-                      <td className="px-3 py-2">
+                      <td className="py-6 px-6 text-gray-800">{t.duration_minutes} min</td>
+                      <td className="py-6 px-6 text-gray-800">
                         {t.session_count === 1
                           ? "1 session"
                           : `${t.session_count} sessions`}
                       </td>
-                      <td className="px-3 py-2">{t.default_capacity}</td>
+                      <td className="py-6 px-6 text-gray-800">{t.default_capacity}</td>
                       {showArchived && (
-                        <td className="px-3 py-2">
+                        <td className="py-6 px-6">
                           {isArchived ? (
-                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">
+                            <span className="inline-flex items-center rounded-full px-3 py-1 text-base font-medium bg-gray-100 text-gray-600">
                               Archived
                             </span>
                           ) : (
-                            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">
+                            <span className="inline-flex items-center rounded-full px-3 py-1 text-base font-medium bg-green-100 text-green-700">
                               Active
                             </span>
                           )}
                         </td>
                       )}
-                      {showArchived && (
-                        <td
-                          className="px-3 py-2 text-right"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {isArchived && (
-                            <Button
-                              variant="secondary"
-                              onClick={() => restoreM.mutate(t.slug)}
-                              disabled={restoreM.isPending}
+                      <td
+                        className="py-6 px-6 text-right space-x-5 whitespace-nowrap"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {isArchived ? (
+                          <button
+                            type="button"
+                            onClick={() => restoreM.mutate(t.slug)}
+                            disabled={restoreM.isPending}
+                            className="text-blue-600 hover:underline font-medium disabled:opacity-50"
+                          >
+                            Restore
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => openEdit(t)}
+                              className="text-blue-600 hover:underline font-medium"
                             >
-                              Restore
-                            </Button>
-                          )}
-                        </td>
-                      )}
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setArchiveConfirm(t.slug)}
+                              className="text-red-600 hover:underline font-medium"
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -619,6 +667,7 @@ export default function TemplatesSection() {
             isCreate={false}
             onSubmit={handleUpdate}
             onArchive={() => setArchiveConfirm(drawerTemplate.slug)}
+            onClone={handleClone}
             onCancel={() => setDrawerTemplate(null)}
             onEditFormFields={() => setFormFieldsFor(drawerTemplate)}
             submitting={updateM.isPending}

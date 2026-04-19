@@ -263,10 +263,27 @@ export default function FormFieldsDrawer({
     <>
       <SideDrawer open={open} onClose={onClose} title={title} widthClass="w-[40rem]">
         <div className="space-y-3">
+          <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm text-blue-900 space-y-2">
+            <p className="font-semibold">What are custom questions?</p>
+            <p>
+              Extra questions you want to ask volunteers when they sign up for
+              this event — anything beyond name, email, and phone (which are
+              always collected).
+            </p>
+            <p>
+              <span className="font-semibold">Examples:</span> "Emergency
+              contact", "Do you need a parking pass?", "T-shirt size", "Any
+              dietary restrictions?"
+            </p>
+            <p>
+              Answers show up on the roster and in the CSV export. Leave this
+              empty if you don't need any extra info.
+            </p>
+          </div>
           <div className="flex items-center justify-between">
             <p className="text-sm text-[var(--color-fg-muted)]">
-              Define the questions shown on the signup form. Volunteers answer
-              once per signup; responses appear on the roster and CSV export.
+              Click <span className="font-medium">Add field</span> to create a
+              question.
             </p>
             <Button type="button" onClick={openCreate}>
               Add field

@@ -148,6 +148,7 @@ def test_commit_rollback_on_integrity_error(db_session, admin_user_and_headers):
                     "status": "ok",
                     "normalized": {
                         "module_slug": "test-module",
+                        "school": "Test School",
                         "location": "Room A",
                         "start_at": "2026-09-15T09:00:00",
                         "end_at": "2026-09-15T11:00:00",

@@ -12,6 +12,23 @@ function RedirectOrganizeRoster() {
   return <Navigate to={`/organizer/events/${eventId}/roster`} replace />;
 }
 
+function RedirectEventsToVolunteer() {
+  return <Navigate to="/volunteer" replace />;
+}
+
+function RedirectEventDetailToVolunteer() {
+  const { eventId } = useParams();
+  return <Navigate to={`/volunteer/events/${eventId}`} replace />;
+}
+
+function RootRoute() {
+  const { isAuthed, role } = useAuth();
+  if (isAuthed && (role === "admin" || role === "organizer")) {
+    return <Navigate to="/admin" replace />;
+  }
+  return <LoginPage />;
+}
+
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -31,7 +48,7 @@ import { useAuth } from "./state/useAuth";
 
 function AdminIndexRoute() {
   const { role } = useAuth();
-  if (role === "organizer") return <Navigate to="/organizer" replace />;
+  if (role === "organizer") return <Navigate to="/admin/preview" replace />;
   return <OverviewSection />;
 }
 import AdminEventPage from "./pages/AdminEventPage";
@@ -57,12 +74,22 @@ export default function App() {
     <Routes>
       {/* Layout wrapper */}
       <Route path="/" element={<Layout />}>
-        {/* Public */}
-        <Route index element={<Navigate to="/events" replace />} />
+        {/* Root — admin landing (login if signed out, dashboard if signed in) */}
+        <Route index element={<RootRoute />} />
         <Route path="login" element={<LoginPage />} />
         <Route path="set-password" element={<SetPasswordPage />} />
-        <Route path="events" element={<EventsBrowsePage />} />
-        <Route path="events/:eventId" element={<EventDetailPage />} />
+
+        {/* Participant surfaces (no login button anywhere) */}
+        <Route path="volunteer" element={<EventsBrowsePage />} />
+        <Route path="volunteer/events/:eventId" element={<EventDetailPage />} />
+
+        {/* Legacy /events — redirect to /volunteer so emailed links don't break */}
+        <Route path="events" element={<RedirectEventsToVolunteer />} />
+        <Route
+          path="events/:eventId"
+          element={<RedirectEventDetailToVolunteer />}
+        />
+
         <Route path="check-in/:signupId" element={<SelfCheckInPage />} />
         <Route path="event-check-in/:eventId" element={<EventCheckInPage />} />
         <Route path="signup/confirm" element={<ConfirmSignupPage />} />
@@ -76,7 +103,7 @@ export default function App() {
 
         {/* Organizer roster — mobile check-in surface */}
         <Route element={<ProtectedRoute roles={["organizer", "admin"]} />}>
-          <Route path="organizer" element={<OrganizerDashboard />} />
+          <Route path="organizer" element={<Navigate to="/admin/preview" replace />} />
           <Route path="organizer/events/:eventId" element={<RedirectEventToAdmin />} />
           <Route path="organizer/events/:eventId/roster" element={<OrganizerRosterPage />} />
           {/* Legacy typo path — preserved as redirect for old bookmarks/tests */}
@@ -88,9 +115,15 @@ export default function App() {
           <Route path="admin" element={<AdminLayout />}>
             <Route index element={<AdminIndexRoute />} />
             <Route path="events" element={<EventsSection />} />
+            <Route path="preview" element={<OrganizerDashboard />} />
             <Route path="events/:eventId" element={<AdminEventPage />} />
+            <Route
+              path="events/:eventId/roster"
+              element={<OrganizerRosterPage />}
+            />
             <Route path="imports" element={<ImportsSection />} />
             <Route path="templates" element={<TemplatesSection />} />
+            <Route path="reminders" element={<AdminRemindersPage />} />
             <Route path="help" element={<HelpSection />} />
             {/* Admin-only surfaces */}
             <Route element={<ProtectedRoute roles={["admin"]} />}>
@@ -102,8 +135,6 @@ export default function App() {
                 path="orientation-credits"
                 element={<OrientationCreditsSection />}
               />
-              {/* Phase 24 — scheduled reminder emails */}
-              <Route path="reminders" element={<AdminRemindersPage />} />
             </Route>
           </Route>
         </Route>

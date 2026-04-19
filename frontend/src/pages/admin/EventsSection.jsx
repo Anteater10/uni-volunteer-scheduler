@@ -807,8 +807,8 @@ export default function EventsSection() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Events</h1>
-          <p className="text-sm text-gray-600">
+          <h1 className="text-5xl font-bold tracking-tight">Events</h1>
+          <p className="text-xl text-gray-600 mt-3">
             All events in the system. Create, edit, or delete events here.
           </p>
         </div>
@@ -817,23 +817,23 @@ export default function EventsSection() {
             setEditing(null);
             setDrawerMode("create");
           }}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg"
+          className="px-8 py-4 text-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow"
         >
           + New event
         </button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-4">
         <input
           placeholder="Search by title…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[14rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          className="flex-1 min-w-[20rem] rounded-xl border border-gray-300 px-5 py-4 text-xl"
         />
         <select
           value={scope}
           onChange={(e) => setScope(e.target.value)}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
+          className="rounded-xl border border-gray-300 px-5 py-4 text-xl bg-white"
         >
           <option value="upcoming">Upcoming</option>
           <option value="past">Past</option>
@@ -855,21 +855,21 @@ export default function EventsSection() {
           No events match.
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+          <table className="min-w-full text-2xl">
+            <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
               <tr>
-                <th className="py-2 px-3">Title</th>
-                <th className="py-2 px-3">Start</th>
-                <th className="py-2 px-3">End</th>
-                <th className="py-2 px-3">Location</th>
-                <th className="py-2 px-3 text-right">Actions</th>
+                <th className="py-5 px-6">Title</th>
+                <th className="py-5 px-6">Start</th>
+                <th className="py-5 px-6">End</th>
+                <th className="py-5 px-6">Location</th>
+                <th className="py-5 px-6 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.map((e) => (
                 <tr key={e.id} className="hover:bg-gray-50">
-                  <td className="py-2 px-3 font-medium">
+                  <td className="py-6 px-6 font-semibold">
                     <Link
                       to={`/admin/events/${e.id}`}
                       className="text-blue-600 hover:underline"
@@ -877,28 +877,28 @@ export default function EventsSection() {
                       {e.title || "(untitled)"}
                     </Link>
                   </td>
-                  <td className="py-2 px-3">{fmtDateTime(e.start_date)}</td>
-                  <td className="py-2 px-3">{fmtDateTime(e.end_date)}</td>
-                  <td className="py-2 px-3">{e.location || "—"}</td>
-                  <td className="py-2 px-3 text-right space-x-2 whitespace-nowrap">
+                  <td className="py-6 px-6 text-gray-800">{fmtDateTime(e.start_date)}</td>
+                  <td className="py-6 px-6 text-gray-800">{fmtDateTime(e.end_date)}</td>
+                  <td className="py-6 px-6 text-gray-800">{e.location || "—"}</td>
+                  <td className="py-6 px-6 text-right space-x-5 whitespace-nowrap">
                     <button
                       onClick={() => {
                         setEditing(e);
                         setDrawerMode("edit");
                       }}
-                      className="text-blue-600 hover:underline"
+                      className="text-blue-600 hover:underline font-medium"
                     >
                       Edit
                     </button>
                     <button
                       onClick={() => cloneM.mutate(e.id)}
-                      className="text-gray-700 hover:underline"
+                      className="text-gray-700 hover:underline font-medium"
                     >
                       Clone
                     </button>
                     <button
                       onClick={() => setDeleting(e)}
-                      className="text-red-600 hover:underline"
+                      className="text-red-600 hover:underline font-medium"
                     >
                       Delete
                     </button>

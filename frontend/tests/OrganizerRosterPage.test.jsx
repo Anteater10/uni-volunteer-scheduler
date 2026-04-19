@@ -89,7 +89,7 @@ describe("OrganizerRosterPage", () => {
   it("shows checked-in count in header", async () => {
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText(/1 of 3 checked in/)).toBeInTheDocument();
+      expect(screen.getByText(/1 \/ 3/)).toBeInTheDocument();
     });
   });
 

@@ -37,10 +37,10 @@ function fmtDateTime(iso) {
 function StatCard({ label, value }) {
   return (
     <Card>
-      <p className="text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
+      <p className="text-sm uppercase tracking-wide text-[var(--color-fg-muted)] font-medium">
         {label}
       </p>
-      <p className="mt-1 text-2xl font-semibold">{value ?? "—"}</p>
+      <p className="mt-1 text-3xl font-semibold">{value ?? "—"}</p>
     </Card>
   );
 }
@@ -48,10 +48,10 @@ function StatCard({ label, value }) {
 function DetailRow({ label, value }) {
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
+      <dt className="text-sm uppercase tracking-wide text-[var(--color-fg-muted)] font-medium">
         {label}
       </dt>
-      <dd className="mt-0.5">{value}</dd>
+      <dd className="mt-1 text-base">{value}</dd>
     </div>
   );
 }
@@ -181,6 +181,7 @@ export default function AdminEventPage() {
               module_slug: e.module_slug,
               week_number: e.week_number,
               year: e.year,
+              quarter: e.quarter,
             });
           }
         }
@@ -236,7 +237,7 @@ export default function AdminEventPage() {
     setErr("");
     try {
       await downloadBlob(
-        `/admin/events/${eventId}/export?privacy=${privacy}`,
+        `/admin/events/${eventId}/export_csv`,
         `event_${eventId}_roster.csv`,
         { auth: true },
       );
@@ -253,7 +254,7 @@ export default function AdminEventPage() {
         title={eventTitle}
         action={
           <div className="flex gap-2">
-            <Button as={Link} to={`/organizer/events/${eventId}/roster`}>
+            <Button as={Link} to={`/admin/events/${eventId}/roster`}>
               Live roster (check-in)
             </Button>
             <Button variant="secondary" onClick={() => setQrOpen(true)}>
@@ -289,7 +290,7 @@ export default function AdminEventPage() {
       </Card>
 
       <section>
-        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+        <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide mb-3">
           Attendance summary
         </h2>
         {analyticsQ.isPending ? (
@@ -313,7 +314,7 @@ export default function AdminEventPage() {
       </section>
 
       <section>
-        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+        <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide mb-3">
           Event details
         </h2>
         {eventQ.isPending ? (
@@ -326,14 +327,14 @@ export default function AdminEventPage() {
           />
         ) : (
           <Card>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 text-base">
               <DetailRow label="Location" value={eventQ.data.location || "—"} />
               <DetailRow label="Visibility" value={eventQ.data.visibility || "—"} />
-              <DetailRow label="Starts" value={fmtDateTime(eventQ.data.start_at)} />
-              <DetailRow label="Ends" value={fmtDateTime(eventQ.data.end_at)} />
+              <DetailRow label="Starts" value={fmtDateTime(eventQ.data.start_date)} />
+              <DetailRow label="Ends" value={fmtDateTime(eventQ.data.end_date)} />
               <DetailRow
                 label="Max signups per user"
-                value={eventQ.data.max_signups_per_user ?? "—"}
+                value={eventQ.data.max_signups_per_user ?? "No limit"}
               />
               <DetailRow
                 label="Created"
@@ -353,7 +354,7 @@ export default function AdminEventPage() {
       </section>
 
       <section>
-        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+        <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide mb-3">
           Form fields
         </h2>
         <Card>
@@ -361,15 +362,25 @@ export default function AdminEventPage() {
             <Skeleton className="h-10" />
           ) : (
             <>
-              <p className="text-sm text-[var(--color-fg-muted)] mb-2">
+              <p className="text-sm mb-2">
+                <span className="font-medium">Ask volunteers extra questions when they sign up.</span>{" "}
+                Beyond the standard name, email, and phone (which are always
+                collected), you can add your own questions — e.g. "Emergency
+                contact", "Do you need a parking pass?", "T-shirt size",
+                "Dietary restrictions". Answers appear on the roster and in
+                the CSV export.
+              </p>
+              <p className="text-sm text-[var(--color-fg-muted)] mb-3">
                 {(formSchemaQ.data?.schema || []).length === 0
-                  ? "No custom signup questions configured. Volunteers will see only the standard name / email / phone fields."
-                  : `${(formSchemaQ.data?.schema || []).length} custom question${
+                  ? "No extra questions set up yet. Click below to add one — or leave it empty if you don't need any."
+                  : `${(formSchemaQ.data?.schema || []).length} extra question${
                       (formSchemaQ.data?.schema || []).length === 1 ? "" : "s"
-                    } on the signup form.`}
+                    } set up on this event's signup form.`}
               </p>
               <Button onClick={() => setFormFieldsOpen(true)}>
-                Edit form fields
+                {(formSchemaQ.data?.schema || []).length === 0
+                  ? "Add a question"
+                  : "Edit questions"}
               </Button>
             </>
           )}
@@ -377,7 +388,7 @@ export default function AdminEventPage() {
       </section>
 
       <section>
-        <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mb-2">
+        <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide mb-3">
           Signed-up volunteers
         </h2>
         {rosterQ.isPending ? (

@@ -3,8 +3,67 @@
 Runs stage-1 LLM extraction then stage-2 deterministic validation.
 Stores preview in csv_imports.result_payload.
 """
+import re
 import statistics
 from typing import List
+
+
+# Common partner high schools in SciTrek sheets. Used to (a) detect a school
+# name anywhere in the header/body and (b) spot when the LLM has stuffed the
+# school into the `location` field by mistake.
+_KNOWN_PARTNER_SCHOOL_STEMS = (
+    "San Marcos",
+    "Dos Pueblos",
+    "Santa Barbara",
+    "Goleta Valley",
+    "Carpinteria",
+)
+
+
+def _find_school_in_header(raw_csv: str) -> str | None:
+    """Scan the first few CSV lines for a partner high school name.
+
+    Recognises both labelled ('School: San Marcos High School') and bare
+    ('San Marcos' alone in a header cell) forms. Returns the canonical
+    '<Stem> High School' string, or None if nothing matches.
+    """
+    header_blob = "\n".join(raw_csv.splitlines()[:5])
+    m = re.search(r"School:\s*([A-Za-z .'-]+?(?:\bHigh School\b)?)", header_blob)
+    if m:
+        raw = m.group(1).strip().rstrip(",").strip()
+        if raw:
+            return raw if "High School" in raw else f"{raw} High School"
+    for stem in _KNOWN_PARTNER_SCHOOL_STEMS:
+        if re.search(rf"\b{re.escape(stem)}\b", header_blob):
+            return f"{stem} High School"
+    return None
+
+
+def _looks_like_school(value: str) -> bool:
+    if not value:
+        return False
+    if "High School" in value:
+        return True
+    return any(stem in value for stem in _KNOWN_PARTNER_SCHOOL_STEMS)
+
+
+def _repair_extracted_rows(raw_csv: str, rows: list[dict]) -> list[dict]:
+    """Deterministic post-LLM fixups for school/location confusion.
+
+    The Gemma/4o-mini models frequently stuff the partner-school name into
+    ``location`` and leave ``school`` empty. We backfill ``school`` from the
+    header and clear a school-shaped ``location``.
+    """
+    header_school = _find_school_in_header(raw_csv)
+    for row in rows:
+        if not row.get("school") and _looks_like_school(row.get("location", "")):
+            row["school"] = row["location"]
+            row["location"] = ""
+        if not row.get("school") and header_school:
+            row["school"] = header_school
+        if _looks_like_school(row.get("location", "")):
+            row["location"] = ""
+    return rows
 
 import instructor
 from openai import OpenAI
@@ -64,15 +123,29 @@ def _stage1_extract(raw_csv: str, model: str) -> list[dict]:
         "You extract Sci Trek volunteer events from quarterly CSV sign-up sheets.\n\n"
         "CSV LAYOUT (not a standard tabular CSV):\n"
         "- Cell A1: module name (e.g. 'Glucose Sensing')\n"
-        "- Header row also has teacher name and school name in adjacent cells\n"
-        "- Then rows alternate between: date rows like '5/27 (Wednesday)' and\n"
-        "  period rows like 'Period 1: 8:00 AM to 10:20 AM'\n"
-        "- Each date may have 1-4 periods. Each period = one event.\n"
+        "- Header row may also include teacher name and school name in adjacent cells\n"
+        "- Then rows alternate between: date rows like '5/27 (Wednesday)' or\n"
+        "  '5/21 -Thursday', and time-range rows like 'Period 1: 8:00 AM to 10:20 AM'\n"
+        "  or 'Orientation #1' followed by '3:30 PM - 5:30 PM in CHEM 1005D'.\n"
+        "- Each date may have 1-4 time blocks. Each block = one event.\n"
         "- Lead/Volunteer name columns may be empty or filled — ignore them.\n\n"
-        "OUTPUT: One ExtractedEvent per period block found in the CSV.\n"
-        f"Use year {current_year} for all dates (CSV only shows month/day).\n"
-        "Set location to the school name from the header.\n"
-        "Set instructor_name to the teacher name from the header.\n\n"
+        "OUTPUT: One ExtractedEvent per time block found in the CSV.\n"
+        f"Use year {current_year} for all dates (CSV only shows month/day).\n\n"
+        "FIELD RULES — READ CAREFULLY:\n"
+        "- school: the PARTNER HIGH SCHOOL name from the header row. Look for a\n"
+        "  cell containing 'School:' (e.g. 'School: San Marcos High School' →\n"
+        "  'San Marcos High School'), OR any header cell that clearly names a\n"
+        "  high school (e.g. ' San Marcos' alone in a header cell means 'San\n"
+        "  Marcos High School'). Normalise short forms like 'San Marcos' or\n"
+        "  'Dos Pueblos' by appending ' High School'. Never leave school empty\n"
+        "  if ANY header cell contains a school name or a 'School:' label.\n"
+        "- location: the specific ROOM for this block — e.g. 'CHEM 1005D'\n"
+        "  appearing inside the time-range cell like '3:30 PM - 5:30 PM in\n"
+        "  CHEM 1005D'. NEVER put the high school name here; that goes in the\n"
+        "  `school` field. If no room is visible in the time cell, return an\n"
+        "  empty string.\n"
+        "- instructor_name: the teacher name from the header (strip any\n"
+        "  'Teacher:' prefix).\n\n"
         f"Known module template slugs: {slug_list}.\n"
         "Match the module name (cell A1) to the closest known slug. If no slug "
         "matches, use a kebab-case slug derived from the module name.\n\n"
@@ -136,6 +209,8 @@ def process_csv_import(self, import_id: str) -> None:
         # Stage 1: LLM extraction via OpenRouter (Gemma 4 31B free)
         raw_csv = raw_csv_bytes.decode("utf-8", errors="replace")
         extracted_dicts = _stage1_extract(raw_csv, settings.llm_model)
+        # Post-LLM repair: backfill school from header, fix school-in-location.
+        extracted_dicts = _repair_extracted_rows(raw_csv, extracted_dicts)
 
         if not extracted_dicts:
             import_service.update_import_status(

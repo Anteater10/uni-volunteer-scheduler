@@ -11,7 +11,53 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from app.models import CsvImport, CsvImportStatus, Event, Slot, ModuleTemplate, Quarter, SlotType
+import re
+
+from app.models import CsvImport, CsvImportStatus, Event, Slot, ModuleTemplate, ModuleType, Quarter, SlotType
+
+
+_KNOWN_PARTNER_SCHOOL_STEMS = (
+    "San Marcos", "Dos Pueblos", "Santa Barbara", "Goleta Valley", "Carpinteria",
+)
+
+
+def _looks_like_school(value: str) -> bool:
+    if not value:
+        return False
+    if "High School" in value:
+        return True
+    return any(stem in value for stem in _KNOWN_PARTNER_SCHOOL_STEMS)
+
+
+def _normalize_school(value: str) -> str:
+    """Normalise bare partner-school names to '<Stem> High School' so the
+    merge key compares equal across module + orientation CSVs."""
+    if not value:
+        return value
+    cleaned = value.strip().rstrip(",").strip()
+    if "High School" in cleaned:
+        return cleaned
+    for stem in _KNOWN_PARTNER_SCHOOL_STEMS:
+        if stem in cleaned:
+            return f"{stem} High School"
+    return cleaned
+
+
+def _find_school_in_header(raw_csv: str) -> str | None:
+    """Scan the first few CSV lines for a partner high school name. Mirrors
+    the repair logic in tasks/import_csv.py so old previews self-heal."""
+    if not raw_csv:
+        return None
+    header_blob = "\n".join(raw_csv.splitlines()[:5])
+    m = re.search(r"School:\s*([A-Za-z .'-]+?(?:\bHigh School\b)?)", header_blob)
+    if m:
+        raw = m.group(1).strip().rstrip(",").strip()
+        if raw:
+            return raw if "High School" in raw else f"{raw} High School"
+    for stem in _KNOWN_PARTNER_SCHOOL_STEMS:
+        if re.search(rf"\b{re.escape(stem)}\b", header_blob):
+            return f"{stem} High School"
+    return None
 
 
 # UCSB quarter start dates — keep in sync with backend/app/routers/public/events.py
@@ -117,6 +163,7 @@ def revalidate_import(db: Session, import_id) -> dict:
         src = row.get("original") or row.get("normalized") or {}
         extracted.append(ExtractedEvent(
             module_slug=src.get("module_slug", ""),
+            school=src.get("school", row.get("normalized", {}).get("school", "")),
             location=src.get("location", ""),
             start_at=src.get("start_at"),
             end_at=src.get("end_at"),
@@ -207,9 +254,29 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
     if not ok_rows:
         raise HTTPException(status_code=400, detail="No rows to commit")
 
-    # Normalise + group rows by (school, week_number). Each group becomes ONE
-    # Event with N slots — admins want a single "Glucose Sensing" card per
-    # week per school, not one per period.
+    # Merge key: an orientation template and its paired module template share
+    # a family_key so the two imports collapse into one Event per (family,
+    # school, week). Fallback to slug when family_key is unset.
+    family_slug = template.family_key or template.slug
+    slot_type = SlotType.ORIENTATION if template.type == ModuleType.orientation else SlotType.PERIOD
+
+    # Locate a sibling module-kind template for nicer Event title/description
+    # when the orientation CSV lands first.
+    sibling_module = None
+    if template.type == ModuleType.orientation:
+        sibling_module = (
+            db.query(ModuleTemplate)
+            .filter(
+                ModuleTemplate.deleted_at.is_(None),
+                ModuleTemplate.type == ModuleType.module,
+                (ModuleTemplate.family_key == family_slug) | (ModuleTemplate.slug == family_slug),
+            )
+            .first()
+        )
+
+    # Normalise + group rows by (school, week_number). Orientation rows may
+    # omit school (older format); they fall into the empty-school bucket and
+    # are rejected below.
     normalised_rows = []
     for row in ok_rows:
         n = row["normalized"]
@@ -219,12 +286,36 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
             start_at = datetime.fromisoformat(start_at)
         if isinstance(end_at, str):
             end_at = datetime.fromisoformat(end_at)
-        location = n.get("location") or ""
+        # Event.start_date / Slot.start_time are tz-aware (DateTime(timezone=True)).
+        # Coerce naive ISO strings from CSV to UTC so merge comparisons don't
+        # raise "can't compare offset-naive and offset-aware datetimes".
+        if start_at.tzinfo is None:
+            start_at = start_at.replace(tzinfo=timezone.utc)
+        if end_at.tzinfo is None:
+            end_at = end_at.replace(tzinfo=timezone.utc)
+        school = (n.get("school") or "").strip()
+        location = (n.get("location") or "").strip()
+        # Self-heal: older LLM extractions stuffed the partner-school into
+        # `location`. If school is empty but location looks like a school
+        # name, swap. Final header fallback reads the stored raw_csv blob.
+        if not school and _looks_like_school(location):
+            school = location
+            location = ""
+        if not school:
+            header_school = _find_school_in_header(
+                (imp.result_payload or {}).get("raw_csv", "")
+            )
+            if header_school:
+                school = header_school
+        if _looks_like_school(location):
+            location = ""
+        school = _normalize_school(school)
         capacity = n.get("capacity") or template.default_capacity
         quarter, year, week = _compute_quarter_week(start_at.date())
         normalised_rows.append({
             "start_at": start_at,
             "end_at": end_at,
+            "school": school,
             "location": location,
             "capacity": capacity,
             "quarter": quarter,
@@ -232,33 +323,74 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
             "week": week,
         })
 
-    groups: dict[tuple[str, int | None], list[dict]] = {}
+    missing_school = [i for i, r in enumerate(normalised_rows) if not r["school"]]
+    if missing_school:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "CSV rows are missing the 'school' column. Update the sheet so "
+                "every row names the partner high school, then retry."
+            ),
+        )
+
+    # Merge key: (family, school, quarter, year). Orientation sessions may
+    # happen the week before the module runs, so keying on week_number would
+    # create a separate event — widen to the full quarter so both collapse.
+    groups: dict[tuple[str, Quarter | None, int | None], list[dict]] = {}
     for r in normalised_rows:
-        key = (r["location"], r["week"])
+        key = (r["school"], r["quarter"], r["year"])
         groups.setdefault(key, []).append(r)
 
-    created_events = []
+    created_events: list[dict] = []
+    merged_events: list[dict] = []
     try:
-        for (location, week), group in groups.items():
+        for (school, quarter, year), group in groups.items():
             group.sort(key=lambda r: r["start_at"])
             first = group[0]
             last_end = max(r["end_at"] for r in group)
-
-            event = Event(
-                owner_id=imp.uploaded_by,
-                title=template.name,
-                description=template.description,
-                location=location,
-                start_date=first["start_at"],
-                end_date=last_end,
-                module_slug=template.slug,
-                quarter=first["quarter"],
-                year=first["year"],
-                week_number=week,
-                school=location or None,
+            module_week = min(
+                (r["week"] for r in group if r["week"] is not None),
+                default=first["week"],
             )
-            db.add(event)
-            db.flush()  # get event.id
+
+            event = (
+                db.query(Event)
+                .filter(
+                    Event.module_slug == family_slug,
+                    Event.school == school,
+                    Event.quarter == quarter,
+                    Event.year == year,
+                )
+                .first()
+            )
+            existed = event is not None
+
+            if event is None:
+                title_template = sibling_module or template
+                event = Event(
+                    owner_id=imp.uploaded_by,
+                    title=title_template.name,
+                    description=title_template.description,
+                    location=school or None,
+                    start_date=first["start_at"],
+                    end_date=last_end,
+                    module_slug=family_slug,
+                    quarter=quarter,
+                    year=year,
+                    week_number=module_week,
+                    school=school or None,
+                )
+                db.add(event)
+                db.flush()
+            else:
+                # Expand window to include newly arriving slots. Prefer the
+                # module-week when merging orientation into a module event.
+                if first["start_at"] < event.start_date:
+                    event.start_date = first["start_at"]
+                if last_end > event.end_date:
+                    event.end_date = last_end
+                if slot_type == SlotType.PERIOD and module_week is not None:
+                    event.week_number = module_week
 
             for r in group:
                 slot = Slot(
@@ -266,30 +398,38 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
                     start_time=r["start_at"],
                     end_time=r["end_at"],
                     capacity=r["capacity"],
-                    slot_type=SlotType.PERIOD,
+                    slot_type=slot_type,
                     date=r["start_at"].date(),
-                    location=location or None,
+                    location=r["location"] or None,
                 )
                 db.add(slot)
 
-            created_events.append({
+            record = {
                 "event_id": str(event.id),
                 "title": event.title,
                 "location": event.location,
-                "start_date": first["start_at"].isoformat(),
-                "end_date": last_end.isoformat(),
-                "quarter": first["quarter"].value if first["quarter"] else None,
-                "year": first["year"],
-                "week_number": week,
+                "school": school,
+                "start_date": event.start_date.isoformat(),
+                "end_date": event.end_date.isoformat(),
+                "quarter": quarter.value if quarter else None,
+                "year": year,
+                "week_number": event.week_number,
                 "slot_count": len(group),
-            })
+                "slot_type": slot_type.value,
+                "merged": existed,
+            }
+            (merged_events if existed else created_events).append(record)
 
         # Update import status
         imp.status = CsvImportStatus.committed
         imp.updated_at = datetime.now(timezone.utc)
         db.commit()
 
-        return {"created_count": len(created_events), "events": created_events}
+        return {
+            "created_count": len(created_events),
+            "merged_count": len(merged_events),
+            "events": created_events + merged_events,
+        }
 
     except IntegrityError as e:
         db.rollback()

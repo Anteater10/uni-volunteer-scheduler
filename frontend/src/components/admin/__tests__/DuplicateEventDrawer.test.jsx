@@ -81,6 +81,7 @@ describe("DuplicateEventDrawer", () => {
     expect(onSubmit).toHaveBeenCalledWith({
       target_weeks: [5, 6],
       target_year: 2026,
+      target_quarter: "spring",
       skip_conflicts: true,
     });
   });

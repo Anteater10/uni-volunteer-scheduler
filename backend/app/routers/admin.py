@@ -1995,6 +1995,20 @@ def restore_module_template(
     return template_service.restore_template(db, slug)
 
 
+@router.post("/module-templates/{slug}/clone", response_model=ModuleTemplateRead, status_code=201)
+def clone_module_template(
+    slug: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
+):
+    new_slug = (payload or {}).get("new_slug")
+    new_name = (payload or {}).get("new_name")
+    if not new_slug:
+        raise HTTPException(status_code=422, detail="new_slug is required")
+    return template_service.clone_template(db, slug, new_slug, new_name)
+
+
 # =========================
 # PHASE 22 — CUSTOM FORM FIELDS
 # =========================
@@ -2056,16 +2070,20 @@ def duplicate_event(
         raise HTTPException(status_code=422, detail="body must be an object")
     target_weeks = body.get("target_weeks") or []
     target_year = body.get("target_year")
+    target_quarter = body.get("target_quarter")
     skip_conflicts = bool(body.get("skip_conflicts", True))
     if not isinstance(target_weeks, list):
         raise HTTPException(status_code=422, detail="target_weeks must be a list")
     if not isinstance(target_year, int):
         raise HTTPException(status_code=422, detail="target_year must be an int")
+    if target_quarter is not None and not isinstance(target_quarter, str):
+        raise HTTPException(status_code=422, detail="target_quarter must be a string")
     return event_duplication_service.duplicate_event(
         db,
         source_event_id=event_id,
         target_weeks=[int(w) for w in target_weeks],
         target_year=target_year,
+        target_quarter=target_quarter,
         skip_conflicts=skip_conflicts,
         actor=admin_user,
     )
@@ -2203,6 +2221,18 @@ def retry_csv_import(
     )
     process_csv_import.delay(str(imp.id))
     return {"status": "retrying", "import_id": import_id}
+
+
+@router.delete("/imports/{import_id}", status_code=204)
+def delete_csv_import(
+    import_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
+):
+    """Permanently delete an import record. Events already committed are NOT removed."""
+    imp = import_service.get_import(db, import_id)
+    db.delete(imp)
+    db.commit()
 
 
 # =========================

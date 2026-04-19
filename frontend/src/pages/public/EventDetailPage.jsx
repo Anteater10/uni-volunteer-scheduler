@@ -844,26 +844,41 @@ export default function EventDetailPage() {
   const dateKeys = Object.keys(periodSlotsByDate).sort();
 
   return (
-    <div className="flex flex-col gap-4 py-4 max-w-4xl mx-auto">
+    <div className="flex flex-col gap-5 py-4 max-w-5xl mx-auto w-full">
       {/* Back link */}
       <div>
-        <Link to="/events" className="text-sm text-[var(--color-primary)] hover:underline">
+        <Link to="/volunteer" className="inline-flex items-center gap-1 text-sm text-[var(--color-primary)] hover:underline">
           &larr; Back to events
         </Link>
       </div>
 
-      {/* Event header */}
-      <div>
-        <h1 className="text-xl font-bold text-[var(--color-fg)]">
-          {event.title}
-        </h1>
-        <p className="text-sm text-[var(--color-fg-muted)] mt-1">
-          {event.school} &middot; {formatDateRange(event.start_date, event.end_date)}
-        </p>
-        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-          Times shown in Pacific Time.
-        </p>
-      </div>
+      {/* Event header — hero card */}
+      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-800 text-white p-6 sm:p-8 md:p-10">
+        <div
+          aria-hidden="true"
+          className="absolute -top-16 -right-16 h-64 w-64 rounded-full bg-blue-400/25 blur-3xl"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute -bottom-20 -left-10 h-72 w-72 rounded-full bg-indigo-300/20 blur-3xl"
+        />
+        <div className="relative z-10">
+          {event.school && (
+            <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-blue-200">
+              {event.school}
+            </p>
+          )}
+          <h1 className="mt-2 text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight leading-tight">
+            {event.title}
+          </h1>
+          <p className="mt-3 text-sm sm:text-base text-blue-100">
+            {formatDateRange(event.start_date, event.end_date)}
+          </p>
+          <p className="mt-1 text-xs text-blue-200/80">
+            Times shown in Pacific Time.
+          </p>
+        </div>
+      </section>
 
       {/* Phase 29 (LOCK-01) — signup window banner */}
       {outsideWindow && (
@@ -932,13 +947,151 @@ export default function EventDetailPage() {
           title="Every slot is full"
           body="This event is fully booked. Try another event from this week's list."
           action={
-            <Button variant="secondary" onClick={() => navigate("/events")}>
+            <Button variant="secondary" onClick={() => navigate("/volunteer")}>
               Back to events
             </Button>
           }
         />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+        <>
+          {/* ---- Mobile slot list (sm and below) ---- */}
+          <div className="md:hidden flex flex-col gap-5">
+            {orientationSlots.length > 0 && (
+              <section>
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)] mb-2">
+                  Orientation
+                </h2>
+                <div className="flex flex-col gap-3">
+                  {orientationSlots.map((slot) => {
+                    const isFull = slot.filled >= slot.capacity;
+                    const isSelected = selectedSlotIds.has(slot.id);
+                    return (
+                      <div
+                        key={slot.id}
+                        className={[
+                          "rounded-xl border bg-white p-4 shadow-sm",
+                          highlightOrientation && !isFull
+                            ? "border-blue-400 ring-2 ring-blue-200"
+                            : "border-[var(--color-border)]",
+                        ].join(" ")}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium uppercase tracking-wide text-blue-700">
+                              Orientation {slot._periodLabel}
+                            </p>
+                            <p className="mt-1 text-base font-semibold text-[var(--color-fg)]">
+                              {formatShortDate(slot.date)} · {formatWeekday(slot.date)}
+                            </p>
+                            <p className="text-sm text-[var(--color-fg-muted)] mt-0.5">
+                              {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
+                            </p>
+                            {slot.location && (
+                              <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
+                                {slot.location}
+                              </p>
+                            )}
+                            <p className="text-xs text-[var(--color-fg-muted)] mt-2">
+                              {slot.filled} of {slot.capacity} filled
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => toggleSlot(slot.id)}
+                            className={[
+                              "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-colors",
+                              isFull
+                                ? isSelected
+                                  ? "bg-amber-500 text-white"
+                                  : "bg-amber-600 text-white"
+                                : isSelected
+                                  ? "bg-green-600 text-white"
+                                  : "bg-blue-600 text-white",
+                            ].join(" ")}
+                          >
+                            {isFull
+                              ? isSelected ? "On waitlist" : "Join waitlist"
+                              : isSelected ? "Selected" : "Sign up"}
+                          </button>
+                        </div>
+                        {slot.signups?.length > 0 && (
+                          <div className="flex flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
+                            {slot.signups.map((s, i) => (
+                              <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+            {dateKeys.map((dateKey) => {
+              const daySlots = periodSlotsByDate[dateKey];
+              const firstSlot = daySlots[0];
+              return (
+                <section key={dateKey}>
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)] mb-2">
+                    {formatShortDate(dateKey)} · {formatWeekday(dateKey)}
+                    {firstSlot.location ? ` · ${firstSlot.location}` : ""}
+                  </h2>
+                  <div className="flex flex-col gap-3">
+                    {daySlots.map((slot) => {
+                      const isFull = slot.filled >= slot.capacity;
+                      const isSelected = selectedSlotIds.has(slot.id);
+                      return (
+                        <div
+                          key={slot.id}
+                          className="rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium uppercase tracking-wide text-indigo-700">
+                                Period {slot._periodLabel}
+                              </p>
+                              <p className="mt-1 text-base font-semibold text-[var(--color-fg)]">
+                                {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
+                              </p>
+                              <p className="text-xs text-[var(--color-fg-muted)] mt-2">
+                                {slot.filled} of {slot.capacity} filled
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => toggleSlot(slot.id)}
+                              className={[
+                                "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-colors",
+                                isFull
+                                  ? isSelected
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-amber-600 text-white"
+                                  : isSelected
+                                    ? "bg-green-600 text-white"
+                                    : "bg-blue-600 text-white",
+                              ].join(" ")}
+                            >
+                              {isFull
+                                ? isSelected ? "On waitlist" : "Join waitlist"
+                                : isSelected ? "Selected" : "Sign up"}
+                            </button>
+                          </div>
+                          {slot.signups?.length > 0 && (
+                            <div className="flex flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
+                              {slot.signups.map((s, i) => (
+                                <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+
+          {/* ---- Desktop slot table (md and up) ---- */}
+          <div className="hidden md:block overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
@@ -1095,7 +1248,8 @@ export default function EventDetailPage() {
               );
             })}
           </table>
-        </div>
+          </div>
+        </>
       )}
 
       {/* Identity form — shown when at least one slot is selected */}

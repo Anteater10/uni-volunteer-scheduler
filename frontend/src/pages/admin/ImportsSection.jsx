@@ -449,6 +449,26 @@ export default function ImportsSection() {
     onError: (err) => toast.error(err?.message || "Retry failed"),
   });
 
+  const deleteMut = useMutation({
+    mutationFn: (id) => api.admin.imports.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["adminImports"] });
+      setSelectedImportId(null);
+      toast.success("Import deleted. Events already committed are untouched.");
+    },
+    onError: (err) => toast.error(err?.message || "Delete failed"),
+  });
+
+  function handleDeleteImport(id) {
+    if (
+      !window.confirm(
+        "Delete this import record? Events already committed will NOT be removed.",
+      )
+    )
+      return;
+    deleteMut.mutate(id);
+  }
+
   function handleFileSelect(e) {
     const file = e.target.files?.[0];
     if (file) uploadMut.mutate(file);
@@ -480,22 +500,26 @@ export default function ImportsSection() {
     : "Commit this import? This creates all events in the preview and cannot be undone.";
 
   return (
-    <div className="space-y-4">
-      {/* D-18 explainer sentence */}
-      <p className="text-sm text-gray-600">
-        Upload a quarterly Sci Trek CSV here. The system will read the file, extract
-        events, and show you a preview before anything is saved.
-      </p>
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-5xl font-bold tracking-tight">Imports</h1>
+        <p className="text-xl text-[var(--color-fg-muted)] mt-3">
+          Upload a quarterly SciTrek CSV. The system reads the file, extracts
+          events, and shows you a preview before anything is saved.
+        </p>
+      </div>
 
       {/* Upload bar */}
       <div className="flex flex-wrap gap-3 items-center">
-        <Button
+        <button
+          type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploadMut.isPending}
           title="Upload a Sci Trek quarterly CSV to preview and commit events."
+          className="px-8 py-4 text-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow disabled:opacity-50"
         >
           {uploadMut.isPending ? "Uploading..." : "Upload quarterly CSV"}
-        </Button>
+        </button>
         <input
           ref={fileInputRef}
           type="file"
@@ -526,17 +550,17 @@ export default function ImportsSection() {
       ) : (
         <>
           {/* Admin-only, desktop-first (D-08): single table, no mobile fallback. */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--color-border)] text-left">
-                  <th className="py-2 pr-3 font-medium">Filename</th>
-                  <th className="py-2 pr-3 font-medium">Status</th>
-                  <th className="py-2 pr-3 font-medium">Created</th>
-                  <th className="py-2 font-medium">Actions</th>
+          <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+            <table className="min-w-full text-2xl">
+              <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
+                <tr>
+                  <th className="py-5 px-6">Filename</th>
+                  <th className="py-5 px-6">Status</th>
+                  <th className="py-5 px-6">Created</th>
+                  <th className="py-5 px-6 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
+              <tbody className="divide-y divide-gray-100">
                 {imports.map((imp) => (
                   <tr
                     key={imp.id}
@@ -549,32 +573,42 @@ export default function ImportsSection() {
                       )
                     }
                   >
-                    <td className="py-2 pr-3 font-medium">{imp.filename}</td>
-                    <td className="py-2 pr-3">
-                      <StatusChip status={imp.status} />
+                    <td className="py-6 px-6 font-semibold">{imp.filename}</td>
+                    <td className="py-6 px-6">
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-base font-medium ${
+                          IMPORT_STATUS_COLORS[imp.status] ||
+                          "bg-gray-100 text-gray-800"
+                        }`}
+                      >
+                        {imp.status}
+                      </span>
                     </td>
-                    <td className="py-2 pr-3 text-[var(--color-fg-muted)] whitespace-nowrap">
+                    <td className="py-6 px-6 text-gray-600 whitespace-nowrap">
                       {formatTs(imp.created_at)}
                     </td>
                     <td
-                      className="py-2 flex gap-2"
+                      className="py-6 px-6 text-right space-x-5 whitespace-nowrap"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {imp.status === "failed" && (
-                        <Button
-                          variant="secondary"
-                          className="text-xs !px-2 !py-1"
+                        <button
+                          type="button"
                           disabled={retryMut.isPending}
                           onClick={() => retryMut.mutate(imp.id)}
+                          className="text-blue-600 hover:underline font-medium disabled:opacity-50"
                         >
                           Re-run
-                        </Button>
+                        </button>
                       )}
-                      {imp.error_message && (
-                        <span className="text-xs text-red-600 truncate max-w-xs">
-                          {humanizeError(imp.error_message)}
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        disabled={deleteMut.isPending}
+                        onClick={() => handleDeleteImport(imp.id)}
+                        className="text-red-600 hover:underline font-medium disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 ))}

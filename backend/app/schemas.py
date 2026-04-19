@@ -173,6 +173,10 @@ class EventRead(ORMBase, EventBase):
     id: UUID
     owner_id: UUID
     module_slug: Optional[str] = None
+    quarter: Optional[Quarter] = None
+    year: Optional[int] = None
+    week_number: Optional[int] = None
+    created_at: Optional[datetime] = None
     slots: List[SlotRead] = []
 
 

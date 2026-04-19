@@ -38,13 +38,26 @@ export default function Layout() {
   const navItems = isAuthed ? navItemsForRole(role) : null;
   const { pathname } = useLocation();
   const isAdminRoute = pathname.startsWith("/admin");
-  const containerWidth = isAdminRoute ? "max-w-none" : "max-w-screen-md";
+  const isOrganizerRoute = pathname.startsWith("/organizer");
+  const isParticipantRoute =
+    pathname === "/" ||
+    pathname.startsWith("/volunteer") ||
+    pathname.startsWith("/events") ||
+    pathname.startsWith("/check-in") ||
+    pathname.startsWith("/event-check-in") ||
+    pathname.startsWith("/signup");
+  const wideRoute = isAdminRoute || isOrganizerRoute;
+  const containerWidth = wideRoute
+    ? "max-w-none"
+    : isParticipantRoute
+      ? "max-w-6xl"
+      : "max-w-screen-md";
   const brandTarget =
     isAuthed && role === "admin"
       ? "/admin"
       : isAuthed && role === "organizer"
         ? "/admin/events"
-        : "/events";
+        : "/volunteer";
   const helpTarget =
     role === "admin" || role === "organizer" ? "/admin/help" : "/help";
 
@@ -115,14 +128,14 @@ export default function Layout() {
                   </div>
                 ) : null}
               </div>
-            ) : (
+            ) : isParticipantRoute ? null : (
               <Link to="/login">Login</Link>
             )}
           </div>
         </div>
       </header>
 
-      <main className={`flex-1 mx-auto w-full ${containerWidth} ${isAdminRoute ? "" : "px-4 pb-20 md:pb-8"}`}>
+      <main className={`flex-1 mx-auto w-full ${containerWidth} ${wideRoute ? (isAdminRoute ? "" : "px-6 pb-8") : "px-4 pb-20 md:pb-8"}`}>
         <Outlet />
       </main>
 

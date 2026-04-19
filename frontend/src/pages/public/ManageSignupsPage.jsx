@@ -95,7 +95,7 @@ export default function ManageSignupsPage({ tokenOverride }) {
         title="We couldn't load this page"
         body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
         action={
-          <Button variant="primary" onClick={() => navigate("/events")}>
+          <Button variant="primary" onClick={() => navigate("/volunteer")}>
             Back to events
           </Button>
         }
@@ -225,7 +225,7 @@ export default function ManageSignupsPage({ tokenOverride }) {
           title="You haven't signed up for anything yet"
           body="Browse this week's volunteer events to get started."
           action={
-            <Button variant="primary" onClick={() => navigate("/events")}>
+            <Button variant="primary" onClick={() => navigate("/volunteer")}>
               View events
             </Button>
           }
@@ -237,15 +237,26 @@ export default function ManageSignupsPage({ tokenOverride }) {
   const activeCount = signups.filter((s) => s.status !== "cancelled").length;
 
   return (
-    <div className="max-w-xl mx-auto mt-8 px-4 space-y-4">
-      <PageHeader
-        title={
-          data?.volunteer_first_name
-            ? `Signups for ${data.volunteer_first_name} ${data.volunteer_last_name}`
-            : "Your signups"
-        }
-      />
-      <p className="text-sm text-gray-600">Times shown in Pacific Time.</p>
+    <div className="max-w-3xl mx-auto mt-6 sm:mt-8 px-1 sm:px-4 space-y-5">
+      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-800 text-white p-6 sm:p-8">
+        <div
+          aria-hidden="true"
+          className="absolute -top-16 -right-16 h-56 w-56 rounded-full bg-blue-400/25 blur-3xl"
+        />
+        <div className="relative z-10">
+          <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-blue-200">
+            Manage signups
+          </p>
+          <h1 className="mt-2 text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight leading-tight">
+            {data?.volunteer_first_name
+              ? `Hi ${data.volunteer_first_name}`
+              : "Your signups"}
+          </h1>
+          <p className="mt-2 text-sm text-blue-100">
+            View, move, or cancel your volunteer shifts. Times shown in Pacific Time.
+          </p>
+        </div>
+      </section>
 
       {signups.map((signup) => (
         <Card key={signup.signup_id} className="p-4">

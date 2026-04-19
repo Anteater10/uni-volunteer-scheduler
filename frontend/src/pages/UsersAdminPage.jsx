@@ -151,56 +151,49 @@ export default function UsersAdminPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Users</h1>
-          <p className="text-[var(--color-fg-muted)]">
+          <h1 className="text-5xl font-bold tracking-tight">Users</h1>
+          <p className="text-xl text-[var(--color-fg-muted)] mt-3">
             People who can sign into this admin panel. Invite organizers and
             other admins — students don't have accounts.
           </p>
         </div>
-        <Button
+        <button
           onClick={() => {
             setCreateError(null);
             setInviteOpen(true);
           }}
+          className="px-8 py-4 text-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow"
         >
           Invite user
-        </Button>
+        </button>
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex-1 min-w-[12rem]">
-          <Label htmlFor="user-search" className="sr-only">
-            Search users
-          </Label>
-          <Input
-            id="user-search"
-            placeholder="Search name or email..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <div>
-          <Label htmlFor="role-filter" className="sr-only">
-            Filter by role
-          </Label>
-          <select
-            id="role-filter"
-            aria-label="Filter by role"
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-            className="min-h-11 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm"
-          >
-            <option value="all">All roles</option>
-            <option value="admin">Admin</option>
-            <option value="organizer">Organizer</option>
-          </select>
-        </div>
-        <label className="flex items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-4">
+        <input
+          id="user-search"
+          placeholder="Search name or email..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 min-w-[20rem] rounded-xl border border-gray-300 px-5 py-4 text-xl"
+        />
+        <select
+          id="role-filter"
+          aria-label="Filter by role"
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value)}
+          className="rounded-xl border border-gray-300 px-5 py-4 text-xl bg-white"
+        >
+          <option value="all">All roles</option>
+          <option value="admin">Admin</option>
+          <option value="organizer">Organizer</option>
+        </select>
+        <label className="flex items-center gap-2 text-lg">
           <input
             type="checkbox"
             checked={showDeactivated}
             onChange={(e) => setShowDeactivated(e.target.checked)}
+            className="h-5 w-5"
           />
           Show deactivated
         </label>
@@ -222,24 +215,24 @@ export default function UsersAdminPage() {
       ) : filtered.length === 0 ? (
         <EmptyState title="No users found" />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-[var(--color-bg-muted)] text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
+        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+          <table className="min-w-full text-2xl">
+            <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
               <tr>
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Email</th>
-                <th className="px-3 py-2">Role</th>
-                <th className="px-3 py-2">Last login</th>
-                <th className="px-3 py-2">Status</th>
+                <th className="py-5 px-6">Name</th>
+                <th className="py-5 px-6">Email</th>
+                <th className="py-5 px-6">Role</th>
+                <th className="py-5 px-6">Last login</th>
+                <th className="py-5 px-6">Status</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-100">
               {filtered.map((u) => {
                 const inactive = u.is_active === false;
                 return (
                   <tr
                     key={u.id}
-                    className={`border-t border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-bg-muted)] ${
+                    className={`cursor-pointer hover:bg-gray-50 ${
                       inactive ? "opacity-50" : ""
                     }`}
                     onClick={() => {
@@ -247,19 +240,19 @@ export default function UsersAdminPage() {
                       setDrawerUser(u);
                     }}
                   >
-                    <td className="px-3 py-2 font-medium">
+                    <td className="py-6 px-6 font-semibold">
                       {u.name || "(no name)"}
                     </td>
-                    <td className="px-3 py-2">{u.email}</td>
-                    <td className="px-3 py-2">
+                    <td className="py-6 px-6 text-gray-800">{u.email}</td>
+                    <td className="py-6 px-6">
                       <RoleBadge role={u.role} />
                     </td>
-                    <td className="px-3 py-2 text-[var(--color-fg-muted)]">
+                    <td className="py-6 px-6 text-gray-600">
                       {lastLoginLabel(u.last_login_at)}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="py-6 px-6">
                       <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusPillClass(
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-base font-medium ${statusPillClass(
                           !inactive,
                         )}`}
                       >
@@ -274,21 +267,22 @@ export default function UsersAdminPage() {
         </div>
       )}
 
-      {/* Invite drawer */}
-      <SideDrawer
+      {/* Invite modal */}
+      <Modal
         open={inviteOpen}
         onClose={() => {
           setInviteOpen(false);
           setCreateError(null);
         }}
         title="Invite user"
+        className="max-w-2xl p-8"
       >
         <InviteForm
           onSubmit={(body) => inviteM.mutate(body)}
           submitting={inviteM.isPending}
           error={createError}
         />
-      </SideDrawer>
+      </Modal>
 
       {/* Edit drawer */}
       <SideDrawer
@@ -394,40 +388,51 @@ function InviteForm({ onSubmit, submitting, error }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("organizer");
 
+  const fieldClass =
+    "w-full rounded-xl border border-gray-300 px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500";
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
         onSubmit({ name, email, role });
       }}
-      className="space-y-3"
+      className="space-y-5"
     >
       <div>
-        <Label htmlFor="invite-name">Name</Label>
-        <Input
+        <label htmlFor="invite-name" className="block text-base font-medium mb-1.5">
+          Name
+        </label>
+        <input
           id="invite-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
+          className={fieldClass}
         />
       </div>
       <div>
-        <Label htmlFor="invite-email">Email</Label>
-        <Input
+        <label htmlFor="invite-email" className="block text-base font-medium mb-1.5">
+          Email
+        </label>
+        <input
           id="invite-email"
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          className={fieldClass}
         />
       </div>
       <div>
-        <Label htmlFor="invite-role">Role</Label>
+        <label htmlFor="invite-role" className="block text-base font-medium mb-1.5">
+          Role
+        </label>
         <select
           id="invite-role"
           value={role}
           onChange={(e) => setRole(e.target.value)}
-          className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+          className={`${fieldClass} bg-white`}
         >
           {ROLES.map((r) => (
             <option key={r} value={r}>
@@ -437,18 +442,22 @@ function InviteForm({ onSubmit, submitting, error }) {
         </select>
       </div>
       {error && (
-        <p className="text-sm text-[var(--color-danger)]" role="alert">
+        <p className="text-base text-[var(--color-danger)]" role="alert">
           {error}
         </p>
       )}
-      <p className="text-xs text-[var(--color-fg-muted)]">
+      <p className="text-sm text-[var(--color-fg-muted)]">
         They'll get an email with a link to sign in. If they're new, they'll
         set a password on first login.
       </p>
-      <div className="flex justify-end">
-        <Button type="submit" disabled={submitting}>
+      <div className="flex justify-end pt-2">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="px-6 py-3 text-lg font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow disabled:opacity-50"
+        >
           {submitting ? "Sending..." : "Send invite"}
-        </Button>
+        </button>
       </div>
     </form>
   );
