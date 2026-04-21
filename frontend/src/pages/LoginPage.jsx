@@ -122,7 +122,7 @@ export default function LoginPage() {
 
       {/* ---- Right: sign-in panel ---- */}
       <div className="flex-1 flex items-center justify-center px-6 py-12 sm:px-12 bg-gradient-to-br from-slate-50 via-white to-blue-50/40 overflow-y-auto">
-        <div className="w-full max-w-md">
+        <div className="w-full max-w-2xl">
           {/* mobile brand (only when left panel hidden) */}
           <div className="lg:hidden flex items-center gap-3 mb-10">
             <div className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md">
@@ -146,20 +146,20 @@ export default function LoginPage() {
             </span>
           </div>
 
-          <div className="mb-8">
-            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900">
+          <div className="mb-12">
+            <h1 className="text-6xl sm:text-7xl font-bold tracking-tight text-gray-900">
               Welcome back
             </h1>
-            <p className="mt-2 text-base text-gray-600">
+            <p className="mt-5 text-2xl text-gray-600">
               Sign in to manage events, volunteers, and rosters.
             </p>
           </div>
 
-          <form onSubmit={onSubmit} className="space-y-5">
+          <form onSubmit={onSubmit} className="space-y-8">
             <div>
               <label
                 htmlFor="login-email"
-                className="block text-sm font-medium text-gray-800 mb-1.5"
+                className="block text-xl font-medium text-gray-800 mb-3"
               >
                 Email
               </label>
@@ -171,13 +171,13 @@ export default function LoginPage() {
                 autoComplete="email"
                 required
                 placeholder="you@ucsb.edu"
-                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-base shadow-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                className="w-full rounded-xl border border-gray-300 bg-white px-6 py-5 text-2xl shadow-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
               />
             </div>
             <div>
               <label
                 htmlFor="login-password"
-                className="block text-sm font-medium text-gray-800 mb-1.5"
+                className="block text-xl font-medium text-gray-800 mb-3"
               >
                 Password
               </label>
@@ -189,7 +189,7 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 required
                 placeholder="••••••••"
-                className="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-base shadow-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                className="w-full rounded-xl border border-gray-300 bg-white px-6 py-5 text-2xl shadow-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
               />
             </div>
 
@@ -205,13 +205,13 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold py-3 px-4 shadow-md hover:shadow-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-2xl py-5 px-4 shadow-md hover:shadow-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
 
-          <p className="mt-8 text-center text-sm text-gray-500">
+          <p className="mt-10 text-center text-lg text-gray-500">
             For authorised organisers and administrators only.
           </p>
         </div>

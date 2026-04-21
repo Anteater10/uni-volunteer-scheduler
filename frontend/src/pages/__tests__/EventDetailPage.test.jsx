@@ -393,7 +393,10 @@ describe("EventDetailPage", () => {
     await screen.findByText("CRISPR at Carpinteria HS");
 
     expect(
-      screen.getByRole("button", { name: /add to calendar/i })
+      screen.getByRole("button", { name: /download \.ics/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /add to google calendar/i })
     ).toBeInTheDocument();
   });
 
@@ -401,7 +404,7 @@ describe("EventDetailPage", () => {
     renderDetailPage();
     await screen.findByText("CRISPR at Carpinteria HS");
 
-    fireEvent.click(screen.getByRole("button", { name: /add to calendar/i }));
+    fireEvent.click(screen.getByRole("button", { name: /download \.ics/i }));
 
     expect(downloadIcs).toHaveBeenCalledTimes(1);
     const callArg = downloadIcs.mock.calls[0][0];
@@ -424,7 +427,10 @@ describe("EventDetailPage", () => {
     await screen.findByText(/every slot is full/i);
 
     expect(
-      screen.queryByRole("button", { name: /add to calendar/i })
+      screen.queryByRole("button", { name: /download \.ics/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /add to google calendar/i })
     ).not.toBeInTheDocument();
   });
 });

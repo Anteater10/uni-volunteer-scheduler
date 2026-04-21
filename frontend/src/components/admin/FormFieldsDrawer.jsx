@@ -261,116 +261,110 @@ export default function FormFieldsDrawer({
 
   return (
     <>
-      <SideDrawer open={open} onClose={onClose} title={title} widthClass="w-[40rem]">
-        <div className="space-y-3">
-          <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm text-blue-900 space-y-2">
-            <p className="font-semibold">What are custom questions?</p>
-            <p>
-              Extra questions you want to ask volunteers when they sign up for
-              this event — anything beyond name, email, and phone (which are
-              always collected).
-            </p>
-            <p>
-              <span className="font-semibold">Examples:</span> "Emergency
-              contact", "Do you need a parking pass?", "T-shirt size", "Any
-              dietary restrictions?"
-            </p>
-            <p>
-              Answers show up on the roster and in the CSV export. Leave this
-              empty if you don't need any extra info.
-            </p>
-          </div>
+      <SideDrawer open={open} onClose={onClose} title={title} widthClass="w-[52rem]">
+        <div className="space-y-4">
+          <details className="rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-900">
+            <summary className="cursor-pointer list-none select-none px-4 py-2.5 font-semibold flex items-center justify-between">
+              <span>What are custom questions?</span>
+              <span className="text-xs font-normal text-blue-700">Click to expand</span>
+            </summary>
+            <div className="px-4 pb-3 space-y-2">
+              <p>
+                Extra questions you want to ask volunteers when they sign up —
+                anything beyond name, email, and phone (which are always
+                collected). Examples: "Emergency contact", "T-shirt size",
+                "Dietary restrictions".
+              </p>
+              <p className="text-xs">
+                Answers show up on the roster and in the CSV export.
+              </p>
+            </div>
+          </details>
+
           <div className="flex items-center justify-between">
             <p className="text-sm text-[var(--color-fg-muted)]">
-              Click <span className="font-medium">Add field</span> to create a
-              question.
+              {sorted.length === 0
+                ? "No questions yet."
+                : `${sorted.length} question${sorted.length === 1 ? "" : "s"}`}
             </p>
             <Button type="button" onClick={openCreate}>
-              Add field
+              + Add question
             </Button>
           </div>
 
           {sorted.length === 0 ? (
             <EmptyState
-              title="No custom fields yet"
-              body="Click Add field to create the first question."
+              title="No custom questions"
+              body="Click + Add question to create one, or save with none to keep the signup form simple."
             />
           ) : (
-            <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-[var(--color-bg-muted)] text-xs uppercase tracking-wide">
-                  <tr>
-                    <th className="px-3 py-2 w-10">#</th>
-                    <th className="px-3 py-2">Label</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2">Required</th>
-                    <th className="px-3 py-2 w-36" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((f, i) => {
-                    const realIdx = workSchema.findIndex((x) => x.id === f.id);
-                    return (
-                      <tr
-                        key={f.id}
-                        className="border-t border-[var(--color-border)]"
+            <ul className="flex flex-col gap-2">
+              {sorted.map((f, i) => {
+                const realIdx = workSchema.findIndex((x) => x.id === f.id);
+                return (
+                  <li
+                    key={f.id}
+                    className="rounded-lg border border-[var(--color-border)] bg-white p-3 flex items-start gap-3"
+                  >
+                    <div className="flex flex-col items-center gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        aria-label="Move up"
+                        onClick={() => handleMove(realIdx, -1)}
+                        disabled={i === 0}
+                        className="text-xs px-1.5 rounded hover:bg-gray-100 disabled:opacity-30"
                       >
-                        <td className="px-3 py-2 text-xs">{i + 1}</td>
-                        <td className="px-3 py-2">
-                          <div className="font-medium">{f.label}</div>
-                          <div className="text-xs text-[var(--color-fg-muted)]">
-                            {f.id}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-xs">{f.type}</td>
-                        <td className="px-3 py-2 text-xs">
-                          {f.required ? "Yes" : "No"}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <div className="inline-flex gap-1">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              aria-label="Move up"
-                              onClick={() => handleMove(realIdx, -1)}
-                              disabled={i === 0}
-                            >
-                              ↑
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              aria-label="Move down"
-                              onClick={() => handleMove(realIdx, +1)}
-                              disabled={i === sorted.length - 1}
-                            >
-                              ↓
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              onClick={() => openEdit(realIdx)}
-                            >
-                              Edit
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="danger"
-                              onClick={() => handleDelete(realIdx)}
-                            >
-                              Delete
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                        ▲
+                      </button>
+                      <span className="text-[10px] text-[var(--color-fg-muted)]">{i + 1}</span>
+                      <button
+                        type="button"
+                        aria-label="Move down"
+                        onClick={() => handleMove(realIdx, +1)}
+                        disabled={i === sorted.length - 1}
+                        className="text-xs px-1.5 rounded hover:bg-gray-100 disabled:opacity-30"
+                      >
+                        ▼
+                      </button>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm break-words">{f.label}</div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--color-fg-muted)]">
+                        <span className="font-mono">{f.id}</span>
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 uppercase tracking-wide">{f.type}</span>
+                        {f.required && (
+                          <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 font-medium">
+                            Required
+                          </span>
+                        )}
+                      </div>
+                      {f.help_text && (
+                        <p className="mt-1 text-xs text-[var(--color-fg-muted)]">{f.help_text}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => openEdit(realIdx)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        onClick={() => handleDelete(realIdx)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           )}
 
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--color-border)] sticky bottom-0 bg-white">
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>

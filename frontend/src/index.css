@@ -1,15 +1,19 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #ffffff;          /* TODO(brand) */
-  --color-surface: #f8fafc;     /* TODO(brand) */
-  --color-fg: #0f172a;          /* TODO(brand) */
-  --color-fg-muted: #475569;    /* TODO(brand) */
-  --color-border: #e2e8f0;      /* TODO(brand) */
-  --color-brand: #0369a1;       /* sky-700 — bumped from sky-600 (#0284c7) for WCAG AA contrast: white text on brand was 4.09:1, sky-700 is 5.36:1. PART-10. */
-  --color-brand-fg: #ffffff;    /* TODO(brand) */
-  --color-danger: #dc2626;      /* TODO(brand) */
-  --color-success: #16a34a;     /* TODO(brand) */
+  --color-bg: #ffffff;
+  --color-surface: #f8fafc;
+  --color-fg: #0f172a;
+  --color-fg-muted: #475569;
+  --color-border: #e2e8f0;
+  --color-brand: #0369a1;       /* sky-700 — WCAG AA (5.36:1) */
+  --color-brand-fg: #ffffff;
+  --color-brand-soft: #e0f2fe;  /* sky-100 — subtle tint backgrounds */
+  --color-accent: #f97316;      /* orange-500 — warm counterpoint for chips/highlights */
+  --color-accent-soft: #ffedd5; /* orange-100 */
+  --color-danger: #dc2626;
+  --color-success: #16a34a;
+  --color-warn: #d97706;        /* amber-600 — "filling fast" chip */
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 
@@ -19,8 +23,41 @@
 html, body, #root { height: 100%; }
 body {
   font-family: var(--font-sans);
-  background: var(--color-bg);
+  /* Warm, tinted page so surfaces (cards, tables) pop instead of fading into a white page. */
+  background:
+    radial-gradient(1000px 700px at 0% 0%, rgba(3,105,161,0.22), transparent 55%),
+    radial-gradient(900px 600px at 100% 10%, rgba(249,115,22,0.18), transparent 55%),
+    radial-gradient(1200px 800px at 50% 110%, rgba(99,102,241,0.16), transparent 60%),
+    linear-gradient(180deg, #eef4fb 0%, #f1f5f9 50%, #fef6ef 100%);
+  background-attachment: fixed;
   color: var(--color-fg);
   -webkit-font-smoothing: antialiased;
   font-size: 16px;
+}
+
+/* ---------------------------------------------------------------------------
+   Motion utilities. Intentionally tiny — no framer-motion.
+   - .animate-fade-up: mount animation for page/section entrances
+   - .animate-fade-in: simpler fade for toasts / inline reveals
+   - .hover-lift:     card / tile hover translate + shadow bump
+   All respect prefers-reduced-motion.
+   --------------------------------------------------------------------------- */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-fade-up { animation: fade-up 340ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-fade-in { animation: fade-in 260ms ease-out both; }
+
+.hover-lift { transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease; }
+.hover-lift:hover { transform: translateY(-2px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up, .animate-fade-in { animation: none; }
+  .hover-lift { transition: none; }
+  .hover-lift:hover { transform: none; }
 }

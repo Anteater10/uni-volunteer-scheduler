@@ -66,6 +66,7 @@ function emptyForm() {
     default_capacity: 30,
     description: "",
     materials: "",
+    family_key: "",
   };
 }
 
@@ -79,6 +80,7 @@ function templateToForm(t) {
     default_capacity: t.default_capacity ?? 30,
     description: t.description || "",
     materials: Array.isArray(t.materials) ? t.materials.join(", ") : (t.materials || ""),
+    family_key: t.family_key || "",
   };
 }
 
@@ -86,7 +88,7 @@ function templateToForm(t) {
 // TemplateForm — shared create/edit form rendered inside SideDrawer
 // ---------------------------------------------------------------------------
 
-function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
+function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
   function handleNameChange(e) {
     const name = e.target.value;
     setForm((prev) => ({
@@ -152,6 +154,29 @@ function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, o
         </select>
       </div>
 
+      {/* Links to module (orientation only) */}
+      {form.type === "orientation" && (
+        <div>
+          <Label htmlFor="tf-family">Links to module</Label>
+          <select
+            id="tf-family"
+            value={form.family_key || ""}
+            onChange={(e) => setForm((p) => ({ ...p, family_key: e.target.value }))}
+            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+          >
+            <option value="">— None (standalone orientation) —</option>
+            {moduleTemplates.map((m) => (
+              <option key={m.slug} value={m.family_key || m.slug}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+            Pair this orientation with a module so CSV imports merge into one event (orientation slots + module slots).
+          </p>
+        </div>
+      )}
+
       {/* Duration */}
       <div>
         <Label htmlFor="tf-dur">Duration (minutes)</Label>
@@ -163,23 +188,6 @@ function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, o
           onChange={(e) => setForm((p) => ({ ...p, duration_minutes: Number(e.target.value) }))}
           required
         />
-      </div>
-
-      {/* Number of sessions */}
-      <div>
-        <Label htmlFor="tf-sessions">Number of sessions</Label>
-        <Input
-          id="tf-sessions"
-          type="number"
-          min="1"
-          max="10"
-          value={form.session_count}
-          onChange={(e) => setForm((p) => ({ ...p, session_count: Number(e.target.value) }))}
-          required
-        />
-        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-          How many class sessions does this module span?
-        </p>
       </div>
 
       {/* Default capacity */}
@@ -396,6 +404,11 @@ export default function TemplatesSection() {
     return result;
   }, [listQ.data, search, typeFilter]);
 
+  const moduleTemplates = useMemo(
+    () => (listQ.data || []).filter((t) => t.type === "module" && !t.deleted_at),
+    [listQ.data],
+  );
+
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -422,6 +435,9 @@ export default function TemplatesSection() {
       materials: formData.materials
         ? formData.materials.split(",").map((s) => s.trim()).filter(Boolean)
         : [],
+      ...(formData.type === "orientation" && formData.family_key
+        ? { family_key: formData.family_key }
+        : {}),
     });
   }
 
@@ -439,6 +455,9 @@ export default function TemplatesSection() {
         materials: formData.materials
           ? formData.materials.split(",").map((s) => s.trim()).filter(Boolean)
           : [],
+        ...(formData.type === "orientation"
+          ? { family_key: formData.family_key || null }
+          : {}),
       },
     });
   }
@@ -648,6 +667,7 @@ export default function TemplatesSection() {
           form={form}
           setForm={setForm}
           isCreate
+          moduleTemplates={moduleTemplates}
           onSubmit={handleCreate}
           onCancel={() => setCreateOpen(false)}
           submitting={createM.isPending}
@@ -665,6 +685,7 @@ export default function TemplatesSection() {
             form={form}
             setForm={setForm}
             isCreate={false}
+            moduleTemplates={moduleTemplates.filter((m) => m.slug !== drawerTemplate.slug)}
             onSubmit={handleUpdate}
             onArchive={() => setArchiveConfirm(drawerTemplate.slug)}
             onClone={handleClone}

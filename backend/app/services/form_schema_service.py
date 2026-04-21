@@ -182,11 +182,28 @@ def _validate_schema(schema: Any) -> list[dict]:
 def _template_default(db: Session, module_slug: Optional[str]) -> list[dict]:
     if not module_slug:
         return []
+    # Event.module_slug may be a family_key (when a module + orientation
+    # import merges into one event). Prefer the module-type template in that
+    # family; fall back to any template whose slug/family_key matches.
     tpl = (
         db.query(models.ModuleTemplate)
-        .filter(models.ModuleTemplate.slug == module_slug)
+        .filter(
+            models.ModuleTemplate.family_key == module_slug,
+            models.ModuleTemplate.type == models.ModuleType.module,
+            models.ModuleTemplate.deleted_at.is_(None),
+        )
         .first()
     )
+    if tpl is None:
+        tpl = (
+            db.query(models.ModuleTemplate)
+            .filter(
+                (models.ModuleTemplate.family_key == module_slug)
+                | (models.ModuleTemplate.slug == module_slug),
+                models.ModuleTemplate.deleted_at.is_(None),
+            )
+            .first()
+        )
     if tpl is None:
         return []
     schema = tpl.default_form_schema or []

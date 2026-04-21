@@ -14,7 +14,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { XCircle } from "lucide-react";
 
 import api from "../../lib/api";
-import { downloadIcs } from "../../lib/calendar";
+import { downloadIcs, buildGoogleCalendarUrl } from "../../lib/calendar";
 import { toast } from "../../state/toast";
 import {
   Button,
@@ -137,27 +137,46 @@ function VolunteerChip({ firstName, lastInitial }) {
 // Slot row for the table
 // ---------------------------------------------------------------------------
 
+function SlotTypeBadge({ type }) {
+  if (type === "orientation") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-800 border border-blue-300 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+        Orientation
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+      Module
+    </span>
+  );
+}
+
 function SlotRow({ slot, selected, onToggle, highlight }) {
   const isFull = slot.filled >= slot.capacity;
+  const isOrientation = slot.slot_type === "orientation";
 
   return (
     <tr className={[
       "border-b border-[var(--color-border)] align-top",
-      highlight && !isFull && slot.slot_type === "orientation" ? "bg-blue-50/50" : "",
+      isOrientation
+        ? "bg-blue-50 border-l-4 border-l-blue-500"
+        : "bg-emerald-50/40 border-l-4 border-l-emerald-500",
+      highlight && !isFull && isOrientation ? "ring-1 ring-blue-300" : "",
     ].join(" ")}>
       {/* Sign Up / Join Waitlist button */}
       <td className="py-3 px-2 text-center align-top">
         <button
           onClick={() => onToggle(slot.id)}
           className={[
-            "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
+            "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
             isFull
               ? selected
                 ? "bg-amber-500 text-white"
                 : "bg-amber-600 text-white hover:bg-amber-700"
               : selected
-                ? "bg-green-600 text-white"
-                : "bg-red-600 text-white hover:bg-red-700",
+                ? "bg-[var(--color-success)] text-white"
+                : "bg-[var(--color-brand)] text-white hover:brightness-110",
           ].join(" ")}
         >
           {isFull
@@ -167,10 +186,11 @@ function SlotRow({ slot, selected, onToggle, highlight }) {
       </td>
       {/* Slot name + volunteer list */}
       <td className="py-3 px-2">
-        <div className="font-medium text-sm text-[var(--color-fg)]">
-          {slot.slot_type === "orientation"
-            ? `Orientation`
-            : `Period ${slot._periodLabel || ""}`}
+        <div className="flex items-center gap-2">
+          <SlotTypeBadge type={slot.slot_type} />
+          <div className="font-medium text-sm text-[var(--color-fg)]">
+            {isOrientation ? "Orientation" : `Period ${slot._periodLabel || ""}`}
+          </div>
         </div>
         {slot.capacity > 0 && (
           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5 mb-1">
@@ -251,14 +271,14 @@ function SlotRowInline({ slot, selected, onToggle, highlight }) {
         <button
           onClick={() => onToggle(slot.id)}
           className={[
-            "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
+            "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
             isFull
               ? selected
                 ? "bg-amber-500 text-white"
                 : "bg-amber-600 text-white hover:bg-amber-700"
               : selected
-                ? "bg-green-600 text-white"
-                : "bg-red-600 text-white hover:bg-red-700",
+                ? "bg-[var(--color-success)] text-white"
+                : "bg-[var(--color-brand)] text-white hover:brightness-110",
           ].join(" ")}
         >
           {isFull
@@ -268,13 +288,18 @@ function SlotRowInline({ slot, selected, onToggle, highlight }) {
       </td>
       {/* Slot name + volunteers */}
       <td className={[
-        "py-3 px-2 align-top",
-        highlight && !isFull && slot.slot_type === "orientation" ? "bg-blue-50/30" : "",
+        "py-3 px-2 align-top border-l-4",
+        slot.slot_type === "orientation"
+          ? "bg-blue-50 border-l-blue-500"
+          : "bg-emerald-50/40 border-l-emerald-500",
       ].join(" ")}>
-        <div className="font-medium text-sm text-[var(--color-fg)]">
-          {slot.slot_type === "orientation"
-            ? "Orientation"
-            : `Period ${slot._periodLabel || ""}`}
+        <div className="flex items-center gap-2">
+          <SlotTypeBadge type={slot.slot_type} />
+          <div className="font-medium text-sm text-[var(--color-fg)]">
+            {slot.slot_type === "orientation"
+              ? "Orientation"
+              : `Period ${slot._periodLabel || ""}`}
+          </div>
         </div>
         {slot.capacity > 0 && (
           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
@@ -321,7 +346,7 @@ function EventDescription({ event, orientationSlots }) {
   const hasCustomDescription = !!(event.description && event.description.trim());
 
   return (
-    <Card className="text-sm text-[var(--color-fg)] leading-relaxed">
+    <Card className="text-sm text-[var(--color-fg)] leading-relaxed !bg-gradient-to-br !from-white !to-[var(--color-brand-soft)]/50 !border-[var(--color-brand-soft)] shadow-sm">
       {hasCustomDescription ? (
         <p className="whitespace-pre-wrap">{event.description}</p>
       ) : (
@@ -844,16 +869,16 @@ export default function EventDetailPage() {
   const dateKeys = Object.keys(periodSlotsByDate).sort();
 
   return (
-    <div className="flex flex-col gap-5 py-4 max-w-5xl mx-auto w-full">
+    <div className="flex flex-col gap-5 py-4 max-w-5xl mx-auto w-full animate-fade-up">
       {/* Back link */}
       <div>
-        <Link to="/volunteer" className="inline-flex items-center gap-1 text-sm text-[var(--color-primary)] hover:underline">
+        <Link to="/volunteer" className="inline-flex items-center gap-1 text-sm text-[var(--color-brand)] hover:underline">
           &larr; Back to events
         </Link>
       </div>
 
       {/* Event header — hero card */}
-      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-800 text-white p-6 sm:p-8 md:p-10">
+      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-[var(--color-brand)] via-indigo-600 to-indigo-800 text-white p-6 sm:p-8 md:p-10">
         <div
           aria-hidden="true"
           className="absolute -top-16 -right-16 h-64 w-64 rounded-full bg-blue-400/25 blur-3xl"
@@ -894,18 +919,40 @@ export default function EventDetailPage() {
       {/* Event description (auto-generated + any custom admin text) */}
       <EventDescription event={event} orientationSlots={orientationSlots} />
 
-      {/* Already signed up link */}
-      <div className="text-sm">
-        Already signed up?{" "}
-        <Link to="/signup/manage" className="text-[var(--color-primary)] hover:underline font-medium">
-          Change my sign up
-        </Link>
+      {/* Already-signed-up hint. Manage page requires a token from the
+          confirmation email, so a bare link would error — we explain instead. */}
+      <div className="inline-flex items-center gap-2 self-start rounded-full bg-[var(--color-brand-soft)] px-4 py-2 text-sm text-[var(--color-brand)]">
+        <span aria-hidden="true">✉️</span>
+        Already signed up? Use the <span className="font-semibold">Manage my signups</span> link in your confirmation email.
       </div>
 
       {/* Add to calendar (PART-13 surface A) — secondary CTA below event metadata,
           above the slot list. Only renders when there is at least one slot to add. */}
       {slots.length > 0 && (
-        <div className="mt-2 mb-2">
+        <div className="mt-2 mb-2 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              const selectedSlot =
+                [...selectedSlotIds]
+                  .map((id) => slotMap[id])
+                  .find(Boolean) ||
+                orientationSlots.find(
+                  (s) => (s.filled ?? 0) < (s.capacity ?? 0)
+                ) ||
+                slots[0];
+              if (!selectedSlot) return;
+              const url = buildGoogleCalendarUrl({
+                event,
+                slot: selectedSlot,
+                origin: window.location.origin,
+              });
+              window.open(url, "_blank", "noopener,noreferrer");
+            }}
+          >
+            Add to Google Calendar
+          </Button>
           <Button
             type="button"
             variant="secondary"
@@ -936,7 +983,7 @@ export default function EventDetailPage() {
               );
             }}
           >
-            Add to calendar
+            Download .ics
           </Button>
         </div>
       )}
@@ -998,14 +1045,14 @@ export default function EventDetailPage() {
                           <button
                             onClick={() => toggleSlot(slot.id)}
                             className={[
-                              "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-colors",
+                              "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
                               isFull
                                 ? isSelected
                                   ? "bg-amber-500 text-white"
                                   : "bg-amber-600 text-white"
                                 : isSelected
-                                  ? "bg-green-600 text-white"
-                                  : "bg-blue-600 text-white",
+                                  ? "bg-[var(--color-success)] text-white"
+                                  : "bg-[var(--color-brand)] text-white hover:brightness-110",
                             ].join(" ")}
                           >
                             {isFull
@@ -1059,14 +1106,14 @@ export default function EventDetailPage() {
                             <button
                               onClick={() => toggleSlot(slot.id)}
                               className={[
-                                "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-colors",
+                                "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
                                 isFull
                                   ? isSelected
                                     ? "bg-amber-500 text-white"
                                     : "bg-amber-600 text-white"
                                   : isSelected
-                                    ? "bg-green-600 text-white"
-                                    : "bg-blue-600 text-white",
+                                    ? "bg-[var(--color-success)] text-white"
+                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
                               ].join(" ")}
                             >
                               {isFull
@@ -1091,14 +1138,14 @@ export default function EventDetailPage() {
           </div>
 
           {/* ---- Desktop slot table (md and up) ---- */}
-          <div className="hidden md:block overflow-x-auto rounded-xl border border-[var(--color-border)] bg-white">
+          <div className="hidden md:block overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
-                <th className="py-2 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">Date</th>
-                <th className="py-2 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">Time</th>
-                <th className="py-2 px-2 text-center font-semibold text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">Available Slot</th>
-                <th className="py-2 px-2 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg-muted)]"></th>
+              <tr className="bg-gradient-to-r from-[var(--color-brand-soft)] to-[var(--color-accent-soft)] border-b border-[var(--color-border)]">
+                <th className="py-3 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Date</th>
+                <th className="py-3 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Time</th>
+                <th className="py-3 px-2 text-center font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Available Slot</th>
+                <th className="py-3 px-2 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]"></th>
               </tr>
             </thead>
 
@@ -1107,9 +1154,9 @@ export default function EventDetailPage() {
               <>
                 {orientationSlots.map((slot, idx) => (
                   <tbody key={slot.id}>
-                    <tr className="border-b border-[var(--color-border)]">
+                    <tr className="border-b border-[var(--color-border)] hover:bg-[var(--color-brand-soft)]/40 transition-colors">
                       {/* Date + location */}
-                      <td className="py-3 px-3 align-top bg-[var(--color-surface)] border-r border-[var(--color-border)]">
+                      <td className="py-3 px-3 align-top bg-[var(--color-brand-soft)]/60 border-r border-[var(--color-border)] border-l-4 border-l-[var(--color-brand)]">
                         <div className="font-semibold">{formatShortDate(slot.date)}</div>
                         <div className="text-xs text-[var(--color-fg-muted)]">{formatWeekday(slot.date)}</div>
                         {slot.location && (
@@ -1130,14 +1177,14 @@ export default function EventDetailPage() {
                             <button
                               onClick={() => toggleSlot(slot.id)}
                               className={[
-                                "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
+                                "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
                                 isFull
                                   ? isSelected
                                     ? "bg-amber-500 text-white"
                                     : "bg-amber-600 text-white hover:bg-amber-700"
                                   : isSelected
-                                    ? "bg-green-600 text-white"
-                                    : "bg-red-600 text-white hover:bg-red-700",
+                                    ? "bg-[var(--color-success)] text-white"
+                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
                               ].join(" ")}
                             >
                               {isFull
@@ -1181,12 +1228,12 @@ export default function EventDetailPage() {
               return (
                 <tbody key={dateKey}>
                   {daySlots.map((slot, idx) => (
-                    <tr key={slot.id} className="border-b border-[var(--color-border)]">
+                    <tr key={slot.id} className="border-b border-[var(--color-border)] hover:bg-[var(--color-accent-soft)]/40 transition-colors">
                       {/* Date cell — only first row in group */}
                       {idx === 0 ? (
                         <td
                           rowSpan={daySlots.length}
-                          className="py-3 px-3 align-top bg-[var(--color-surface)] border-r border-[var(--color-border)]"
+                          className="py-3 px-3 align-top bg-[var(--color-accent-soft)]/60 border-r border-[var(--color-border)] border-l-4 border-l-[var(--color-accent)]"
                         >
                           <div className="font-semibold">{formatShortDate(dateKey)}</div>
                           <div className="text-xs text-[var(--color-fg-muted)]">{formatWeekday(dateKey)}</div>
@@ -1209,14 +1256,14 @@ export default function EventDetailPage() {
                             <button
                               onClick={() => toggleSlot(slot.id)}
                               className={[
-                                "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
+                                "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
                                 isFull
                                   ? isSelected
                                     ? "bg-amber-500 text-white"
                                     : "bg-amber-600 text-white hover:bg-amber-700"
                                   : isSelected
-                                    ? "bg-green-600 text-white"
-                                    : "bg-red-600 text-white hover:bg-red-700",
+                                    ? "bg-[var(--color-success)] text-white"
+                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
                               ].join(" ")}
                             >
                               {isFull

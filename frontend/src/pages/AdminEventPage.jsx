@@ -360,30 +360,50 @@ export default function AdminEventPage() {
         <Card>
           {formSchemaQ.isPending ? (
             <Skeleton className="h-10" />
-          ) : (
-            <>
-              <p className="text-sm mb-2">
-                <span className="font-medium">Ask volunteers extra questions when they sign up.</span>{" "}
-                Beyond the standard name, email, and phone (which are always
-                collected), you can add your own questions — e.g. "Emergency
-                contact", "Do you need a parking pass?", "T-shirt size",
-                "Dietary restrictions". Answers appear on the roster and in
-                the CSV export.
-              </p>
-              <p className="text-sm text-[var(--color-fg-muted)] mb-3">
-                {(formSchemaQ.data?.schema || []).length === 0
-                  ? "No extra questions set up yet. Click below to add one — or leave it empty if you don't need any."
-                  : `${(formSchemaQ.data?.schema || []).length} extra question${
-                      (formSchemaQ.data?.schema || []).length === 1 ? "" : "s"
-                    } set up on this event's signup form.`}
-              </p>
-              <Button onClick={() => setFormFieldsOpen(true)}>
-                {(formSchemaQ.data?.schema || []).length === 0
-                  ? "Add a question"
-                  : "Edit questions"}
-              </Button>
-            </>
-          )}
+          ) : (() => {
+            const schema = formSchemaQ.data?.schema || [];
+            const count = schema.length;
+            return (
+              <>
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">Extra signup questions</p>
+                    <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
+                      {count === 0
+                        ? "None yet — name, email, and phone are always collected."
+                        : `${count} question${count === 1 ? "" : "s"} on this event's signup form.`}
+                    </p>
+                  </div>
+                  <Button onClick={() => setFormFieldsOpen(true)}>
+                    {count === 0 ? "Add a question" : "Edit"}
+                  </Button>
+                </div>
+                {count > 0 && (
+                  <ul className="flex flex-col gap-1.5">
+                    {schema.map((f) => (
+                      <li
+                        key={f.id}
+                        className="flex items-center justify-between gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+                      >
+                        <span className="truncate">{f.label}</span>
+                        <span className="flex items-center gap-2 text-xs text-[var(--color-fg-muted)] shrink-0">
+                          <span className="uppercase tracking-wide">{f.type}</span>
+                          {f.required && (
+                            <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 font-medium">
+                              Required
+                            </span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="text-xs text-[var(--color-fg-muted)] mt-3">
+                  Answers appear on the roster and in the CSV export.
+                </p>
+              </>
+            );
+          })()}
         </Card>
       </section>
 

@@ -7,7 +7,7 @@
 import React from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Calendar, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Calendar, Users, MapPin } from "lucide-react";
 
 import api from "../../lib/api";
 import { getNextWeek, getPrevWeek, formatWeekLabel } from "../../lib/weekUtils";
@@ -31,12 +31,24 @@ function formatDayOfWeek(isoString) {
 }
 
 function slotCounts(slots) {
-  if (!slots || slots.length === 0) return { total: 0, types: {} };
+  if (!slots || slots.length === 0) return { total: 0, types: {}, filled: 0, capacity: 0 };
   const types = slots.reduce((acc, s) => {
     acc[s.slot_type] = (acc[s.slot_type] || 0) + 1;
     return acc;
   }, {});
-  return { total: slots.length, types };
+  const filled = slots.reduce((n, s) => n + (s.filled ?? s.current_count ?? 0), 0);
+  const capacity = slots.reduce((n, s) => n + (s.capacity ?? 0), 0);
+  return { total: slots.length, types, filled, capacity };
+}
+
+function capacityStatus(filled, capacity) {
+  if (!capacity) return { label: "Open", bg: "bg-[var(--color-brand-soft)]", fg: "text-[var(--color-brand)]", bar: "bg-[var(--color-brand)]" };
+  const pct = filled / capacity;
+  if (pct >= 1)
+    return { label: "Full", bg: "bg-slate-100", fg: "text-slate-600", bar: "bg-slate-400" };
+  if (pct >= 0.75)
+    return { label: "Filling fast", bg: "bg-amber-50", fg: "text-[var(--color-warn)]", bar: "bg-[var(--color-warn)]" };
+  return { label: "Open", bg: "bg-[var(--color-brand-soft)]", fg: "text-[var(--color-brand)]", bar: "bg-[var(--color-brand)]" };
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +56,9 @@ function slotCounts(slots) {
 // ---------------------------------------------------------------------------
 
 function EventCard({ event }) {
-  const { total, types } = slotCounts(event.slots);
+  const { total, types, filled, capacity } = slotCounts(event.slots);
+  const status = capacityStatus(filled, capacity);
+  const pct = capacity ? Math.min(100, Math.round((filled / capacity) * 100)) : 0;
   const dateRange =
     event.start_date && event.end_date
       ? `${formatShortDate(event.start_date)} – ${formatShortDate(event.end_date)}`
@@ -54,32 +68,58 @@ function EventCard({ event }) {
   return (
     <Link
       to={`/volunteer/events/${event.id}`}
-      className="group block focus-visible:outline-none rounded-2xl"
+      className="group block focus-visible:outline-none rounded-2xl focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2"
     >
-      <div className="h-full flex flex-col rounded-2xl border border-[var(--color-border)] bg-white shadow-sm hover:shadow-md hover:border-blue-300 transition-all overflow-hidden">
+      <div className="hover-lift h-full flex flex-col rounded-2xl border border-[var(--color-border)] bg-white shadow-sm hover:shadow-lg hover:border-[var(--color-brand)]/40 overflow-hidden">
         {/* Accent bar */}
-        <div className="h-1.5 bg-gradient-to-r from-blue-500 to-indigo-500" />
+        <div className="h-1.5 bg-gradient-to-r from-[var(--color-brand)] via-indigo-500 to-[var(--color-accent)]" />
 
         <div className="flex-1 p-5 flex flex-col gap-3">
-          {/* Date chip */}
-          {dateRange && (
-            <div className="inline-flex items-center gap-1.5 self-start rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-              <Calendar size={12} />
-              {dayOfWeek ? `${dayOfWeek} · ` : ""}
-              {dateRange}
-            </div>
-          )}
+          {/* Top row: date chip + status chip */}
+          <div className="flex items-center justify-between gap-2">
+            {dateRange && (
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-[var(--color-brand-soft)] px-3 py-1 text-xs font-medium text-[var(--color-brand)]">
+                <Calendar size={12} />
+                {dayOfWeek ? `${dayOfWeek} · ` : ""}
+                {dateRange}
+              </div>
+            )}
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${status.bg} ${status.fg}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${status.bar}`} />
+              {status.label}
+            </span>
+          </div>
 
           {/* Title */}
-          <h3 className="text-lg font-semibold text-[var(--color-fg)] leading-snug group-hover:text-blue-700 transition-colors">
+          <h3 className="text-lg font-semibold text-[var(--color-fg)] leading-snug group-hover:text-[var(--color-brand)] transition-colors">
             {event.title}
           </h3>
 
           {/* School */}
           {event.school && (
-            <p className="text-sm text-[var(--color-fg-muted)]">
+            <p className="inline-flex items-center gap-1.5 text-sm text-[var(--color-fg-muted)]">
+              <MapPin size={14} className="text-[var(--color-accent)]" />
               {event.school}
             </p>
+          )}
+
+          {/* Capacity progress */}
+          {capacity > 0 && (
+            <div className="mt-1">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className="inline-flex items-center gap-1 text-[var(--color-fg-muted)]">
+                  <Users size={12} />
+                  {filled} of {capacity} volunteers
+                </span>
+                <span className={`font-semibold ${status.fg}`}>{pct}%</span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                <div
+                  className={`h-full ${status.bar} rounded-full transition-all duration-500`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
           )}
 
           {/* Slot summary */}
@@ -94,7 +134,7 @@ function EventCard({ event }) {
               {Object.entries(types).map(([type, n]) => (
                 <span
                   key={type}
-                  className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 capitalize"
+                  className="inline-flex items-center rounded-md bg-[var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent)] capitalize"
                 >
                   {n} {type}
                 </span>
@@ -213,7 +253,7 @@ export default function EventsBrowsePage() {
   return (
     <div className="flex flex-col">
       {/* ---- Hero / week navigator ---- */}
-      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-800 text-white px-5 py-7 sm:px-8 sm:py-10 md:px-12 md:py-14 mt-4">
+      <section className="animate-fade-up relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-[var(--color-brand)] via-indigo-600 to-indigo-800 text-white px-5 py-7 sm:px-8 sm:py-10 md:px-12 md:py-14 mt-4">
         {/* decorative blobs */}
         <div
           aria-hidden="true"
@@ -289,19 +329,28 @@ export default function EventsBrowsePage() {
             }
           />
         ) : events.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-[var(--color-border)] bg-white px-6 py-12">
-            <EmptyState
-              title="Nothing scheduled this week"
-              body="New events go up on Mondays. Check back then, or browse next week's calendar."
-              action={
-                <Button variant="secondary" onClick={handleNext}>
-                  View next week
+          <div className="animate-fade-up relative overflow-hidden rounded-3xl border border-[var(--color-border)] bg-gradient-to-br from-white to-[var(--color-brand-soft)] px-6 py-20 sm:py-28 text-center shadow-sm">
+            <div aria-hidden="true" className="absolute -top-12 -right-12 h-48 w-48 rounded-full bg-[var(--color-brand)]/15 blur-3xl" />
+            <div aria-hidden="true" className="absolute -bottom-16 -left-10 h-56 w-56 rounded-full bg-[var(--color-accent)]/15 blur-3xl" />
+            <div className="relative z-10 max-w-lg mx-auto">
+              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--color-brand-soft)] text-[var(--color-brand)] shadow-sm">
+                <Calendar size={28} />
+              </div>
+              <h3 className="text-2xl sm:text-3xl font-bold text-[var(--color-fg)] tracking-tight">
+                Nothing scheduled this week
+              </h3>
+              <p className="mt-3 text-[var(--color-fg-muted)]">
+                New events go up on Mondays. Check back then, or browse next week's calendar.
+              </p>
+              <div className="mt-6">
+                <Button variant="primary" onClick={handleNext}>
+                  View next week →
                 </Button>
-              }
-            />
+              </div>
+            </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-8">
+          <div className="flex flex-col gap-8 animate-fade-up">
             {Object.entries(grouped).map(([school, schoolEvents]) => (
               <section key={school}>
                 <div className="flex items-baseline justify-between mb-3">

@@ -11,7 +11,7 @@
 
 import React from "react";
 import { Modal, Button } from "./ui";
-import { downloadIcs } from "../lib/calendar";
+import { downloadIcs, buildGoogleCalendarUrl } from "../lib/calendar";
 import { toast } from "../state/toast";
 
 /**
@@ -92,24 +92,41 @@ export default function SignupSuccessCard({
       )}
 
       {event && slot ? (
-        <Button
-          type="button"
-          variant="primary"
-          className="w-full min-h-11 mt-5"
-          onClick={() => {
-            const dateStr =
-              event.start_date ||
-              (slot.start_time
-                ? new Date(slot.start_time).toISOString().slice(0, 10)
-                : "event");
-            const slugPart = event.slug || event.id;
-            const filename = `scitrek-${slugPart}-${dateStr}.ics`;
-            downloadIcs({ event, slot, filename });
-            toast.success("Calendar file saved. Open it to add to your calendar.");
-          }}
-        >
-          Add to calendar
-        </Button>
+        <>
+          <Button
+            type="button"
+            variant="primary"
+            className="w-full min-h-11 mt-5"
+            onClick={() => {
+              const url = buildGoogleCalendarUrl({
+                event,
+                slot,
+                origin: window.location.origin,
+              });
+              window.open(url, "_blank", "noopener,noreferrer");
+            }}
+          >
+            Add to Google Calendar
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-full min-h-11 mt-3"
+            onClick={() => {
+              const dateStr =
+                event.start_date ||
+                (slot.start_time
+                  ? new Date(slot.start_time).toISOString().slice(0, 10)
+                  : "event");
+              const slugPart = event.slug || event.id;
+              const filename = `scitrek-${slugPart}-${dateStr}.ics`;
+              downloadIcs({ event, slot, filename });
+              toast.success("Calendar file saved. Open it to add to your calendar.");
+            }}
+          >
+            Download .ics (Apple / Outlook)
+          </Button>
+        </>
       ) : null}
 
       <Button

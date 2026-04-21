@@ -35,7 +35,6 @@ function navItemsForRole(role) {
 
 export default function Layout() {
   const { user, isAuthed, role, logout } = useAuth();
-  const navItems = isAuthed ? navItemsForRole(role) : null;
   const { pathname } = useLocation();
   const isAdminRoute = pathname.startsWith("/admin");
   const isOrganizerRoute = pathname.startsWith("/organizer");
@@ -46,14 +45,16 @@ export default function Layout() {
     pathname.startsWith("/check-in") ||
     pathname.startsWith("/event-check-in") ||
     pathname.startsWith("/signup");
+  const navItems = isAuthed && !isParticipantRoute ? navItemsForRole(role) : null;
   const wideRoute = isAdminRoute || isOrganizerRoute;
   const containerWidth = wideRoute
     ? "max-w-none"
     : isParticipantRoute
-      ? "max-w-6xl"
+      ? "max-w-7xl"
       : "max-w-screen-md";
-  const brandTarget =
-    isAuthed && role === "admin"
+  const brandTarget = isParticipantRoute
+    ? "/volunteer"
+    : isAuthed && role === "admin"
       ? "/admin"
       : isAuthed && role === "organizer"
         ? "/admin/events"
@@ -80,14 +81,14 @@ export default function Layout() {
   }, [menuOpen]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--color-bg)] text-[var(--color-fg)]">
-      <header className="sticky top-0 z-30 h-14 border-b border-[var(--color-border)] bg-[var(--color-bg)]/95 backdrop-blur">
+    <div className="min-h-screen flex flex-col text-[var(--color-fg)]">
+      <header className="sticky top-0 z-30 h-14 border-b border-white/40 bg-white/70 backdrop-blur-md">
         <div className={`mx-auto flex h-full ${containerWidth} items-center justify-between px-4`}>
           <Link to={brandTarget} className="font-semibold">
             Volunteer Scheduler
           </Link>
           <div className="flex items-center gap-3 text-sm">
-            {isAuthed ? (
+            {isAuthed && !isParticipantRoute ? (
               <div className="relative" ref={menuRef}>
                 <button
                   type="button"
@@ -135,7 +136,7 @@ export default function Layout() {
         </div>
       </header>
 
-      <main className={`flex-1 mx-auto w-full ${containerWidth} ${wideRoute ? (isAdminRoute ? "" : "px-6 pb-8") : "px-4 pb-20 md:pb-8"}`}>
+      <main className={`flex-1 mx-auto w-full ${containerWidth} ${wideRoute ? (isAdminRoute ? "" : "px-6 pb-8") : "px-4 sm:px-6 lg:px-8 pb-20 md:pb-8"}`}>
         <Outlet />
       </main>
 

@@ -99,6 +99,41 @@ export function buildIcs({ event, slot, origin }) {
  * @param {object} params.slot
  * @param {string} params.filename - e.g. "scitrek-{event-slug}-{yyyy-mm-dd}.ics"
  */
+/**
+ * Build a Google Calendar "event template" URL. Opening this URL takes the
+ * user to a pre-filled Google Calendar event-creation page; they click Save
+ * and the event lands in whichever Google Calendar they choose.
+ *
+ * No OAuth, no API call. Uses UTC for dates (slot.start_time / end_time are
+ * UTC ISO strings from the backend) so the event shows at the correct wall
+ * time regardless of the viewer's current device timezone.
+ *
+ * @param {object} params
+ * @param {object} params.event - { id, title, description?, school? }
+ * @param {object} params.slot  - { start_time, end_time, location? }
+ * @param {string} params.origin - for the URL in description
+ * @returns {string} https://calendar.google.com/calendar/render?... URL
+ */
+export function buildGoogleCalendarUrl({ event, slot, origin }) {
+  const toGcal = (iso) =>
+    new Date(iso)
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}/, '')
+  const dates = `${toGcal(slot.start_time)}/${toGcal(slot.end_time)}`
+  const url = `${origin}/events/${event.id}`
+  const details =
+    (event.description ? `${event.description}\n\n` : '') + url
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: `Sci Trek: ${event.title}`,
+    dates,
+    details,
+    location: slot.location || event.school || '',
+  })
+  return `https://calendar.google.com/calendar/render?${params.toString()}`
+}
+
 export function downloadIcs({ event, slot, filename }) {
   const ics = buildIcs({ event, slot, origin: window.location.origin })
   const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' })
