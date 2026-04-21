@@ -9,19 +9,23 @@
 // cleared on form reset or unmount.
 
 import React, { useState, useMemo } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { XCircle } from "lucide-react";
 
 import api from "../../lib/api";
+import { downloadIcs, buildGoogleCalendarUrl } from "../../lib/calendar";
 import { toast } from "../../state/toast";
 import {
   Button,
   Card,
+  Chip,
   Input,
   Label,
   FieldError,
   Skeleton,
   EmptyState,
+  ErrorState,
   PageHeader,
 } from "../../components/ui";
 import OrientationWarningModal from "../../components/OrientationWarningModal";
@@ -49,10 +53,20 @@ function formatShortDate(isoString) {
   return d.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
 }
 
+// Slot datetimes arrive as UTC ISO strings. Render in venue timezone so all
+// viewers see wall-clock at UCSB regardless of browser locale.
+const VENUE_TZ = "America/Los_Angeles";
+
 function formatTime(isoString) {
   if (!isoString) return "";
   const d = new Date(isoString);
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).toLowerCase();
+  return d
+    .toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: VENUE_TZ,
+    })
+    .toLowerCase();
 }
 
 function formatDateRange(start, end) {
@@ -63,13 +77,38 @@ function formatDateRange(start, end) {
 }
 
 // ---------------------------------------------------------------------------
+// Phone validation (PART-05) — accepts US-formatted and E.164.
+// Exported only via internal use. Server-side Pydantic is authoritative.
+// ---------------------------------------------------------------------------
+
+export function isValidPhone(raw) {
+  if (raw == null) return false;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return false;
+  // E.164: +[country code 1-9][7-14 more digits], total 8-15 digits after +.
+  // If the string starts with '+', it MUST match E.164 — do not fall back to
+  // US digit-count which would accept things like '+0123456789'.
+  if (trimmed.startsWith("+")) {
+    return /^\+[1-9]\d{7,14}$/.test(trimmed);
+  }
+  // US: strip non-digits; require exactly 10 digits, OR 11 with leading 1.
+  const digitsOnly = trimmed.replace(/\D/g, "");
+  if (digitsOnly.length === 10) return true;
+  if (digitsOnly.length === 11 && digitsOnly.startsWith("1")) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Volunteer avatar (initials circle like SignUpGenius)
 // ---------------------------------------------------------------------------
 
+// Avatar palette uses -700 shades so white text on each background clears the
+// WCAG AA 4.5:1 contrast bar (PART-10). The -500/-400 shades that were here
+// previously failed contrast (pink-500=3.58, orange-500=2.88, red-400=2.92, etc.)
 const AVATAR_COLORS = [
-  "bg-blue-500", "bg-green-500", "bg-purple-500", "bg-orange-500",
-  "bg-pink-500", "bg-teal-500", "bg-indigo-500", "bg-red-400",
-  "bg-cyan-500", "bg-amber-500",
+  "bg-blue-700", "bg-green-700", "bg-purple-700", "bg-orange-700",
+  "bg-pink-700", "bg-teal-700", "bg-indigo-700", "bg-red-700",
+  "bg-cyan-700", "bg-amber-700",
 ];
 
 function getAvatarColor(name) {
@@ -98,42 +137,64 @@ function VolunteerChip({ firstName, lastInitial }) {
 // Slot row for the table
 // ---------------------------------------------------------------------------
 
+function SlotTypeBadge({ type }) {
+  if (type === "orientation") {
+    return (
+      <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-800 border border-blue-300 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+        Orientation
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+      Module
+    </span>
+  );
+}
+
 function SlotRow({ slot, selected, onToggle, highlight }) {
   const isFull = slot.filled >= slot.capacity;
+  const isOrientation = slot.slot_type === "orientation";
 
   return (
     <tr className={[
       "border-b border-[var(--color-border)] align-top",
-      highlight && !isFull && slot.slot_type === "orientation" ? "bg-blue-50/50" : "",
+      isOrientation
+        ? "bg-blue-50 border-l-4 border-l-blue-500"
+        : "bg-emerald-50/40 border-l-4 border-l-emerald-500",
+      highlight && !isFull && isOrientation ? "ring-1 ring-blue-300" : "",
     ].join(" ")}>
-      {/* Sign Up button */}
+      {/* Sign Up / Join Waitlist button */}
       <td className="py-3 px-2 text-center align-top">
-        {isFull ? (
-          <span className="text-xs text-[var(--color-fg-muted)] font-medium">Full</span>
-        ) : (
-          <button
-            onClick={() => onToggle(slot.id)}
-            className={[
-              "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
-              selected
-                ? "bg-green-600 text-white"
-                : "bg-red-500 text-white hover:bg-red-600",
-            ].join(" ")}
-          >
-            {selected ? "Selected" : "Sign Up"}
-          </button>
-        )}
+        <button
+          onClick={() => onToggle(slot.id)}
+          className={[
+            "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+            isFull
+              ? selected
+                ? "bg-amber-500 text-white"
+                : "bg-amber-600 text-white hover:bg-amber-700"
+              : selected
+                ? "bg-[var(--color-success)] text-white"
+                : "bg-[var(--color-brand)] text-white hover:brightness-110",
+          ].join(" ")}
+        >
+          {isFull
+            ? selected ? "On waitlist" : "Join waitlist"
+            : selected ? "Selected" : "Sign Up"}
+        </button>
       </td>
       {/* Slot name + volunteer list */}
       <td className="py-3 px-2">
-        <div className="font-medium text-sm text-[var(--color-fg)]">
-          {slot.slot_type === "orientation"
-            ? `Orientation`
-            : `Period ${slot._periodLabel || ""}`}
+        <div className="flex items-center gap-2">
+          <SlotTypeBadge type={slot.slot_type} />
+          <div className="font-medium text-sm text-[var(--color-fg)]">
+            {isOrientation ? "Orientation" : `Period ${slot._periodLabel || ""}`}
+          </div>
         </div>
-        {slot.filled > 0 && (
+        {slot.capacity > 0 && (
           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5 mb-1">
-            {slot.filled} slot{slot.filled !== 1 ? "s" : ""} filled
+            {slot.filled} of {slot.capacity} filled
           </div>
         )}
         {slot.signups && slot.signups.length > 0 && (
@@ -205,37 +266,44 @@ function SlotRowInline({ slot, selected, onToggle, highlight }) {
   const isFull = slot.filled >= slot.capacity;
   return (
     <>
-      {/* Sign Up button */}
+      {/* Sign Up / Join Waitlist button */}
       <td className="py-3 px-2 text-center align-top w-20">
-        {isFull ? (
-          <span className="text-xs text-[var(--color-fg-muted)] font-medium">Full</span>
-        ) : (
-          <button
-            onClick={() => onToggle(slot.id)}
-            className={[
-              "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
-              selected
-                ? "bg-green-600 text-white"
-                : "bg-red-500 text-white hover:bg-red-600",
-            ].join(" ")}
-          >
-            {selected ? "Selected" : "Sign Up"}
-          </button>
-        )}
+        <button
+          onClick={() => onToggle(slot.id)}
+          className={[
+            "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+            isFull
+              ? selected
+                ? "bg-amber-500 text-white"
+                : "bg-amber-600 text-white hover:bg-amber-700"
+              : selected
+                ? "bg-[var(--color-success)] text-white"
+                : "bg-[var(--color-brand)] text-white hover:brightness-110",
+          ].join(" ")}
+        >
+          {isFull
+            ? selected ? "On waitlist" : "Join waitlist"
+            : selected ? "Selected" : "Sign Up"}
+        </button>
       </td>
       {/* Slot name + volunteers */}
       <td className={[
-        "py-3 px-2 align-top",
-        highlight && !isFull && slot.slot_type === "orientation" ? "bg-blue-50/30" : "",
+        "py-3 px-2 align-top border-l-4",
+        slot.slot_type === "orientation"
+          ? "bg-blue-50 border-l-blue-500"
+          : "bg-emerald-50/40 border-l-emerald-500",
       ].join(" ")}>
-        <div className="font-medium text-sm text-[var(--color-fg)]">
-          {slot.slot_type === "orientation"
-            ? "Orientation"
-            : `Period ${slot._periodLabel || ""}`}
+        <div className="flex items-center gap-2">
+          <SlotTypeBadge type={slot.slot_type} />
+          <div className="font-medium text-sm text-[var(--color-fg)]">
+            {slot.slot_type === "orientation"
+              ? "Orientation"
+              : `Period ${slot._periodLabel || ""}`}
+          </div>
         </div>
-        {slot.filled > 0 && (
+        {slot.capacity > 0 && (
           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-            {slot.filled} slot{slot.filled !== 1 ? "s" : ""} filled
+            {slot.filled} of {slot.capacity} filled
           </div>
         )}
         {slot.signups && slot.signups.length > 0 && (
@@ -275,26 +343,33 @@ function capitalizeQuarter(q) {
 function EventDescription({ event, orientationSlots }) {
   const moduleName = formatModuleName(event.module_slug);
   const quarter = capitalizeQuarter(event.quarter);
+  const hasCustomDescription = !!(event.description && event.description.trim());
 
   return (
-    <Card className="text-sm text-[var(--color-fg)] leading-relaxed">
-      {/* Intro paragraph */}
-      <p>
-        SciTrek will be conducting the {moduleName || event.title} Module
-        {event.school ? ` at ${event.school}` : ""}
-        {event.week_number ? ` for Week ${event.week_number} of ${quarter} quarter` : ""}.
-      </p>
+    <Card className="text-sm text-[var(--color-fg)] leading-relaxed !bg-gradient-to-br !from-white !to-[var(--color-brand-soft)]/50 !border-[var(--color-brand-soft)] shadow-sm">
+      {hasCustomDescription ? (
+        <p className="whitespace-pre-wrap">{event.description}</p>
+      ) : (
+        <p>
+          SciTrek will be conducting the {moduleName || event.title} Module
+          {event.school ? ` at ${event.school}` : ""}
+          {event.week_number ? ` for Week ${event.week_number} of ${quarter} quarter` : ""}.
+        </p>
+      )}
 
-      {/* Orientation note */}
       {orientationSlots.length > 0 && (
         <>
-          <p className="mt-3 font-semibold">NOTE:</p>
-          <p>
-            You must attend one Orientation. Attending an Orientation before mentoring
-            in the classroom is required. Previously attended orientations and/or
-            training workshops that covered {moduleName || "this module"} fulfill this requirement.
-          </p>
-          <p className="mt-2">~ You must choose one of the following orientations:</p>
+          {!hasCustomDescription && (
+            <>
+              <p className="mt-3 font-semibold">NOTE:</p>
+              <p>
+                You must attend one Orientation. Attending an Orientation before mentoring
+                in the classroom is required. Previously attended orientations and/or
+                training workshops that covered {moduleName || "this module"} fulfill this requirement.
+              </p>
+            </>
+          )}
+          <p className="mt-2">Available orientation slots:</p>
           <ul className="mt-1 ml-4 list-disc">
             {orientationSlots.map((slot, i) => (
               <li key={slot.id}>
@@ -307,29 +382,25 @@ function EventDescription({ event, orientationSlots }) {
         </>
       )}
 
-      {/* Logistics */}
-      <p className="mt-3">
-        All shifts meet at the SciTrek office in room Chem 1204 and travel by van to the school.
-        We begin boarding vans at the exact start time of your shift. Please be on time
-        (we are not able to accommodate late arrivals).
-      </p>
+      {!hasCustomDescription && (
+        <>
+          <p className="mt-3">
+            All shifts meet at the SciTrek office in room Chem 1204 and travel by van to the school.
+            We begin boarding vans at the exact start time of your shift. Please be on time
+            (we are not able to accommodate late arrivals).
+          </p>
 
-      <p className="mt-3">We look forward to working with you!</p>
+          <p className="mt-3">We look forward to working with you!</p>
 
-      <p className="mt-3">
-        Please contact the SciTrek Manager at{" "}
-        <a href="mailto:chem-scitrekmanager@ucsb.edu" className="text-[var(--color-primary)] underline">
-          chem-scitrekmanager@ucsb.edu
-        </a>{" "}
-        if you have any questions. If you sign up for a shift but cannot make it,
-        please notify us as soon as possible.
-      </p>
-
-      {/* Custom admin description appended below if present */}
-      {event.description && (
-        <p className="mt-3 whitespace-pre-wrap border-t border-[var(--color-border)] pt-3">
-          {event.description}
-        </p>
+          <p className="mt-3">
+            Please contact the SciTrek Manager at{" "}
+            <a href="mailto:chem-scitrekmanager@ucsb.edu" className="text-[var(--color-primary)] underline">
+              chem-scitrekmanager@ucsb.edu
+            </a>{" "}
+            if you have any questions. If you sign up for a shift but cannot make it,
+            please notify us as soon as possible.
+          </p>
+        </>
       )}
     </Card>
   );
@@ -341,7 +412,13 @@ function EventDescription({ event, orientationSlots }) {
 
 function DetailSkeleton() {
   return (
-    <div className="flex flex-col gap-4 py-4">
+    <div
+      className="flex flex-col gap-4 py-4"
+      role="status"
+      aria-busy="true"
+      aria-live="polite"
+      aria-label="Loading event details"
+    >
       <Skeleton className="h-16 rounded-xl" />
       <Skeleton className="h-32 rounded-xl" />
       <Skeleton className="h-64 rounded-xl" />
@@ -355,6 +432,7 @@ function DetailSkeleton() {
 
 export default function EventDetailPage() {
   const { eventId } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   // State machine
@@ -377,6 +455,15 @@ export default function EventDetailPage() {
     queryFn: () => api.public.getEvent(eventId),
     enabled: !!eventId,
   });
+
+  // Phase 22 — effective custom form schema
+  const formSchemaQ = useQuery({
+    queryKey: ["publicEventFormSchema", eventId],
+    queryFn: () => api.public.getFormSchema(eventId),
+    enabled: !!eventId,
+  });
+  const formSchema = formSchemaQ.data?.schema || [];
+  const [responses, setResponses] = useState({}); // { field_id: value }
 
   // Build slot lookup and group slots by date
   const { slotMap, orientationSlots, periodSlotsByDate } = useMemo(() => {
@@ -435,23 +522,187 @@ export default function EventDetailPage() {
     }
   }
 
-  // Client-side validation
+  // Client-side validation (UI-SPEC §Form validation copy)
+  // Phone accepts BOTH US-formatted (10 digits, optional leading 1) and
+  // E.164 (+[country][number], total 8-15 digits). Server (D-14) remains
+  // authoritative; this only improves UX before the round-trip. PART-05.
   function validateIdentity() {
     const errors = {};
-    if (!identity.first_name.trim()) errors.first_name = "First name is required";
-    if (!identity.last_name.trim()) errors.last_name = "Last name is required";
+    const fullName = `${identity.first_name} ${identity.last_name}`.trim();
+    if (!identity.first_name.trim() || !identity.last_name.trim()) {
+      const msg = "Enter your full name";
+      if (!identity.first_name.trim()) errors.first_name = msg;
+      if (!identity.last_name.trim()) errors.last_name = msg;
+    }
     if (!identity.email.trim()) {
-      errors.email = "Email is required";
+      errors.email = "Enter your email address";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.email)) {
-      errors.email = "Enter a valid email address";
+      errors.email = "That doesn't look like a valid email";
     }
     if (!identity.phone.trim()) {
-      errors.phone = "Phone number is required";
-    } else {
-      const digits = identity.phone.replace(/\D/g, "");
-      if (digits.length < 10) errors.phone = "Enter a valid phone number (10+ digits)";
+      errors.phone = "Enter your phone number";
+    } else if (!isValidPhone(identity.phone)) {
+      errors.phone = "Use a US format: (805) 555-1234 or +18055551234";
     }
+    // Phase 22 — validate required custom fields. Server accepts missing
+    // (organizer override), but we block client-side unless the volunteer
+    // explicitly confirms skip. For v1.3 we just block at submit: organizer
+    // can still add the volunteer later.
+    for (const f of formSchema) {
+      if (!f.required) continue;
+      const v = responses[f.id];
+      const isBlank =
+        v === undefined ||
+        v === null ||
+        (typeof v === "string" && !v.trim()) ||
+        (Array.isArray(v) && v.length === 0);
+      if (isBlank) {
+        errors[`custom_${f.id}`] = `Please answer: ${f.label}`;
+      }
+    }
+    // Touch fullName so the helper isn't dead code if a future linter trims it.
+    void fullName;
     return errors;
+  }
+
+  // Phase 22 — dynamic form renderer
+  function renderFormField(field) {
+    const fieldErrKey = `custom_${field.id}`;
+    const value = responses[field.id];
+    function setValue(v) {
+      setResponses((prev) => ({ ...prev, [field.id]: v }));
+      if (formErrors[fieldErrKey]) {
+        setFormErrors((prev) => {
+          const n = { ...prev };
+          delete n[fieldErrKey];
+          return n;
+        });
+      }
+    }
+    const fid = `ff-${field.id}`;
+    let input;
+    switch (field.type) {
+      case "textarea":
+        input = (
+          <textarea
+            id={fid}
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+            className="w-full min-h-16 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+          />
+        );
+        break;
+      case "select":
+        input = (
+          <select
+            id={fid}
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+          >
+            <option value="">— select —</option>
+            {(field.options || []).map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        );
+        break;
+      case "radio":
+        input = (
+          <div className="space-y-1" role="radiogroup" aria-labelledby={`${fid}-label`}>
+            {(field.options || []).map((o) => (
+              <label key={o} className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={fid}
+                  value={o}
+                  checked={value === o}
+                  onChange={() => setValue(o)}
+                />
+                {o}
+              </label>
+            ))}
+          </div>
+        );
+        break;
+      case "checkbox": {
+        const selected = new Set(Array.isArray(value) ? value : []);
+        input = (
+          <div className="space-y-1">
+            {(field.options || []).map((o) => (
+              <label key={o} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selected.has(o)}
+                  onChange={(e) => {
+                    const next = new Set(selected);
+                    if (e.target.checked) next.add(o);
+                    else next.delete(o);
+                    setValue(Array.from(next));
+                  }}
+                />
+                {o}
+              </label>
+            ))}
+          </div>
+        );
+        break;
+      }
+      case "phone":
+        input = (
+          <Input
+            id={fid}
+            type="tel"
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        );
+        break;
+      case "email":
+        input = (
+          <Input
+            id={fid}
+            type="email"
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        );
+        break;
+      case "text":
+      default:
+        input = (
+          <Input
+            id={fid}
+            type="text"
+            value={value || ""}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        );
+    }
+    return (
+      <div key={field.id}>
+        <Label htmlFor={fid} id={`${fid}-label`}>
+          {field.label}
+          {field.required ? " *" : ""}
+        </Label>
+        {input}
+        {field.help_text && (
+          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+            {field.help_text}
+          </p>
+        )}
+        <FieldError>{formErrors[fieldErrKey]}</FieldError>
+      </div>
+    );
+  }
+
+  // Phase 22 — build the response array from state
+  function buildResponsesArray() {
+    return Object.entries(responses)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([field_id, value]) => ({ field_id, value }));
   }
 
   // Submit signup
@@ -462,7 +713,24 @@ export default function EventDetailPage() {
       const response = await api.public.createSignup({
         ...identity,
         slot_ids: [...selectedSlotIds],
+        responses: buildResponsesArray(),
       });
+      // Phase 25 (WAIT-01): if any selected slot was at capacity the server
+      // puts the signup on the waitlist instead of rejecting. Surface that
+      // explicitly so the volunteer knows what happened.
+      const waitlistedItems = (response.signups || []).filter(
+        (s) => s.status === "waitlisted",
+      );
+      if (waitlistedItems.length > 0) {
+        const minPosition = waitlistedItems.reduce(
+          (acc, s) => (s.position != null && (acc == null || s.position < acc) ? s.position : acc),
+          null,
+        );
+        const positionText = minPosition != null ? ` — position ${minPosition}` : "";
+        toast.info
+          ? toast.info(`You're on the waitlist${positionText}.`)
+          : toast.success(`You're on the waitlist${positionText}.`);
+      }
       setSuccessData({ ...response, slots: selectedSlots });
       setStep("success");
     } catch (err) {
@@ -517,8 +785,16 @@ export default function EventDetailPage() {
     if (hasPeriod && !hasOrientation) {
       setStep("checking-orientation");
       try {
-        const result = await api.public.orientationStatus(identity.email);
-        if (!result.has_attended_orientation) {
+        // Phase 21: credit check is cross-week / cross-module within the same
+        // module family. Pass eventId so the backend can resolve the family.
+        const result = await api.public.orientationCheck(
+          identity.email,
+          eventId,
+        );
+        // `has_credit` is the new field; fall back to `has_attended_orientation`
+        // so the check still works if we ever point at the legacy endpoint.
+        const hasCredit = result?.has_credit ?? result?.has_attended_orientation;
+        if (!hasCredit) {
           setStep("orientation-warning");
           return;
         }
@@ -539,6 +815,7 @@ export default function EventDetailPage() {
     setSubmitError(null);
     setSuccessData(null);
     setHighlightOrientation(false);
+    setResponses({});
   }
 
   function handleOrientationYes() {
@@ -558,12 +835,12 @@ export default function EventDetailPage() {
 
   if (eventQ.isError) {
     return (
-      <EmptyState
-        title="Could not load event"
-        body={eventQ.error?.message || "Something went wrong."}
+      <ErrorState
+        title="We couldn't load this page"
+        body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
         action={
           <Button variant="secondary" onClick={() => eventQ.refetch()}>
-            Retry
+            Try again
           </Button>
         }
       />
@@ -576,50 +853,299 @@ export default function EventDetailPage() {
     selectedSlotIds.size > 0 && (step === "form" || step === "checking-orientation");
   const isSubmitting = step === "submitting" || step === "checking-orientation";
 
+  // Phase 29 (LOCK-01) — compute signup-window state for banner + submit gate.
+  const now = new Date();
+  const opensAt = event?.signup_open_at ? new Date(event.signup_open_at) : null;
+  const closesAt = event?.signup_close_at ? new Date(event.signup_close_at) : null;
+  const beforeWindow = !!(opensAt && now < opensAt);
+  const afterWindow = !!(closesAt && now > closesAt);
+  const outsideWindow = beforeWindow || afterWindow;
+  const windowBannerText = beforeWindow
+    ? `Signup opens ${opensAt?.toLocaleString("en-US", { timeZone: "America/Los_Angeles", dateStyle: "medium", timeStyle: "short" })} PT`
+    : afterWindow
+      ? `Signup closed ${closesAt?.toLocaleString("en-US", { timeZone: "America/Los_Angeles", dateStyle: "medium", timeStyle: "short" })} PT`
+      : null;
+
   const dateKeys = Object.keys(periodSlotsByDate).sort();
 
   return (
-    <div className="flex flex-col gap-4 py-4 max-w-4xl mx-auto">
+    <div className="flex flex-col gap-5 py-4 max-w-5xl mx-auto w-full animate-fade-up">
       {/* Back link */}
       <div>
-        <Link to="/events" className="text-sm text-[var(--color-primary)] hover:underline">
+        <Link to="/volunteer" className="inline-flex items-center gap-1 text-sm text-[var(--color-brand)] hover:underline">
           &larr; Back to events
         </Link>
       </div>
 
-      {/* Event header */}
-      <div>
-        <h1 className="text-xl font-bold text-[var(--color-fg)]">
-          {event.title}
-        </h1>
-        <p className="text-sm text-[var(--color-fg-muted)] mt-1">
-          {event.school} &middot; {formatDateRange(event.start_date, event.end_date)}
-        </p>
-      </div>
+      {/* Event header — hero card */}
+      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-[var(--color-brand)] via-indigo-600 to-indigo-800 text-white p-6 sm:p-8 md:p-10">
+        <div
+          aria-hidden="true"
+          className="absolute -top-16 -right-16 h-64 w-64 rounded-full bg-blue-400/25 blur-3xl"
+        />
+        <div
+          aria-hidden="true"
+          className="absolute -bottom-20 -left-10 h-72 w-72 rounded-full bg-indigo-300/20 blur-3xl"
+        />
+        <div className="relative z-10">
+          {event.school && (
+            <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-blue-200">
+              {event.school}
+            </p>
+          )}
+          <h1 className="mt-2 text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight leading-tight">
+            {event.title}
+          </h1>
+          <p className="mt-3 text-sm sm:text-base text-blue-100">
+            {formatDateRange(event.start_date, event.end_date)}
+          </p>
+          <p className="mt-1 text-xs text-blue-200/80">
+            Times shown in Pacific Time.
+          </p>
+        </div>
+      </section>
+
+      {/* Phase 29 (LOCK-01) — signup window banner */}
+      {outsideWindow && (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+          data-testid="signup-window-banner"
+        >
+          {windowBannerText}
+        </div>
+      )}
 
       {/* Event description (auto-generated + any custom admin text) */}
       <EventDescription event={event} orientationSlots={orientationSlots} />
 
-      {/* Already signed up link */}
-      <div className="text-sm">
-        Already signed up?{" "}
-        <Link to="/signup/manage" className="text-[var(--color-primary)] hover:underline font-medium">
-          Change my sign up
-        </Link>
+      {/* Already-signed-up hint. Manage page requires a token from the
+          confirmation email, so a bare link would error — we explain instead. */}
+      <div className="inline-flex items-center gap-2 self-start rounded-full bg-[var(--color-brand-soft)] px-4 py-2 text-sm text-[var(--color-brand)]">
+        <span aria-hidden="true">✉️</span>
+        Already signed up? Use the <span className="font-semibold">Manage my signups</span> link in your confirmation email.
       </div>
+
+      {/* Add to calendar (PART-13 surface A) — secondary CTA below event metadata,
+          above the slot list. Only renders when there is at least one slot to add. */}
+      {slots.length > 0 && (
+        <div className="mt-2 mb-2 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              const selectedSlot =
+                [...selectedSlotIds]
+                  .map((id) => slotMap[id])
+                  .find(Boolean) ||
+                orientationSlots.find(
+                  (s) => (s.filled ?? 0) < (s.capacity ?? 0)
+                ) ||
+                slots[0];
+              if (!selectedSlot) return;
+              const url = buildGoogleCalendarUrl({
+                event,
+                slot: selectedSlot,
+                origin: window.location.origin,
+              });
+              window.open(url, "_blank", "noopener,noreferrer");
+            }}
+          >
+            Add to Google Calendar
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              // Slot precedence: selected → first non-full orientation → first slot
+              const selectedSlot =
+                [...selectedSlotIds]
+                  .map((id) => slotMap[id])
+                  .find(Boolean) ||
+                orientationSlots.find(
+                  (s) => (s.filled ?? 0) < (s.capacity ?? 0)
+                ) ||
+                slots[0];
+              if (!selectedSlot) return;
+              const dateStr =
+                event.start_date
+                  ? String(event.start_date).slice(0, 10)
+                  : selectedSlot.start_time
+                  ? new Date(selectedSlot.start_time)
+                      .toISOString()
+                      .slice(0, 10)
+                  : "event";
+              const slugPart = event.slug || event.id;
+              const filename = `scitrek-${slugPart}-${dateStr}.ics`;
+              downloadIcs({ event, slot: selectedSlot, filename });
+              toast.success(
+                "Calendar file saved. Open it to add to your calendar."
+              );
+            }}
+          >
+            Download .ics
+          </Button>
+        </div>
+      )}
 
       {/* Slot table */}
       {slots.length === 0 ? (
-        <EmptyState title="No slots available" body="Check back later." />
+        <EmptyState
+          title="Every slot is full"
+          body="This event is fully booked. Try another event from this week's list."
+          action={
+            <Button variant="secondary" onClick={() => navigate("/volunteer")}>
+              Back to events
+            </Button>
+          }
+        />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+        <>
+          {/* ---- Mobile slot list (sm and below) ---- */}
+          <div className="md:hidden flex flex-col gap-5">
+            {orientationSlots.length > 0 && (
+              <section>
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)] mb-2">
+                  Orientation
+                </h2>
+                <div className="flex flex-col gap-3">
+                  {orientationSlots.map((slot) => {
+                    const isFull = slot.filled >= slot.capacity;
+                    const isSelected = selectedSlotIds.has(slot.id);
+                    return (
+                      <div
+                        key={slot.id}
+                        className={[
+                          "rounded-xl border bg-white p-4 shadow-sm",
+                          highlightOrientation && !isFull
+                            ? "border-blue-400 ring-2 ring-blue-200"
+                            : "border-[var(--color-border)]",
+                        ].join(" ")}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium uppercase tracking-wide text-blue-700">
+                              Orientation {slot._periodLabel}
+                            </p>
+                            <p className="mt-1 text-base font-semibold text-[var(--color-fg)]">
+                              {formatShortDate(slot.date)} · {formatWeekday(slot.date)}
+                            </p>
+                            <p className="text-sm text-[var(--color-fg-muted)] mt-0.5">
+                              {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
+                            </p>
+                            {slot.location && (
+                              <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
+                                {slot.location}
+                              </p>
+                            )}
+                            <p className="text-xs text-[var(--color-fg-muted)] mt-2">
+                              {slot.filled} of {slot.capacity} filled
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => toggleSlot(slot.id)}
+                            className={[
+                              "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+                              isFull
+                                ? isSelected
+                                  ? "bg-amber-500 text-white"
+                                  : "bg-amber-600 text-white"
+                                : isSelected
+                                  ? "bg-[var(--color-success)] text-white"
+                                  : "bg-[var(--color-brand)] text-white hover:brightness-110",
+                            ].join(" ")}
+                          >
+                            {isFull
+                              ? isSelected ? "On waitlist" : "Join waitlist"
+                              : isSelected ? "Selected" : "Sign up"}
+                          </button>
+                        </div>
+                        {slot.signups?.length > 0 && (
+                          <div className="flex flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
+                            {slot.signups.map((s, i) => (
+                              <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+            {dateKeys.map((dateKey) => {
+              const daySlots = periodSlotsByDate[dateKey];
+              const firstSlot = daySlots[0];
+              return (
+                <section key={dateKey}>
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)] mb-2">
+                    {formatShortDate(dateKey)} · {formatWeekday(dateKey)}
+                    {firstSlot.location ? ` · ${firstSlot.location}` : ""}
+                  </h2>
+                  <div className="flex flex-col gap-3">
+                    {daySlots.map((slot) => {
+                      const isFull = slot.filled >= slot.capacity;
+                      const isSelected = selectedSlotIds.has(slot.id);
+                      return (
+                        <div
+                          key={slot.id}
+                          className="rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium uppercase tracking-wide text-indigo-700">
+                                Period {slot._periodLabel}
+                              </p>
+                              <p className="mt-1 text-base font-semibold text-[var(--color-fg)]">
+                                {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
+                              </p>
+                              <p className="text-xs text-[var(--color-fg-muted)] mt-2">
+                                {slot.filled} of {slot.capacity} filled
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => toggleSlot(slot.id)}
+                              className={[
+                                "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+                                isFull
+                                  ? isSelected
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-amber-600 text-white"
+                                  : isSelected
+                                    ? "bg-[var(--color-success)] text-white"
+                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
+                              ].join(" ")}
+                            >
+                              {isFull
+                                ? isSelected ? "On waitlist" : "Join waitlist"
+                                : isSelected ? "Selected" : "Sign up"}
+                            </button>
+                          </div>
+                          {slot.signups?.length > 0 && (
+                            <div className="flex flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
+                              {slot.signups.map((s, i) => (
+                                <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+
+          {/* ---- Desktop slot table (md and up) ---- */}
+          <div className="hidden md:block overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
-                <th className="py-2 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">Date</th>
-                <th className="py-2 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">Time</th>
-                <th className="py-2 px-2 text-center font-semibold text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">Available Slot</th>
-                <th className="py-2 px-2 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg-muted)]"></th>
+              <tr className="bg-gradient-to-r from-[var(--color-brand-soft)] to-[var(--color-accent-soft)] border-b border-[var(--color-border)]">
+                <th className="py-3 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Date</th>
+                <th className="py-3 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Time</th>
+                <th className="py-3 px-2 text-center font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Available Slot</th>
+                <th className="py-3 px-2 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]"></th>
               </tr>
             </thead>
 
@@ -628,9 +1154,9 @@ export default function EventDetailPage() {
               <>
                 {orientationSlots.map((slot, idx) => (
                   <tbody key={slot.id}>
-                    <tr className="border-b border-[var(--color-border)]">
+                    <tr className="border-b border-[var(--color-border)] hover:bg-[var(--color-brand-soft)]/40 transition-colors">
                       {/* Date + location */}
-                      <td className="py-3 px-3 align-top bg-[var(--color-surface)] border-r border-[var(--color-border)]">
+                      <td className="py-3 px-3 align-top bg-[var(--color-brand-soft)]/60 border-r border-[var(--color-border)] border-l-4 border-l-[var(--color-brand)]">
                         <div className="font-semibold">{formatShortDate(slot.date)}</div>
                         <div className="text-xs text-[var(--color-fg-muted)]">{formatWeekday(slot.date)}</div>
                         {slot.location && (
@@ -642,23 +1168,31 @@ export default function EventDetailPage() {
                         <div>{formatTime(slot.start_time)}-</div>
                         <div>{formatTime(slot.end_time)}</div>
                       </td>
-                      {/* Sign Up button */}
+                      {/* Sign Up / Join Waitlist button */}
                       <td className="py-3 px-2 text-center align-top">
-                        {slot.filled >= slot.capacity ? (
-                          <span className="text-xs text-[var(--color-fg-muted)]">Full</span>
-                        ) : (
-                          <button
-                            onClick={() => toggleSlot(slot.id)}
-                            className={[
-                              "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
-                              selectedSlotIds.has(slot.id)
-                                ? "bg-green-600 text-white"
-                                : "bg-red-500 text-white hover:bg-red-600",
-                            ].join(" ")}
-                          >
-                            {selectedSlotIds.has(slot.id) ? "Selected" : "Sign Up"}
-                          </button>
-                        )}
+                        {(() => {
+                          const isFull = slot.filled >= slot.capacity;
+                          const isSelected = selectedSlotIds.has(slot.id);
+                          return (
+                            <button
+                              onClick={() => toggleSlot(slot.id)}
+                              className={[
+                                "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+                                isFull
+                                  ? isSelected
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-amber-600 text-white hover:bg-amber-700"
+                                  : isSelected
+                                    ? "bg-[var(--color-success)] text-white"
+                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
+                              ].join(" ")}
+                            >
+                              {isFull
+                                ? isSelected ? "On waitlist" : "Join waitlist"
+                                : isSelected ? "Selected" : "Sign Up"}
+                            </button>
+                          );
+                        })()}
                       </td>
                       {/* Slot label + volunteers */}
                       <td className={[
@@ -668,9 +1202,9 @@ export default function EventDetailPage() {
                         <div className="font-medium">
                           Orientation {slot._periodLabel}
                         </div>
-                        {slot.filled > 0 && (
+                        {slot.capacity > 0 && (
                           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-                            {slot.filled} slot{slot.filled !== 1 ? "s" : ""} filled
+                            {slot.filled} of {slot.capacity} filled
                           </div>
                         )}
                         {slot.signups?.length > 0 && (
@@ -694,12 +1228,12 @@ export default function EventDetailPage() {
               return (
                 <tbody key={dateKey}>
                   {daySlots.map((slot, idx) => (
-                    <tr key={slot.id} className="border-b border-[var(--color-border)]">
+                    <tr key={slot.id} className="border-b border-[var(--color-border)] hover:bg-[var(--color-accent-soft)]/40 transition-colors">
                       {/* Date cell — only first row in group */}
                       {idx === 0 ? (
                         <td
                           rowSpan={daySlots.length}
-                          className="py-3 px-3 align-top bg-[var(--color-surface)] border-r border-[var(--color-border)]"
+                          className="py-3 px-3 align-top bg-[var(--color-accent-soft)]/60 border-r border-[var(--color-border)] border-l-4 border-l-[var(--color-accent)]"
                         >
                           <div className="font-semibold">{formatShortDate(dateKey)}</div>
                           <div className="text-xs text-[var(--color-fg-muted)]">{formatWeekday(dateKey)}</div>
@@ -713,30 +1247,38 @@ export default function EventDetailPage() {
                         <div>{formatTime(slot.start_time)}-</div>
                         <div>{formatTime(slot.end_time)}</div>
                       </td>
-                      {/* Sign Up button */}
+                      {/* Sign Up / Join Waitlist button */}
                       <td className="py-3 px-2 text-center align-top">
-                        {slot.filled >= slot.capacity ? (
-                          <span className="text-xs text-[var(--color-fg-muted)]">Full</span>
-                        ) : (
-                          <button
-                            onClick={() => toggleSlot(slot.id)}
-                            className={[
-                              "px-3 py-1.5 rounded text-xs font-semibold transition-colors",
-                              selectedSlotIds.has(slot.id)
-                                ? "bg-green-600 text-white"
-                                : "bg-red-500 text-white hover:bg-red-600",
-                            ].join(" ")}
-                          >
-                            {selectedSlotIds.has(slot.id) ? "Selected" : "Sign Up"}
-                          </button>
-                        )}
+                        {(() => {
+                          const isFull = slot.filled >= slot.capacity;
+                          const isSelected = selectedSlotIds.has(slot.id);
+                          return (
+                            <button
+                              onClick={() => toggleSlot(slot.id)}
+                              className={[
+                                "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+                                isFull
+                                  ? isSelected
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-amber-600 text-white hover:bg-amber-700"
+                                  : isSelected
+                                    ? "bg-[var(--color-success)] text-white"
+                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
+                              ].join(" ")}
+                            >
+                              {isFull
+                                ? isSelected ? "On waitlist" : "Join waitlist"
+                                : isSelected ? "Selected" : "Sign Up"}
+                            </button>
+                          );
+                        })()}
                       </td>
                       {/* Slot label + volunteers */}
                       <td className="py-3 px-2 align-top">
                         <div className="font-medium">Period {slot._periodLabel}</div>
-                        {slot.filled > 0 && (
+                        {slot.capacity > 0 && (
                           <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-                            {slot.filled} slot{slot.filled !== 1 ? "s" : ""} filled
+                            {slot.filled} of {slot.capacity} filled
                           </div>
                         )}
                         {slot.signups?.length > 0 && (
@@ -753,7 +1295,8 @@ export default function EventDetailPage() {
               );
             })}
           </table>
-        </div>
+          </div>
+        </>
       )}
 
       {/* Identity form — shown when at least one slot is selected */}
@@ -815,13 +1358,30 @@ export default function EventDetailPage() {
               />
               <FieldError>{formErrors.phone}</FieldError>
             </div>
+            {/* Phase 22 — dynamic custom form fields */}
+            {formSchema.length > 0 && (
+              <div className="pt-2 border-t border-[var(--color-border)] flex flex-col gap-4">
+                <h3 className="text-sm font-semibold">
+                  A few more questions
+                </h3>
+                {formSchema.map((f) => renderFormField(f))}
+              </div>
+            )}
             <Button
               type="submit"
               variant="primary"
               className="w-full min-h-11"
-              disabled={isSubmitting}
+              disabled={isSubmitting || outsideWindow}
+              title={outsideWindow ? windowBannerText : undefined}
+              data-testid="signup-submit"
             >
-              {isSubmitting ? "Submitting..." : "Sign up"}
+              {isSubmitting
+                ? "Submitting..."
+                : outsideWindow
+                  ? beforeWindow
+                    ? "Signup not open yet"
+                    : "Signup closed"
+                  : "Sign up"}
             </Button>
           </form>
         </Card>

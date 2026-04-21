@@ -66,10 +66,10 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/organize/events/evt-1/roster"]}>
+      <MemoryRouter initialEntries={["/organizer/events/evt-1/roster"]}>
         <Routes>
           <Route
-            path="/organize/events/:eventId/roster"
+            path="/organizer/events/:eventId/roster"
             element={<OrganizerRosterPage />}
           />
         </Routes>
@@ -89,7 +89,7 @@ describe("OrganizerRosterPage", () => {
   it("shows checked-in count in header", async () => {
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText(/1 of 3 checked in/)).toBeInTheDocument();
+      expect(screen.getByText(/1 \/ 3/)).toBeInTheDocument();
     });
   });
 

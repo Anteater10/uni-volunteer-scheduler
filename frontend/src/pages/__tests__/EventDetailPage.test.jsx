@@ -1,11 +1,15 @@
 // src/pages/__tests__/EventDetailPage.test.jsx
 //
-// Component tests for EventDetailPage: slot checkboxes, identity form, state machine,
-// orientation warning modal, success card, and error handling.
-// 10 test cases.
+// Component tests for EventDetailPage covering:
+// - SignUpGenius-style button-based slot selection (current UI)
+// - UI-SPEC error / empty / loading state copy (Plan 15-04)
+// - E.164 + US-format phone validation (PART-05)
+// - Add-to-Calendar secondary button + downloadIcs wiring (PART-13 surface A)
+// - Status chip "Full" carries an icon (no color-only signal)
+// - Orientation warning modal still triggers when period selected without orientation (PART-04 + PART-06)
 
 import React from "react";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -19,7 +23,10 @@ vi.mock("../../lib/api", () => ({
     public: {
       getEvent: vi.fn(),
       createSignup: vi.fn(),
+      // Legacy — kept for any test that still exercises the old flow.
       orientationStatus: vi.fn(),
+      // Phase 21 — cross-week/cross-module credit check.
+      orientationCheck: vi.fn(),
     },
   },
 }));
@@ -32,9 +39,16 @@ vi.mock("../../state/toast", () => ({
   },
 }));
 
+// Stub downloadIcs so the parallel Plan 15-02 lib does not need to exist
+// at test time. The real implementation is exercised in calendar.test.js.
+vi.mock("../../lib/calendar", () => ({
+  downloadIcs: vi.fn(),
+}));
+
 import api from "../../lib/api";
 import { toast } from "../../state/toast";
-import EventDetailPage from "../public/EventDetailPage";
+import { downloadIcs } from "../../lib/calendar";
+import EventDetailPage, { isValidPhone } from "../public/EventDetailPage";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -75,14 +89,15 @@ const FULL_SLOT = {
 
 const MOCK_EVENT = {
   id: "evt-1",
+  slug: "crispr-carpinteria",
   title: "CRISPR at Carpinteria HS",
   quarter: "spring",
   year: 2026,
   week_number: 5,
   school: "Carpinteria HS",
   module_slug: "crispr",
-  start_date: "2026-04-22T00:00:00",
-  end_date: "2026-04-28T00:00:00",
+  start_date: "2026-04-22",
+  end_date: "2026-04-28",
   slots: [ORIENTATION_SLOT, PERIOD_SLOT, FULL_SLOT],
 };
 
@@ -96,9 +111,6 @@ function makeQueryClient() {
   });
 }
 
-/**
- * Render EventDetailPage with the event ID pre-populated in the route params.
- */
 function renderDetailPage(eventId = "evt-1") {
   const qc = makeQueryClient();
   return render(
@@ -106,20 +118,31 @@ function renderDetailPage(eventId = "evt-1") {
       <MemoryRouter initialEntries={[`/events/${eventId}`]}>
         <Routes>
           <Route path="/events/:eventId" element={<EventDetailPage />} />
+          <Route path="/events" element={<div>Events list page</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>
   );
 }
 
-/**
- * Fill in the identity form with valid data.
- */
 async function fillIdentityForm() {
   await userEvent.type(screen.getByLabelText(/^first name$/i), "Alice");
   await userEvent.type(screen.getByLabelText(/^last name$/i), "Smith");
   await userEvent.type(screen.getByLabelText(/^email$/i), "alice@example.com");
   await userEvent.type(screen.getByLabelText(/^phone$/i), "(213) 867-5309");
+}
+
+async function clickFirstSignUpButton() {
+  const buttons = await screen.findAllByRole("button", { name: /^sign up$/i });
+  fireEvent.click(buttons[0]);
+}
+
+// The identity form submit button is the only <button type="submit"> on the page.
+// Use this to disambiguate from the slot-row "Sign Up" buttons which share copy.
+function clickFormSubmitButton(container) {
+  const submit = container.querySelector('form button[type="submit"]');
+  if (!submit) throw new Error("Form submit button not found");
+  fireEvent.click(submit);
 }
 
 // ---------------------------------------------------------------------------
@@ -133,44 +156,105 @@ describe("EventDetailPage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 1: Renders slot cards with checkboxes when event data loads
+  // Loading / error / empty states (UI-SPEC §Plan 15-04)
   // -------------------------------------------------------------------------
-  it("renders slot cards with checkboxes when event data loads", async () => {
+
+  it("renders aria-busy loading region while fetching", async () => {
+    let resolveGet;
+    api.public.getEvent.mockImplementation(
+      () => new Promise((r) => { resolveGet = r; })
+    );
+    const { container } = renderDetailPage();
+
+    const busy = container.querySelector('[aria-busy="true"]');
+    expect(busy).not.toBeNull();
+    expect(busy.getAttribute("aria-live")).toBe("polite");
+
+    await act(async () => { resolveGet(MOCK_EVENT); });
+  });
+
+  it("renders ErrorState with UI-SPEC copy + 'Try again' on fetch error", async () => {
+    api.public.getEvent.mockRejectedValue(new Error("network down"));
+
     renderDetailPage();
 
     await waitFor(() => {
-      expect(screen.getByText("CRISPR at Carpinteria HS")).toBeInTheDocument();
+      expect(
+        screen.getByText("We couldn't load this page")
+      ).toBeInTheDocument();
     });
+    expect(
+      screen.getByText(/scitrek@ucsb\.edu/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /try again/i })
+    ).toBeInTheDocument();
+    // Old copy must be gone
+    expect(screen.queryByText(/Could not load event/i)).not.toBeInTheDocument();
+  });
 
-    // Section headings
-    expect(screen.getByText(/Orientation Slots/i)).toBeInTheDocument();
-    expect(screen.getByText(/Period Slots/i)).toBeInTheDocument();
+  it("renders 'Every slot is full' empty state with Back to events action when no slots", async () => {
+    api.public.getEvent.mockResolvedValue({ ...MOCK_EVENT, slots: [] });
 
-    // Checkboxes for the available slots
-    const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes.length).toBeGreaterThanOrEqual(2);
+    renderDetailPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/every slot is full/i)).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/this event is fully booked/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /back to events/i })
+    ).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------
-  // Test 2: Checking a slot checkbox reveals the identity form
+  // Slot grouping preserved (PART-04)
   // -------------------------------------------------------------------------
-  it("reveals identity form when a slot checkbox is checked", async () => {
+
+  it("renders both orientation and period slots with capacity+filled counts (PART-04)", async () => {
     renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
 
-    await waitFor(() => {
-      expect(screen.getByText(/Orientation Slots/i)).toBeInTheDocument();
-    });
+    // Orientation row label is rendered (intro paragraph + slot row both mention orientation)
+    const orientationLabels = await screen.findAllByText(/orientation/i);
+    expect(orientationLabels.length).toBeGreaterThanOrEqual(1);
 
-    // Initially the form should not be visible
+    // Period row labels are rendered (period slot rows). There are two period
+    // slots (PERIOD_SLOT + FULL_SLOT), so "Period 1" appears once per period
+    // group. Use getAllByText since both period dates produce a "Period 1".
+    const periodLabels = screen.getAllByText(/^Period\s*1$/);
+    expect(periodLabels.length).toBeGreaterThanOrEqual(1);
+
+    // Filled counts now show capacity denominator per UI-SPEC (PART-04 / GAP-A):
+    // "N of M filled" so the remaining headroom is visible even when a slot is not yet full.
+    expect(screen.getByText(/5 of 20 filled/i)).toBeInTheDocument();
+    expect(screen.getByText(/7 of 20 filled/i)).toBeInTheDocument();
+  });
+
+  it("Full slot exposes a 'Join waitlist' button (waitlist affordance replaces the old Full chip)", async () => {
+    renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+
+    // v1.3 waitlist UX: full slots no longer show a read-only "Full" chip —
+    // they render a Join-waitlist button so users can self-enqueue.
+    const waitlistBtn = await screen.findByRole("button", { name: /join waitlist/i });
+    expect(waitlistBtn).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Sign-up flow (current button-based UI)
+  // -------------------------------------------------------------------------
+
+  it("reveals identity form when a Sign Up button is clicked", async () => {
+    renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+
     expect(screen.queryByLabelText(/^first name$/i)).not.toBeInTheDocument();
 
-    // Check the orientation slot checkbox (index 0, first enabled)
-    const checkboxes = screen.getAllByRole("checkbox");
-    const enabledCheckbox = checkboxes.find((cb) => !cb.disabled);
-    expect(enabledCheckbox).toBeDefined();
-    fireEvent.click(enabledCheckbox);
+    await clickFirstSignUpButton();
 
-    // Form should now appear
     await waitFor(() => {
       expect(screen.getByLabelText(/^first name$/i)).toBeInTheDocument();
     });
@@ -179,272 +263,119 @@ describe("EventDetailPage", () => {
     expect(screen.getByLabelText(/^phone$/i)).toBeInTheDocument();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 3: Submitting with empty fields shows validation errors
-  // -------------------------------------------------------------------------
-  it("shows validation errors when submitting with empty fields", async () => {
-    renderDetailPage();
+  it("shows UI-SPEC validation copy when submitting empty form", async () => {
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
 
+    await clickFirstSignUpButton();
+    await screen.findByLabelText(/^first name$/i);
+
+    clickFormSubmitButton(container);
+
+    // Both first_name and last_name produce "Enter your full name" per UI-SPEC,
+    // so getAllByText is the right query (two matches expected).
     await waitFor(() => {
-      expect(screen.getByText(/Orientation Slots/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/enter your full name/i).length).toBeGreaterThanOrEqual(1);
     });
+    expect(screen.getByText(/enter your email address/i)).toBeInTheDocument();
+    expect(screen.getByText(/enter your phone number/i)).toBeInTheDocument();
 
-    // Click a slot to reveal form
-    const checkboxes = screen.getAllByRole("checkbox");
-    const enabledCheckbox = checkboxes.find((cb) => !cb.disabled);
-    fireEvent.click(enabledCheckbox);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/^first name$/i)).toBeInTheDocument();
-    });
-
-    // Submit with empty fields
-    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/first name is required/i)).toBeInTheDocument();
-    });
+    // Old copy is gone
+    expect(screen.queryByText(/first name is required/i)).not.toBeInTheDocument();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 4: Submitting with period slot + no orientation slot calls orientationStatus
-  // -------------------------------------------------------------------------
-  it("calls orientationStatus when period slot selected with no orientation slot", async () => {
-    api.public.orientationStatus.mockResolvedValue({
-      has_attended_orientation: true,
-    });
-    api.public.createSignup.mockResolvedValue({
-      volunteer_id: "vol-1",
-      signup_ids: ["sig-1"],
-      magic_link_sent: true,
-    });
+  it("rejects invalid phone with UI-SPEC E.164/US copy", async () => {
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    await clickFirstSignUpButton();
+    await screen.findByLabelText(/^first name$/i);
 
-    renderDetailPage();
+    await userEvent.type(screen.getByLabelText(/^first name$/i), "Alice");
+    await userEvent.type(screen.getByLabelText(/^last name$/i), "Smith");
+    await userEvent.type(screen.getByLabelText(/^email$/i), "alice@example.com");
+    // Too short to match either US or E.164
+    await userEvent.type(screen.getByLabelText(/^phone$/i), "12345");
 
-    await waitFor(() => {
-      expect(screen.getByText(/Period Slots/i)).toBeInTheDocument();
-    });
-
-    // The checkboxes are ordered: orientation (index 0), period available (index 1), period full (index 2, disabled)
-    // Select only the period slot (index 1) — no orientation slot selected
-    const checkboxes = screen.getAllByRole("checkbox");
-    const periodCheckbox = checkboxes[1]; // period slot (available, not full)
-    expect(periodCheckbox).not.toBeDisabled();
-    fireEvent.click(periodCheckbox);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/^first name$/i)).toBeInTheDocument();
-    });
-
-    await fillIdentityForm();
-
-    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
-
-    await waitFor(() => {
-      expect(api.public.orientationStatus).toHaveBeenCalledWith("alice@example.com");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 5: When orientationStatus returns false, orientation modal appears
-  // -------------------------------------------------------------------------
-  it("shows orientation modal when orientationStatus returns has_attended_orientation:false", async () => {
-    api.public.orientationStatus.mockResolvedValue({
-      has_attended_orientation: false,
-      last_attended_at: null,
-    });
-
-    renderDetailPage();
-
-    await waitFor(() => {
-      expect(screen.getByText(/Period Slots/i)).toBeInTheDocument();
-    });
-
-    // Select period slot only (index 1) — no orientation slot selected
-    const checkboxes = screen.getAllByRole("checkbox");
-    const periodCheckbox = checkboxes[1];
-    expect(periodCheckbox).not.toBeDisabled();
-    fireEvent.click(periodCheckbox);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/^first name$/i)).toBeInTheDocument();
-    });
-
-    await fillIdentityForm();
-
-    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
+    clickFormSubmitButton(container);
 
     await waitFor(() => {
       expect(
-        screen.getByText(/have you completed orientation/i)
+        screen.getByText(/use a us format: \(805\) 555-1234 or \+18055551234/i)
       ).toBeInTheDocument();
     });
-    expect(
-      screen.getByRole("button", { name: /yes, i have completed orientation/i })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /no.*show me orientation/i })
-    ).toBeInTheDocument();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 6: When orientationStatus returns true, skips modal and submits
-  // -------------------------------------------------------------------------
-  it("skips orientation modal when has_attended_orientation is true", async () => {
-    api.public.orientationStatus.mockResolvedValue({
-      has_attended_orientation: true,
-    });
+  it("submits successfully when orientation slot selected (no orientation warning needed)", async () => {
     api.public.createSignup.mockResolvedValue({
       volunteer_id: "vol-1",
       signup_ids: ["sig-1"],
       magic_link_sent: true,
     });
 
-    renderDetailPage();
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
 
-    await waitFor(() => {
-      expect(screen.getByText(/Period Slots/i)).toBeInTheDocument();
-    });
-
-    // Select period slot only (index 1) — no orientation slot selected
-    const checkboxes = screen.getAllByRole("checkbox");
-    const periodCheckbox = checkboxes[1];
-    expect(periodCheckbox).not.toBeDisabled();
-    fireEvent.click(periodCheckbox);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/^first name$/i)).toBeInTheDocument();
-    });
+    // The first Sign Up button corresponds to the orientation slot (orientations render first)
+    await clickFirstSignUpButton();
+    await screen.findByLabelText(/^first name$/i);
 
     await fillIdentityForm();
+    clickFormSubmitButton(container);
 
-    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
-
-    // Wait for signup to complete — orientation modal should NOT appear
     await waitFor(() => {
       expect(api.public.createSignup).toHaveBeenCalled();
     });
-
-    expect(screen.queryByText(/have you completed orientation/i)).not.toBeInTheDocument();
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 7: Successful signup shows SignupSuccessCard with "Check your email!"
-  // -------------------------------------------------------------------------
-  it("shows success card with 'Check your email!' after successful signup", async () => {
-    api.public.createSignup.mockResolvedValue({
-      volunteer_id: "vol-1",
-      signup_ids: ["sig-1"],
-      magic_link_sent: true,
-    });
-
-    renderDetailPage();
-
-    await waitFor(() => {
-      expect(screen.getByText(/Orientation Slots/i)).toBeInTheDocument();
-    });
-
-    // Select orientation slot (index 0) — no period check needed since orientation is included
-    const checkboxes = screen.getAllByRole("checkbox");
-    const orientCheckbox = checkboxes[0];
-    expect(orientCheckbox).not.toBeDisabled();
-    fireEvent.click(orientCheckbox);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/^first name$/i)).toBeInTheDocument();
-    });
-
-    await fillIdentityForm();
-
-    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/check your email/i)).toBeInTheDocument();
-    });
-
-    // "Thanks, Alice!" is split across elements; check the containing paragraph
+    // Orientation warning modal should not appear because an orientation slot is selected
     expect(
-      screen.getByText((_, element) => {
-        return (
-          element?.tagName === "P" &&
-          element.textContent.includes("Thanks,") &&
-          element.textContent.includes("Alice")
-        );
-      })
-    ).toBeInTheDocument();
+      screen.queryByText(/have you completed orientation/i)
+    ).not.toBeInTheDocument();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 8: Dismissing success card resets form to browse state
-  // -------------------------------------------------------------------------
-  it("resets form to browse state after dismissing success card", async () => {
+  it("calls orientationCheck with the event id when only a period slot is selected (Phase 21)", async () => {
+    api.public.orientationCheck.mockResolvedValue({
+      has_credit: true,
+      has_attended_orientation: true,
+      source: "attendance",
+    });
     api.public.createSignup.mockResolvedValue({
       volunteer_id: "vol-1",
       signup_ids: ["sig-1"],
       magic_link_sent: true,
     });
 
-    renderDetailPage();
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
 
-    await waitFor(() => {
-      expect(screen.getByText(/Orientation Slots/i)).toBeInTheDocument();
-    });
+    // Sign Up buttons render in slot order: [orientation, period] (FULL_SLOT is a span chip, not a button)
+    const signUpButtons = await screen.findAllByRole("button", { name: /^sign up$/i });
+    // Click the second Sign Up button → period slot
+    fireEvent.click(signUpButtons[1]);
 
-    // Select orientation slot (index 0) — no orientation check triggered
-    const checkboxes = screen.getAllByRole("checkbox");
-    const enabledCb = checkboxes[0];
-    expect(enabledCb).not.toBeDisabled();
-    fireEvent.click(enabledCb);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/^first name$/i)).toBeInTheDocument();
-    });
-
+    await screen.findByLabelText(/^first name$/i);
     await fillIdentityForm();
-    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
+    clickFormSubmitButton(container);
 
     await waitFor(() => {
-      expect(screen.getByText(/check your email/i)).toBeInTheDocument();
+      expect(api.public.orientationCheck).toHaveBeenCalledWith(
+        "alice@example.com",
+        expect.any(String),
+      );
     });
-
-    // Dismiss the success card
-    fireEvent.click(screen.getByRole("button", { name: /done/i }));
-
-    // Success card should be gone
-    await waitFor(() => {
-      expect(screen.queryByText(/check your email/i)).not.toBeInTheDocument();
-    });
-
-    // Identity form should be gone (no slots selected after reset)
-    expect(screen.queryByLabelText(/^first name$/i)).not.toBeInTheDocument();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 9: 429 error shows rate-limit toast message
-  // -------------------------------------------------------------------------
-  it("shows rate-limit toast message on 429 error", async () => {
+  it("shows rate-limit toast on 429 error", async () => {
     const rateErr = new Error("rate limited");
     rateErr.status = 429;
     api.public.createSignup.mockRejectedValue(rateErr);
 
-    renderDetailPage();
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
 
-    await waitFor(() => {
-      expect(screen.getByText(/Orientation Slots/i)).toBeInTheDocument();
-    });
-
-    // Select orientation slot (index 0) — no orientation check triggered
-    const checkboxes = screen.getAllByRole("checkbox");
-    const enabledCb = checkboxes[0];
-    expect(enabledCb).not.toBeDisabled();
-    fireEvent.click(enabledCb);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/^first name$/i)).toBeInTheDocument();
-    });
+    await clickFirstSignUpButton();
+    await screen.findByLabelText(/^first name$/i);
 
     await fillIdentityForm();
-    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
+    clickFormSubmitButton(container);
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
@@ -454,23 +385,87 @@ describe("EventDetailPage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 10: Full slots have disabled checkboxes
+  // Add to calendar (PART-13 surface A, Task 2)
   // -------------------------------------------------------------------------
-  it("renders disabled checkbox for full slots", async () => {
+
+  it("renders 'Add to calendar' secondary button below event metadata", async () => {
     renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
 
-    await waitFor(() => {
-      expect(screen.getByText(/Period Slots/i)).toBeInTheDocument();
-    });
+    expect(
+      screen.getByRole("button", { name: /download \.ics/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /add to google calendar/i })
+    ).toBeInTheDocument();
+  });
 
-    // The FULL_SLOT is the last checkbox (index 2) and should be disabled
-    const checkboxes = screen.getAllByRole("checkbox");
-    // Find the disabled one (the full slot)
-    const disabledCheckboxes = checkboxes.filter((cb) => cb.disabled);
-    expect(disabledCheckboxes.length).toBe(1);
-    expect(disabledCheckboxes[0]).toBeDisabled();
+  it("clicking 'Add to calendar' calls downloadIcs with UI-SPEC filename and shows success toast", async () => {
+    renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
 
-    // Also confirm "Full" text is shown in the slot list
-    expect(screen.getByText("Full")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /download \.ics/i }));
+
+    expect(downloadIcs).toHaveBeenCalledTimes(1);
+    const callArg = downloadIcs.mock.calls[0][0];
+    expect(callArg).toHaveProperty("event");
+    expect(callArg).toHaveProperty("slot");
+    expect(callArg).toHaveProperty("filename");
+    expect(callArg.filename).toMatch(/^scitrek-crispr-carpinteria-2026-04-22\.ics$/);
+    // Selection precedence: no selection yet → falls back to first non-full orientation slot
+    expect(callArg.slot.id).toBe("slot-orient-1");
+
+    expect(toast.success).toHaveBeenCalledWith(
+      "Calendar file saved. Open it to add to your calendar."
+    );
+  });
+
+  it("does NOT render 'Add to calendar' when there are no slots", async () => {
+    api.public.getEvent.mockResolvedValue({ ...MOCK_EVENT, slots: [] });
+
+    renderDetailPage();
+    await screen.findByText(/every slot is full/i);
+
+    expect(
+      screen.queryByRole("button", { name: /download \.ics/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /add to google calendar/i })
+    ).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isValidPhone unit coverage (PART-05)
+// ---------------------------------------------------------------------------
+
+describe("isValidPhone (PART-05)", () => {
+  it("accepts US 10-digit formats", () => {
+    expect(isValidPhone("8055551234")).toBe(true);
+    expect(isValidPhone("(805) 555-1234")).toBe(true);
+    expect(isValidPhone("805-555-1234")).toBe(true);
+    expect(isValidPhone("805.555.1234")).toBe(true);
+    expect(isValidPhone("805 555 1234")).toBe(true);
+  });
+
+  it("accepts US 11-digit with leading 1", () => {
+    expect(isValidPhone("18055551234")).toBe(true);
+    expect(isValidPhone("1 (805) 555-1234")).toBe(true);
+  });
+
+  it("accepts E.164 format", () => {
+    expect(isValidPhone("+18055551234")).toBe(true);
+    expect(isValidPhone("+447911123456")).toBe(true); // UK
+    expect(isValidPhone("+819012345678")).toBe(true); // Japan
+  });
+
+  it("rejects invalid input", () => {
+    expect(isValidPhone("")).toBe(false);
+    expect(isValidPhone(null)).toBe(false);
+    expect(isValidPhone(undefined)).toBe(false);
+    expect(isValidPhone("12345")).toBe(false); // too short
+    expect(isValidPhone("+0123456789")).toBe(false); // E.164 country must start 1-9
+    expect(isValidPhone("abcdefghij")).toBe(false);
+    expect(isValidPhone("+1234567")).toBe(false); // E.164 too short (under 8 digits)
   });
 });

@@ -7,7 +7,9 @@
 #   -S redbeat.RedBeatScheduler flag — tracked as a Plan 07 CI concern.
 
 import logging
+import smtplib
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 
 from celery import Celery
 from celery.schedules import crontab
@@ -37,6 +39,7 @@ celery.conf.update(
     beat_scheduler="redbeat.RedBeatScheduler",
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+    include=["app.tasks.import_csv", "app.tasks.reminders"],
 )
 
 
@@ -65,28 +68,89 @@ def _check_daily_send_limit(db: Session) -> bool:
     return True
 
 
-def _send_email_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
-    """Send an email via SendGrid if API key + from address are configured.
+def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+    """Send an email via SMTP (stdlib smtplib).
 
-    # TODO(resend): swap SendGrid client for Resend SDK
+    Used in two places:
+      - Local dev → Mailpit at mailpit:1025 (no auth, no TLS)
+      - Production → AWS SES SMTP (username/password from IAM, STARTTLS on 587)
+
+    Both paths share this single code path; prod vs dev is a pure config
+    question (smtp_host, smtp_username, smtp_password, smtp_use_tls).
     """
-    if not settings.sendgrid_api_key or not settings.email_from_address:
+    if not settings.email_from_address:
+        logger.warning("email_from_address not configured; skipping send to=%s", to_email)
         return
 
-    message = Mail(
-        from_email=settings.email_from_address,
-        to_emails=to_email,
-        subject=subject,
-        plain_text_content=body,
-    )
+    msg = EmailMessage()
+    msg["From"] = settings.email_from_address
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(body or "")
     if html_body:
-        message.html_content = html_body
+        msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
+        if settings.smtp_use_tls:
+            smtp.starttls()
+        if settings.smtp_username and settings.smtp_password:
+            smtp.login(settings.smtp_username, settings.smtp_password)
+        smtp.send_message(msg)
+
+
+def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+    """Send an email via SendGrid HTTPS API. Prod fallback; dev uses SMTP."""
+    if not settings.sendgrid_api_key or not settings.email_from_address:
+        logger.warning(
+            "sendgrid_api_key or email_from_address missing; skipping send to=%s",
+            to_email,
+        )
+        return
+
+    mail_kwargs = {
+        "from_email": settings.email_from_address,
+        "to_emails": to_email,
+        "subject": subject,
+    }
+    if body:
+        mail_kwargs["plain_text_content"] = body
+    if html_body:
+        mail_kwargs["html_content"] = html_body
+    message = Mail(**mail_kwargs)
+    sg = SendGridAPIClient(settings.sendgrid_api_key)
+    sg.send(message)
+
+
+# Backward-compat alias — external callers (admin broadcast router) still
+# import `_send_email_via_sendgrid`. Resolved here at import time so renaming
+# the function didn't require cross-pillar edits.
+def _send_email(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+    """Single entry point for transactional email. Dispatches on settings.email_mode.
+
+    Errors are logged (not swallowed). The caller is a Celery task with
+    autoretry_for=(Exception,), so re-raising lets the framework retry
+    transient failures; persistent failures surface in docker logs.
+    """
     try:
-        sg = SendGridAPIClient(settings.sendgrid_api_key)
-        sg.send(message)
+        if settings.email_mode == "sendgrid":
+            _send_via_sendgrid(to_email, subject, body, html_body=html_body)
+        else:  # "smtp" (default)
+            _send_via_smtp(to_email, subject, body, html_body=html_body)
     except Exception:
-        # In a real system you'd log this somewhere (Sentry, log file, etc.)
-        pass
+        # Surface the failure in logs — previous silent-swallow behaviour
+        # masked misconfigured sender identities for weeks.
+        logger.exception(
+            "email_send_failed mode=%s to=%s subject=%s",
+            settings.email_mode,
+            to_email,
+            subject,
+        )
+        raise
+
+
+# Backward-compat alias for the admin broadcast router (admin pillar, not
+# edited here). Keep until admin.py is migrated to send_email_notification.delay.
+_send_email_via_sendgrid = _send_email
 
 
 @celery.task(
@@ -146,7 +210,7 @@ def send_email_notification(
             to_email = v.email if v else None
             if not to_email:
                 return
-            _send_email_via_sendgrid(to_email, subject, body, html_body=html_body)
+            _send_email(to_email, subject, body, html_body=html_body)
             # Phase 09 (D-11): skip Notification row for volunteer-backed signups;
             # migration 0010 adds volunteer_id FK but this pipeline uses dedup kind pattern
             # which doesn't map cleanly. Phase 11 will add audit rows here.
@@ -161,7 +225,7 @@ def send_email_notification(
 
             # 1) Send real email (if configured)
             if user.notify_email:
-                _send_email_via_sendgrid(user.email, subject, body, html_body=html_body)
+                _send_email(user.email, subject, body, html_body=html_body)
 
             # 2) Log notification in DB
             notif = models.Notification(
@@ -299,7 +363,51 @@ def weekly_digest() -> None:
             ]
             body = "Your upcoming volunteer slots this week:\n\n" + "\n".join(lines)
             subject = "Weekly volunteer digest"
-            _send_email_via_sendgrid(v.email, subject, body)
+            _send_email(v.email, subject, body)
+    finally:
+        db.close()
+
+
+@celery.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+    name="app.celery_app.send_broadcast_email",
+)
+def send_broadcast_email(
+    self,
+    signup_id: str,
+    to_email: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+) -> None:
+    """Phase 26 — deliver a single broadcast message.
+
+    The caller (broadcast_service.send_broadcast) has already performed
+    the atomic dedup insert on ``sent_notifications(signup_id, kind)``
+    before enqueuing this task, so we only deliver here. Retries from
+    the Celery framework are worker-level guards; any persistent failure
+    surfaces in docker logs.
+
+    Broadcasts are operational — they intentionally bypass
+    ``volunteer_preferences.email_reminders_enabled``.
+    """
+    db: Session = SessionLocal()
+    try:
+        if not _check_daily_send_limit(db):
+            return
+        if not to_email:
+            return
+        _send_email(to_email, subject, text_body or "", html_body=html_body)
+        logger.info(
+            "broadcast_email_sent signup_id=%s to=%s",
+            signup_id,
+            to_email,
+        )
     finally:
         db.close()
 
@@ -333,7 +441,7 @@ def send_signup_confirmation_email(
             )
             return
         subject, html = build_signup_confirmation_email(volunteer, signups, token, event)
-        _send_email_via_sendgrid(to_email=volunteer.email, subject=subject, body="", html_body=html)
+        _send_email(to_email=volunteer.email, subject=subject, body="", html_body=html)
         logger.info(
             "signup_confirmation_email_sent volunteer_id=%s event_id=%s signup_count=%d",
             volunteer_id, event_id, len(signups),
@@ -415,5 +523,12 @@ celery.conf.beat_schedule = {
     "expire-pending-signups-daily-3am": {
         "task": "app.celery_app.expire_pending_signups",
         "schedule": crontab(hour=3, minute=0),
+    },
+    # Phase 24 — kickoff + 24h + 2h reminders. The task is idempotent via
+    # sent_notifications(signup_id, kind); running every 15 min leaves a
+    # ±15 min drift window per send.
+    "check-reminders": {
+        "task": "app.tasks.reminders.check_and_send_reminders",
+        "schedule": 900.0,
     },
 }

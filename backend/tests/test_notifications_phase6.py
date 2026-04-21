@@ -237,7 +237,7 @@ def test_daily_limit_blocks_sends(client, db_session, monkeypatch, patch_session
     send_calls = []
     monkeypatch.setattr(
         celery_mod,
-        "_send_email_via_sendgrid",
+        "_send_email",
         lambda *a, **k: send_calls.append((a, k)),
     )
 
@@ -267,7 +267,7 @@ def test_send_notification_dedup_cancellation(client, db_session, monkeypatch, p
     send_calls = []
     monkeypatch.setattr(
         celery_mod,
-        "_send_email_via_sendgrid",
+        "_send_email",
         lambda *a, **k: send_calls.append((a, k)),
     )
 

@@ -20,4 +20,19 @@ describe('api module', () => {
   it('does not export admin.overrides', () => {
     expect(api.admin.overrides).toBeUndefined()
   })
+
+  it('exposes api.admin.users.invite / deactivate / reactivate', () => {
+    expect(typeof api.admin.users.invite).toBe('function')
+    expect(typeof api.admin.users.deactivate).toBe('function')
+    expect(typeof api.admin.users.reactivate).toBe('function')
+  })
+
+  it('exposes attendance + no-show CSV helpers', () => {
+    expect(typeof api.admin.analytics.attendanceRatesCsv).toBe('function')
+    expect(typeof api.admin.analytics.noShowRatesCsv).toBe('function')
+  })
+
+  it('still does NOT expose api.admin.overrides (guard)', () => {
+    expect(api.admin.overrides).toBeUndefined()
+  })
 })

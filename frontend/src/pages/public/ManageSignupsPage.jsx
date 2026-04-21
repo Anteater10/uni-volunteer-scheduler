@@ -3,19 +3,48 @@
 // Token-gated manage page for volunteers to view and cancel their signups.
 // Can be rendered standalone at /signup/manage?token= or embedded by
 // ConfirmSignupPage after a successful confirm (via tokenOverride prop).
+//
+// Phase 15-05 polish:
+// - Local ErrorCard deleted; both error branches now use the shared
+//   ErrorState primitive with UI-SPEC network-error copy.
+// - Empty state uses UI-SPEC "You haven't signed up for anything yet"
+//   with a "View events" PRIMARY action navigating to /events.
+// - Cancel-single + Cancel-all Modal copy aligned to UI-SPEC §Destructive
+//   confirmations table EXACTLY (titles, body, button labels).
+// - Toast spelling normalized to American "canceled" (one L).
+// - Status badges carry a lucide icon (CheckCircle / Clock) alongside the
+//   text label so color is not the sole signal.
+// - Page heading uses PageHeader primitive for UI-SPEC Display typography.
 
 import React, { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { CheckCircle, Clock } from "lucide-react";
 import api from "../../lib/api";
 import { toast } from "../../state/toast";
-import { Button, Card, Skeleton, EmptyState, Modal } from "../../components/ui";
+import {
+  Button,
+  Card,
+  Skeleton,
+  EmptyState,
+  ErrorState,
+  Modal,
+  PageHeader,
+} from "../../components/ui";
+import ReminderPreferencesCard from "../../components/ReminderPreferencesCard";
 
-// Use the no-Z pattern from EventDetailPage to avoid UTC offset shifts in JSDOM
+// Slot datetimes arrive as UTC ISO strings (e.g. "2026-04-16T09:00:00Z").
+// Render them in SciTrek's venue timezone so all viewers see wall-clock at UCSB.
+const VENUE_TZ = "America/Los_Angeles";
+
 function formatTime(isoString) {
   if (!isoString) return "";
   const d = new Date(isoString);
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: VENUE_TZ,
+  });
 }
 
 function formatDate(dateString) {
@@ -27,31 +56,23 @@ function formatDate(dateString) {
   });
 }
 
-function ErrorCard() {
-  return (
-    <Card className="max-w-md mx-auto mt-12 p-6 text-center">
-      <h2 className="text-lg font-semibold text-gray-900 mb-2">
-        Link expired or invalid
-      </h2>
-      <p className="text-gray-600">
-        This link has expired or is invalid. Please check your email for a new
-        link.
-      </p>
-    </Card>
-  );
-}
-
 export default function ManageSignupsPage({ tokenOverride }) {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const token = tokenOverride || searchParams.get("token");
 
   const [signups, setSignups] = useState([]);
   const [cancelTarget, setCancelTarget] = useState(null); // signup_id
-  const [cancelling, setCancelling] = useState(false);
+  const [canceling, setCanceling] = useState(false);
   const [cancelAllOpen, setCancelAllOpen] = useState(false);
-  const [cancellingAll, setCancellingAll] = useState(false);
+  const [cancelingAll, setCancelingAll] = useState(false);
+  // Phase 29 (SWAP-02) — swap target state.
+  const [swapSource, setSwapSource] = useState(null); // {signup_id}
+  const [swapping, setSwapping] = useState(false);
+  const [eventSlots, setEventSlots] = useState([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["manage-signups", token],
     queryFn: () => api.public.getManageSignups(token),
     enabled: !!token,
@@ -69,7 +90,17 @@ export default function ManageSignupsPage({ tokenOverride }) {
   // Guard: no token in URL and no override
   // ------------------------------------------------------------------
   if (!token) {
-    return <ErrorCard />;
+    return (
+      <ErrorState
+        title="We couldn't load this page"
+        body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
+        action={
+          <Button variant="primary" onClick={() => navigate("/volunteer")}>
+            Back to events
+          </Button>
+        }
+      />
+    );
   }
 
   // ------------------------------------------------------------------
@@ -86,10 +117,20 @@ export default function ManageSignupsPage({ tokenOverride }) {
   }
 
   // ------------------------------------------------------------------
-  // Token error state
+  // Token / fetch error state
   // ------------------------------------------------------------------
   if (error) {
-    return <ErrorCard />;
+    return (
+      <ErrorState
+        title="We couldn't load this page"
+        body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
+        action={
+          <Button variant="secondary" onClick={() => refetch()}>
+            Try again
+          </Button>
+        }
+      />
+    );
   }
 
   // ------------------------------------------------------------------
@@ -97,11 +138,11 @@ export default function ManageSignupsPage({ tokenOverride }) {
   // ------------------------------------------------------------------
   async function handleCancelConfirm() {
     if (!cancelTarget) return;
-    setCancelling(true);
+    setCanceling(true);
     try {
       await api.public.cancelSignup(cancelTarget, token);
       setSignups((prev) => prev.filter((s) => s.signup_id !== cancelTarget));
-      toast.success("Signup cancelled.");
+      toast.success("Signup canceled.");
     } catch (err) {
       if (err?.status === 403) {
         toast.error("You don't have permission to cancel this signup.");
@@ -109,8 +150,46 @@ export default function ManageSignupsPage({ tokenOverride }) {
         toast.error(err?.message || "Failed to cancel signup.");
       }
     } finally {
-      setCancelling(false);
+      setCanceling(false);
       setCancelTarget(null);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Swap to different slot (Phase 29 SWAP-02)
+  // ------------------------------------------------------------------
+  async function openSwap(signup) {
+    setSwapSource(signup);
+    setLoadingSlots(true);
+    try {
+      const ev = await api.public.getEvent(data.event_id);
+      setEventSlots(ev.slots || []);
+    } catch (err) {
+      toast.error(err?.message || "Failed to load slots.");
+      setSwapSource(null);
+    } finally {
+      setLoadingSlots(false);
+    }
+  }
+
+  async function handleSwapConfirm(targetSlotId) {
+    if (!swapSource || !targetSlotId) return;
+    setSwapping(true);
+    try {
+      await api.public.swapSignup(swapSource.signup_id, targetSlotId, token);
+      toast.success("Moved to new slot.");
+      setSwapSource(null);
+      refetch();
+    } catch (err) {
+      if (err?.status === 409) {
+        toast.error("That slot is full.");
+      } else if (err?.status === 400) {
+        toast.error(err?.message || "Slot not available for this event.");
+      } else {
+        toast.error(err?.message || "Failed to move signup.");
+      }
+    } finally {
+      setSwapping(false);
     }
   }
 
@@ -118,7 +197,7 @@ export default function ManageSignupsPage({ tokenOverride }) {
   // Cancel all
   // ------------------------------------------------------------------
   async function handleCancelAll() {
-    setCancellingAll(true);
+    setCancelingAll(true);
     const active = signups.filter((s) => s.status !== "cancelled");
     for (const s of active) {
       try {
@@ -126,14 +205,14 @@ export default function ManageSignupsPage({ tokenOverride }) {
         setSignups((prev) => prev.filter((x) => x.signup_id !== s.signup_id));
       } catch (err) {
         toast.error(`Failed to cancel signup: ${err?.message || "Unknown error"}`);
-        setCancellingAll(false);
+        setCancelingAll(false);
         setCancelAllOpen(false);
         return; // stop on first failure
       }
     }
-    setCancellingAll(false);
+    setCancelingAll(false);
     setCancelAllOpen(false);
-    toast.success("All signups cancelled.");
+    toast.success("All signups canceled.");
   }
 
   // ------------------------------------------------------------------
@@ -143,8 +222,13 @@ export default function ManageSignupsPage({ tokenOverride }) {
     return (
       <div className="max-w-xl mx-auto mt-8 px-4">
         <EmptyState
-          title="No upcoming signups"
-          body="No upcoming signups found for this event."
+          title="You haven't signed up for anything yet"
+          body="Browse this week's volunteer events to get started."
+          action={
+            <Button variant="primary" onClick={() => navigate("/volunteer")}>
+              View events
+            </Button>
+          }
         />
       </div>
     );
@@ -153,8 +237,26 @@ export default function ManageSignupsPage({ tokenOverride }) {
   const activeCount = signups.filter((s) => s.status !== "cancelled").length;
 
   return (
-    <div className="max-w-xl mx-auto mt-8 px-4 space-y-4">
-      <h1 className="text-xl font-semibold text-gray-900">Your Signups</h1>
+    <div className="max-w-3xl mx-auto mt-6 sm:mt-8 px-1 sm:px-4 space-y-5">
+      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-800 text-white p-6 sm:p-8">
+        <div
+          aria-hidden="true"
+          className="absolute -top-16 -right-16 h-56 w-56 rounded-full bg-blue-400/25 blur-3xl"
+        />
+        <div className="relative z-10">
+          <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-blue-200">
+            Manage signups
+          </p>
+          <h1 className="mt-2 text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight leading-tight">
+            {data?.volunteer_first_name
+              ? `Hi ${data.volunteer_first_name}`
+              : "Your signups"}
+          </h1>
+          <p className="mt-2 text-sm text-blue-100">
+            View, move, or cancel your volunteer shifts. Times shown in Pacific Time.
+          </p>
+        </div>
+      </section>
 
       {signups.map((signup) => (
         <Card key={signup.signup_id} className="p-4">
@@ -184,26 +286,56 @@ export default function ManageSignupsPage({ tokenOverride }) {
                 <p className="text-sm text-gray-500">{signup.slot.location}</p>
               )}
 
-              {/* Status badge */}
-              <span
-                className={
-                  signup.status === "confirmed"
-                    ? "inline-block text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700"
-                    : "inline-block text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700"
-                }
-              >
-                {signup.status === "confirmed" ? "Confirmed" : "Pending"}
-              </span>
+              {/* Status badge — icon + label so color isn't the sole signal.
+                  Phase 25 (WAIT-01): waitlisted rows carry a distinct orange
+                  badge with their current FIFO position. */}
+              {signup.status === "waitlisted" ? (
+                <span
+                  className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700"
+                  data-testid="waitlist-badge"
+                >
+                  <Clock size={12} aria-hidden="true" />
+                  Waitlist #{signup.waitlist_position ?? "—"}
+                </span>
+              ) : (
+                <span
+                  className={
+                    signup.status === "confirmed"
+                      ? "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700"
+                      : "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700"
+                  }
+                >
+                  {signup.status === "confirmed" ? (
+                    <CheckCircle size={12} aria-hidden="true" />
+                  ) : (
+                    <Clock size={12} aria-hidden="true" />
+                  )}
+                  {signup.status === "confirmed" ? "Confirmed" : "Pending"}
+                </span>
+              )}
             </div>
 
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={() => setCancelTarget(signup.signup_id)}
-              disabled={cancelling || cancellingAll}
-            >
-              Cancel
-            </Button>
+            <div className="flex flex-col gap-2 items-end">
+              {/* Phase 29 (SWAP-02) — move to a different slot in the same event */}
+              {signup.status !== "cancelled" && signup.status !== "waitlisted" && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => openSwap(signup)}
+                  disabled={canceling || cancelingAll || swapping}
+                >
+                  Move
+                </Button>
+              )}
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => setCancelTarget(signup.signup_id)}
+                disabled={canceling || cancelingAll}
+              >
+                Cancel
+              </Button>
+            </div>
           </div>
         </Card>
       ))}
@@ -213,64 +345,124 @@ export default function ManageSignupsPage({ tokenOverride }) {
           <Button
             variant="danger"
             onClick={() => setCancelAllOpen(true)}
-            disabled={cancellingAll}
+            disabled={cancelingAll}
           >
-            {cancellingAll ? "Cancelling..." : "Cancel all signups"}
+            {cancelingAll ? "Canceling all…" : "Cancel all signups"}
           </Button>
         </div>
       )}
 
-      {/* Cancel single modal */}
+      {/* Phase 24 — reminder opt-out toggle (REM-03) */}
+      <ReminderPreferencesCard manageToken={token} />
+
+      {/* Cancel single modal — UI-SPEC §Destructive confirmations row 1 */}
       <Modal
         open={!!cancelTarget}
-        onClose={() => !cancelling && setCancelTarget(null)}
+        onClose={() => !canceling && setCancelTarget(null)}
         title="Cancel this signup?"
       >
         <p className="text-sm text-gray-600 mb-4">
-          This will remove your signup. You can sign up again if spots are
-          available.
+          You'll lose your spot. If the event fills up, you may not get it back.
         </p>
         <div className="flex gap-3 justify-end">
           <Button
-            variant="ghost"
+            variant="secondary"
             onClick={() => setCancelTarget(null)}
-            disabled={cancelling}
+            disabled={canceling}
           >
-            Never mind
+            Keep signup
           </Button>
           <Button
             variant="danger"
             onClick={handleCancelConfirm}
-            disabled={cancelling}
+            disabled={canceling}
           >
-            {cancelling ? "Cancelling..." : "Yes, cancel"}
+            {canceling ? "Canceling…" : "Yes, cancel"}
           </Button>
         </div>
       </Modal>
 
-      {/* Cancel all modal */}
+      {/* Phase 29 (SWAP-02) — Move-to-different-slot drawer modal */}
+      <Modal
+        open={!!swapSource}
+        onClose={() => !swapping && setSwapSource(null)}
+        title="Move to different slot"
+      >
+        {loadingSlots ? (
+          <Skeleton className="h-24 rounded" />
+        ) : (
+          <>
+            <p className="text-sm text-gray-600 mb-3">
+              Pick another slot in the same event. Full slots are disabled.
+            </p>
+            <div className="space-y-2 max-h-80 overflow-y-auto">
+              {eventSlots
+                .filter((s) => s.id !== swapSource?.slot?.id)
+                .map((s) => {
+                  const remaining = (s.capacity || 0) - (s.filled || 0);
+                  const disabled = remaining <= 0 || swapping;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => handleSwapConfirm(s.id)}
+                      className={
+                        "w-full text-left border rounded-lg p-3 transition " +
+                        (disabled
+                          ? "opacity-50 cursor-not-allowed bg-gray-50"
+                          : "hover:border-blue-500 hover:bg-blue-50")
+                      }
+                    >
+                      <div className="text-sm font-medium text-gray-900">
+                        {formatDate(s.date)} · {formatTime(s.start_time)}–
+                        {formatTime(s.end_time)}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {s.location || "TBD"} ·{" "}
+                        {disabled ? "Full" : `${remaining} open`}
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+            <div className="flex justify-end pt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setSwapSource(null)}
+                disabled={swapping}
+              >
+                Cancel
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      {/* Cancel all modal — UI-SPEC §Destructive confirmations row 2 */}
       <Modal
         open={cancelAllOpen}
-        onClose={() => !cancellingAll && setCancelAllOpen(false)}
-        title={`Cancel all ${activeCount} signups for this event?`}
+        onClose={() => !cancelingAll && setCancelAllOpen(false)}
+        title="Cancel all signups?"
       >
         <p className="text-sm text-gray-600 mb-4">
-          This will cancel all your upcoming signups for this event.
+          You'll lose every spot you've reserved for this event. This can't be
+          undone.
         </p>
         <div className="flex gap-3 justify-end">
           <Button
-            variant="ghost"
+            variant="secondary"
             onClick={() => setCancelAllOpen(false)}
-            disabled={cancellingAll}
+            disabled={cancelingAll}
           >
-            Never mind
+            Keep my signups
           </Button>
           <Button
             variant="danger"
             onClick={handleCancelAll}
-            disabled={cancellingAll}
+            disabled={cancelingAll}
           >
-            {cancellingAll ? "Cancelling..." : "Yes, cancel all"}
+            {cancelingAll ? "Canceling all…" : "Yes, cancel all"}
           </Button>
         </div>
       </Modal>

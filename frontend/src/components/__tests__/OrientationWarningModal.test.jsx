@@ -24,15 +24,15 @@ describe("OrientationWarningModal", () => {
     renderModal();
 
     expect(
-      screen.getByText(/have you completed orientation/i)
+      screen.getByText(/have you done a sci trek orientation/i)
     ).toBeInTheDocument();
 
     expect(
-      screen.getByRole("button", { name: /yes, i have completed orientation/i })
+      screen.getByRole("button", { name: /i've done orientation/i })
     ).toBeInTheDocument();
 
     expect(
-      screen.getByRole("button", { name: /no.*show me orientation/i })
+      screen.getByRole("button", { name: /i haven't.*show me orientation events/i })
     ).toBeInTheDocument();
   });
 
@@ -43,7 +43,7 @@ describe("OrientationWarningModal", () => {
     renderModal({ open: false });
 
     expect(
-      screen.queryByText(/have you completed orientation/i)
+      screen.queryByText(/have you done a sci trek orientation/i)
     ).not.toBeInTheDocument();
 
     expect(
@@ -59,7 +59,7 @@ describe("OrientationWarningModal", () => {
     renderModal({ onYes });
 
     fireEvent.click(
-      screen.getByRole("button", { name: /yes, i have completed orientation/i })
+      screen.getByRole("button", { name: /i've done orientation/i })
     );
 
     expect(onYes).toHaveBeenCalledTimes(1);
@@ -73,7 +73,7 @@ describe("OrientationWarningModal", () => {
     renderModal({ onNo });
 
     fireEvent.click(
-      screen.getByRole("button", { name: /no.*show me orientation/i })
+      screen.getByRole("button", { name: /i haven't.*show me orientation events/i })
     );
 
     expect(onNo).toHaveBeenCalledTimes(1);

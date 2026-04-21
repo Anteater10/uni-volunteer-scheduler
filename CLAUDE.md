@@ -75,9 +75,21 @@ Module template CSV import (Phase 5) runs **once per quarter — every 11 weeks*
 ## Planning harness
 This project uses the **GSD (get-shit-done)** harness. Project state lives in
 `.planning/` — `ROADMAP.md`, `STATE.md`, per-phase `PLAN.md` / `SUMMARY.md`,
-and `remote-run.log`. Phases 0–7 are code-complete. Phase 8 (deployment) is
-deferred. A product pivot (account-less signup, week-based schedule, orientation
-as soft warning) is coming in the next milestone.
+and `remote-run.log`.
+
+**Milestone status (v1.2-prod complete — 2026-04-17):**
+
+- v1.0 phases 0–7 shipped (2026-04-08). Phase 8 (deployment) remains deferred
+  to a later milestone.
+- v1.1 phases 8–13 shipped (2026-04-10) — account-less realignment, magic-link
+  infrastructure, 16-scenario Playwright baseline.
+- v1.2-prod phases 14–20 shipped (2026-04-17) — production-ready by role
+  (participant, admin, organizer) with cross-role Playwright integration.
+
+Cross-role regression coverage lives in `e2e/cross-role.spec.js` (5 scenarios
+× 6 browser projects). Manual smoke verification: see
+[docs/smoke-checklist.md](docs/smoke-checklist.md) for the ~30-minute
+three-window pass. Next milestone (deployment / v1.3 polish) TBD.
 
 ## Teaching style
 Andy prefers **one concept per turn** with a check-in question at the end.

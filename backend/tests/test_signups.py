@@ -117,8 +117,8 @@ def test_admin_cancel_promotes_oldest_waitlisted_fifo(client, db_session):
     db_session.expire_all()
     b_row = db_session.query(models.Signup).filter(models.Signup.id == signup_b.id).one()
     c_row = db_session.query(models.Signup).filter(models.Signup.id == signup_c.id).one()
-    # B was older — gets promoted to pending (Phase 2: magic-link confirm)
-    assert b_row.status == models.SignupStatus.pending
+    # B was older — gets promoted directly to confirmed
+    assert b_row.status == models.SignupStatus.confirmed
     # C stays waitlisted
     assert c_row.status == models.SignupStatus.waitlisted
 
@@ -147,7 +147,7 @@ def test_admin_cancel_promotes_by_id_tiebreaker(client, db_session):
     db_session.expire_all()
     first_row = db_session.query(models.Signup).filter(models.Signup.id == first.id).one()
     second_row = db_session.query(models.Signup).filter(models.Signup.id == second.id).one()
-    assert first_row.status == models.SignupStatus.pending
+    assert first_row.status == models.SignupStatus.confirmed
     assert second_row.status == models.SignupStatus.waitlisted
 
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_owner_or_admin
+from .public.events import derive_quarter_week
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -24,6 +25,32 @@ def _validate_event_dates(start_date: datetime, end_date: datetime):
     end_date = _normalize_dt(end_date)
     if end_date <= start_date:
         raise HTTPException(status_code=400, detail="end_date must be after start_date")
+
+
+def _validate_module_slug(db: Session, module_slug: str | None) -> None:
+    """Reject create/update when module_slug is missing or unknown.
+
+    Every event is tied to a module so orientation credit can be scoped
+    per-module (see docs/superpowers/specs/2026-04-17-per-module-orientation).
+    """
+    if not module_slug:
+        raise HTTPException(
+            status_code=422,
+            detail="module_slug is required — every event must be tied to a module",
+        )
+    exists = (
+        db.query(models.ModuleTemplate)
+        .filter(
+            models.ModuleTemplate.slug == module_slug,
+            models.ModuleTemplate.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not exists:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown module_slug '{module_slug}'",
+        )
 
 
 def _validate_slot_range_within_event(
@@ -57,11 +84,23 @@ def create_event(
     ),
 ):
     _validate_event_dates(event_in.start_date, event_in.end_date)
+    _validate_module_slug(db, event_in.module_slug)
 
     start_date = _normalize_dt(event_in.start_date)
     end_date = _normalize_dt(event_in.end_date)
     signup_open_at = _normalize_dt(event_in.signup_open_at) if event_in.signup_open_at else None
     signup_close_at = _normalize_dt(event_in.signup_close_at) if event_in.signup_close_at else None
+
+    # Derive quarter/year/week_number from start_date when the caller omits them,
+    # so admin-created events remain visible through the public week filter.
+    quarter = event_in.quarter
+    year = event_in.year
+    week_number = event_in.week_number
+    if quarter is None or year is None or week_number is None:
+        d_quarter, d_year, d_week = derive_quarter_week(start_date.date())
+        quarter = quarter or d_quarter
+        year = year or d_year
+        week_number = week_number or d_week
 
     event = models.Event(
         owner_id=current_user.id,
@@ -75,9 +114,9 @@ def create_event(
         max_signups_per_user=event_in.max_signups_per_user,
         signup_open_at=signup_open_at,
         signup_close_at=signup_close_at,
-        quarter=event_in.quarter,
-        year=event_in.year,
-        week_number=event_in.week_number,
+        quarter=quarter,
+        year=year,
+        week_number=week_number,
         school=event_in.school,
         module_slug=event_in.module_slug,
     )
@@ -143,6 +182,11 @@ def update_event(
     new_start = data.get("start_date", event.start_date)
     new_end = data.get("end_date", event.end_date)
     _validate_event_dates(new_start, new_end)
+
+    # If module_slug is in the payload, validate it — admins can reassign
+    # the module or backfill a legacy NULL-module event.
+    if "module_slug" in data:
+        _validate_module_slug(db, data["module_slug"])
 
     for field, value in data.items():
         setattr(event, field, value)
