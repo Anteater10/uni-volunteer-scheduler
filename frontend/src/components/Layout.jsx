@@ -5,6 +5,7 @@ import { Calendar, User, LayoutDashboard, Shield, ClipboardList } from "lucide-r
 import { useAuth } from "../state/useAuth";
 import ToastHost from "./ui/Toast";
 import BottomNav from "./ui/BottomNav";
+import CopilotFab from "../copilot/CopilotFab";
 
 const organizerNavItems = [
   { to: "/admin/events", label: "Events", icon: <Calendar className="h-5 w-5" /> },
@@ -144,6 +145,7 @@ export default function Layout() {
         {navItems && <BottomNav items={navItems} />}
       </div>
       <ToastHost />
+      <CopilotFab />
     </div>
   );
 }
