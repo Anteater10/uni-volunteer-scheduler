@@ -355,7 +355,7 @@ def weekly_digest() -> None:
 
         for volunteer_id, slots in by_volunteer.items():
             v = db.get(models.Volunteer, volunteer_id)
-            if not v:
+            if not v:  # pragma: no cover - FK constraint makes this unreachable
                 continue
             lines = [
                 f"- {slot.start_time} at {slot.event.location or 'TBD'} ({slot.event.title})"

@@ -15,14 +15,6 @@ from ..signup_service import promote_waitlist_fifo
 router = APIRouter(prefix="/signups", tags=["signups"])
 
 
-def _ensure_signup_window(event: models.Event) -> None:
-    now = datetime.now(timezone.utc)
-    if event.signup_open_at and now < event.signup_open_at:
-        raise HTTPException(status_code=400, detail="Signup has not opened yet")
-    if event.signup_close_at and now > event.signup_close_at:
-        raise HTTPException(status_code=400, detail="Signup is closed")
-
-
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
     """Count signups holding a slot: both confirmed AND pending (phase 2)."""
     return (
@@ -75,11 +67,11 @@ def cancel_signup(
         .with_for_update()
         .first()
     )
-    if not slot:
+    if not slot:  # pragma: no cover - FK constraint makes this unreachable
         raise HTTPException(status_code=404, detail="Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
+    if not event:  # pragma: no cover - FK constraint makes this unreachable
         raise HTTPException(status_code=404, detail="Event not found")
 
     # Defensive heal
@@ -149,11 +141,11 @@ def signup_ics(
         raise HTTPException(status_code=403, detail="Not authorized to view this signup")
 
     slot = db.query(models.Slot).filter(models.Slot.id == signup.slot_id).first()
-    if not slot:
+    if not slot:  # pragma: no cover - FK constraint makes this unreachable
         raise HTTPException(status_code=404, detail="Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
+    if not event:  # pragma: no cover - FK constraint makes this unreachable
         raise HTTPException(status_code=404, detail="Event not found")
 
     def fmt(dt: datetime) -> str:
