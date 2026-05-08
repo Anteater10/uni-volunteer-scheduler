@@ -751,3 +751,75 @@ class VolunteerPreference(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class CopilotMessageRole(str, enum.Enum):
+    user = "user"
+    assistant = "assistant"
+    system = "system"
+
+
+class CopilotSession(Base):
+    """Phase 30 (v1.4): one row per copilot chat thread."""
+
+    __tablename__ = "copilot_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    model_id = Column(String(255), nullable=False)
+    system_prompt_hash = Column(String(64), nullable=False)
+    system_prompt_version = Column(String(32), nullable=False)
+
+    user = relationship("User")
+    messages = relationship(
+        "CopilotMessage",
+        back_populates="session",
+        order_by="CopilotMessage.created_at",
+        cascade="all, delete-orphan",
+    )
+
+
+class CopilotMessage(Base):
+    """Phase 30 (v1.4): one row per chat turn.
+
+    Telemetry columns (latency_ms, prompt_tokens, completion_tokens,
+    prompt_hash, response_hash, model_id, error) are populated only on
+    assistant rows. Locked schema for the v1.4 milestone — see
+    REQUIREMENTS-v1.4.md.
+    """
+
+    __tablename__ = "copilot_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copilot_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role = Column(
+        SqlEnum(CopilotMessageRole, name="copilot_message_role", native_enum=True),
+        nullable=False,
+    )
+    content = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    latency_ms = Column(Integer, nullable=True)
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    prompt_hash = Column(String(64), nullable=True)
+    response_hash = Column(String(64), nullable=True)
+    model_id = Column(String(255), nullable=True)
+    error = Column(Text, nullable=True)
+
+    session = relationship("CopilotSession", back_populates="messages")

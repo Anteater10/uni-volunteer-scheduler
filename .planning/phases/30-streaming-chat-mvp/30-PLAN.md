@@ -36,7 +36,7 @@ worth more than a polished offline prototype.
     assistant response back as Server-Sent Events
   - `GET /sessions/{id}` — fetch session + messages
   - `GET /sessions` — list current user's sessions
-- Alembic migration `0042_copilot_sessions_and_messages`:
+- Alembic migration `0018_copilot_sessions_and_messages`:
   - `copilot_sessions(id, user_id, created_at, model_id, system_prompt_hash)`
   - `copilot_messages(id, session_id, role, content, created_at,
      latency_ms, prompt_tokens, completion_tokens, prompt_hash,
@@ -126,13 +126,18 @@ and filled in alongside the code.
 
 ---
 
-## Open decisions to lock at start of execution
+## Open decisions locked at start of execution
 
-- [ ] Primary model: OpenRouter free shortlist — pick one (e.g.
-      `meta-llama/llama-3.1-8b-instruct:free` or
-      `mistralai/mistral-7b-instruct:free`). Lock at first commit.
-- [ ] Fallback model: pick one disjoint from primary.
-- [ ] System prompt v0: 1 page, role-aware, tells the model it has no
-      live data yet. Hash logged with every session row.
-- [ ] Session retention: keep all messages forever for now (paper data).
-      Revisit at Phase 38 deploy.
+- [x] **Primary model:** `openai/gpt-oss-120b:free` — 117B MoE, native
+      tool use, configurable reasoning, 131K context. Picking it now
+      means Phase 33 (ReAct + tools) lands without a model migration.
+- [x] **Fallback model:** `meta-llama/llama-3.3-70b-instruct:free` —
+      different vendor (cross-vendor redundancy), well-understood,
+      predictable failure modes when `gpt-oss-120b` 429s.
+- [x] **Migration ID:** `0018_copilot_sessions_and_messages` (next
+      sequential after head `0017_site_settings_hide_past_events`).
+- [x] **Session retention:** keep all messages forever for now —
+      they're the paper's raw data table. Revisit at Phase 38.
+- [ ] **System prompt v0:** 1 page, role-aware, tells the model it has
+      no live data yet. Hash logged with every session row. To be
+      drafted alongside `app/copilot/prompts.py`.
