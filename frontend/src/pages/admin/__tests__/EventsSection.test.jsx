@@ -443,6 +443,11 @@ describe("EventsSection — edit flow diff", () => {
 
   it("renders existing slots with their values and signup count", async () => {
     renderWithQuery(<EventsSection />);
+    // FIXTURE_EVENT is dated 2026-04-20 which is in the past relative to
+    // "today"; the default scope filter is "upcoming" so the row gets
+    // hidden. Switch scope to "all" so the Edit button renders.
+    const scopeSelect = await screen.findByDisplayValue("Upcoming");
+    fireEvent.change(scopeSelect, { target: { value: "all" } });
     fireEvent.click(await screen.findByRole("button", { name: /^Edit$/i }));
 
     expect(await screen.findByTestId("slot-row-0")).toBeInTheDocument();
@@ -465,6 +470,9 @@ describe("EventsSection — edit flow diff", () => {
     api.events.list.mockResolvedValue([editable]);
 
     renderWithQuery(<EventsSection />);
+    // Same scope adjustment as above — fixture date is in the past.
+    const scopeSelect = await screen.findByDisplayValue("Upcoming");
+    fireEvent.change(scopeSelect, { target: { value: "all" } });
     fireEvent.click(await screen.findByRole("button", { name: /^Edit$/i }));
     await screen.findByTestId("slot-row-0");
 

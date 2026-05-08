@@ -178,9 +178,10 @@ describe("EventsBrowsePage", () => {
         "New events go up on Mondays. Check back then, or browse next week's calendar."
       )
     ).toBeInTheDocument();
-    // "View next week" CTA should be present
+    // "View next week" CTA should be present (the rendered label includes
+    // a trailing arrow glyph, e.g. "View next week →")
     expect(
-      screen.getByRole("button", { name: "View next week" })
+      screen.getByRole("button", { name: /view next week/i })
     ).toBeInTheDocument();
   });
 
@@ -214,14 +215,14 @@ describe("EventsBrowsePage", () => {
       initialEntries: ["/events?quarter=spring&year=2026&week=7"],
     });
 
-    // Wait for "This week" to become enabled (getCurrentWeek resolves)
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: "This week" })
-      ).not.toBeDisabled();
+    // Wait for "Jump to this week" to appear (only shown when not on the
+    // current week — getCurrentWeek must resolve first).
+    const jumpBtn = await screen.findByRole("button", {
+      name: /jump to this week/i,
     });
+    expect(jumpBtn).not.toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "This week" }));
+    fireEvent.click(jumpBtn);
 
     // After clicking, listEvents should be called again with week 5 params
     await waitFor(() => {
@@ -244,12 +245,13 @@ describe("EventsBrowsePage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Carpinteria HS")).toBeInTheDocument();
+      expect(screen.getAllByText("Carpinteria HS").length).toBeGreaterThanOrEqual(1);
     });
 
-    expect(screen.getByText("Santa Barbara HS")).toBeInTheDocument();
+    expect(screen.getAllByText("Santa Barbara HS").length).toBeGreaterThanOrEqual(1);
 
-    // Each school heading should be an h2
+    // Each school heading should be an h2 (responsive layouts may render
+    // the heading more than once, so just assert membership).
     const headings = screen.getAllByRole("heading", { level: 2 });
     const schools = headings.map((h) => h.textContent);
     expect(schools).toContain("Carpinteria HS");

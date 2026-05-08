@@ -283,13 +283,13 @@ describe("ManageSignupsPage", () => {
     });
   });
 
-  it("8. renders 'Signups for {first} {last}' in the page header", async () => {
+  it("8. greets the volunteer by first name in the page header", async () => {
     api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
 
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Signups for Hung Khuu")).toBeInTheDocument();
+      expect(screen.getByText("Hi Hung")).toBeInTheDocument();
     });
   });
 

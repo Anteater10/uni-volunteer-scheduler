@@ -235,11 +235,17 @@ describe("ImportsSection", () => {
       expect(screen.getByText("bad-upload.csv")).toBeInTheDocument();
     });
 
+    // Detail panel (with the humanized error) is collapsed by default;
+    // expand by clicking the row.
+    fireEvent.click(screen.getByText("bad-upload.csv"));
+
     // Raw error text "AuthenticationError" should NOT appear
     expect(screen.queryByText(/AuthenticationError/)).not.toBeInTheDocument();
 
     // But user-friendly message SHOULD appear
-    expect(screen.getByText(/API key/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/API key/i)).toBeInTheDocument();
+    });
   });
 
   it("shows processing indicator for a processing import when clicked", async () => {

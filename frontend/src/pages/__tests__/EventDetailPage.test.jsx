@@ -229,8 +229,10 @@ describe("EventDetailPage", () => {
 
     // Filled counts now show capacity denominator per UI-SPEC (PART-04 / GAP-A):
     // "N of M filled" so the remaining headroom is visible even when a slot is not yet full.
-    expect(screen.getByText(/5 of 20 filled/i)).toBeInTheDocument();
-    expect(screen.getByText(/7 of 20 filled/i)).toBeInTheDocument();
+    // Responsive layouts (mobile + desktop) may render the same slot row
+    // twice. Assert presence rather than uniqueness.
+    expect(screen.getAllByText(/5 of 20 filled/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/7 of 20 filled/i).length).toBeGreaterThanOrEqual(1);
   });
 
   it("Full slot exposes a 'Join waitlist' button (waitlist affordance replaces the old Full chip)", async () => {
@@ -239,8 +241,9 @@ describe("EventDetailPage", () => {
 
     // v1.3 waitlist UX: full slots no longer show a read-only "Full" chip —
     // they render a Join-waitlist button so users can self-enqueue.
-    const waitlistBtn = await screen.findByRole("button", { name: /join waitlist/i });
-    expect(waitlistBtn).toBeInTheDocument();
+    // Responsive layouts may render the button in both mobile + desktop views.
+    const waitlistBtns = await screen.findAllByRole("button", { name: /join waitlist/i });
+    expect(waitlistBtns.length).toBeGreaterThanOrEqual(1);
   });
 
   // -------------------------------------------------------------------------

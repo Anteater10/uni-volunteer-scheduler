@@ -30,24 +30,22 @@ describe("FormFieldsDrawer", () => {
     });
     expect(screen.getByText("Foo?")).toBeInTheDocument();
     expect(screen.getByText("Favorite color")).toBeInTheDocument();
-    // required column
-    const rows = screen.getAllByRole("row");
-    // header + 2 data rows
-    expect(rows.length).toBeGreaterThanOrEqual(3);
+    // Drawer renders fields as <li> list items (not a <table>) — one per
+    // configured field.
+    const items = screen.getAllByRole("listitem");
+    expect(items.length).toBeGreaterThanOrEqual(2);
   });
 
   it("adds a field via the modal editor and includes it in save payload", async () => {
     const onSave = vi.fn();
     renderDrawer({ schema: [], onSave });
 
-    fireEvent.click(screen.getByRole("button", { name: /add field/i }));
-    // Editor modal opens — fill out label
+    // Drawer's top control is "+ Add question"; clicking opens the editor
+    // modal whose submit button reads "Add field".
+    fireEvent.click(screen.getByRole("button", { name: /add question/i }));
     const labelInput = screen.getByLabelText(/question/i);
     fireEvent.change(labelInput, { target: { value: "Emergency contact" } });
-    // After modal opens there are two "Add field" buttons (the drawer's top
-    // control and the modal's submit). Click the submit button (last one).
-    const addButtons = screen.getAllByRole("button", { name: /add field/i });
-    fireEvent.click(addButtons[addButtons.length - 1]);
+    fireEvent.click(screen.getByRole("button", { name: /^add field$/i }));
 
     // Field should appear in the table
     expect(screen.getByText("Emergency contact")).toBeInTheDocument();

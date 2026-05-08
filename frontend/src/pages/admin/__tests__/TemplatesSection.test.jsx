@@ -200,7 +200,8 @@ test("create form has all required fields", async () => {
   // Type select — use its id since label text "Type" is common
   expect(document.getElementById("tf-type")).toBeInTheDocument();
   expect(screen.getByLabelText(/duration/i)).toBeInTheDocument();
-  expect(screen.getByLabelText(/number of sessions/i)).toBeInTheDocument();
+  // session_count is no longer a user-editable field on the create form;
+  // it's derived per template and surfaced in the table column instead.
   expect(screen.getByLabelText(/default capacity/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/materials/i)).toBeInTheDocument();
