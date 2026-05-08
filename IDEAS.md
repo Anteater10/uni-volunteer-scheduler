@@ -139,7 +139,7 @@ The core pain point. Every page gets rebuilt or reviewed at 375px first.
 
 ---
 
-### 5. Event Template System + LLM-Normalized CSV Import (yearly ops win + real AI surface)
+### 5. Event Template System + LLM-Normalized CSV Import (quarterly ops win + real AI surface)
 
 **The problem.** Sci Trek runs the same modules every year, but **the CSV format is different every time** — different column names, layouts, date formats, maybe merged cells. Right now someone manually re-enters everything. A hand-written parser would need to be rewritten each year, which is the exact manual work we're eliminating.
 
@@ -193,7 +193,7 @@ Original instinct was "no AI needed, just templates." That was wrong because it 
 **Open questions for friend:**
 - Can we get 2–3 past years' CSVs right now to use as few-shot examples + eval set?
 - Are module descriptions/capacities stable year-over-year, or do they drift? (affects template versioning)
-- Who does the yearly upload — one coordinator, or multiple organizers per module?
+- Who does the quarterly upload — one coordinator, or multiple organizers per module?
 - What model to use for Stage 1? Default to Claude Haiku for cost; upgrade to Sonnet if Haiku misses edge cases.
 
 ---
@@ -215,7 +215,7 @@ Original instinct was "no AI needed, just templates." That was wrong because it 
 
 - Manual eligibility override (for edge cases where a student's email history is broken)
 - Bulk module-template CRUD
-- CSV import UI for yearly event generation (see #5)
+- CSV import UI for quarterly event generation (see #5)
 - Audit log viewer (already have `AuditLogsPage.jsx`)
 
 ---
@@ -263,7 +263,7 @@ None of these ship in the product. All of them make Hung a better engineer and g
 3. **Magic-link confirmation** (#3) — tiny, unblocks check-in and prereqs.
 4. **Check-in state machine + organizer roster** (#1 + #6) — the flagship feature.
 5. **Prereq enforcement** (#2) — one query, trivial once #1 is done.
-6. **Event template + LLM CSV import** (#5) — the yearly ops win + real AI surface.
+6. **Event template + LLM CSV import** (#5) — the quarterly ops win + real AI surface.
 7. **Notifications polish** (#8) — Celery wiring and templates.
 8. **Admin polish** (#7) — last mile.
 
@@ -275,7 +275,7 @@ Each one is a GSD phase. Ship each before starting the next.
 
 1. Does `signups.status` enum already support `checked_in` / `attended`? (saves a migration)
 2. Does Sci Trek actually turn people away at the door for missing prereqs, or is it a soft warning?
-3. What does the current yearly event CSV look like? Get a real sample.
+3. What does the current quarterly event CSV look like? Get a real sample.
 4. Are module descriptions / capacities truly stable year-over-year?
 5. Who owns the code post-graduation? Who maintains it after June 2026?
 6. Is there a staging environment, or is `main` → prod?

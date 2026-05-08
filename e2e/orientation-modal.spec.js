@@ -5,9 +5,9 @@
 //   Test B: Modal skipped when volunteer has prior attended orientation
 //
 // From OrientationWarningModal.jsx:
-//   title: "Have you completed orientation?"
-//   Yes button: "Yes, I have completed orientation"
-//   No button: "No — show me orientation slots"
+//   title: "Have you done a Sci Trek orientation?"
+//   Primary button: "I've done orientation — continue"
+//   Secondary button: "I haven't — show me orientation events"
 
 import { test, expect } from '@playwright/test';
 import { getSeed, ephemeralEmail, VOLUNTEER_IDENTITY } from './fixtures.js';
@@ -19,6 +19,20 @@ async function fillIdentityForm(page, email) {
   await page.locator('#phone').fill(VOLUNTEER_IDENTITY.phone);
 }
 
+// Slot table helper — after 15-04 the EventDetailPage uses a <table>; locate
+// the slot-label <div> (which has class "font-medium") then walk up to the row.
+async function clickSlotByLabel(page, label) {
+  const labelDiv = page.locator('table div.font-medium', { hasText: label }).first();
+  await labelDiv.waitFor({ state: 'visible' });
+  const row = labelDiv.locator('xpath=ancestor::tr[1]');
+  await row.getByRole('button', { name: /^sign up$/i }).click();
+}
+
+// Submit the identity form — must be the form's "Sign up" CTA, not a row button.
+async function submitForm(page) {
+  await page.locator('form').getByRole('button', { name: /sign up/i }).last().click();
+}
+
 test.describe('orientation modal', () => {
   test('Test A: modal fires when period-only + no orientation history', async ({ page }) => {
     const seed = getSeed();
@@ -27,9 +41,7 @@ test.describe('orientation modal', () => {
     await page.goto(`/events/${seed.event_id}`);
 
     // Select ONLY the period slot (not orientation)
-    const periodCards = page.locator('section').filter({ hasText: /period slots/i }).locator('li');
-    await expect(periodCards.first()).toBeVisible();
-    await periodCards.first().click();
+    await clickSlotByLabel(page, /^period/i);
 
     // Identity form appears
     await expect(page.getByText('Your information')).toBeVisible();
@@ -39,17 +51,17 @@ test.describe('orientation modal', () => {
     await fillIdentityForm(page, email);
 
     // Submit form
-    await page.getByRole('button', { name: /sign up/i }).click();
+    await submitForm(page);
 
     // The orientation modal MUST fire because:
     // - Only period slot selected (no orientation slot)
     // - Email has no prior orientation history
     await expect(
-      page.getByText('Have you completed orientation?')
+      page.getByText('Have you done a Sci Trek orientation?')
     ).toBeVisible({ timeout: 8000 });
 
-    // Click "Yes, I have completed orientation"
-    await page.getByRole('button', { name: /yes, i have completed orientation/i }).click();
+    // Click "I've done orientation — continue"
+    await page.getByRole('button', { name: /i've done orientation/i }).click();
 
     // Signup should proceed — success response (API call happens after modal confirm)
     // Wait for the POST /public/signups to complete
@@ -69,9 +81,7 @@ test.describe('orientation modal', () => {
     await page.goto(`/events/${seed.event_id}`);
 
     // Select ONLY the period slot
-    const periodCards = page.locator('section').filter({ hasText: /period slots/i }).locator('li');
-    await expect(periodCards.first()).toBeVisible();
-    await periodCards.first().click();
+    await clickSlotByLabel(page, /^period/i);
 
     // Identity form appears
     await expect(page.getByText('Your information')).toBeVisible();
@@ -84,15 +94,13 @@ test.describe('orientation modal', () => {
     await page.locator('#email').fill(seed.attended_volunteer_email);
     await page.locator('#phone').fill('805-555-0100');
 
-    // Submit — use fresh ephemeral email so orientation API is called first
-    // (The orientation-status check happens before the signup POST)
-    // We need to watch for the orientation-status API call to confirm the check happened
+    // Submit — wait for the orientation-status API call to confirm the check happened.
     const [orientResp] = await Promise.all([
       page.waitForResponse(
         (resp) =>
           resp.url().includes('/orientation-status') && resp.request().method() === 'GET'
       ),
-      page.getByRole('button', { name: /sign up/i }).click(),
+      page.locator('form').getByRole('button', { name: /sign up/i }).last().click(),
     ]);
 
     // The orientation-status response must say has_attended_orientation: true
@@ -105,7 +113,7 @@ test.describe('orientation modal', () => {
     // Orientation modal must NOT appear (suppressed because has_attended_orientation=true)
     await page.waitForTimeout(500);
     await expect(
-      page.getByText('Have you completed orientation?')
+      page.getByText('Have you done a Sci Trek orientation?')
     ).not.toBeVisible();
   });
 });

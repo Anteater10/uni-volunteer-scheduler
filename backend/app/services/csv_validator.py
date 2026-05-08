@@ -54,6 +54,7 @@ def _validate_row(
 
     normalized = {
         "module_slug": event.module_slug,
+        "school": event.school,
         "location": event.location,
         "start_at": event.start_at.isoformat(),
         "end_at": event.end_at.isoformat(),

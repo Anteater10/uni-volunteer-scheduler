@@ -4,7 +4,7 @@ GET /public/events  — list events filtered by quarter, year, week_number; opti
 GET /public/events/{event_id}  — single event detail with slots + filled counts
 GET /public/current-week  — returns the current UCSB quarter, year, and week_number
 """
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from ... import models, schemas
 from ...database import get_db
 from ...deps import rate_limit
+from ...services.settings_service import get_app_settings
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -25,6 +26,28 @@ QUARTER_START_DATES: dict[tuple[int, str], date] = {
     (2026, "fall"):   date(2026, 9, 21),
     (2027, "winter"): date(2027, 1, 4),
 }
+
+
+def derive_quarter_week(for_date: date) -> tuple[str, int, int]:
+    """Derive (quarter, year, week_number) from a date using QUARTER_START_DATES.
+
+    Mirrors the current_week() selection logic. Used by the events create
+    route to populate these fields when the caller doesn't supply them, so
+    admin-created events remain visible through the quarter/week filter.
+    """
+    best: tuple[int, str] | None = None
+    best_start: date | None = None
+    for (year, quarter), start in QUARTER_START_DATES.items():
+        if start <= for_date:
+            if best_start is None or start > best_start:
+                best = (year, quarter)
+                best_start = start
+    if best is None:
+        first_key = min(QUARTER_START_DATES.keys(), key=lambda k: QUARTER_START_DATES[k])
+        return first_key[1], first_key[0], 1
+    year, quarter = best
+    week_number = ((for_date - best_start).days // 7) + 1
+    return quarter, year, max(1, min(11, week_number))
 
 
 @router.get(
@@ -125,6 +148,9 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
         module_slug=event.module_slug,
         start_date=event.start_date,
         end_date=event.end_date,
+        # Phase 29 (LOCK-01) — expose signup window for client-side banner.
+        signup_open_at=event.signup_open_at,
+        signup_close_at=event.signup_close_at,
         slots=slot_reads,
     )
 
@@ -150,6 +176,22 @@ def list_events(
     if school:
         q = q.filter(models.Event.school == school)
     events = q.order_by(models.Event.school, models.Event.start_date).all()
+
+    # Phase 29 (HIDE-01): optionally hide events whose last slot end is in
+    # the past. Uses slot end, not event date — an event "ends" when its
+    # final slot ends. Admin/organizer routes never call this filter.
+    settings = get_app_settings(db)
+    if settings.hide_past_events_from_public and events:
+        now = datetime.now(timezone.utc)
+        visible: list[models.Event] = []
+        for e in events:
+            slot_ends = [s.end_time for s in e.slots] if e.slots else []
+            # Fallback to event.end_date if the event has no slots.
+            last_end = max(slot_ends) if slot_ends else e.end_date
+            if last_end is None or last_end >= now:
+                visible.append(e)
+        events = visible
+
     return [_build_event_response(db, e) for e in events]
 
 
@@ -164,3 +206,19 @@ def get_event(event_id: UUID, db: Session = Depends(get_db)):
     if event is None:
         raise HTTPException(status_code=404, detail="event not found")
     return _build_event_response(db, event)
+
+
+@router.get(
+    "/events/{event_id}/form-schema",
+    dependencies=[Depends(rate_limit(max_requests=60, window_seconds=60))],
+)
+def get_event_form_schema(event_id: UUID, db: Session = Depends(get_db)):
+    """Phase 22 — return the effective custom-form schema for this event.
+
+    Resolves event.form_schema ?? module_template.default_form_schema.
+    Public (no auth) so participants can fetch the form to render.
+    """
+    from ...services import form_schema_service
+
+    schema = form_schema_service.get_effective_schema(db, event_id)
+    return {"event_id": str(event_id), "schema": schema}

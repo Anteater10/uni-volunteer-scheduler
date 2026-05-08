@@ -1,32 +1,70 @@
 // src/App.jsx
 import React from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
+
+function RedirectEventToAdmin() {
+  const { eventId } = useParams();
+  return <Navigate to={`/admin/events/${eventId}`} replace />;
+}
+
+function RedirectOrganizeRoster() {
+  const { eventId } = useParams();
+  return <Navigate to={`/organizer/events/${eventId}/roster`} replace />;
+}
+
+function RedirectEventsToVolunteer() {
+  return <Navigate to="/volunteer" replace />;
+}
+
+function RedirectEventDetailToVolunteer() {
+  const { eventId } = useParams();
+  return <Navigate to={`/volunteer/events/${eventId}`} replace />;
+}
+
+function RootRoute() {
+  const { isAuthed, role } = useAuth();
+  if (isAuthed && (role === "admin" || role === "organizer")) {
+    return <Navigate to="/admin" replace />;
+  }
+  return <LoginPage />;
+}
 
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 import EventsBrowsePage from "./pages/public/EventsBrowsePage";
 import EventDetailPage from "./pages/public/EventDetailPage";
-import PortalPage from "./pages/PortalPage";
 import LoginPage from "./pages/LoginPage";
+import SetPasswordPage from "./pages/SetPasswordPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import ProfilePage from "./pages/ProfilePage";
 
-import OrganizerDashboardPage from "./pages/OrganizerDashboardPage";
-import OrganizerEventPage from "./pages/OrganizerEventPage";
 import OrganizerRosterPage from "./pages/OrganizerRosterPage";
+import OrganizerDashboard from "./pages/organizer/OrganizerDashboard";
 
 import AdminLayout from "./pages/admin/AdminLayout";
 import OverviewSection from "./pages/admin/OverviewSection";
+import { useAuth } from "./state/useAuth";
+
+function AdminIndexRoute() {
+  const { role } = useAuth();
+  if (role === "organizer") return <Navigate to="/admin/preview" replace />;
+  return <OverviewSection />;
+}
 import AdminEventPage from "./pages/AdminEventPage";
 import UsersAdminPage from "./pages/UsersAdminPage";
-import PortalsAdminPage from "./pages/PortalsAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
 import ExportsSection from "./pages/admin/ExportsSection";
 import TemplatesSection from "./pages/admin/TemplatesSection";
 import ImportsSection from "./pages/admin/ImportsSection";
+import OrientationCreditsSection from "./pages/admin/OrientationCreditsSection";
+import EventsSection from "./pages/admin/EventsSection";
+import HelpSection from "./pages/admin/HelpSection";
+// Phase 24 — scheduled reminder emails admin page
+import AdminRemindersPage from "./pages/admin/AdminRemindersPage";
 
 import SelfCheckInPage from "./pages/SelfCheckInPage";
+import EventCheckInPage from "./pages/EventCheckInPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import ConfirmSignupPage from "./pages/public/ConfirmSignupPage";
 import ManageSignupsPage from "./pages/public/ManageSignupsPage";
@@ -36,13 +74,24 @@ export default function App() {
     <Routes>
       {/* Layout wrapper */}
       <Route path="/" element={<Layout />}>
-        {/* Public */}
-        <Route index element={<Navigate to="/events" replace />} />
+        {/* Root — admin landing (login if signed out, dashboard if signed in) */}
+        <Route index element={<RootRoute />} />
         <Route path="login" element={<LoginPage />} />
-        <Route path="events" element={<EventsBrowsePage />} />
-        <Route path="events/:eventId" element={<EventDetailPage />} />
-        <Route path="portals/:slug" element={<PortalPage />} />
+        <Route path="set-password" element={<SetPasswordPage />} />
+
+        {/* Participant surfaces (no login button anywhere) */}
+        <Route path="volunteer" element={<EventsBrowsePage />} />
+        <Route path="volunteer/events/:eventId" element={<EventDetailPage />} />
+
+        {/* Legacy /events — redirect to /volunteer so emailed links don't break */}
+        <Route path="events" element={<RedirectEventsToVolunteer />} />
+        <Route
+          path="events/:eventId"
+          element={<RedirectEventDetailToVolunteer />}
+        />
+
         <Route path="check-in/:signupId" element={<SelfCheckInPage />} />
+        <Route path="event-check-in/:eventId" element={<EventCheckInPage />} />
         <Route path="signup/confirm" element={<ConfirmSignupPage />} />
         <Route path="signup/manage" element={<ManageSignupsPage />} />
 
@@ -52,24 +101,41 @@ export default function App() {
           <Route path="profile" element={<ProfilePage />} />
         </Route>
 
-        {/* Organizer/Admin */}
+        {/* Organizer roster — mobile check-in surface */}
         <Route element={<ProtectedRoute roles={["organizer", "admin"]} />}>
-          <Route path="organizer" element={<OrganizerDashboardPage />} />
-          <Route path="organizer/events/:eventId" element={<OrganizerEventPage />} />
-          <Route path="organize/events/:eventId/roster" element={<OrganizerRosterPage />} />
+          <Route path="organizer" element={<Navigate to="/admin/preview" replace />} />
+          <Route path="organizer/events/:eventId" element={<RedirectEventToAdmin />} />
+          <Route path="organizer/events/:eventId/roster" element={<OrganizerRosterPage />} />
+          {/* Legacy typo path — preserved as redirect for old bookmarks/tests */}
+          <Route path="organize/events/:eventId/roster" element={<RedirectOrganizeRoster />} />
         </Route>
 
-        {/* Admin/Organizer — nested under AdminLayout */}
+        {/* Admin shell — shared surfaces (admin + organizer) */}
         <Route element={<ProtectedRoute roles={["admin", "organizer"]} />}>
           <Route path="admin" element={<AdminLayout />}>
-            <Route index element={<OverviewSection />} />
+            <Route index element={<AdminIndexRoute />} />
+            <Route path="events" element={<EventsSection />} />
+            <Route path="preview" element={<OrganizerDashboard />} />
             <Route path="events/:eventId" element={<AdminEventPage />} />
-            <Route path="users" element={<UsersAdminPage />} />
-            <Route path="portals" element={<PortalsAdminPage />} />
-            <Route path="audit-logs" element={<AuditLogsPage />} />
-            <Route path="templates" element={<TemplatesSection />} />
+            <Route
+              path="events/:eventId/roster"
+              element={<OrganizerRosterPage />}
+            />
             <Route path="imports" element={<ImportsSection />} />
-            <Route path="exports" element={<ExportsSection />} />
+            <Route path="templates" element={<TemplatesSection />} />
+            <Route path="reminders" element={<AdminRemindersPage />} />
+            <Route path="help" element={<HelpSection />} />
+            {/* Admin-only surfaces */}
+            <Route element={<ProtectedRoute roles={["admin"]} />}>
+              <Route path="users" element={<UsersAdminPage />} />
+              <Route path="audit-logs" element={<AuditLogsPage />} />
+              <Route path="exports" element={<ExportsSection />} />
+              {/* Phase 21 */}
+              <Route
+                path="orientation-credits"
+                element={<OrientationCreditsSection />}
+              />
+            </Route>
           </Route>
         </Route>
 

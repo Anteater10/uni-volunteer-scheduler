@@ -25,6 +25,18 @@ vi.mock("../src/lib/authStorage", () => ({
 
 import OrganizerRosterPage from "../src/pages/OrganizerRosterPage";
 import { fetchRoster, checkInSignup, resolveEvent } from "../src/api/roster";
+import { AuthContext } from "../src/state/AuthContext";
+
+const MOCK_AUTH = {
+  user: { id: "u1", role: "organizer", first_name: "Test" },
+  initializing: false,
+  isAuthed: true,
+  role: "organizer",
+  reloadMe: vi.fn(),
+  login: vi.fn(),
+  register: vi.fn(),
+  logout: vi.fn(),
+};
 
 const MOCK_ROSTER = {
   event_id: "evt-1",
@@ -65,16 +77,18 @@ function renderPage() {
     },
   });
   return render(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/organize/events/evt-1/roster"]}>
-        <Routes>
-          <Route
-            path="/organize/events/:eventId/roster"
-            element={<OrganizerRosterPage />}
-          />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <AuthContext.Provider value={MOCK_AUTH}>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/organizer/events/evt-1/roster"]}>
+          <Routes>
+            <Route
+              path="/organizer/events/:eventId/roster"
+              element={<OrganizerRosterPage />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </AuthContext.Provider>,
   );
 }
 
@@ -89,7 +103,7 @@ describe("OrganizerRosterPage", () => {
   it("shows checked-in count in header", async () => {
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText(/1 of 3 checked in/)).toBeInTheDocument();
+      expect(screen.getByText(/1 \/ 3/)).toBeInTheDocument();
     });
   });
 

@@ -3,7 +3,7 @@
 // Organizer check-in regression test:
 //   1. Create a confirmed signup via API (direct fetch, no UI dependency on other specs)
 //   2. Login as organizer via the UI
-//   3. Navigate to the seeded event's roster: /organize/events/:id/roster
+//   3. Navigate to the seeded event's roster: /organizer/events/:id/roster
 //   4. Verify signup row is visible
 //   5. Click the row (check-in action) and assert status changes to checked_in
 //
@@ -71,8 +71,8 @@ test('organizer can view roster and check in a signup', async ({ page }) => {
   await expect(page).not.toHaveURL('/login', { timeout: 8000 });
 
   // Step 3: Navigate directly to the roster page
-  // Route is /organize/events/:eventId/roster per App.jsx
-  await page.goto(`/organize/events/${seed.event_id}/roster`);
+  // Route is /organizer/events/:eventId/roster per App.jsx (normalized in Phase 19-01; legacy /organize/ redirects here)
+  await page.goto(`/organizer/events/${seed.event_id}/roster`);
 
   // Step 4: Roster loaded with our signup row
   // OrganizerRosterPage shows "X of Y checked in" header — use .first() to avoid strict violation

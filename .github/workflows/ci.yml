@@ -8,53 +8,9 @@ on:
 
 jobs:
   # -------------------------------------------------------------------
-  # Original Phase 0 backend job (kept intact — do not rewrite)
-  # -------------------------------------------------------------------
-  backend-ci:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: uni_volunteer
-        ports:
-          - "5432:5432"
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/uni_volunteer
-      JWT_SECRET: test-secret
-      JWT_ALGORITHM: HS256
-      ACCESS_TOKEN_EXPIRES_MINUTES: 60
-      REFRESH_TOKEN_EXPIRES_DAYS: 14
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install dependencies
-        run: |
-          cd backend
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run tests
-        run: |
-          cd backend
-          pytest
-
-  # -------------------------------------------------------------------
-  # Phase 0 Plan 07: backend + frontend + E2E + critical-path coverage
+  # Phase 0 Plan 07: backend + frontend + E2E + critical-path coverage.
+  # The pre-Plan-07 backend-ci job was removed — phase0-backend-tests is
+  # a strict superset (adds redis service + alembic + coverage gates).
   # -------------------------------------------------------------------
   phase0-backend-tests:
     name: phase0 backend tests + coverage
@@ -104,17 +60,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Create test database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE test_uvs;"
+
       - name: alembic upgrade head
         run: |
           cd backend
           alembic upgrade head
 
       - name: pytest with JSON coverage
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
         run: |
           cd backend
           pytest --cov=app --cov-report=json --cov-report=term
 
-      - name: Critical-path coverage gate (>= 0.90 for signup_service.py, routers/signups.py, celery_app.py)
+      - name: Critical-path coverage gate (== 1.00 for signup_service.py, routers/signups.py, celery_app.py)
         run: |
           cd backend
           python - <<'PY'
@@ -128,9 +92,9 @@ jobs:
                       return info["summary"]["percent_covered"] / 100.0
               return None
           targets = {
-              "app/signup_service.py": 0.90,
-              "app/routers/signups.py": 0.90,
-              "app/celery_app.py": 0.90,
+              "app/signup_service.py": 1.00,
+              "app/routers/signups.py": 1.00,
+              "app/celery_app.py": 1.00,
           }
           failed = []
           for suffix, floor in targets.items():
@@ -216,10 +180,10 @@ jobs:
             sleep 2
           done
 
-      - name: Install root playwright deps + browser
+      - name: Install root playwright deps + browsers
         run: |
           npm ci
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps
 
       - name: Install frontend + start dev server
         run: |

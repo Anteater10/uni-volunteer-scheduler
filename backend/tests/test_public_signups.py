@@ -159,7 +159,8 @@ class TestCreatePublicSignup:
         resp = client.post("/api/v1/public/signups", json=_signup_payload(uuid.uuid4()))
         assert resp.status_code == 404, resp.text
 
-    def test_full_slot_returns_409(self, client, db_session, monkeypatch):
+    def test_full_slot_goes_to_waitlist(self, client, db_session, monkeypatch):
+        """Phase 25 (WAIT-01): at-capacity signups are waitlisted, not rejected."""
         monkeypatch.setattr(
             "app.celery_app.send_signup_confirmation_email.delay",
             lambda *a, **k: None,
@@ -169,7 +170,18 @@ class TestCreatePublicSignup:
         db_session.commit()
 
         resp = client.post("/api/v1/public/signups", json=_signup_payload(slot.id))
-        assert resp.status_code == 409, resp.text
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["signups"], "response should include per-signup result items"
+        item = data["signups"][0]
+        assert item["status"] == "waitlisted"
+        assert item["position"] == 1
+
+        # Slot current_count must stay at capacity — waitlisted signups don't hold a seat.
+        db_session.expire_all()
+        from app import models as _m
+        slot_row = db_session.query(_m.Slot).filter(_m.Slot.id == slot.id).one()
+        assert slot_row.current_count == 1
 
     def test_duplicate_signup_returns_409(self, client, db_session, monkeypatch):
         monkeypatch.setattr(
@@ -423,3 +435,36 @@ class TestCancelSignup:
         assert log_entry is not None, "AuditLog entry for signup_cancelled not found"
         assert log_entry.extra is not None
         assert log_entry.extra.get("volunteer_email") == "audit_log11@example.com"
+
+
+def test_manage_response_includes_volunteer_name(client, db_session, monkeypatch):
+    """Manage endpoint must return volunteer first/last name so the
+    UI can render 'Signups for {first} {last}' on shared-device flows."""
+    monkeypatch.setattr(
+        "app.celery_app.send_signup_confirmation_email.delay",
+        lambda *a, **k: None,
+    )
+    event = _make_event(db_session)
+    slot = _make_slot(db_session, event.id)
+    db_session.commit()
+
+    payload = {
+        "first_name": "Hung",
+        "last_name": "Khuu",
+        "email": "hung_name_test@example.com",
+        "phone": GOOD_PHONE,
+        "slot_ids": [str(slot.id)],
+    }
+    with _TokenCapture(monkeypatch) as cap:
+        r = client.post("/api/v1/public/signups", json=payload)
+    assert r.status_code == 201, r.text
+
+    if cap.last_token is None:
+        pytest.skip("Token capture failed")
+
+    token = cap.last_token
+    r = client.get("/api/v1/public/signups/manage", params={"token": token})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["volunteer_first_name"] == "Hung"
+    assert body["volunteer_last_name"] == "Khuu"

@@ -142,6 +142,51 @@ if settings.oidc_client_id and settings.oidc_client_secret and settings.oidc_iss
 # -------------------------
 
 
+class SetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+
+@router.post("/set-password", response_model=schemas.Token)
+def set_password_from_invite(
+    payload: SetPasswordRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(rate_limit(20, 60)),
+):
+    """Consume an invite JWT, set the user's password, return access+refresh tokens."""
+    from jose import JWTError, ExpiredSignatureError
+    from ..services.invite import verify_invite_token
+
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    try:
+        user_id = verify_invite_token(payload.token)
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=400, detail="Invite link has expired. Ask an admin to re-invite you.")
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid invite link.")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if user is None or user.is_active is False:
+        raise HTTPException(status_code=400, detail="Invalid invite link.")
+
+    user.hashed_password = hash_password(payload.password)
+    user.last_login_at = datetime.now(timezone.utc)
+    db.add(user)
+
+    access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    raw_refresh = _issue_refresh_token(db, user)
+    log_action(db, user, "user_set_password", "User", str(user.id))
+    db.commit()
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "refresh_token": raw_refresh,
+    }
+
+
 @router.post("/token", response_model=schemas.Token)
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -149,7 +194,13 @@ def login(
     _: None = Depends(rate_limit(30, 60)),
 ):
     user = db.query(models.User).filter(models.User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    # Phase 16 Plan 01: hashed_password may be NULL for magic-link-only users
+    if not user or user.hashed_password is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+    if not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -157,6 +208,12 @@ def login(
 
     access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
     raw_refresh = _issue_refresh_token(db, user)
+
+    # Phase 16 Plan 02 (D-37): stamp last_login_at on successful login so the
+    # admin Users page can show "last seen" per user. Application-code driven,
+    # NOT a DB trigger, for portability.
+    user.last_login_at = datetime.now(timezone.utc)
+    db.add(user)
 
     log_action(db, user, "user_login", "User", str(user.id))
 

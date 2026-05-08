@@ -23,6 +23,9 @@ from ...magic_link_service import (
 from ...models import Signup, SignupStatus, Slot
 from ...services.public_signup_service import create_public_signup
 from ...services.phone_service import InvalidPhoneError
+from ...services.swap_service import swap_signup
+from ...services.waitlist_service import compute_waitlist_position
+from ...signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -91,18 +94,30 @@ def manage_signups(
     if anchor is None:
         raise HTTPException(status_code=400, detail="token references missing signup")
 
+    volunteer = token_row.volunteer
+    if volunteer is None:
+        raise HTTPException(status_code=400, detail="token references missing volunteer")
+
     anchor_slot = db.get(Slot, anchor.slot_id)
     if anchor_slot is None:
         raise HTTPException(status_code=400, detail="anchor slot not found")
     event_id = anchor_slot.event_id
 
+    # Phase 25 (WAIT-01): include waitlisted signups so the manage page can
+    # show "Waitlist #N" alongside confirmed/pending rows.
     signups = (
         db.query(Signup)
         .join(Slot, Slot.id == Signup.slot_id)
         .filter(
             Signup.volunteer_id == token_row.volunteer_id,
             Slot.event_id == event_id,
-            Signup.status.in_([SignupStatus.pending, SignupStatus.confirmed]),
+            Signup.status.in_(
+                [
+                    SignupStatus.pending,
+                    SignupStatus.confirmed,
+                    SignupStatus.waitlisted,
+                ]
+            ),
         )
         .all()
     )
@@ -110,6 +125,11 @@ def manage_signups(
     signup_reads = []
     for s in signups:
         slot = db.get(Slot, s.slot_id)
+        waitlist_position = (
+            compute_waitlist_position(db, slot.id, s.id)
+            if s.status == SignupStatus.waitlisted
+            else None
+        )
         signup_reads.append(
             schemas.TokenedSignupRead(
                 signup_id=s.id,
@@ -124,14 +144,65 @@ def manage_signups(
                     capacity=slot.capacity,
                     filled=slot.current_count,
                 ),
+                waitlist_position=waitlist_position,
             )
         )
 
     return schemas.TokenedManageRead(
         volunteer_id=token_row.volunteer_id,
+        volunteer_first_name=volunteer.first_name,
+        volunteer_last_name=volunteer.last_name,
         event_id=event_id,
         signups=signup_reads,
     )
+
+
+@router.post(
+    "/signups/{signup_id}/swap",
+    dependencies=[Depends(rate_limit(max_requests=30, window_seconds=60))],
+)
+def swap_signup_public(
+    signup_id: UUID,
+    body: schemas.SignupMoveRequest,
+    token: str = Query(..., min_length=16),
+    db: Session = Depends(get_db),
+):
+    """Phase 29 (SWAP-01/02) — participant-initiated swap to a different slot.
+
+    Requires the owning volunteer's ``manage_token``. Delegates to the
+    shared ``swap_service.swap_signup`` which enforces same-event +
+    target-capacity and writes the audit row. Hard-fails on target full
+    (409) and cross-event (400).
+    """
+    token_row = _lookup_token(db, token)
+    if token_row is None or token_row.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="token invalid or expired")
+    if token_row.purpose not in (
+        MagicLinkPurpose.SIGNUP_CONFIRM,
+        MagicLinkPurpose.SIGNUP_MANAGE,
+    ):
+        raise HTTPException(status_code=400, detail="token not valid for manage")
+
+    signup = db.query(Signup).filter(Signup.id == signup_id).first()
+    if signup is None:
+        raise HTTPException(status_code=404, detail="signup not found")
+    if signup.volunteer_id != token_row.volunteer_id:
+        raise HTTPException(status_code=403, detail="token does not own this signup")
+
+    updated = swap_signup(
+        db,
+        signup_id=signup_id,
+        target_slot_id=body.target_slot_id,
+        actor=None,
+        actor_label="participant",
+    )
+    db.commit()
+    db.refresh(updated)
+    return {
+        "signup_id": str(updated.id),
+        "slot_id": str(updated.slot_id),
+        "status": updated.status.value,
+    }
 
 
 @router.delete(
@@ -151,7 +222,14 @@ def cancel_signup(
     if token_row is None or token_row.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="token invalid or expired")
 
-    signup = db.get(Signup, signup_id)
+    # Phase 25 (WAIT-02): lock signup + slot, cancel, then auto-promote the
+    # FIFO head of the waitlist. Mirrors the admin cancel flow.
+    signup = (
+        db.query(Signup)
+        .filter(Signup.id == signup_id)
+        .with_for_update()
+        .first()
+    )
     if signup is None:
         raise HTTPException(status_code=404, detail="signup not found")
 
@@ -162,14 +240,46 @@ def cancel_signup(
     if signup.status == SignupStatus.cancelled:
         return {"cancelled": True, "signup_id": str(signup_id), "already_cancelled": True}
 
+    slot = (
+        db.query(Slot)
+        .filter(Slot.id == signup.slot_id)
+        .with_for_update()
+        .first()
+    )
+
+    previous_status = signup.status
     signup.status = SignupStatus.cancelled
-    slot = db.get(Slot, signup.slot_id)
-    if slot:
+    # Only confirmed/pending signups hold capacity; waitlisted cancels are
+    # a no-op on current_count.
+    if slot and previous_status in (
+        SignupStatus.pending,
+        SignupStatus.confirmed,
+    ):
         slot.current_count = max(0, slot.current_count - 1)
+
+    # Phase 25 (WAIT-02): auto-promote the FIFO head until the slot is full
+    # or the waitlist is empty. Each promotion bumps current_count.
+    promoted_count = 0
+    if slot:
+        while slot.current_count < slot.capacity:
+            promoted = promote_waitlist_fifo(db, slot.id)
+            if promoted is None:
+                break
+            slot.current_count += 1
+            promoted_count += 1
+
     log_action(
         db, actor=None, action="signup_cancelled",
         entity_type="signup", entity_id=str(signup_id),
-        extra={"volunteer_email": token_row.volunteer.email, "signup_id": str(signup_id)},
+        extra={
+            "volunteer_email": token_row.volunteer.email,
+            "signup_id": str(signup_id),
+            "promoted_from_waitlist": promoted_count,
+        },
     )
     db.commit()
-    return {"cancelled": True, "signup_id": str(signup_id)}
+    return {
+        "cancelled": True,
+        "signup_id": str(signup_id),
+        "promoted_from_waitlist": promoted_count,
+    }

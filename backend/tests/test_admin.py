@@ -99,8 +99,9 @@ def test_admin_cancel_signup_promotes_waitlist(client, db_session):
 
     db_session.expire_all()
     b_row = db_session.query(models.Signup).filter(models.Signup.id == b_signup.id).one()
-    # Phase 2: promoted signups go to 'pending' (must confirm via magic link)
-    assert b_row.status == models.SignupStatus.pending
+    # Promoted signups go directly to 'confirmed' — the volunteer already
+    # consented at initial signup time; no double-confirm needed.
+    assert b_row.status == models.SignupStatus.confirmed
 
 
 def test_admin_summary_requires_admin(client, db_session):
@@ -110,7 +111,8 @@ def test_admin_summary_requires_admin(client, db_session):
     resp = client.get("/api/v1/admin/summary", headers=auth_headers(client, admin))
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    for key in ("total_users", "total_events", "total_slots", "total_signups"):
+    # Phase 16 Plan 02: summary shape expanded per D-14..D-29.
+    for key in ("users_total", "events_total", "slots_total", "signups_total"):
         assert key in body
 
 

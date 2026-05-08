@@ -210,6 +210,17 @@ function logout() {
   authStorage.clearAll();
 }
 
+async function setPasswordFromInvite(token, password) {
+  const json = await request("/auth/set-password", {
+    method: "POST",
+    auth: false,
+    body: { token, password },
+  });
+  if (json?.access_token) authStorage.setToken(json.access_token);
+  if (json?.refresh_token) authStorage.setRefreshToken(json.refresh_token);
+  return json;
+}
+
 // --------------------
 // USERS
 // --------------------
@@ -394,6 +405,16 @@ async function publicCreateSignup(body) {
 async function publicOrientationStatus(email) {
   return request("/public/orientation-status", { method: "GET", auth: false, params: { email } });
 }
+// Phase 21: cross-week/cross-module credit check. Pass eventId so the backend
+// can resolve the module family from the event. Response shape adds
+// has_credit + source + family_key.
+async function publicOrientationCheck(email, eventId) {
+  return request("/public/orientation-check", {
+    method: "GET",
+    auth: false,
+    params: { email, event_id: eventId },
+  });
+}
 async function publicConfirmSignup(token) {
   return request("/public/signups/confirm", { method: "POST", auth: false, params: { token } });
 }
@@ -402,6 +423,83 @@ async function publicGetManageSignups(token) {
 }
 async function publicCancelSignup(signupId, token) {
   return request(`/public/signups/${signupId}`, { method: "DELETE", auth: false, params: { token } });
+}
+
+// Phase 29 (SWAP-02) — participant swap to a different slot in the same event.
+async function publicSwapSignup(signupId, targetSlotId, token) {
+  return request(`/public/signups/${signupId}/swap`, {
+    method: "POST",
+    auth: false,
+    params: { token },
+    body: { target_slot_id: targetSlotId },
+  });
+}
+
+// Phase 24 — volunteer reminder preferences (token-gated)
+async function publicGetPreferences(manageToken) {
+  return request("/public/preferences", {
+    method: "GET",
+    auth: false,
+    params: { manage_token: manageToken },
+  });
+}
+async function publicUpdatePreferences(manageToken, patch) {
+  return request("/public/preferences", {
+    method: "PUT",
+    auth: false,
+    params: { manage_token: manageToken },
+    body: patch,
+  });
+}
+
+// Phase 24 — admin reminders page
+async function adminListUpcomingReminders(days = 7) {
+  return request("/admin/reminders/upcoming", { method: "GET", params: { days } });
+}
+async function adminSendReminderNow(signupId, kind) {
+  return request("/admin/reminders/send-now", {
+    method: "POST",
+    body: { signup_id: signupId, kind },
+  });
+}
+
+// Phase 26 — broadcast messages (organizer + admin).
+// Returns the recipient-count preview for the modal.
+async function getBroadcastRecipientCount(eventId) {
+  return request(`/events/${eventId}/broadcast-recipients`, {
+    method: "GET",
+  });
+}
+// Sends a broadcast. On 429 the Error carries .status and .retryAfter.
+async function sendBroadcast(eventId, { subject, body_markdown }) {
+  const url = `${API_BASE}/events/${eventId}/broadcast`;
+  const token = authStorage.getToken();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ subject, body_markdown }),
+  });
+  const json = await safeReadJson(res);
+  if (!res.ok) {
+    const err = new Error(
+      extractErrorMessage(json, `Broadcast failed (${res.status})`),
+    );
+    err.status = res.status;
+    if (res.status === 429) {
+      err.retryAfter = Number(res.headers.get("Retry-After") || 0) || null;
+    }
+    throw err;
+  }
+  return json;
+}
+async function listBroadcasts(eventId, days = 30) {
+  return request(`/events/${eventId}/broadcasts`, {
+    method: "GET",
+    params: { days },
+  });
 }
 
 // --------------------
@@ -428,6 +526,7 @@ export const api = {
   // auth
   login,
   logout,
+  setPasswordFromInvite,
 
   // users
   me,
@@ -499,9 +598,32 @@ export const api = {
     getEvent: (id) => publicGetEvent(id),
     createSignup: (body) => publicCreateSignup(body),
     orientationStatus: (email) => publicOrientationStatus(email),
+    // Phase 21
+    orientationCheck: (email, eventId) => publicOrientationCheck(email, eventId),
+    // Phase 22
+    getFormSchema: (eventId) =>
+      request(`/public/events/${eventId}/form-schema`, {
+        method: "GET",
+        auth: false,
+      }),
     confirmSignup: (token) => publicConfirmSignup(token),
     getManageSignups: (token) => publicGetManageSignups(token),
     cancelSignup: (signupId, token) => publicCancelSignup(signupId, token),
+    // Phase 29 (SWAP-02) — participant swap via manage_token.
+    swapSignup: (signupId, targetSlotId, token) =>
+      publicSwapSignup(signupId, targetSlotId, token),
+    // Phase 24 — reminder preferences
+    getPreferences: (manageToken) => publicGetPreferences(manageToken),
+    updatePreferences: (manageToken, patch) =>
+      publicUpdatePreferences(manageToken, patch),
+    // Event-QR check-in (post-integration) — organizer shows a QR that points
+    // at /event-check-in/:eventId; volunteer enters email and hits this.
+    checkInByEmail: (eventId, email) =>
+      request(`/events/${eventId}/check-in-by-email`, {
+        method: "POST",
+        auth: false,
+        body: { email },
+      }),
   },
 
   // --- Module Templates (Phase 5) ---
@@ -532,13 +654,53 @@ export const api = {
     request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
   commitCsvImport: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
 
+  // Phase 21 — organizer-scoped helpers
+  organizer: {
+    grantOrientation: (eventId, signupId) =>
+      request(
+        `/organizer/events/${eventId}/signups/${signupId}/grant-orientation`,
+        { method: "POST" },
+      ),
+    // Phase 22 — quick-add form field from roster page
+    appendEventField: (eventId, field) =>
+      request(`/organizer/events/${eventId}/form-fields`, {
+        method: "POST",
+        body: field,
+      }),
+    // Phase 25 — organizer manual waitlist promote (WAIT-03)
+    promoteSignup: (eventId, signupId) =>
+      request(
+        `/organizer/events/${eventId}/signups/${signupId}/promote`,
+        { method: "POST" },
+      ),
+    // Phase 26 — broadcast messages (organizer reuse of same endpoints)
+    broadcastRecipientCount: (eventId) =>
+      getBroadcastRecipientCount(eventId),
+    sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
+    listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
+  },
+
   admin: {
     summary: () => adminSummary(),
+    // Phase 29 (HIDE-01) — site-wide settings singleton
+    siteSettings: {
+      get: () => request("/admin/site-settings", { method: "GET" }),
+      update: (patch) =>
+        request("/admin/site-settings", { method: "PATCH", body: patch }),
+    },
     users: {
-      list: (params) => adminListUsers(params),
+      // Phase 16 Plan 03 (ADMIN-18..21): invite / deactivate / reactivate wire
+      // up to Plan 02's backend endpoints. Legacy create/update/delete kept for
+      // compatibility but the UI flow prefers invite + soft-delete.
+      list: (params = {}) => request("/users/", { method: "GET", params }),
       create: (payload) => adminCreateUser(payload),
       update: (id, payload) => adminUpdateUser(id, payload),
       delete: (id) => adminDeleteUser(id),
+      invite: (body) => request("/users/invite", { method: "POST", body }),
+      deactivate: (id) =>
+        request(`/users/${id}/deactivate`, { method: "POST", body: {} }),
+      reactivate: (id) =>
+        request(`/users/${id}/reactivate`, { method: "POST", body: {} }),
       ccpaExport: (userId, reason) =>
         request(`/admin/users/${userId}/ccpa-export`, { method: "GET", params: { reason } }),
       ccpaDelete: (userId, reason) =>
@@ -557,16 +719,112 @@ export const api = {
       resend: (id) => adminResendSignup(id),
     },
     analytics: {
-      volunteerHours: (params) => request("/admin/analytics/volunteer-hours", { method: "GET", params }),
-      attendanceRates: (params) => request("/admin/analytics/attendance-rates", { method: "GET", params }),
-      noShowRates: (params) => request("/admin/analytics/no-show-rates", { method: "GET", params }),
+      // JSON read helpers — consumed by ExportsSection panels in Plan 06
+      volunteerHours: (params = {}) =>
+        request("/admin/analytics/volunteer-hours", { method: "GET", params }),
+      attendanceRates: (params = {}) =>
+        request("/admin/analytics/attendance-rates", { method: "GET", params }),
+      noShowRates: (params = {}) =>
+        request("/admin/analytics/no-show-rates", { method: "GET", params }),
+      // CSV download helpers — consumed by ExportsSection Download CSV buttons in Plan 06
+      volunteerHoursCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/volunteer-hours.csv", "volunteer-hours.csv", { params }),
+      attendanceRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/attendance-rates.csv", "attendance-rates.csv", { params }),
+      noShowRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/no-show-rates.csv", "no-show-rates.csv", { params }),
+
+      // Phase 18 Plan 03 — extra SciTrek-focused reports
+      eventFillRates: (params = {}) =>
+        request("/admin/analytics/event-fill-rates", { method: "GET", params }),
+      eventFillRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/event-fill-rates.csv", "event-fill-rates.csv", { params }),
+      hoursBySchool: (params = {}) =>
+        request("/admin/analytics/hours-by-school", { method: "GET", params }),
+      hoursBySchoolCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/hours-by-school.csv", "hours-by-school.csv", { params }),
+      uniqueVolunteers: (params = {}) =>
+        request("/admin/analytics/unique-volunteers", { method: "GET", params }),
+      uniqueVolunteersCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/unique-volunteers.csv", "unique-volunteers.csv", { params }),
+      cancellationRates: (params = {}) =>
+        request("/admin/analytics/cancellation-rates", { method: "GET", params }),
+      cancellationRatesCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/cancellation-rates.csv", "cancellation-rates.csv", { params }),
+      modulePopularity: (params = {}) =>
+        request("/admin/analytics/module-popularity", { method: "GET", params }),
+      modulePopularityCsv: (params = {}) =>
+        downloadBlob("/admin/analytics/module-popularity.csv", "module-popularity.csv", { params }),
     },
     templates: {
-      list: () => request("/admin/module-templates"),
+      list: (params) => request("/admin/module-templates", { params }),
       create: (payload) => request("/admin/module-templates", { method: "POST", body: payload }),
       update: (slug, payload) => request(`/admin/module-templates/${slug}`, { method: "PATCH", body: payload }),
       delete: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
       bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/module-templates/${s}`, { method: "DELETE" }))),
+      restore: (slug) => request(`/admin/module-templates/${slug}/restore`, { method: "POST" }),
+      clone: (slug, { new_slug, new_name }) =>
+        request(`/admin/module-templates/${slug}/clone`, {
+          method: "POST",
+          body: { new_slug, new_name },
+        }),
+      // Phase 22 — default form schema on template
+      setDefaultFormSchema: (slug, schema) =>
+        request(`/admin/templates/${slug}/default-form-schema`, {
+          method: "PUT",
+          body: { schema },
+        }),
+    },
+    // Phase 22 — per-event form schema override
+    setEventFormSchema: (eventId, schema) =>
+      request(`/admin/events/${eventId}/form-schema`, {
+        method: "PUT",
+        body: { schema },
+      }),
+    // Phase 23 — recurring event duplication
+    duplicateEvent: (
+      eventId,
+      { target_weeks, target_year, target_quarter, skip_conflicts },
+    ) =>
+      request(`/admin/events/${eventId}/duplicate`, {
+        method: "POST",
+        body: {
+          target_weeks,
+          target_year,
+          ...(target_quarter ? { target_quarter } : {}),
+          skip_conflicts,
+        },
+      }),
+    // Phase 25 — admin reorder waitlist (WAIT-05)
+    reorderWaitlist: (eventId, slotId, orderedIds) =>
+      request(
+        `/admin/events/${eventId}/slots/${slotId}/waitlist-order`,
+        {
+          method: "PATCH",
+          body: { ordered_signup_ids: orderedIds },
+        },
+      ),
+    // Phase 24 — scheduled reminder emails
+    reminders: {
+      listUpcoming: (days = 7) => adminListUpcomingReminders(days),
+      sendNow: (signupId, kind) => adminSendReminderNow(signupId, kind),
+    },
+    // Phase 26 — broadcast messages
+    broadcastRecipientCount: (eventId) =>
+      getBroadcastRecipientCount(eventId),
+    sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
+    listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
+    // Phase 21 — orientation credit engine
+    orientationCredits: {
+      list: (params = {}) =>
+        request("/admin/orientation-credits", { method: "GET", params }),
+      create: ({ volunteer_email, family_key, notes = null }) =>
+        request("/admin/orientation-credits", {
+          method: "POST",
+          body: { volunteer_email, family_key, notes },
+        }),
+      revoke: (creditId) =>
+        request(`/admin/orientation-credits/${creditId}`, { method: "DELETE" }),
     },
     imports: {
       list: () => request("/admin/imports", { method: "GET" }),
@@ -587,8 +845,17 @@ export const api = {
           return res.json();
         });
       },
-      commit: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
+      commit: (importId, moduleTemplateSlug) =>
+        request(`/admin/imports/${importId}/commit`, {
+          method: "POST",
+          body: { module_template_slug: moduleTemplateSlug },
+        }),
       retry: (importId) => request(`/admin/imports/${importId}/retry`, { method: "POST" }),
+      revalidate: (importId) =>
+        request(`/admin/imports/${importId}/revalidate`, { method: "POST" }),
+      updateRow: (importId, rowIndex, data) =>
+        request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
+      delete: (importId) => request(`/admin/imports/${importId}`, { method: "DELETE" }),
     },
   },
 };

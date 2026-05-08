@@ -129,8 +129,10 @@ def test_audit_logs_csv_export(client, db_session):
     # Check CSV has header row
     lines = resp.text.strip().split("\n")
     assert len(lines) >= 1
-    assert "timestamp" in lines[0]
-    assert "action" in lines[0]
+    # Phase 16 Plan 02 (D-19/D-34): CSV headers are now the humanized shape
+    # (When, Who, Role, What, Target, Raw Action, Entity ID).
+    assert "When" in lines[0]
+    assert "Raw Action" in lines[0]
 
 
 @pytest.mark.integration

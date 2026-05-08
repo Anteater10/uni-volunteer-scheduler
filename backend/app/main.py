@@ -10,10 +10,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import settings
 from .database import get_db
-from .routers import auth, users, events, slots, signups, notifications, admin, portals, magic, roster, check_in
+from .routers import auth, users, events, slots, signups, notifications, admin, portals, magic, roster, check_in, organizer
 from .routers.public import events as public_events
 from .routers.public import signups as public_signups
 from .routers.public import orientation as public_orientation
+# Phase 24 — token-gated reminder preferences
+from .routers import preferences as public_preferences
+# Phase 26 — broadcast messages (organizer/admin → confirmed signups)
+from .routers import broadcasts
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +102,16 @@ app.include_router(portals.router, prefix="/api/v1")
 app.include_router(magic.router, prefix="/api/v1")
 app.include_router(roster.router, prefix="/api/v1")
 app.include_router(check_in.router, prefix="/api/v1")
+# Phase 21: organizer-scoped actions (grant orientation credit, etc.)
+app.include_router(organizer.router, prefix="/api/v1")
 # Phase 09: public (unauthenticated) volunteer signup surface
 app.include_router(public_events.router, prefix="/api/v1")
 app.include_router(public_signups.router, prefix="/api/v1")
 app.include_router(public_orientation.router, prefix="/api/v1")
+# Phase 24 — volunteer reminder opt-out endpoints (token-gated)
+app.include_router(public_preferences.router, prefix="/api/v1")
+# Phase 26 — broadcast messages (organizer/admin → confirmed signups)
+app.include_router(broadcasts.router, prefix="/api/v1")
 
 # Test helpers — only included when EXPOSE_TOKENS_FOR_TESTING=1
 if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":

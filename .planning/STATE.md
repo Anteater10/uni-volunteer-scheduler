@@ -1,55 +1,65 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: milestone
-status: executing
-last_updated: "2026-04-15T06:10:41.978Z"
-last_activity: 2026-04-15
+milestone: v1.3
+milestone_name: feature-expansion
+status: complete
+last_updated: "2026-05-08T00:00:00.000Z"
+last_activity: 2026-05-08
 progress:
-  total_phases: 7
-  completed_phases: 0
-  total_plans: 4
-  completed_plans: 0
-  percent: 0
+  total_phases: 9
+  completed_phases: 8
+  total_plans: 8
+  completed_plans: 8
+  percent: 89
 ---
 
 # Project State
 
 **Project:** Uni Volunteer Scheduler (UCSB Sci Trek)
 **Initialized:** 2026-04-08
-**Mode:** YOLO · Standard granularity · Parallel execution · Research/Plan-Check/Verifier all ON
+**Mode:** Autonomous · Standard granularity · Sequential execution · Research/Plan-Check/Verifier all ON
 **Deadline:** Before June 2026
 
 ## Current Position
 
-Phase: 14 (collaboration-setup) — EXECUTING
-Plan: 1 of 4
-**Milestone:** v1.2-prod Production-ready by role
-Status: Executing Phase 14
-**Last activity:** 2026-04-15
+Milestone: v1.3 feature expansion — **CODE COMPLETE** (8 of 9 phases shipped; Phase 27 deferred)
+Phase: none active
+Plan: none active
+**Last activity:** 2026-05-08 — retroactive Phase 28 PLAN/SUMMARY + STATE refresh
 
 ## Current Status
 
 - ✓ v1.0 phases 0–7 shipped (2026-04-08) — drifted from no-accounts thesis, then realigned in v1.1
 - ✓ v1.1 phases 08–13 shipped (2026-04-10) — account-less realignment + admin shell + 16/16 Playwright E2E green
-- ✓ v1.2-prod ROADMAP.md created (2026-04-14) — 7 phases, 68 requirements mapped, parallel collab structure locked
-- ▶ Phase 14 (Collaboration setup) is the next action
+- ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
+- ✓ v1.3 phases 21, 22, 23, 24, 25, 26, 28, 29 shipped (2026-04-17) — feature expansion complete
+- ⏸ Phase 27 (SMS reminders + no-show nudges, AWS SNS) — **deferred** to a later milestone (TCPA + flag-gated; not a blocker)
+- ▶ v1.4 (AI Onboarding Copilot) — milestone planned in `~/.claude/plans/v1.4-roadmap-build-and-paper.md`; not yet scaffolded
 
-**v1.2-prod phase plan (7 phases, 14–20):**
+**v1.3 phase outcomes (9 phases, 21–29):**
 
-- Phase 14: Collaboration setup — git-worktree workflow, role-owned branches, COLLABORATION.md + CLAUDE.md updates
-- Phase 15: Participant audit + UX polish (PART-01..14) — runs in PARALLEL with Phase 16
-- Phase 16: Admin shell + retire Overrides + Overview + Audit Log + Users + Exports + UX polish (ADMIN-01..07, 18..27) — runs in PARALLEL with Phase 15
-- Phase 17: Admin Templates CRUD (ADMIN-08..11)
-- Phase 18: Admin LLM CSV Imports (ADMIN-12..17) — Phase 5.07 finally unblocked, Andy holds the CSV
-- Phase 19: Organizer audit + UX polish (ORG-01..14) — sequenced after admin pillar to avoid shared-code conflicts
-- Phase 20: Cross-role integration (INTEG-01..06) — strictly last
+- ✓ Phase 21: Orientation credit engine — `(volunteer, module_family)` credit table + organizer override + admin grant/revoke
+- ✓ Phase 22: Custom form fields — organizer-editable signup questions with module-template defaults; CSV export
+- ✓ Phase 23: Recurring event duplication — admin "Duplicate to weeks N…M" with atomic commit + conflict warning
+- ✓ Phase 24: Scheduled reminder emails — Celery Beat kickoff + 24h + 2h with idempotency, opt-out, quiet hours
+- ✓ Phase 25: Waitlist + auto-promote — public, organizer, admin surfaces; cancel-triggers-promote atomic path
+- ✓ Phase 26: Broadcast messages — organizer/admin → email all signups, rate-limited + audited + dedup
+- ⏸ Phase 27: SMS reminders + no-show nudges — **deferred** (AWS SNS, TCPA-gated; revisit post-v1.4)
+- ✓ Phase 28: QR check-in — **shipped with deviation:** organizer-displayed event-QR + volunteer self-check-in by email (PLAN/SUMMARY written retroactively 2026-05-08; see `.planning/phases/28-qr-check-in/`)
+- ✓ Phase 29: Slot swap + signup locking + past-event hiding + cross-feature integration
 
-**Out of scope:** UCSB production deployment (next milestone).
+**Out of scope (carryover for later milestones):** UCSB production deployment, payments/donations, SSO, multi-tenant, branding, bulk QR sticker sheets.
 
 ## Next Action
 
-`/gsd-plan-phase 14` — start Phase 14 (Collaboration setup). This phase MUST ship first because every later phase depends on the worktree workflow being defined and tested. After Phase 14 merges, Andy and Hung can run Phase 15 (participant) and Phase 16 (admin) in parallel on different worktrees.
+Stage 0 of v1.4 lock-in (per `~/.claude/plans/v1.4-roadmap-build-and-paper.md`):
+
+1. Confirm SciTrek deployment access in writing (independent of build).
+2. Pick 3–5 OpenRouter free model shortlist.
+3. Resolve `feature/google-calendar-link` branch + uncommitted `backend/app/routers/auth.py` change.
+4. Run `/gsd-complete-milestone` to archive v1.3 cleanly.
+5. Scaffold v1.4 with `/gsd-new-milestone v1.4` and create phase folders 30–38.
+6. Begin Phase 30 (streaming chat MVP) — the v1.4 critical-path entry.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
@@ -96,4 +106,4 @@ See `.planning/PROJECT.md` → Key Decisions.
 See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-prod.md` → Open Questions (to resolve during planning).
 
 ---
-*Last updated: 2026-04-14 — v1.2-prod ROADMAP.md written; 7 phases (14–20); 68/68 requirements mapped; next action is `/gsd-plan-phase 14`*
+*Last updated: 2026-05-08 — v1.3 marked code-complete (8/9 phases shipped, Phase 27 SMS deferred); Phase 28 PLAN + SUMMARY written retroactively to document the event-QR deviation; next action is the Stage 0 lock-in for v1.4.*

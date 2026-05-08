@@ -14,8 +14,10 @@ import {
   Skeleton,
 } from "../components/ui";
 import { toast } from "../state/toast";
+import { useAdminPageTitle } from "./admin/AdminLayout";
 
 export default function PortalsAdminPage() {
+  useAdminPageTitle("Portals");
   const [portals, setPortals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -51,7 +53,6 @@ export default function PortalsAdminPage() {
         description: form.description?.trim() || null,
       });
       setForm({ name: "", slug: "", description: "" });
-      // TODO(copy)
       toast.success("Portal created.");
       load();
     } catch (e2) {
@@ -64,14 +65,17 @@ export default function PortalsAdminPage() {
   function doDelete() {
     if (!pendingDelete) return;
     setPendingDelete(null);
-    // TODO(copy): delete portal endpoint not wired
-    toast.info("Delete portal: backend endpoint not yet wired.");
+    toast.info(
+      "Deleting portals is not available yet. Contact the developer to remove a portal.",
+    );
   }
 
   return (
     <div className="space-y-4">
-      {/* TODO(copy) */}
-      <PageHeader title="Portals" />
+      <PageHeader
+        title="Portals"
+        subtitle="Portals are the public-facing landing pages volunteers use to see events."
+      />
 
       {loading ? (
         <div className="space-y-2">
@@ -81,21 +85,14 @@ export default function PortalsAdminPage() {
         </div>
       ) : err ? (
         <EmptyState
-          /* TODO(copy) */
           title="Couldn't load portals"
-          /* TODO(copy) */
           body={err}
-          action={
-            <Button onClick={load}>
-              {/* TODO(copy) */}
-              Retry
-            </Button>
-          }
+          action={<Button onClick={load}>Try again</Button>}
         />
       ) : portals.length === 0 ? (
         <EmptyState
-          /* TODO(copy) */
           title="No portals yet"
+          body="Create your first portal below to give volunteers a public landing page."
         />
       ) : (
         <div className="space-y-3">
@@ -108,12 +105,10 @@ export default function PortalsAdminPage() {
               )}
               <div className="mt-3 flex gap-2">
                 <Button variant="secondary" as={Link} to={`/portals/${p.slug}`}>
-                  {/* TODO(copy) */}
-                  Open public
+                  View public page
                 </Button>
                 <Button variant="danger" onClick={() => setPendingDelete(p)}>
-                  {/* TODO(copy) */}
-                  Delete
+                  Delete portal
                 </Button>
               </div>
             </Card>
@@ -122,15 +117,13 @@ export default function PortalsAdminPage() {
       )}
 
       <section>
-        {/* TODO(copy) */}
         <h2 className="text-sm font-medium text-[var(--color-fg-muted)] uppercase tracking-wide mt-4 mb-2">
-          Create portal
+          Create a new portal
         </h2>
         <Card>
           <form onSubmit={createPortal} className="space-y-3">
             <div>
-              {/* TODO(copy) */}
-              <Label htmlFor="np-name">Name</Label>
+              <Label htmlFor="np-name">Portal name</Label>
               <Input
                 id="np-name"
                 value={form.name}
@@ -138,8 +131,7 @@ export default function PortalsAdminPage() {
               />
             </div>
             <div>
-              {/* TODO(copy) */}
-              <Label htmlFor="np-slug">Slug</Label>
+              <Label htmlFor="np-slug">URL slug (short name used in the link)</Label>
               <Input
                 id="np-slug"
                 value={form.slug}
@@ -147,8 +139,7 @@ export default function PortalsAdminPage() {
               />
             </div>
             <div>
-              {/* TODO(copy) */}
-              <Label htmlFor="np-desc">Description</Label>
+              <Label htmlFor="np-desc">Short description (optional)</Label>
               <Input
                 id="np-desc"
                 value={form.description}
@@ -158,8 +149,7 @@ export default function PortalsAdminPage() {
             <FieldError>{err}</FieldError>
             <div className="flex justify-end">
               <Button type="submit" disabled={creating}>
-                {/* TODO(copy) */}
-                {creating ? "Creating..." : "Create portal"}
+                {creating ? "Creating…" : "Create portal"}
               </Button>
             </div>
           </form>
@@ -169,20 +159,17 @@ export default function PortalsAdminPage() {
       <Modal
         open={!!pendingDelete}
         onClose={() => setPendingDelete(null)}
-        /* TODO(copy) */
         title="Delete portal"
       >
         <p className="text-sm">
-          {/* TODO(copy) */}
-          Delete portal "{pendingDelete?.name}"?
+          Delete the portal "{pendingDelete?.name}"? Volunteers will no
+          longer be able to use its public link.
         </p>
         <div className="flex justify-end gap-2 mt-4">
           <Button variant="ghost" onClick={() => setPendingDelete(null)}>
-            {/* TODO(copy) */}
-            Keep
+            Keep portal
           </Button>
           <Button variant="danger" onClick={doDelete}>
-            {/* TODO(copy) */}
             Delete portal
           </Button>
         </div>

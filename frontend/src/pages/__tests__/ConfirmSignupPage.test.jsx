@@ -98,10 +98,11 @@ describe("ConfirmSignupPage", () => {
     });
     api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
 
-    renderWithToken("valid_token_abc123");
+    const { container } = renderWithToken("valid_token_abc123");
 
-    // Spinner shown initially
-    expect(screen.getByText("Confirming your signup...")).toBeInTheDocument();
+    // Skeleton loading region shown initially (Phase 15-05: replaced
+    // animate-spin spinner with aria-busy Skeleton stack).
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument();
 
     // After confirm resolves, manage view appears
     await waitFor(() => {
@@ -120,8 +121,17 @@ describe("ConfirmSignupPage", () => {
     renderWithToken("expired_token_xyz");
 
     await waitFor(() => {
-      expect(screen.getByText("Link expired or invalid")).toBeInTheDocument();
+      // Phase 15-05: ErrorState with UI-SPEC magic-link-expired copy.
+      expect(screen.getByText("This link has expired")).toBeInTheDocument();
     });
+
+    // Body copy + "Back to events" primary action present.
+    expect(
+      screen.getByText(/Magic links are good for 24 hours/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /back to events/i })
+    ).toBeInTheDocument();
 
     // No retry button (per decision 7)
     expect(
@@ -137,10 +147,10 @@ describe("ConfirmSignupPage", () => {
     });
     api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
 
-    renderWithToken("used_token_def456");
+    const { container } = renderWithToken("used_token_def456");
 
-    // Spinner shown initially
-    expect(screen.getByText("Confirming your signup...")).toBeInTheDocument();
+    // Skeleton loading region shown initially (Phase 15-05).
+    expect(container.querySelector('[aria-busy="true"]')).toBeInTheDocument();
 
     // After idempotent confirm resolves, manage view still appears
     await waitFor(() => {
@@ -153,7 +163,8 @@ describe("ConfirmSignupPage", () => {
     renderWithToken(null);
 
     await waitFor(() => {
-      expect(screen.getByText("Link expired or invalid")).toBeInTheDocument();
+      // Phase 15-05: shared ErrorState with magic-link copy.
+      expect(screen.getByText("This link has expired")).toBeInTheDocument();
     });
 
     // confirmSignup should NOT have been called

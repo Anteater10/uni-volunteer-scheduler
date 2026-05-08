@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class ExtractedEvent(BaseModel):
     """Single event extracted by stage-1 LLM."""
     module_slug: str
+    school: str = ""
     location: str = ""
     start_at: datetime
     end_at: datetime

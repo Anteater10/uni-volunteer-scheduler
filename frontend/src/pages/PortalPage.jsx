@@ -7,6 +7,7 @@ import {
   Card,
   Button,
   EmptyState,
+  ErrorState,
   Skeleton,
 } from "../components/ui";
 
@@ -20,7 +21,7 @@ export default function PortalPage() {
 
   if (q.isPending) {
     return (
-      <div className="space-y-3">
+      <div aria-busy="true" aria-live="polite" className="space-y-3 px-4 md:px-8 py-4">
         <Skeleton className="h-14 w-full" />
         <Skeleton className="h-32 w-full" />
       </div>
@@ -28,46 +29,58 @@ export default function PortalPage() {
   }
   if (q.error) {
     return (
-      <EmptyState
-        /* TODO(copy) */
-        title="Couldn't load portal"
-        /* TODO(copy) */
-        body={q.error.message}
-      />
+      <div className="px-4 md:px-8 py-4">
+        <ErrorState
+          title="We couldn't load this page"
+          body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
+          action={
+            <Button variant="secondary" onClick={() => q.refetch()}>
+              Try again
+            </Button>
+          }
+        />
+      </div>
     );
   }
 
   const portal = q.data;
+  const portalEvents = portal.events || [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 px-4 md:px-8 py-4">
       <PageHeader
-        /* TODO(copy) */
-        title={portal.name}
+        title={portal.name || "Partner portal"}
         subtitle={portal.description || ""}
       />
 
       <Card>
         <p className="text-sm">
-          {/* TODO(copy) */}
-          Welcome to {portal.name}. Browse upcoming events and grab a slot.
+          Welcome to {portal.name}. Browse upcoming events and sign up for a slot.
         </p>
         <div className="mt-3">
           <Button as={Link} to="/events" size="lg">
-            {/* TODO(copy) */}
-            Browse events
+            See this week's events
           </Button>
         </div>
       </Card>
 
-      {(portal.events || []).length > 0 && (
+      {portalEvents.length === 0 ? (
+        <EmptyState
+          title="No events from this partner yet"
+          body="Sci Trek will post new events here as they're scheduled."
+          action={
+            <Button as={Link} to="/events" variant="secondary">
+              View all events
+            </Button>
+          }
+        />
+      ) : (
         <div>
-          {/* TODO(copy) */}
           <h2 className="text-sm font-medium text-[var(--color-fg-muted)] mt-4 mb-2 uppercase tracking-wide">
             Events
           </h2>
           <div className="space-y-2">
-            {portal.events.map((e) => (
+            {portalEvents.map((e) => (
               <Card key={e.id}>
                 <Link to={`/events/${e.id}`} className="font-semibold">
                   {e.title}
