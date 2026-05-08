@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: feature-expansion
-status: complete
-last_updated: "2026-05-08T00:00:00.000Z"
+milestone: v1.4
+milestone_name: ai-onboarding-copilot
+status: scaffolding
+last_updated: "2026-05-08T22:00:00.000Z"
 last_activity: 2026-05-08
 progress:
   total_phases: 9
-  completed_phases: 8
-  total_plans: 8
-  completed_plans: 8
-  percent: 89
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -18,14 +18,15 @@ progress:
 **Project:** Uni Volunteer Scheduler (UCSB Sci Trek)
 **Initialized:** 2026-04-08
 **Mode:** Autonomous · Standard granularity · Sequential execution · Research/Plan-Check/Verifier all ON
-**Deadline:** Before June 2026
+**Deadline:** Phase 30 before graduation; full milestone + paper by week 16.
 
 ## Current Position
 
-Milestone: v1.3 feature expansion — **CODE COMPLETE** (8 of 9 phases shipped; Phase 27 deferred)
-Phase: none active
-Plan: none active
-**Last activity:** 2026-05-08 — retroactive Phase 28 PLAN/SUMMARY + STATE refresh
+Milestone: **v1.4 AI Onboarding Copilot** — scaffolding (Stage 0)
+Phase: 30 (streaming chat MVP) — planning
+Plan: 30-PLAN.md drafted
+Branch: `feature/v1.4-phase-30-streaming-chat`
+**Last activity:** 2026-05-08 — v1.4 scaffold (REQUIREMENTS, STATE, Phase 30 PLAN, learning + documentation stubs)
 
 ## Current Status
 
