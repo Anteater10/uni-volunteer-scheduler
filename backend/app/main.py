@@ -18,6 +18,7 @@ from .routers.public import orientation as public_orientation
 from .routers import preferences as public_preferences
 # Phase 26 — broadcast messages (organizer/admin → confirmed signups)
 from .routers import broadcasts
+from .copilot import router as copilot_router
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,8 @@ app.include_router(public_orientation.router, prefix="/api/v1")
 app.include_router(public_preferences.router, prefix="/api/v1")
 # Phase 26 — broadcast messages (organizer/admin → confirmed signups)
 app.include_router(broadcasts.router, prefix="/api/v1")
+# Phase 30 (v1.4) — AI Onboarding Copilot, flag-gated to 404 when disabled.
+app.include_router(copilot_router.router, prefix="/api/v1")
 
 # Test helpers — only included when EXPOSE_TOKENS_FOR_TESTING=1
 if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
