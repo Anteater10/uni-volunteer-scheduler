@@ -48,7 +48,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Create test database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE test_uvs;"
+
       - name: Run tests
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
         run: |
           cd backend
           pytest
@@ -104,12 +112,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Create test database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE test_uvs;"
+
       - name: alembic upgrade head
         run: |
           cd backend
           alembic upgrade head
 
       - name: pytest with JSON coverage
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
         run: |
           cd backend
           pytest --cov=app --cov-report=json --cov-report=term
