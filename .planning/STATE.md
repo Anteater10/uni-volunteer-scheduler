@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: feature-expansion
-status: executing
-last_updated: "2026-04-17T00:00:00.000Z"
-last_activity: 2026-04-17
+status: complete
+last_updated: "2026-05-08T00:00:00.000Z"
+last_activity: 2026-05-08
 progress:
   total_phases: 9
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 8
+  total_plans: 8
+  completed_plans: 8
+  percent: 89
 ---
 
 # Project State
@@ -22,36 +22,44 @@ progress:
 
 ## Current Position
 
-Phase: 21 (orientation-credit-engine) — NEXT
-Plan: Not started
-**Milestone:** v1.3 feature expansion (SciTrek parity)
-Status: Ready to plan Phase 21; v1.3 branch active, roadmap written 2026-04-17
-**Last activity:** 2026-04-17
+Milestone: v1.3 feature expansion — **CODE COMPLETE** (8 of 9 phases shipped; Phase 27 deferred)
+Phase: none active
+Plan: none active
+**Last activity:** 2026-05-08 — retroactive Phase 28 PLAN/SUMMARY + STATE refresh
 
 ## Current Status
 
 - ✓ v1.0 phases 0–7 shipped (2026-04-08) — drifted from no-accounts thesis, then realigned in v1.1
 - ✓ v1.1 phases 08–13 shipped (2026-04-10) — account-less realignment + admin shell + 16/16 Playwright E2E green
 - ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
-- ▶ v1.3 feature expansion milestone seeded + roadmap written 2026-04-17 (Phase 21 next)
+- ✓ v1.3 phases 21, 22, 23, 24, 25, 26, 28, 29 shipped (2026-04-17) — feature expansion complete
+- ⏸ Phase 27 (SMS reminders + no-show nudges, AWS SNS) — **deferred** to a later milestone (TCPA + flag-gated; not a blocker)
+- ▶ v1.4 (AI Onboarding Copilot) — milestone planned in `~/.claude/plans/v1.4-roadmap-build-and-paper.md`; not yet scaffolded
 
-**v1.3 phase plan (9 phases, 21–29):**
+**v1.3 phase outcomes (9 phases, 21–29):**
 
-- Phase 21: Orientation credit engine — cross-week/cross-module tracked by (volunteer, module_family)
-- Phase 22: Custom form fields — organizer-editable signup questions with template defaults
-- Phase 23: Recurring event duplication — admin "Duplicate to weeks N…M"
-- Phase 24: Scheduled reminder emails — Celery Beat kickoff + 24h + 2h with idempotency
-- Phase 25: Waitlist + auto-promote — wire up waitlisted enum end-to-end
-- Phase 26: Broadcast messages — organizer/admin → email all signups
-- Phase 27: SMS reminders + no-show nudges — AWS SNS behind feature flag
-- Phase 28: QR check-in — per-signup QR on confirmation email
-- Phase 29: Slot swap + signup locking + past-event hiding + integration gate
+- ✓ Phase 21: Orientation credit engine — `(volunteer, module_family)` credit table + organizer override + admin grant/revoke
+- ✓ Phase 22: Custom form fields — organizer-editable signup questions with module-template defaults; CSV export
+- ✓ Phase 23: Recurring event duplication — admin "Duplicate to weeks N…M" with atomic commit + conflict warning
+- ✓ Phase 24: Scheduled reminder emails — Celery Beat kickoff + 24h + 2h with idempotency, opt-out, quiet hours
+- ✓ Phase 25: Waitlist + auto-promote — public, organizer, admin surfaces; cancel-triggers-promote atomic path
+- ✓ Phase 26: Broadcast messages — organizer/admin → email all signups, rate-limited + audited + dedup
+- ⏸ Phase 27: SMS reminders + no-show nudges — **deferred** (AWS SNS, TCPA-gated; revisit post-v1.4)
+- ✓ Phase 28: QR check-in — **shipped with deviation:** organizer-displayed event-QR + volunteer self-check-in by email (PLAN/SUMMARY written retroactively 2026-05-08; see `.planning/phases/28-qr-check-in/`)
+- ✓ Phase 29: Slot swap + signup locking + past-event hiding + cross-feature integration
 
-**Out of scope:** UCSB production deployment (next milestone), payments/donations, SSO, multi-tenant, branding.
+**Out of scope (carryover for later milestones):** UCSB production deployment, payments/donations, SSO, multi-tenant, branding, bulk QR sticker sheets.
 
 ## Next Action
 
-`/gsd-plan-phase 21` — start Phase 21 (Orientation credit engine). This phase MUST ship first because it reshapes the domain model (module family, credit table) that every later phase either touches or assumes.
+Stage 0 of v1.4 lock-in (per `~/.claude/plans/v1.4-roadmap-build-and-paper.md`):
+
+1. Confirm SciTrek deployment access in writing (independent of build).
+2. Pick 3–5 OpenRouter free model shortlist.
+3. Resolve `feature/google-calendar-link` branch + uncommitted `backend/app/routers/auth.py` change.
+4. Run `/gsd-complete-milestone` to archive v1.3 cleanly.
+5. Scaffold v1.4 with `/gsd-new-milestone v1.4` and create phase folders 30–38.
+6. Begin Phase 30 (streaming chat MVP) — the v1.4 critical-path entry.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
@@ -98,4 +106,4 @@ See `.planning/PROJECT.md` → Key Decisions.
 See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-prod.md` → Open Questions (to resolve during planning).
 
 ---
-*Last updated: 2026-04-14 — v1.2-prod ROADMAP.md written; 7 phases (14–20); 68/68 requirements mapped; next action is `/gsd-plan-phase 14`*
+*Last updated: 2026-05-08 — v1.3 marked code-complete (8/9 phases shipped, Phase 27 SMS deferred); Phase 28 PLAN + SUMMARY written retroactively to document the event-QR deviation; next action is the Stage 0 lock-in for v1.4.*
