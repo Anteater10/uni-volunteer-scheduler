@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
 
+    # --- Phase 30 (v1.4): AI Onboarding Copilot ---
+    copilot_enabled: bool = False  # admin feature flag; flip in DB or env to enable
+    copilot_primary_model: str = "openai/gpt-oss-120b:free"
+    copilot_fallback_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    copilot_request_timeout_seconds: int = 60
+    copilot_max_completion_tokens: int = 1024
+
     # CORS
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 

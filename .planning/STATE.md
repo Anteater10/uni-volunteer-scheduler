@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: feature-expansion
-status: complete
-last_updated: "2026-05-08T00:00:00.000Z"
+milestone: v1.4
+milestone_name: ai-onboarding-copilot
+status: in-progress
+last_updated: "2026-05-08T23:00:00.000Z"
 last_activity: 2026-05-08
 progress:
   total_phases: 9
-  completed_phases: 8
-  total_plans: 8
-  completed_plans: 8
-  percent: 89
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 11
 ---
 
 # Project State
@@ -18,14 +18,14 @@ progress:
 **Project:** Uni Volunteer Scheduler (UCSB Sci Trek)
 **Initialized:** 2026-04-08
 **Mode:** Autonomous · Standard granularity · Sequential execution · Research/Plan-Check/Verifier all ON
-**Deadline:** Before June 2026
+**Deadline:** Phase 30 before graduation; full milestone + paper by week 16.
 
 ## Current Position
 
-Milestone: v1.3 feature expansion — **CODE COMPLETE** (8 of 9 phases shipped; Phase 27 deferred)
-Phase: none active
-Plan: none active
-**Last activity:** 2026-05-08 — retroactive Phase 28 PLAN/SUMMARY + STATE refresh
+Milestone: **v1.4 AI Onboarding Copilot** — in progress
+Phase: 30 (streaming chat MVP) — ✅ shipped
+Branch: `feature/v1.4-phase-30-streaming-chat` — ready to merge
+**Last activity:** 2026-05-08 — Phase 30 shipped end-to-end. Backend (29 tests, 100% coverage on `app.copilot`), frontend (16 tests, FAB + drawer + streaming hook), 8 docs (lectures + publication writeups), live OpenRouter smoke test passed via both curl and browser. Telemetry rows landing in `copilot_messages` with full paper-relevant columns populated.
 
 ## Current Status
 
@@ -34,7 +34,7 @@ Plan: none active
 - ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
 - ✓ v1.3 phases 21, 22, 23, 24, 25, 26, 28, 29 shipped (2026-04-17) — feature expansion complete
 - ⏸ Phase 27 (SMS reminders + no-show nudges, AWS SNS) — **deferred** to a later milestone (TCPA + flag-gated; not a blocker)
-- ▶ v1.4 (AI Onboarding Copilot) — milestone planned in `~/.claude/plans/v1.4-roadmap-build-and-paper.md`; not yet scaffolded
+- ▶ v1.4 (AI Onboarding Copilot) — Phase 30 shipped 2026-05-08; phases 31–38 ahead
 
 **v1.3 phase outcomes (9 phases, 21–29):**
 
@@ -52,14 +52,12 @@ Plan: none active
 
 ## Next Action
 
-Stage 0 of v1.4 lock-in (per `~/.claude/plans/v1.4-roadmap-build-and-paper.md`):
-
-1. Confirm SciTrek deployment access in writing (independent of build).
-2. Pick 3–5 OpenRouter free model shortlist.
-3. Resolve `feature/google-calendar-link` branch + uncommitted `backend/app/routers/auth.py` change.
-4. Run `/gsd-complete-milestone` to archive v1.3 cleanly.
-5. Scaffold v1.4 with `/gsd-new-milestone v1.4` and create phase folders 30–38.
-6. Begin Phase 30 (streaming chat MVP) — the v1.4 critical-path entry.
+Merge Phase 30 to `main`, then start Phase 31 (conversation history +
+session list UI). Phase 31 inherits the working session abstraction
+from Phase 30 (`GET /sessions` endpoint exists; only the UI surface
+needs to be built). Locked invariants for Phase 31: do not change the
+SSE wire format, do not narrow the telemetry column set, keep 100%
+coverage on `app.copilot.*`.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
