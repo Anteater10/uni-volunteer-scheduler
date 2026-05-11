@@ -22,6 +22,12 @@ from app.corpus.chunker import (
     Chunk,
     chunk_text,
 )
+from app.corpus.walker import (
+    DENY_LIST,
+    SOURCE_GLOBS_V1,
+    SourceDocument,
+    walk_sources,
+)
 
 __all__ = [
     "CHUNK_OVERLAP",
@@ -29,4 +35,8 @@ __all__ = [
     "CHUNKER_VERSION",
     "Chunk",
     "chunk_text",
+    "DENY_LIST",
+    "SOURCE_GLOBS_V1",
+    "SourceDocument",
+    "walk_sources",
 ]
