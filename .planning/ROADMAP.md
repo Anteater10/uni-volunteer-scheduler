@@ -102,6 +102,13 @@ Flag-gated `/api/v1/copilot` API + admin/organizer FAB + SSE streaming + researc
 
 **Out of scope:** retrieval surface, citations, rerank — all land in Phase 32.
 
+**Plans:** 5 plans
+- [ ] 31-01-PLAN.md — Wave 0: docker image swap (pgvector/pgvector:pg16) + backend deps (sentence-transformers, torch, pgvector, numpy) + 5 xfail test stubs pinning every REQ-31-*
+- [ ] 31-02-PLAN.md — Wave 1: Alembic 0019 (CREATE EXTENSION vector + 3 tables, round-trip safe) + ORM models + corpus_* config settings
+- [ ] 31-03-PLAN.md — Wave 2: deterministic recursive chunker + allow-list source walker (both pure-Python, 100% coverage)
+- [ ] 31-04-PLAN.md — Wave 3: Jina + BGE-padded embedding providers + idempotent ingest orchestrator + python -m app.corpus.ingest CLI
+- [ ] 31-05-PLAN.md — Wave 4: real ingestion smoke + HNSW EXPLAIN test + 4 lectures + 4 publication writeups + STATE.md refresh
+
 ### Phase 32: RAG retrieval (hybrid + rerank + citations)
 
 **Goal:** hybrid retrieval over the Phase-31 corpus (BM25 + vector with rerank), citation chips rendered in the drawer with click-through to the source doc, "rerank lift" figure produced for the paper.
