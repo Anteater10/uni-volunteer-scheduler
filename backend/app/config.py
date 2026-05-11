@@ -69,6 +69,19 @@ class Settings(BaseSettings):
     copilot_request_timeout_seconds: int = 60
     copilot_max_completion_tokens: int = 1024
 
+    # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
+    # Embedding pipeline. The vector(1024) column on corpus_chunks is
+    # immutable without a full re-embed — see RESEARCH D3 / Pitfall 3.
+    corpus_embedding_primary: str = "jina"            # 'jina' | 'local'
+    corpus_embedding_fallback: str = "local"
+    corpus_embedding_dimensions: int = 1024           # locked at 1024
+    corpus_chunk_size: int = 1024
+    corpus_chunk_overlap: int = 128
+    corpus_chunker_version: str = "v1-recursive-char-1024-128"
+    jina_api_key: str = ""                            # Set in backend/.env: JINA_API_KEY=jina_...
+    jina_embedding_model: str = "jina-embeddings-v3"
+    local_embedding_model: str = "BAAI/bge-small-en-v1.5"
+
     # CORS
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 
