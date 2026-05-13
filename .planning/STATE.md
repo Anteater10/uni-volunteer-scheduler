@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-13T21:34:55.457Z"
-last_activity: 2026-05-08 — Phase 30 shipped end-to-end. Backend (29 tests, 100% coverage on `app.copilot`), frontend (16 tests, FAB + drawer + streaming hook), 8 docs (lectures + publication writeups), live OpenRouter smoke test passed via both curl and browser. Telemetry rows landing in `copilot_messages` with full paper-relevant columns populated.
+last_updated: "2026-05-13T22:30:00.000Z"
+last_activity: 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via 0019 migration, 3 corpus tables, 48 corpus tests at 100% coverage on `app.corpus.*`, real ingestion of repo produced 619 documents / 4731 chunks (1024-dim, local BGE provider), HNSW index built and confirmed used by query planner. 8 docs written (4 lectures + 4 publication writeups). Ready to plan Phase 32.
 progress:
   total_phases: 9
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_phases: 2
+  total_plans: 11
+  completed_plans: 10
+  percent: 91
 ---
 
 # Project State
@@ -23,9 +23,9 @@ progress:
 ## Current Position
 
 Milestone: **v1.4 AI Onboarding Copilot** — in progress
-Phase: 30 (streaming chat MVP) — ✅ shipped
-Branch: `feature/v1.4-phase-30-streaming-chat` — ready to merge
-**Last activity:** 2026-05-08 — Phase 30 shipped end-to-end. Backend (29 tests, 100% coverage on `app.copilot`), frontend (16 tests, FAB + drawer + streaming hook), 8 docs (lectures + publication writeups), live OpenRouter smoke test passed via both curl and browser. Telemetry rows landing in `copilot_messages` with full paper-relevant columns populated.
+Phase: 31 (knowledge corpus + pgvector ingestion) — ✅ shipped
+Branch: `feature/v1.4-phase-31-corpus-pgvector-ingestion` — ready to merge
+**Last activity:** 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via `0019_enable_pgvector_corpus_tables` (round-trip safe), 3 corpus tables (`corpus_documents`, `corpus_chunks` with `vector(1024)`, `ingestion_runs` with 22 paper-grade telemetry columns), 48 corpus tests at 100% coverage on `app.corpus.*`. Real ingestion of the repo produced 619 documents / 4731 chunks (all 1024-dim, local-bge provider, status=succeeded). HNSW index built and provably used by the query planner (`test_corpus_hnsw_index.py` green). 8 docs written (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`).
 
 ## Current Status
 
@@ -34,7 +34,7 @@ Branch: `feature/v1.4-phase-30-streaming-chat` — ready to merge
 - ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
 - ✓ v1.3 phases 21, 22, 23, 24, 25, 26, 28, 29 shipped (2026-04-17) — feature expansion complete
 - ⏸ Phase 27 (SMS reminders + no-show nudges, AWS SNS) — **deferred** to a later milestone (TCPA + flag-gated; not a blocker)
-- ▶ v1.4 (AI Onboarding Copilot) — Phase 30 shipped 2026-05-08; phases 31–38 ahead
+- ▶ v1.4 (AI Onboarding Copilot) — Phase 30 + 31 shipped; phases 32–38 ahead
 
 **v1.3 phase outcomes (9 phases, 21–29):**
 
@@ -52,12 +52,11 @@ Branch: `feature/v1.4-phase-30-streaming-chat` — ready to merge
 
 ## Next Action
 
-Merge Phase 30 to `main`, then start Phase 31 (conversation history +
-session list UI). Phase 31 inherits the working session abstraction
-from Phase 30 (`GET /sessions` endpoint exists; only the UI surface
-needs to be built). Locked invariants for Phase 31: do not change the
-SSE wire format, do not narrow the telemetry column set, keep 100%
-coverage on `app.copilot.*`.
+Merge Phase 31 to `main`, then start Phase 32 (RAG retrieval: hybrid + rerank + citations).
+Phase 32 inherits the corpus from Phase 31 — `corpus_documents`, `corpus_chunks` with 1024-dim
+embeddings, HNSW index, and the `embedding_provider` filter affordance. Locked invariants for
+Phase 32: do not change the corpus schema, do not break per-provider cosine isolation, keep 100%
+coverage on `app.copilot.*` AND `app.corpus.*`.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
@@ -103,5 +102,19 @@ See `.planning/PROJECT.md` → Key Decisions.
 
 See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-prod.md` → Open Questions (to resolve during planning).
 
+**Phase 31 outcome (knowledge corpus + pgvector ingestion):**
+
+- ✓ pgvector enabled via `0019_enable_pgvector_corpus_tables` (round-trip safe)
+- ✓ Three tables: `corpus_documents`, `corpus_chunks` (with `vector(1024)`), `ingestion_runs`
+- ✓ Deterministic chunker (`v1-recursive-char-1024-128`) + allow-list walker (no DB, no PII)
+- ✓ Embedding providers: Jina v3 primary + BGE-small fallback (1024-dim locked)
+- ✓ Idempotent CLI: `python -m app.corpus.ingest --source <dir> [--commit | --dry-run | --rebuild | --build-index]`
+- ✓ Paper-grade telemetry: `ingestion_runs` row per CLI invocation with all 22 columns populated
+- ✓ HNSW index built post-ingest with `vector_cosine_ops` (provably used by planner — `test_corpus_hnsw_index.py`)
+- ✓ Real smoke against the running compose stack: 619 documents / 4731 chunks (status=succeeded, dim=1024)
+- ✓ 100% coverage on `app.corpus.*` (matches Phase 30 invariant for `app.copilot.*`)
+- ✓ 48 corpus tests green
+- ✓ 8 docs (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`)
+
 ---
-*Last updated: 2026-05-08 — v1.3 marked code-complete (8/9 phases shipped, Phase 27 SMS deferred); Phase 28 PLAN + SUMMARY written retroactively to document the event-QR deviation; next action is the Stage 0 lock-in for v1.4.*
+*Last updated: 2026-05-13 — Phase 31 shipped end-to-end. v1.4 milestone 2/9 phases complete; next action is Phase 32 planning (RAG retrieval).*
