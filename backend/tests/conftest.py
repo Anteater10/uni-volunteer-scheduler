@@ -6,7 +6,6 @@ project-root backend/conftest.py (which provides ``engine``, ``db_session``,
 ``client``, etc.). Pytest discovers and merges both automatically.
 """
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,11 @@ import pytest
 
 @pytest.fixture
 def tiny_markdown_corpus(tmp_path: Path) -> Path:
-    """A tiny on-disk fixture directory used by walker/ingest tests."""
+    """A tiny on-disk fixture directory used by walker/ingest tests.
+
+    Contains two real markdown documents and two deny-listed paths so the
+    walker's filter is exercised end-to-end in the ingest integration tests.
+    """
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "a.md").write_text("# A\n\nAlpha doc.\n")
     (tmp_path / "docs" / "b.md").write_text("# B\n\nBeta doc.\n")
@@ -26,11 +29,92 @@ def tiny_markdown_corpus(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fake_embedding_provider():
-    """Returns a deterministic embedding provider for ingest tests.
+    """Deterministic in-memory provider producing 1024-dim vectors.
 
-    Implementation lands in plan 04. Wave 0 placeholder so tests can import.
+    Hash-derived so identical input texts produce byte-identical vectors,
+    which lets idempotency tests assert no spurious re-embeds.
     """
-    pytest.skip("fake_embedding_provider lands in plan 04")
+    from app.corpus.embeddings import EmbedMeta
+
+    class FakeProvider:
+        name = "fake"
+        model_id = "fake-1024"
+
+        def embed(self, texts):
+            import hashlib
+
+            vecs = []
+            for t in texts:
+                h = hashlib.sha256(t.encode()).digest()  # 32 bytes
+                vec = [(b - 128) / 128.0 for b in h] * (1024 // 32)  # 32 * 32 = 1024
+                vecs.append(vec[:1024])
+            return vecs, EmbedMeta(
+                provider="fake",
+                model_id="fake-1024",
+                api_calls=0,
+                latency_ms=1,
+                tokens=0,
+            )
+
+    return FakeProvider()
+
+
+@pytest.fixture
+def failing_provider():
+    """Provider that raises ``RuntimeError`` on every call.
+
+    Used by the resumable-on-provider-failure test to force a mid-run
+    exception path. Returns a class instance so test code can hold it
+    across docs.
+    """
+    from app.corpus.embeddings import EmbedMeta  # noqa: F401 (kept for parity)
+
+    class FailingProvider:
+        name = "failing"
+        model_id = "failing-1024"
+
+        def __init__(self):
+            self.calls = 0
+
+        def embed(self, texts):
+            self.calls += 1
+            if self.calls == 1:
+                # First document embeds normally so we can prove partial
+                # progress is committed. Subsequent calls raise.
+                import hashlib
+
+                vecs = []
+                for t in texts:
+                    h = hashlib.sha256(t.encode()).digest()
+                    vec = [(b - 128) / 128.0 for b in h] * (1024 // 32)
+                    vecs.append(vec[:1024])
+                from app.corpus.embeddings import EmbedMeta as _M
+
+                return vecs, _M(
+                    provider="failing",
+                    model_id="failing-1024",
+                    api_calls=0,
+                    latency_ms=1,
+                    tokens=0,
+                )
+            raise RuntimeError("simulated provider failure")
+
+    return FailingProvider()
+
+
+@pytest.fixture
+def rate_limited_provider():
+    """Provider that always raises ``RateLimitError`` — triggers fallback."""
+    from app.corpus.embeddings import RateLimitError
+
+    class RateLimitedProvider:
+        name = "rate-limited"
+        model_id = "rate-limited-1024"
+
+        def embed(self, texts):
+            raise RateLimitError("simulated 429")
+
+    return RateLimitedProvider()
 
 
 # ------------- Phase 31 plan 02: Alembic migration fixtures -------------
@@ -112,3 +196,24 @@ def alembic_engine(alembic_command):
         yield eng
     finally:
         eng.dispose()
+
+
+@pytest.fixture
+def corpus_db_session(alembic_engine):
+    """Real SQLAlchemy Session bound to a freshly-migrated test DB.
+
+    The corpus ingest tests need a real connection (pgvector adapter, real
+    Postgres) — the in-memory ``db_session`` fixture from ``backend/conftest.py``
+    runs inside a SAVEPOINT and shares connection state with the FastAPI test
+    client, which is not what we want here. Each test gets a clean
+    ``ingestion_runs`` / ``corpus_documents`` / ``corpus_chunks`` set thanks to
+    ``alembic_command`` wiping public schema before binding.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    Session = sessionmaker(bind=alembic_engine, future=True, expire_on_commit=False)
+    session = Session()
+    try:
+        yield session
+    finally:
+        session.close()
