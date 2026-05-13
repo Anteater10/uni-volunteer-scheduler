@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: ai-onboarding-copilot
+milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-08T23:00:00.000Z"
-last_activity: 2026-05-08
+last_updated: "2026-05-13T21:34:55.457Z"
+last_activity: 2026-05-08 — Phase 30 shipped end-to-end. Backend (29 tests, 100% coverage on `app.copilot`), frontend (16 tests, FAB + drawer + streaming hook), 8 docs (lectures + publication writeups), live OpenRouter smoke test passed via both curl and browser. Telemetry rows landing in `copilot_messages` with full paper-relevant columns populated.
 progress:
   total_phases: 9
   completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 11
+  total_plans: 6
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
