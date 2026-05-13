@@ -427,3 +427,11 @@ def build_hnsw_index(*, session) -> None:
 
 
 __all__ = ["IngestionResult", "run_ingestion", "build_hnsw_index"]
+
+
+if __name__ == "__main__":  # pragma: no cover - thin delegation to __main__.py
+    import sys
+
+    from .__main__ import main
+
+    sys.exit(main())
