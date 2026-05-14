@@ -193,3 +193,80 @@ def test_all_endpoints_require_admin(client, db_session, non_admin_headers):
     # With participant (non-admin) auth
     r6 = client.get("/api/v1/admin/module-templates", headers=non_admin_headers)
     assert r6.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# Phase-22 default form schema — role + access
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def organizer_headers(client, db_session):
+    """Create an organizer user and return auth headers."""
+    user = make_user(
+        db_session,
+        email="organizer-t17@example.com",
+        role=models.UserRole.organizer,
+    )
+    db_session.commit()
+    return auth_headers(client, user)
+
+
+def _seed_template_for_schema(client, headers, slug="schema-tpl"):
+    """Helper: create a template the form-schema PUT can target."""
+    resp = _create_template(client, headers, slug=slug, name="Schema Test Module")
+    assert resp.status_code == 201, resp.text
+    return slug
+
+
+def test_default_form_schema_organizer_allowed(
+    client, db_session, admin_headers, organizer_headers
+):
+    """Organizer can PUT a template's default form schema (post-widen)."""
+    slug = _seed_template_for_schema(client, admin_headers)
+    body = {
+        "schema": [
+            {
+                "id": "lab_partner",
+                "label": "Preferred lab partner",
+                "type": "text",
+                "required": False,
+                "order": 1,
+            }
+        ]
+    }
+    resp = client.put(
+        f"/api/v1/admin/templates/{slug}/default-form-schema",
+        json=body,
+        headers=organizer_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["slug"] == slug
+    assert isinstance(data["schema"], list)
+    assert any(f.get("id") == "lab_partner" for f in data["schema"])
+
+
+def test_default_form_schema_admin_still_allowed(
+    client, db_session, admin_headers
+):
+    """Admin retains access after widening."""
+    slug = _seed_template_for_schema(client, admin_headers, slug="admin-schema-tpl")
+    resp = client.put(
+        f"/api/v1/admin/templates/{slug}/default-form-schema",
+        json={"schema": []},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_default_form_schema_participant_forbidden(
+    client, db_session, admin_headers, non_admin_headers
+):
+    """Participant remains forbidden after widening."""
+    slug = _seed_template_for_schema(client, admin_headers, slug="participant-schema-tpl")
+    resp = client.put(
+        f"/api/v1/admin/templates/{slug}/default-form-schema",
+        json={"schema": []},
+        headers=non_admin_headers,
+    )
+    assert resp.status_code == 403, resp.text

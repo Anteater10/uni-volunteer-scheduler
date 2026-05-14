@@ -2019,9 +2019,9 @@ def set_template_default_form_schema(
     slug: str,
     body: dict,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
-    """Replace the template's default form schema (admin only).
+    """Replace the template's default form schema (admin or organizer).
 
     Body: ``{"schema": [<FormFieldSchema>, ...]}``.
     """
