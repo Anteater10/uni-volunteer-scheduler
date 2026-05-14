@@ -2094,21 +2094,26 @@ def set_event_form_schema(
     event_id: str,
     body: dict,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    actor: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
-    """Replace the event's form schema override (admin only).
+    """Replace the event's form schema override (admin or owning organizer).
 
     Body: ``{"schema": [...]}`` to set or ``{"schema": null}`` to clear and
     inherit the template default.
     """
     from ..services import form_schema_service
 
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_owner_or_admin(event, actor)
+
     if isinstance(body, dict):
         schema = body.get("schema")
     else:
         schema = body
     result = form_schema_service.set_event_schema(
-        db, event_id, schema, actor=admin_user
+        db, event_id, schema, actor=actor
     )
     return {"event_id": str(event_id), "schema": result}
 
