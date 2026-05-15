@@ -2040,9 +2040,12 @@ def duplicate_event(
     event_id: str,
     body: dict,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    actor: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     """Duplicate a source event into a list of target weeks.
+
+    Admin or the organizer who owns the source event may duplicate.
+    Duplicated events are created with the actor as their owner.
 
     Body shape::
 
@@ -2066,6 +2069,13 @@ def duplicate_event(
     """
     from ..services import event_duplication_service
 
+    source_event = (
+        db.query(models.Event).filter(models.Event.id == event_id).first()
+    )
+    if not source_event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_owner_or_admin(source_event, actor)
+
     if not isinstance(body, dict):
         raise HTTPException(status_code=422, detail="body must be an object")
     target_weeks = body.get("target_weeks") or []
@@ -2085,7 +2095,7 @@ def duplicate_event(
         target_year=target_year,
         target_quarter=target_quarter,
         skip_conflicts=skip_conflicts,
-        actor=admin_user,
+        actor=actor,
     )
 
 
