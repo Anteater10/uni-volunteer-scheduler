@@ -89,10 +89,15 @@ jobs:
           files = data.get("files", {})
 
           # ---- Per-file gates (signup/celery critical path) -----------------
+          # Use covered_lines/num_statements explicitly. percent_covered now
+          # blends branch coverage (cov-branch enabled), so a file at 100%
+          # line but <100% branch would falsely trip a line-coverage gate.
           def cov_for(suffix):
               for path, info in files.items():
                   if path.endswith(suffix):
-                      return info["summary"]["percent_covered"] / 100.0
+                      sm = info["summary"]
+                      n = sm["num_statements"]
+                      return (sm["covered_lines"] / n) if n else 1.0
               return None
           per_file = {
               "app/signup_service.py": 1.00,
