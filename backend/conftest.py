@@ -25,6 +25,11 @@ def _celery_eager_mode():
     celery.conf.task_eager_propagates = False
     celery.conf.broker_url = "memory://"
     celery.conf.result_backend = "cache+memory://"
+    # Celery's default worker_hijack_root_logger=True replaces handlers on
+    # any logger that propagates to root — which steals records from
+    # pytest's caplog before LogCaptureHandler can record them. Disable so
+    # caplog-based tests (e.g. test_magic_link_email_log_redacted) work.
+    celery.conf.worker_hijack_root_logger = False
     yield
 
 

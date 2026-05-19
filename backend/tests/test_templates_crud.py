@@ -6,7 +6,16 @@ from tests.fixtures.helpers import make_user, auth_headers
 
 @pytest.fixture
 def _seed_templates(db_session):
-    """Seed module templates (tests use create_all, not alembic migrations)."""
+    """Seed module templates.
+
+    The session-scoped ``engine`` fixture uses ``Base.metadata.create_all`` so on
+    a fresh DB the table is empty. But Phase 31's corpus tests trigger
+    ``alembic upgrade head`` on the same test database; migration 0006 inserts
+    these exact slugs and migration 0012 then sets ``deleted_at`` on them. After
+    that point the rows exist but are soft-deleted, so the route (which filters
+    ``deleted_at IS NULL``) returns an empty list. Resurrect any soft-deleted
+    seed row instead of silently treating it as already-seeded.
+    """
     for slug, name, prereqs in [
         ("orientation", "Orientation", []),
         ("intro-bio", "Intro to Biology", ["orientation"]),
@@ -15,9 +24,12 @@ def _seed_templates(db_session):
         ("intro-astro", "Intro to Astronomy", ["orientation"]),
     ]:
         existing = db_session.query(models.ModuleTemplate).filter_by(slug=slug).first()
-        if not existing:
+        if existing is None:
             tpl = models.ModuleTemplate(slug=slug, name=name)  # Phase 08 (D-05): column dropped
             db_session.add(tpl)
+        elif existing.deleted_at is not None:
+            existing.deleted_at = None
+            existing.name = name
     db_session.flush()
 
 
