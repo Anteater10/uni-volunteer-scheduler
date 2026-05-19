@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CopilotSessionRead(BaseModel):
@@ -37,3 +37,34 @@ class CopilotSessionDetail(CopilotSessionRead):
 
 class CopilotMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
+
+
+class Citation(BaseModel):
+    """A single grounded reference returned alongside an assistant message.
+
+    Phase 32 retrieval contract — emitted over SSE before the first token
+    event and persisted on the assistant ``CopilotMessage`` row so reruns
+    of the conversation can re-render the same citations.
+
+    Field shape is load-bearing: Plan 32-04's router serializes this model
+    onto the wire and Plan 32-05's frontend consumes it. Do not rename
+    fields without updating both ends.
+    """
+
+    chunk_id: UUID
+    source_path: str
+    char_start: int
+    char_end: int
+    quote: str
+    rrf_score: float | None = None
+    rerank_score: float | None = None
+
+    @field_validator("char_end")
+    @classmethod
+    def _end_after_start(cls, v: int, info) -> int:
+        start = info.data.get("char_start")
+        if start is not None and v < start:
+            raise ValueError(
+                f"char_end ({v}) must be >= char_start ({start})"
+            )
+        return v

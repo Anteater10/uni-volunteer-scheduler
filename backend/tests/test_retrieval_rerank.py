@@ -38,7 +38,11 @@ def fake_cross_encoder(monkeypatch):
     * assert constructor call count + args (singleton + model name checks),
     * configure ``instance.predict`` return values per test.
     """
-    from app.copilot.retrieval import rerank as rerank_mod
+    import sys
+    import importlib
+
+    importlib.import_module("app.copilot.retrieval.rerank")
+    rerank_mod = sys.modules["app.copilot.retrieval.rerank"]
 
     # Clear the lru_cache so each test starts fresh.
     rerank_mod._model.cache_clear()
