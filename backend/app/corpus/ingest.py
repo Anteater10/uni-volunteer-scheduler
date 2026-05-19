@@ -370,18 +370,11 @@ def run_ingestion(
                 error_class = exc.__class__.__name__
                 error_message = str(exc)
 
-    if counters["files_failed"] == 0:
-        status = "succeeded"
-    elif counters["files_ingested"] == 0:
-        status = "failed"
-    else:
-        status = "partial"
-
-    # `failed` per the test contract: any failure flips to 'failed' even with
-    # partial commits, so REQ-31-09 reads cleanly. RESEARCH §Step 2 lists
-    # 'partial' as a status, kept here for completeness.
-    if counters["files_failed"] > 0 and counters["files_ingested"] > 0:
-        status = "failed"
+    # REQ-31-09: any file failure flips the run to 'failed', even if some
+    # files committed successfully. RESEARCH §Step 2 originally listed
+    # 'partial' as a third status, but the test contract collapses it into
+    # 'failed' so consumers see two states only.
+    status = "succeeded" if counters["files_failed"] == 0 else "failed"
 
     _finalize_run(
         session,

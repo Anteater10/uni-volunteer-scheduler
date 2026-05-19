@@ -148,3 +148,29 @@ def test_walker_lf_normalizes_line_endings(tmp_path):
         hashlib.sha256(a.content.encode("utf-8")).hexdigest()
         == hashlib.sha256(b.content.encode("utf-8")).hexdigest()
     )
+
+
+def test_walker_extracts_line_comments_with_leading_blanks(tmp_path):
+    """Frontend file with blank lines before and inside a `//` comment block.
+
+    Covers the leading-blank `continue` branch in `_extract_leading_comment`
+    plus the "blank line inside comment block" append path that previous
+    fixtures skipped over.
+    """
+    from app.corpus.walker import walk_sources
+
+    fe = tmp_path / "frontend" / "src"
+    fe.mkdir(parents=True)
+    contents = (
+        "\n"
+        "\n"
+        "// Component header.\n"
+        "\n"
+        "// More details about it.\n"
+        "export const x = 1;\n"
+    )
+    (fe / "Thing.tsx").write_text(contents, encoding="utf-8")
+    docs = walk_sources(root=tmp_path)
+    fe_docs = [d for d in docs if d.source_kind == "frontend_component"]
+    assert fe_docs and "Component header." in fe_docs[0].content
+    assert "More details about it." in fe_docs[0].content

@@ -72,3 +72,19 @@ def test_chunker_overlap_is_chunk_overlap_chars():
     assert len(chunks) >= 2
     for i in range(len(chunks) - 1):
         assert chunks[i + 1].char_start == chunks[i].char_end - CHUNK_OVERLAP
+
+
+def test_chunker_handles_runs_of_separators():
+    """Consecutive separators produce empty segments — exercise the skip path.
+
+    Three blank lines in a row create empty `text[i:j]` slices in the
+    `_split_recursive` loop. Branch coverage for the "if seg" gate
+    requires hitting the empty-segment case at least once.
+    """
+    from app.corpus.chunker import chunk_text
+
+    text = "alpha\n\n\n\nbeta\n\n\n\ngamma"
+    chunks = chunk_text(text, chunk_size=1024, chunk_overlap=128)
+    assert chunks
+    joined = " ".join(c.content for c in chunks)
+    assert "alpha" in joined and "beta" in joined and "gamma" in joined
