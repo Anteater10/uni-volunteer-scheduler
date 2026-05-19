@@ -1,7 +1,7 @@
 import os
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 from app.main import app
 from app.database import Base, get_db
@@ -25,12 +25,23 @@ def _celery_eager_mode():
     celery.conf.task_eager_propagates = False
     celery.conf.broker_url = "memory://"
     celery.conf.result_backend = "cache+memory://"
+    # Celery's default worker_hijack_root_logger=True replaces handlers on
+    # any logger that propagates to root — which steals records from
+    # pytest's caplog before LogCaptureHandler can record them. Disable so
+    # caplog-based tests (e.g. test_magic_link_email_log_redacted) work.
+    celery.conf.worker_hijack_root_logger = False
     yield
 
 
 @pytest.fixture(scope="session")
 def engine():
     eng = create_engine(TEST_DATABASE_URL, future=True)
+    # Phase 31: corpus_chunks declares `embedding VECTOR(1024)`, which requires
+    # the pgvector extension to be registered on the test database BEFORE
+    # metadata.create_all() emits the DDL. The image already ships the binary;
+    # we just have to register it on test_uvs.
+    with eng.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(eng)
     yield eng
     Base.metadata.drop_all(eng)

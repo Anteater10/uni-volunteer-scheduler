@@ -1,0 +1,150 @@
+"""Phase 31 plan 03 — allow-list source walker tests.
+
+REQ-31-05 (no DB cursor), REQ-31-06 (deny-list), REQ-31-07 (deterministic
+ordering) plus two boundary tests added in plan 03 (python docstring-only
+extraction, LF/CRLF normalization).
+"""
+
+import hashlib
+
+from app.corpus.walker import walk_sources
+
+
+def test_walker_deterministic_order(tiny_markdown_corpus):
+    a = list(walk_sources(root=tiny_markdown_corpus))
+    b = list(walk_sources(root=tiny_markdown_corpus))
+    assert [d.source_path for d in a] == [d.source_path for d in b]
+
+
+def test_walker_respects_deny_list(tiny_markdown_corpus):
+    paths = [d.source_path for d in walk_sources(root=tiny_markdown_corpus)]
+    assert not any("node_modules" in p for p in paths)
+    assert not any("test_" in p.rsplit("/", 1)[-1] for p in paths)
+
+
+def test_walker_opens_no_db_connection(tiny_markdown_corpus, monkeypatch):
+    # Patch SQLAlchemy engine creation to raise — walker must not need it.
+    from app import database
+
+    def boom(*a, **kw):
+        raise AssertionError("walker opened a DB connection")
+
+    monkeypatch.setattr(database, "engine", None)
+    monkeypatch.setattr(database, "SessionLocal", boom)
+    list(walk_sources(root=tiny_markdown_corpus))  # must complete without touching DB
+
+
+def test_walker_extracts_python_docstrings_not_bodies(tmp_path):
+    # Comprehensive fixture covering every source kind the walker emits,
+    # plus edge cases (no-H1 markdown, no-docstring python, broken-python,
+    # JSDoc + // leading comments on frontend files, alembic revision).
+
+    # 1. Python module with module-, function-, async-function-, and class-
+    #    level docstrings. Bodies must NOT appear in any emitted document.
+    pkg = tmp_path / "backend" / "app"
+    pkg.mkdir(parents=True)
+    (pkg / "foo.py").write_text(
+        '"""Module docstring for foo."""\n'
+        "\n"
+        "SECRET_BODY_TOKEN = 'do-not-ingest'\n"
+        "\n"
+        "def bar():\n"
+        '    """Bar function docstring."""\n'
+        "    SECRET_BODY_TOKEN_IN_FN = 'also-do-not-ingest'\n"
+        "    return 42\n"
+        "\n"
+        "async def baz():\n"
+        '    """Baz async docstring."""\n'
+        "    return 0\n"
+        "\n"
+        "class Quux:\n"
+        '    """Quux class docstring."""\n'
+        "    pass\n",
+        encoding="utf-8",
+    )
+    # 2. Python file with NO docstrings — should emit zero documents.
+    (pkg / "no_doc.py").write_text("x = 1\n", encoding="utf-8")
+    # 3. Broken python — must NOT crash the walker, just skip.
+    (pkg / "broken.py").write_text("def (((: not valid\n", encoding="utf-8")
+
+    # 4. Alembic migration with module docstring + revision string.
+    alembic = tmp_path / "backend" / "alembic" / "versions"
+    alembic.mkdir(parents=True)
+    (alembic / "0001_init.py").write_text(
+        '"""Initial migration."""\n'
+        "\n"
+        "revision = '0001_init'\n"
+        "down_revision = None\n",
+        encoding="utf-8",
+    )
+    # Alembic file with no docstring — must emit nothing.
+    (alembic / "0002_empty.py").write_text("revision = '0002'\n", encoding="utf-8")
+    # Alembic with broken syntax — must not crash.
+    (alembic / "0003_broken.py").write_text("def (((\n", encoding="utf-8")
+
+    # 5. Frontend files: JSDoc block, // line block, and a file with no
+    #    leading comment (should be skipped).
+    fe = tmp_path / "frontend" / "src"
+    fe.mkdir(parents=True)
+    (fe / "WithJSDoc.jsx").write_text(
+        "/**\n * Header comment.\n * Multi-line.\n */\n"
+        "export default function X() { return null; }\n",
+        encoding="utf-8",
+    )
+    (fe / "WithLineComments.ts").write_text(
+        "\n\n// first line comment\n// second line comment\n\n"
+        "export const x = 1;\n",
+        encoding="utf-8",
+    )
+    (fe / "NoComment.js").write_text("export const y = 2;\n", encoding="utf-8")
+    # Block-comment that never closes — defensive: walker must not crash.
+    (fe / "Unterminated.tsx").write_text("/* never closes\n", encoding="utf-8")
+
+    # 6. Markdown without an H1 (exercises the _first_h1 None branch).
+    md_dir = tmp_path / "docs"
+    md_dir.mkdir()
+    (md_dir / "noheading.md").write_text("just a paragraph\n", encoding="utf-8")
+
+    # 7. A path that does NOT match any allow-list pattern (exercises the
+    #    "skip non-allow-listed file" branch).
+    (tmp_path / "random.txt").write_text("ignored\n", encoding="utf-8")
+
+    docs = walk_sources(root=tmp_path)
+    by_kind: dict[str, list] = {}
+    for d in docs:
+        by_kind.setdefault(d.source_kind, []).append(d)
+
+    # Python module + 3 python_functions (bar, baz, Quux), 1 alembic, 2 frontend, 1 markdown.
+    assert {d.title for d in by_kind["python_function"]} == {"bar", "baz", "Quux"}
+    assert by_kind["python_module"][0].content == "Module docstring for foo."
+    assert by_kind["alembic_migration"][0].title == "0001_init"
+    assert by_kind["alembic_migration"][0].content == "Initial migration."
+    assert len(by_kind["frontend_component"]) == 2
+    assert any("Header comment." in d.content for d in by_kind["frontend_component"])
+    assert any("first line comment" in d.content for d in by_kind["frontend_component"])
+    # No body tokens leak into ingested content.
+    for d in docs:
+        assert "SECRET_BODY_TOKEN" not in d.content
+    # No-H1 markdown emits with title=None.
+    md = next(d for d in by_kind["markdown"] if d.source_path == "docs/noheading.md")
+    assert md.title is None
+    # Random non-allow-listed file does not appear.
+    assert "random.txt" not in {d.source_path for d in docs}
+
+
+def test_walker_lf_normalizes_line_endings(tmp_path):
+    # Two markdown files with identical logical content but different EOLs.
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    lf = "# Title\n\nLine one.\nLine two.\n"
+    crlf = lf.replace("\n", "\r\n")
+    (docs_dir / "lf.md").write_bytes(lf.encode("utf-8"))
+    (docs_dir / "crlf.md").write_bytes(crlf.encode("utf-8"))
+    docs = {d.source_path: d for d in walk_sources(root=tmp_path)}
+    a = docs["docs/lf.md"]
+    b = docs["docs/crlf.md"]
+    assert a.byte_size == b.byte_size
+    assert (
+        hashlib.sha256(a.content.encode("utf-8")).hexdigest()
+        == hashlib.sha256(b.content.encode("utf-8")).hexdigest()
+    )

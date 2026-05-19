@@ -1,0 +1,114 @@
+"""CLI entry for corpus ingestion (Phase 31, plan 04).
+
+Canonical invocation (inside the compose network)::
+
+    docker compose run --rm backend python -m app.corpus.ingest --source docs --commit
+
+Two module paths reach the same ``main()`` function:
+
+* ``python -m app.corpus`` — Python loads this file directly because it's
+  named ``__main__.py``.
+* ``python -m app.corpus.ingest`` — :mod:`app.corpus.ingest` re-exports
+  ``main`` and runs it via its own ``if __name__ == "__main__"`` guard.
+
+Both are documented in the plan so contributors can pick whichever feels
+natural. The argparse parser is shared.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Return the shared argparse parser used by both entry points.
+
+    Factored out so tests can call ``main(["--help"])`` without spawning
+    a subprocess and so :mod:`app.corpus.ingest`'s ``__name__ ==
+    "__main__"`` guard can reuse the exact same surface.
+    """
+    p = argparse.ArgumentParser(prog="python -m app.corpus.ingest")
+    p.add_argument(
+        "--source",
+        type=Path,
+        default=Path("."),
+        help="root directory to walk (default: cwd)",
+    )
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--commit", action="store_true", help="write to DB (default if neither flag set)"
+    )
+    mode.add_argument(
+        "--dry-run", action="store_true", help="walk + chunk + hash, no DB writes"
+    )
+    p.add_argument(
+        "--provider",
+        choices=["jina", "local"],
+        default=None,
+        help="override settings.corpus_embedding_primary",
+    )
+    p.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="TRUNCATE corpus_chunks + corpus_documents before this run",
+    )
+    p.add_argument(
+        "--build-index",
+        action="store_true",
+        help="CREATE INDEX … USING hnsw (idempotent); skips ingestion",
+    )
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Argparse → run_ingestion or build_hnsw_index → JSON to stdout.
+
+    Returns an int exit code suitable for ``sys.exit``: ``0`` on
+    ``succeeded`` / ``partial``, ``1`` on ``failed``.
+    """
+    # Local imports so ``--help`` works even if optional deps aren't installed.
+    from app.config import settings
+    from app.corpus.embeddings import (
+        JinaEmbeddingProvider,
+        LocalBgeEmbeddingProvider,
+    )
+    from app.corpus.ingest import build_hnsw_index, run_ingestion
+    from app.database import SessionLocal
+
+    args = _build_parser().parse_args(argv)
+    session = SessionLocal()
+    try:
+        if args.build_index:
+            build_hnsw_index(session=session)
+            print("HNSW index ensured.")
+            return 0
+
+        provider_name = args.provider or settings.corpus_embedding_primary
+        if provider_name == "jina":
+            primary = JinaEmbeddingProvider(
+                api_key=settings.jina_api_key, model=settings.jina_embedding_model
+            )
+            fallback = LocalBgeEmbeddingProvider(model=settings.local_embedding_model)
+        else:
+            primary = LocalBgeEmbeddingProvider(model=settings.local_embedding_model)
+            fallback = None
+
+        result = run_ingestion(
+            root=args.source,
+            provider=primary,
+            fallback_provider=fallback,
+            session=session,
+            dry_run=args.dry_run,
+            rebuild=args.rebuild,
+        )
+        print(json.dumps(result.__dict__, indent=2, default=str))
+        return 0 if result.status in ("succeeded", "partial") else 1
+    finally:
+        session.close()
+
+
+if __name__ == "__main__":  # pragma: no cover - process boundary
+    sys.exit(main())

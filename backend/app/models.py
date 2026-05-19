@@ -4,7 +4,9 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
+    CHAR,
     Column,
     Date,
     String,
@@ -22,6 +24,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import backref, relationship
+from pgvector.sqlalchemy import Vector
 
 from .database import Base
 
@@ -823,3 +826,141 @@ class CopilotMessage(Base):
     error = Column(Text, nullable=True)
 
     session = relationship("CopilotSession", back_populates="messages")
+
+
+# -------------------------
+# Phase 31 (v1.4): Knowledge corpus + pgvector ingestion
+# -------------------------
+
+
+class IngestionRun(Base):
+    """One row per CLI ingest invocation.
+
+    Paper-grade telemetry table (mirrors Phase 30's CopilotMessage
+    discipline — log every run, never backfill). Each
+    ``corpus_documents`` and ``corpus_chunks`` row FKs back here so we
+    can attribute every embedding to a reproducible commit + provider.
+    See RESEARCH §Step 2 for column semantics.
+    """
+
+    __tablename__ = "ingestion_runs"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    started_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(Text, nullable=False, server_default=text("'running'"))
+    # 40-char git sha; NOT NULL — RESEARCH §Open Question 5 (paper repro hard req).
+    git_commit_sha = Column(CHAR(40), nullable=False)
+    git_dirty = Column(Boolean, nullable=False, server_default=text("false"))
+    source_globs = Column(JSONB, nullable=False)
+    embedding_provider = Column(Text, nullable=False)
+    embedding_model = Column(Text, nullable=False)
+    embedding_dim = Column(Integer, nullable=False)
+    chunker_version = Column(Text, nullable=False)
+    files_scanned = Column(Integer, nullable=False, server_default=text("0"))
+    files_unchanged = Column(Integer, nullable=False, server_default=text("0"))
+    files_ingested = Column(Integer, nullable=False, server_default=text("0"))
+    files_failed = Column(Integer, nullable=False, server_default=text("0"))
+    chunks_emitted = Column(Integer, nullable=False, server_default=text("0"))
+    chunks_embedded = Column(Integer, nullable=False, server_default=text("0"))
+    embedding_api_calls = Column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    # BIGINT in DB (can run for hours); BigInteger in ORM keeps the type honest.
+    embedding_latency_ms_total = Column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    embedding_tokens_total = Column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    error_class = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+
+class CorpusDocument(Base):
+    """One row per source file (markdown / python docstring / etc.).
+
+    ``UNIQUE(source_path, content_sha256)`` is the idempotency anchor —
+    re-ingesting an unchanged file is a no-op. See RESEARCH §Step 2.
+    """
+
+    __tablename__ = "corpus_documents"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    source_path = Column(Text, nullable=False, index=True)
+    # 'markdown' | 'python_module' | 'python_function' | 'alembic_migration' | 'frontend_component'
+    source_kind = Column(Text, nullable=False)
+    title = Column(Text, nullable=True)
+    content_sha256 = Column(CHAR(64), nullable=False)
+    byte_size = Column(Integer, nullable=False)
+    ingested_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    ingestion_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("ingestion_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_path", "content_sha256", name="uq_corpus_documents_path_hash"
+        ),
+    )
+
+
+class CorpusChunk(Base):
+    """One row per embedding-sized slice of a document.
+
+    ``embedding`` is locked at ``vector(1024)`` — Jina v3 native dim;
+    BGE-small fallback is right-padded to 1024 before write. Phase 32
+    retrieval **must** filter by ``embedding_provider`` to avoid cosine-
+    ing across embedding spaces (RESEARCH Pitfall 4).
+    """
+
+    __tablename__ = "corpus_chunks"
+
+    id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    document_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("corpus_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    content_sha256 = Column(CHAR(64), nullable=False)
+    char_start = Column(Integer, nullable=False)
+    char_end = Column(Integer, nullable=False)
+    token_estimate = Column(Integer, nullable=True)
+    embedding = Column(Vector(1024), nullable=False)
+    embedding_model = Column(Text, nullable=False)
+    embedding_provider = Column(Text, nullable=False)
+    ingestion_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("ingestion_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id", "chunk_index", name="uq_corpus_chunks_doc_idx"
+        ),
+    )
