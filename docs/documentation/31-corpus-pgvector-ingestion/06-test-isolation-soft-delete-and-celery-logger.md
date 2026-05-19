@@ -47,15 +47,40 @@ Celery hasn't booted yet and `caplog` works. In CI's full-suite run,
 corpus + admin tests boot Celery first; by the time the magic-link
 test runs, the root logger is already hijacked.
 
-### Fix
+### Fix (two layers)
+
+**Layer 1 — disable Celery's hijack** in
+`backend/conftest.py` `_celery_eager_mode` fixture:
 
 ```python
-# backend/conftest.py — inside _celery_eager_mode fixture
 celery.conf.worker_hijack_root_logger = False
 ```
 
-Celery's eager-mode worker no longer touches the logging tree.
-`caplog` captures records as designed.
+**Layer 2 — attach a handler directly** in the failing test
+(`test_emails_magic_link.py::test_magic_link_email_log_redacted`).
+`caplog` routes via the root logger and is fragile to any library
+that mutates root-logger state (Celery, sentence-transformers'
+`logging.basicConfig` on first model load, etc). The test now binds
+its handler directly to `app.emails`:
+
+```python
+target = logging.getLogger("app.emails")
+buf = io.StringIO()
+handler = logging.StreamHandler(buf)
+handler.setLevel(logging.INFO)
+target.addHandler(handler)
+target.setLevel(logging.INFO)
+try:
+    send_magic_link(...)
+finally:
+    target.removeHandler(handler)
+log_output = buf.getvalue()
+```
+
+Layer 1 is the right ceiling fix (keeps `caplog` working for the
+~10 other tests that use it). Layer 2 makes this specific test
+indifferent to global-logger state set by any other test that ran
+before it.
 
 ## Bug 2 — Soft-deleted seed templates
 

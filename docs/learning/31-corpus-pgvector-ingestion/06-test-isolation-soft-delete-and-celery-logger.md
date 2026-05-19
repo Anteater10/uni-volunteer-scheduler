@@ -54,14 +54,37 @@ Celery had already booted and the hijack had already happened.
 
 ### The fix
 
-One line in the `_celery_eager_mode` fixture:
+Two layers, because Celery is only one of several offenders:
 
-```python
-celery.conf.worker_hijack_root_logger = False
-```
+1. In the `_celery_eager_mode` fixture, set
+   `celery.conf.worker_hijack_root_logger = False`. This blocks
+   Celery specifically.
+2. In the test itself, **stop relying on `caplog`** for this assertion.
+   Attach a `StreamHandler` directly to the `app.emails` logger:
 
-Now Celery leaves the root logger alone, propagation works, `caplog`
-captures the records.
+   ```python
+   target = logging.getLogger("app.emails")
+   buf = io.StringIO()
+   handler = logging.StreamHandler(buf)
+   handler.setLevel(logging.INFO)
+   target.addHandler(handler)
+   target.setLevel(logging.INFO)
+   try:
+       send_magic_link(...)
+   finally:
+       target.removeHandler(handler)
+   ```
+
+   The handler is bound directly to the logger we care about, so the
+   test no longer depends on propagation reaching the root handler.
+   Celery, sentence-transformers, huggingface_hub, and any future
+   library that mutates root-logger state can't reach this test.
+
+Why both: layer 1 keeps `caplog` working for other tests in the suite
+that depend on it (e.g. `test_celery_app_full.py`). Layer 2 makes
+this *specific* test indifferent to whatever order the suite runs in.
+The lesson is that `caplog` is a convenience that bets on propagation
+staying clean; bet only when the stakes are low.
 
 ### The pattern to remember
 
