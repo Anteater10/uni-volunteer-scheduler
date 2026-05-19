@@ -1,7 +1,7 @@
 import os
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 from app.main import app
 from app.database import Base, get_db
@@ -31,6 +31,12 @@ def _celery_eager_mode():
 @pytest.fixture(scope="session")
 def engine():
     eng = create_engine(TEST_DATABASE_URL, future=True)
+    # Phase 31: corpus_chunks declares `embedding VECTOR(1024)`, which requires
+    # the pgvector extension to be registered on the test database BEFORE
+    # metadata.create_all() emits the DDL. The image already ships the binary;
+    # we just have to register it on test_uvs.
+    with eng.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(eng)
     yield eng
     Base.metadata.drop_all(eng)
