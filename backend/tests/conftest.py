@@ -198,6 +198,133 @@ def alembic_engine(alembic_command):
         eng.dispose()
 
 
+# ------------- Phase 32 plan 02: hybrid retrieval fixtures -------------
+
+
+@pytest.fixture
+def corpus_fixture(corpus_db_session):
+    """Seed 10 chunks across two providers for hybrid retrieval tests.
+
+    Layout:
+      - 6 chunks with ``embedding_provider='local-bge'`` (the "active" provider
+        most tests assume).
+      - 4 chunks with ``embedding_provider='jina-v3-embeddings'`` (the wrong
+        provider — must NEVER appear in same-provider results).
+
+    Content is hand-crafted so FTS (lexical) and dense (random-but-deterministic
+    vectors) disagree on some rankings — that's the whole point of hybrid.
+    Returns a dict with the inserted chunk ids keyed by tag, plus a
+    ``query_embedding`` callable that builds a deterministic 1024-dim vector.
+    """
+    import hashlib
+    import uuid as _uuid
+
+    from pgvector.sqlalchemy import Vector  # noqa: F401  (register psycopg2 adapter)
+    from sqlalchemy import text as _text
+
+    _hex64 = "a" * 64
+    _sha40 = "0" * 40
+
+    def _vec(seed: str) -> list[float]:
+        """Deterministic 1024-dim unit-ish vector derived from a seed string."""
+        h = hashlib.sha256(seed.encode()).digest()  # 32 bytes
+        raw = [(b - 128) / 128.0 for b in h] * (1024 // 32)
+        return raw[:1024]
+
+    # One ingestion_run per provider (FK target)
+    run_local = _uuid.uuid4()
+    run_jina = _uuid.uuid4()
+    corpus_db_session.execute(
+        _text(
+            "INSERT INTO ingestion_runs (id, status, git_commit_sha, "
+            "source_globs, embedding_provider, embedding_model, embedding_dim, "
+            "chunker_version) VALUES "
+            "(:id, 'succeeded', :sha, '[]'::jsonb, 'local-bge', "
+            "'BAAI/bge-large-en-v1.5', 1024, 'v1')"
+        ),
+        {"id": run_local, "sha": _sha40},
+    )
+    corpus_db_session.execute(
+        _text(
+            "INSERT INTO ingestion_runs (id, status, git_commit_sha, "
+            "source_globs, embedding_provider, embedding_model, embedding_dim, "
+            "chunker_version) VALUES "
+            "(:id, 'succeeded', :sha, '[]'::jsonb, 'jina-v3-embeddings', "
+            "'jina-embeddings-v3', 1024, 'v1')"
+        ),
+        {"id": run_jina, "sha": _sha40},
+    )
+
+    # 10 chunks. Content overlaps on "volunteer" / "orientation" / "module" so
+    # FTS finds chunks across both providers; embeddings derived from a label
+    # disjoint from content so dense ordering does NOT match FTS ordering.
+    rows = [
+        # tag, content, provider, vec_seed
+        ("local_orient_1", "Volunteer orientation is required before signing up for any module.", "local-bge", "alpha"),
+        ("local_orient_2", "Orientation covers safety, scheduling, and check-in procedures.", "local-bge", "bravo"),
+        ("local_module_1", "Module SciTrek-101 has four 50-minute periods plus an orientation slot.", "local-bge", "charlie"),
+        ("local_module_2", "Each module template imports quarterly from a CSV file.", "local-bge", "delta"),
+        ("local_generic_1", "The scheduler exposes a REST API for organizers.", "local-bge", "echo"),
+        ("local_generic_2", "Audit logs record every check-in event.", "local-bge", "foxtrot"),
+        ("jina_orient_1", "Orientation is the prerequisite for volunteer signups.", "jina-v3-embeddings", "golf"),
+        ("jina_orient_2", "Volunteers receive an orientation reminder email weekly.", "jina-v3-embeddings", "hotel"),
+        ("jina_module_1", "Module reminders fire 24 hours before each scheduled period.", "jina-v3-embeddings", "india"),
+        ("jina_misc_1", "The frontend is built with React 19 and Vite 7.", "jina-v3-embeddings", "juliet"),
+    ]
+
+    ids: dict[str, _uuid.UUID] = {}
+    for tag, content, provider, seed in rows:
+        chunk_id = _uuid.uuid4()
+        doc_id = _uuid.uuid4()
+        run_id = run_local if provider == "local-bge" else run_jina
+        model_id = (
+            "BAAI/bge-large-en-v1.5" if provider == "local-bge" else "jina-embeddings-v3"
+        )
+        corpus_db_session.execute(
+            _text(
+                "INSERT INTO corpus_documents "
+                "(id, source_path, source_kind, content_sha256, byte_size, "
+                "ingestion_run_id) "
+                "VALUES (:id, :p, 'markdown', :h, :b, :r)"
+            ),
+            {
+                "id": doc_id,
+                "p": f"docs/{tag}.md",
+                "h": _hex64,
+                "b": len(content),
+                "r": run_id,
+            },
+        )
+        corpus_db_session.execute(
+            _text(
+                "INSERT INTO corpus_chunks "
+                "(id, document_id, chunk_index, content, content_sha256, "
+                "char_start, char_end, embedding, embedding_provider, "
+                "embedding_model, ingestion_run_id) "
+                "VALUES (:id, :d, 0, :c, :h, 0, :e, :v, :p, :m, :r)"
+            ),
+            {
+                "id": chunk_id,
+                "d": doc_id,
+                "c": content,
+                "h": _hex64,
+                "e": len(content),
+                "v": _vec(seed),
+                "p": provider,
+                "m": model_id,
+                "r": run_id,
+            },
+        )
+        ids[tag] = chunk_id
+    corpus_db_session.commit()
+
+    return {
+        "ids": ids,
+        "vec": _vec,
+        "session": corpus_db_session,
+    }
+
+
 @pytest.fixture
 def corpus_db_session(alembic_engine):
     """Real SQLAlchemy Session bound to a freshly-migrated test DB.
