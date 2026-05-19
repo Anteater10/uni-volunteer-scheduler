@@ -68,3 +68,18 @@ class Citation(BaseModel):
                 f"char_end ({v}) must be >= char_start ({start})"
             )
         return v
+
+
+class MetaEvent(BaseModel):
+    """Phase 32 SSE ``event: meta`` payload — emitted exactly once, before
+    the first ``event: token``.
+
+    Strictly additive to the Phase 30 SSE taxonomy: ``token`` / ``done`` /
+    ``error`` shapes are unchanged. The router serialises this with
+    :py:meth:`pydantic.BaseModel.model_dump_json` so the embedded
+    :class:`Citation` ``chunk_id`` UUIDs become JSON strings on the wire.
+    """
+
+    citations: list[Citation] = Field(default_factory=list)
+    retrieval_latency_ms: int
+    rerank_latency_ms: int
