@@ -31,36 +31,15 @@ def test_magic_link_email_text_contains_url():
     assert "15 minutes" in result["text"]
 
 
-def test_magic_link_email_log_redacted():
-    """Attach a handler directly to the app.emails logger.
-
-    caplog goes via the root logger and is fragile to anything else in
-    the test session that mutates global logging state (Celery's
-    worker_hijack_root_logger, sentence-transformers' logging.basicConfig
-    on first model load, etc). A direct handler bypasses all of that.
-    """
-    import io
-
-    target = logging.getLogger("app.emails")
-    buf = io.StringIO()
-    handler = logging.StreamHandler(buf)
-    handler.setLevel(logging.INFO)
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    prev_level = target.level
-    target.addHandler(handler)
-    target.setLevel(logging.INFO)
-    try:
+def test_magic_link_email_log_redacted(caplog):
+    with caplog.at_level(logging.INFO, logger="app.emails"):
         send_magic_link(
             "user@example.com",
             "abc123def456",
             SimpleNamespace(title="Test Event"),
             "https://example.com",
         )
-    finally:
-        target.removeHandler(handler)
-        target.setLevel(prev_level)
-
-    log_output = buf.getvalue()
+    log_output = caplog.text
     # The 6-char prefix should appear
     assert "abc123" in log_output
     # The full token must NOT appear in any log line

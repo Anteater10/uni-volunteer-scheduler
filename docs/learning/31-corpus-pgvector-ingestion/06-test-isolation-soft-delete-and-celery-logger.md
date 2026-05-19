@@ -1,106 +1,31 @@
-# Lecture 06 — Test isolation: soft-delete seed rows and Celery's logger hijack
+# Lecture 06 — Test isolation: soft-deleted seeds and Alembic's silent logger massacre
 
 ## Why this lecture exists
 
 After CI got pgvector wired up (lecture 05), four backend tests still failed.
-Not because the code under test was wrong — because the **test environment**
-had two hidden coupling points nobody had to think about until Phase 31
-introduced more tests. Both are general-purpose lessons about how test
-isolation fails in subtle ways.
+None of them were touching anything new. They failed because Phase 31
+exercised parts of the test infrastructure that had silent bugs nobody had
+been forced to notice. Two distinct root causes, both about cross-test
+state contamination — the kind of failure where the symptom and the cause
+sit in different files and don't reference each other.
 
 The two bugs:
 
-1. `test_magic_link_email_log_redacted` — `caplog` saw no records, even
-   though the route definitely emitted the log line.
-2. `test_templates_crud.py` (3 tests) — the `_seed_templates` fixture
-   thought rows were already seeded, but the API endpoint returned an
-   empty list.
+1. `test_templates_crud.py` (3 tests) — the `_seed_templates` fixture
+   thought the rows were already seeded, but the API returned an empty
+   list.
+2. `test_magic_link_email_log_redacted` — `caplog.text` was empty. So
+   was a direct handler attached straight to the `app.emails` logger.
+   Records were not being emitted at all.
 
-Different symptoms. Same root cause family: **shared global state
-across tests is invisible until something else mutates it.**
+Bug 2 is the interesting one and it took three wrong fixes before I
+stopped guessing and actually reproduced it.
 
-## Bug 1 — Celery hijacks the root logger
+## Bug 1 — Migration-inserted seed rows get soft-deleted across tests
 
-### The symptom
+(Same as before — included here for completeness.)
 
-```python
-def test_magic_link_email_log_redacted(client, caplog):
-    with caplog.at_level("INFO"):
-        client.post("/api/v1/auth/magic-link", json={"email": "x@y.com"})
-    assert "magic_link_dispatched" in caplog.text  # FAILS
-```
-
-The application code clearly logged `magic_link_dispatched`. Running
-the route by hand emitted the line. But `caplog.text` was empty.
-
-### What was actually happening
-
-Celery's default config sets `worker_hijack_root_logger=True`. When
-the Celery worker boots — and that happens the first time *any* test
-triggers a `.delay()` call, because tests run Celery in eager mode —
-Celery walks the logging tree, finds every logger whose
-`propagate=True`, and **replaces their handlers** with its own.
-
-Pytest's `caplog` works by attaching a `LogCaptureHandler` to the root
-logger. Application loggers propagate to root, so under normal
-circumstances `caplog` sees their records. After Celery hijacks, those
-records go to Celery's handler instead. `caplog` records nothing,
-even though the log message was emitted exactly as expected.
-
-The bug only surfaces when Celery boots before the test runs. In a
-fresh test process, the magic-link test ran first and passed. In CI,
-where pytest ordering loads many corpus + admin tests before it,
-Celery had already booted and the hijack had already happened.
-
-### The fix
-
-Two layers, because Celery is only one of several offenders:
-
-1. In the `_celery_eager_mode` fixture, set
-   `celery.conf.worker_hijack_root_logger = False`. This blocks
-   Celery specifically.
-2. In the test itself, **stop relying on `caplog`** for this assertion.
-   Attach a `StreamHandler` directly to the `app.emails` logger:
-
-   ```python
-   target = logging.getLogger("app.emails")
-   buf = io.StringIO()
-   handler = logging.StreamHandler(buf)
-   handler.setLevel(logging.INFO)
-   target.addHandler(handler)
-   target.setLevel(logging.INFO)
-   try:
-       send_magic_link(...)
-   finally:
-       target.removeHandler(handler)
-   ```
-
-   The handler is bound directly to the logger we care about, so the
-   test no longer depends on propagation reaching the root handler.
-   Celery, sentence-transformers, huggingface_hub, and any future
-   library that mutates root-logger state can't reach this test.
-
-Why both: layer 1 keeps `caplog` working for other tests in the suite
-that depend on it (e.g. `test_celery_app_full.py`). Layer 2 makes
-this *specific* test indifferent to whatever order the suite runs in.
-The lesson is that `caplog` is a convenience that bets on propagation
-staying clean; bet only when the stakes are low.
-
-### The pattern to remember
-
-`caplog` is not a magic spy. It is a handler attached to a logger,
-and **handlers are mutable global state**. Any library that calls
-`logger.addHandler` or `logger.handlers = [...]` can break your
-log-capture tests without ever touching your code.
-
-Suspect categories: Celery, structlog config blocks, Sentry init,
-loguru `logger.configure`, any "logging setup" helper. If a `caplog`
-test passes alone and fails in a suite, ask what configured logging
-between the two states.
-
-## Bug 2 — Migration-inserted seed rows get soft-deleted across tests
-
-### The symptom
+### Symptom
 
 ```python
 def test_list_templates_returns_seeded(client, admin_headers):
@@ -109,43 +34,21 @@ def test_list_templates_returns_seeded(client, admin_headers):
     assert "orientation" in slugs  # FAILS — slugs is []
 ```
 
-The `_seed_templates` fixture inserts 5 templates including
-`orientation`. The route lists templates. The list came back empty.
+### Root cause
 
-### What was actually happening
+Chain of state across tests:
 
-The fixture's logic was:
+1. `engine` fixture: `Base.metadata.create_all` → empty `module_templates`.
+2. Phase 31 corpus tests call `alembic upgrade head`.
+3. Migration 0006 inserts five seed templates.
+4. Migration 0012 soft-deletes them.
+5. `_seed_templates` does "insert if missing" and skips because the
+   row exists (just soft-deleted).
+6. The list endpoint filters `deleted_at IS NULL` → `[]`.
 
-```python
-existing = db_session.query(ModuleTemplate).filter_by(slug=slug).first()
-if existing is None:
-    db_session.add(ModuleTemplate(slug=slug, name=name))
-```
+### Fix
 
-"Insert if missing" — reasonable. Now follow the chain of events
-that breaks it:
-
-1. The session-scoped `engine` fixture calls `Base.metadata.create_all`
-   on a fresh DB. The `module_templates` table is empty.
-2. The Phase 31 corpus tests need a fully migrated schema. They
-   invoke `alembic upgrade head` against the same database.
-3. Migration 0006 inserts the five seed templates including
-   `orientation` (with `deleted_at = NULL`).
-4. Migration 0012 then sets `deleted_at = NOW()` on those same five
-   rows. The product no longer ships seeded templates by default.
-5. A later test runs `_seed_templates`. It queries for slug
-   `orientation`, finds the row (soft-deleted), takes the
-   `if existing is None: insert` branch's `else` — and does nothing.
-6. The route filters `deleted_at IS NULL`, so the list is empty.
-
-The fixture was correct against assumption #1 (fresh-DB world).
-After step 4, assumption #1 no longer holds. The fixture never
-adapted to the new world.
-
-### The fix
-
-Resurrect any soft-deleted seed row instead of treating it as
-"already there":
+Fixture must reach the desired *state*, not just "row exists":
 
 ```python
 existing = db_session.query(ModuleTemplate).filter_by(slug=slug).first()
@@ -157,59 +60,180 @@ elif existing.deleted_at is not None:
 db_session.flush()
 ```
 
-### The pattern to remember
+### Pattern
 
-**Test fixtures encode assumptions about the schema's history that
-go stale when migrations change.** This fixture was written when
-the table was either empty (fresh `create_all`) or already had the
-five rows you wanted. Migration 0012 added a third possible state
-the fixture never considered: rows-present-but-soft-deleted.
+**Test fixtures should be idempotent against any reachable starting
+state, not just "fresh DB."** "Slug exists" is not the same as "slug
+exists and is active." Migrations add new reachable states the
+fixtures never anticipated.
 
-Two general defenses:
+## Bug 2 — Alembic disabled every existing logger
 
-1. **Fixtures that "ensure X exists" should ensure X is in the
-   desired *state*, not just that a row exists.** "Slug exists" is
-   not the same as "slug exists and is active."
-2. **Cross-test schema state survives in a real database.** Unlike
-   in-memory SQLite, Postgres tests share rows when one test runs
-   `alembic upgrade head` and another runs `create_all`. The
-   surface area for "test A leaves a footprint test B sees" is
-   wider than people remember.
+This is the one worth reading the lecture for.
 
-## Why these surface together
+### Symptom
 
-Both bugs come from the same anti-pattern: **a test relies on a
-piece of process-wide state staying the way it was at fixture-write
-time.** For test 1, that state is the logging tree. For test 2, it's
-the schema's row contents. Neither piece of state is owned by the
-test. Both are mutable from elsewhere. Once Phase 31 added enough
-new tests to perturb either, the latent bugs surfaced.
+```python
+def test_magic_link_email_log_redacted(caplog):
+    with caplog.at_level(logging.INFO, logger="app.emails"):
+        send_magic_link(...)
+    assert "abc123" in caplog.text  # FAILS — caplog.text is ''
+```
 
-The fix in both cases is the same shape: **make the fixture's
-guarantee explicit and idempotent.** The fixture should *reach* the
-desired state, not assume it. "Disable Celery's hijack" reaches a
-known logging tree. "Resurrect soft-deleted rows" reaches a known
-data state.
+`caplog.text` was empty. Strange enough that I tried three increasingly
+wrong fixes before debugging properly.
 
-## How to spot this class of bug
+### The three wrong fixes (worth the embarrassment)
 
-When a test fails that has nothing to do with what you just changed,
-ask:
+**Wrong fix 1 — disable Celery's worker_hijack_root_logger.** Celery
+hijacks the root logger on worker boot when this is true. In eager
+mode the hijack still fires the first time a `.delay()` is invoked.
+Plausible! `worker_hijack_root_logger = False` in the test fixture.
+**CI still red.**
 
-- "What process-wide state does this test depend on?"
-- "Could any other test in the suite have mutated that state?"
-- "Does my fixture *reach* the state I want, or *assume* it?"
+**Wrong fix 2 — blame sentence-transformers.** The corpus tests load
+`sentence_transformers`, which may call `logging.basicConfig()`. That
+adds a root handler but doesn't directly suppress capture. Plausible
+again. I made the test resilient by attaching a `StreamHandler`
+directly to `app.emails`, bypassing root entirely. **CI still red.**
 
-If it assumes, it's a future bug. Cheaper to fix as a fixture
-than as a flaky CI run six months from now.
+That last one is what broke me out of guessing. A direct handler on
+`app.emails` not capturing anything means the logger *itself* is
+silent. Records aren't being filtered downstream — they're not being
+generated at all.
+
+### The actual debug
+
+Bisect locally with progressively narrower test selections:
+
+```bash
+pytest tests/test_corpus_embeddings.py tests/test_emails_magic_link.py
+# → passes
+
+pytest tests/test_corpus_ingest_idempotency.py tests/test_emails_magic_link.py
+# → fails
+
+pytest tests/test_corpus_ingest_idempotency.py::test_ingest_idempotent_on_unchanged_repo \
+       tests/test_emails_magic_link.py::test_magic_link_email_log_redacted
+# → still fails. one corpus test is enough.
+```
+
+The corpus test errored (its own fixture issue) but it still ran far
+enough to break the next test's logger. What does it do before
+erroring? It calls `alembic_command`, which calls `alembic upgrade head`.
+
+So I ran the obvious experiment:
+
+```python
+import logging, app.emails
+print(logging.getLogger('app.emails').disabled)   # False
+from logging.config import fileConfig
+fileConfig('alembic.ini')
+print(logging.getLogger('app.emails').disabled)   # True
+```
+
+There it is.
+
+### Root cause
+
+`backend/alembic/env.py` line 14:
+
+```python
+fileConfig(config.config_file_name)
+```
+
+`logging.config.fileConfig`'s `disable_existing_loggers` parameter
+**defaults to `True`**. When the function runs, it walks the logger
+tree and sets `logger.disabled = True` on every existing logger that
+isn't explicitly named in the config file. `app.emails`,
+`app.celery_app`, the rest — all disabled. A disabled logger silently
+drops every record at `Logger.handle()` before any handler is
+consulted. `caplog` sees nothing. A direct handler sees nothing.
+`logger.info(...)` is effectively a no-op.
+
+The bug had been latent for years. Test suites that don't run
+`alembic upgrade head` mid-session never noticed. Phase 31's corpus
+suite is the first place we do exactly that, in the same process as
+the rest of the tests. It tripped a wire that had been sitting there
+since the very first migration shipped.
+
+### The fix
+
+One argument:
+
+```python
+fileConfig(config.config_file_name, disable_existing_loggers=False)
+```
+
+Now `fileConfig` only configures the loggers it explicitly mentions
+and leaves everything else untouched. `app.emails` stays alive,
+records get emitted, `caplog` works again.
+
+### Pattern
+
+**`logging.config.fileConfig` is a footgun.** It is one of the very
+few Python stdlib functions where the documented default actively
+mutates global state owned by other code. Anything you import that
+calls `fileConfig` (Alembic, Django, plenty of internal tools) can
+silently disable every logger the rest of your process owns. The
+mutation is invisible at the call site and invisible at the read
+site — you only notice when log assertions or live-logging tests
+fail with no records.
+
+Two defenses:
+
+1. **In your own code, always pass `disable_existing_loggers=False`.**
+   The default is almost never what you want.
+2. **In libraries you control, switch to `logging.config.dictConfig`**
+   (it has the same parameter but the explicit form is harder to
+   miss) or build the config programmatically.
+
+If you ever see "the logger silently stopped working halfway through
+the suite," `fileConfig` is your prime suspect.
+
+## Why I went down three wrong roads first
+
+Worth saying out loud, because it's the lesson behind the lesson:
+
+- **Celery's hijack is famous.** It is the canonical "logger
+  silently stops working" cause in the Python web world. So when
+  caplog returned empty, my brain leapt to it without checking.
+- **Sentence-transformers loading is exotic and recent.** Plausible
+  story = plausible-looking fix.
+- **I didn't reproduce locally before committing.** Both fixes shipped
+  on a story, not on evidence.
+
+The actual cause — `fileConfig`'s default arg — wasn't on my radar
+because it's a piece of API ergonomics, not a library behavior. The
+moment I ran the four-line repro (`import emails → fileConfig →
+print disabled`), the answer was obvious. The cost of running that
+first instead of fourth was about thirty minutes and three CI cycles.
+
+**Rule:** when a fix is based on a plausible story rather than a
+reproduction, write the reproduction first. "I think X causes Y"
+should always be cheaper to verify than to fix.
+
+## How these surface together
+
+Both bugs are instances of "fixture or env code mutates global state
+the rest of the suite assumed was stable." For Bug 1, it's
+schema-level row state mutated by migrations. For Bug 2, it's
+process-level logger state mutated by `fileConfig`. Both fixes share
+the same shape: **make the mutation stop happening, or make the
+consumer immune to it.** Here both fixes are at the source: don't
+seed-skip soft-deleted rows; don't let `fileConfig` disable
+unrelated loggers.
 
 ## Operational checklist
 
-- Every test that uses `caplog` should run in a suite alongside any
-  test that triggers Celery. Don't trust solo-passes.
-- Every fixture that "seeds" data should be **idempotent against
-  any starting state** — empty, partially populated, soft-deleted,
-  hard-deleted. Write it as a state machine, not as an insert.
-- When adding a new soft-delete column or a new migration that
-  mutates seed data, audit existing fixtures that seed the same
-  tables. The pattern that just bit us will bite again.
+- Audit every call to `logging.config.fileConfig` in your codebase
+  and any vendored library. If `disable_existing_loggers` is not
+  explicitly `False`, it's a latent bug.
+- When a caplog/log-capture test fails with empty records, *first*
+  check `logging.getLogger(name).disabled`. It's a one-line test that
+  rules out an entire class of cause.
+- Fixtures that "seed" data should be idempotent against any
+  starting state — fresh, present, soft-deleted, hard-deleted.
+- When a plausible story explains a bug, write the four-line
+  reproduction *before* committing the fix. If the reproduction
+  doesn't print the failure you expected, the story is wrong.

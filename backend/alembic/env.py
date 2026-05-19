@@ -11,7 +11,13 @@ from app import models  # ensures models are imported
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which sets
+    # `disabled=True` on every logger created before this call. In tests
+    # the corpus suite invokes `alembic upgrade head` mid-session, and
+    # that silently kills `app.emails` / `app.celery_app` / all other
+    # already-imported loggers — caplog and direct handlers alike see
+    # nothing for the rest of the run.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
