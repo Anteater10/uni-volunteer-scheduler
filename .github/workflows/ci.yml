@@ -18,7 +18,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # Phase 31 — pgvector extension is required by migration 0019.
+        # Must match the dev/prod image (docker-compose.yml).
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
