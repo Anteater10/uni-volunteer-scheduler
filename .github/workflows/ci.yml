@@ -128,6 +128,7 @@ jobs:
               return (c / s) if s else 0.0
           per_pkg = {
               "app/copilot": 0.95,
+              "app/copilot/retrieval": 0.95,
               "app/corpus": 0.95,
           }
           for prefix, floor in per_pkg.items():
@@ -142,6 +143,34 @@ jobs:
                   print("  -", f)
               sys.exit(1)
           PY
+
+      # ---- Phase 32-08: per-package gates as standalone pytest invocations -----
+      # Mirrors Phase 31-followup (75f1145) discipline but expressed as three
+      # independent pytest --cov-fail-under runs (one per namespace). `-o addopts=""`
+      # overrides backend/pytest.ini's global `--cov=app` so each invocation
+      # measures only the requested package. A future PR that loosens any of
+      # these gates (e.g. drops --cov-fail-under to 90) will fail the regression
+      # test in backend/tests/test_coverage_gates.py.
+      - name: Coverage gate — app.copilot
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
+        run: |
+          cd backend
+          pytest -o addopts="" --cov=app.copilot --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
+
+      - name: Coverage gate — app.copilot.retrieval
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
+        run: |
+          cd backend
+          pytest -o addopts="" --cov=app.copilot.retrieval --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
+
+      - name: Coverage gate — app.corpus
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
+        run: |
+          cd backend
+          pytest -o addopts="" --cov=app.corpus --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
 
   phase0-frontend-tests:
     name: phase0 frontend vitest
