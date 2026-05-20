@@ -1,0 +1,4 @@
+metric,rerank_off,rerank_on,lift
+faithfulness,0.0000,0.0000,0.0000
+answer_relevancy,0.0000,0.0000,0.0000
+context_relevancy,0.0000,0.0000,0.0000
