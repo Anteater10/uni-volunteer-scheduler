@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-13T22:30:00.000Z"
-last_activity: 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via 0019 migration, 3 corpus tables, 48 corpus tests at 100% coverage on `app.corpus.*`, real ingestion of repo produced 619 documents / 4731 chunks (1024-dim, local BGE provider), HNSW index built and confirmed used by query planner. 8 docs written (4 lectures + 4 publication writeups). Ready to plan Phase 32.
+last_updated: "2026-05-20T17:56:49.746Z"
+last_activity: 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via `0019_enable_pgvector_corpus_tables` (round-trip safe), 3 corpus tables (`corpus_documents`, `corpus_chunks` with `vector(1024)`, `ingestion_runs` with 22 paper-grade telemetry columns), 48 corpus tests at 100% coverage on `app.corpus.*`. Real ingestion of the repo produced 619 documents / 4731 chunks (all 1024-dim, local-bge provider, status=succeeded). HNSW index built and provably used by the query planner (`test_corpus_hnsw_index.py` green). 8 docs written (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`).
 progress:
   total_phases: 9
   completed_phases: 2
-  total_plans: 11
-  completed_plans: 10
-  percent: 91
+  total_plans: 16
+  completed_plans: 7
+  percent: 44
 ---
 
 # Project State
@@ -26,6 +26,8 @@ Milestone: **v1.4 AI Onboarding Copilot** — in progress
 Phase: 31 (knowledge corpus + pgvector ingestion) — ✅ shipped
 Branch: `feature/v1.4-phase-31-corpus-pgvector-ingestion` — ready to merge
 **Last activity:** 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via `0019_enable_pgvector_corpus_tables` (round-trip safe), 3 corpus tables (`corpus_documents`, `corpus_chunks` with `vector(1024)`, `ingestion_runs` with 22 paper-grade telemetry columns), 48 corpus tests at 100% coverage on `app.corpus.*`. Real ingestion of the repo produced 619 documents / 4731 chunks (all 1024-dim, local-bge provider, status=succeeded). HNSW index built and provably used by the query planner (`test_corpus_hnsw_index.py` green). 8 docs written (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`).
+
+**2026-05-20 — Phase 32 Plan 06 shipped (citation chips frontend):** `useCopilotStream` consumes the new `event: meta` SSE branch additively (Phase 30 token/done/error untouched). New `CitationChip` (`[N] filename` + tooltip + keyboard-accessible) and `CitationPanel` (side-panel modal, "Source consulted" header, conditional external link) components. Per-message citation snapshot keeps multi-turn history coherent. New `e2e/copilot-citations.spec.js` covered by all 6 Playwright projects via the default testMatch glob (Case A — no CI workflow edit). 243/243 vitest green, chromium Playwright green. Paired learning + publication docs (126 + 187 lines).
 
 ## Current Status
 
