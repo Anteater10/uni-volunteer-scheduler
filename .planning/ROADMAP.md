@@ -19,8 +19,8 @@ Phase numbering continues from v1.3 (ended at 29); v1.4 starts at Phase 30.
 ## Phases
 
 - [x] **Phase 30 — Streaming chat MVP** — flag-gated `/api/v1/copilot` + admin/organizer FAB + SSE streaming + research-grade telemetry (`copilot_sessions`, `copilot_messages`). Shipped 2026-05-08.
-- [ ] **Phase 31 — Knowledge corpus + pgvector ingestion** — enable pgvector, add `corpus_documents` + `corpus_chunks` tables, build an ingestion script that pulls docs/schemas/code-comments (no PII tables), generate embeddings, version each ingestion run. No retrieval surface yet (that's Phase 32).
-- [ ] **Phase 32 — RAG retrieval (hybrid + rerank + citations)** — hybrid retrieval (BM25 + vector), rerank, citation chips in the drawer, produce the "rerank lift" figure for the paper.
+- [x] **Phase 31 — Knowledge corpus + pgvector ingestion** — enable pgvector, add `corpus_documents` + `corpus_chunks` tables, build an ingestion script that pulls docs/schemas/code-comments (no PII tables), generate embeddings, version each ingestion run. Shipped 2026-05-13.
+- [x] **Phase 32 — RAG retrieval (hybrid + rerank + citations)** — hybrid retrieval (BM25 + vector) with local CrossEncoder rerank, citation chips in the drawer, "rerank lift" RAGAS harness wired for the paper figure. Shipped 2026-05-20.
 - [ ] **Phase 33 — Tool calling + ReAct loop** ⭐ — tool-boundary PII enforcement pattern (paper contribution #1), adversarial test suite, scoped/redacted/role-checked tool results.
 - [ ] **Phase 34 — Memory + multi-turn context** — per-session memory, conversation summarisation, token-budget management.
 - [ ] **Phase 35 — Multi-model evaluation harness** ⭐ — 5–8 OpenRouter free models compared on agentic tasks; produces paper contributions #2 (empirical) and #3 (failure taxonomy).
@@ -109,9 +109,9 @@ Flag-gated `/api/v1/copilot` API + admin/organizer FAB + SSE streaming + researc
 - [x] 31-04-PLAN.md — Wave 3: Jina + BGE-padded embedding providers + idempotent ingest orchestrator + python -m app.corpus.ingest CLI
 - [ ] 31-05-PLAN.md — Wave 4: real ingestion smoke + HNSW EXPLAIN test + 4 lectures + 4 publication writeups + STATE.md refresh
 
-### Phase 32: RAG retrieval (hybrid + rerank + citations)
+### Phase 32: RAG retrieval (hybrid + rerank + citations) — ✅ shipped 2026-05-20
 
-**Goal:** hybrid retrieval over the Phase-31 corpus (BM25 + vector with rerank), citation chips rendered in the drawer with click-through to the source doc, "rerank lift" figure produced for the paper.
+Hybrid retrieval over the Phase-31 corpus (dense + Postgres FTS fused with RRF in one SQL CTE), local CrossEncoder rerank (`BAAI/bge-reranker-base`), `event: meta` SSE frame (strictly additive to Phase 30), `GET /api/v1/copilot/citations/{chunk_id}` click-through endpoint, frontend chips + side-panel, and the offline RAGAS rerank-lift harness wired for the paper figure. See `.planning/phases/32-rag-retrieval/32-SUMMARY.md` for shipped scope, latencies, coverage, and handoff to Phase 33.
 
 ### Phase 33: Tool calling + ReAct loop ⭐
 
@@ -139,4 +139,4 @@ Flag-gated `/api/v1/copilot` API + admin/organizer FAB + SSE streaming + researc
 
 ---
 
-*Last updated: 2026-05-10 — v1.4 ROADMAP opened. Phase 30 marked shipped. Next action is to plan Phase 31.*
+*Last updated: 2026-05-20 — Phases 31 and 32 marked shipped. v1.4 milestone 3/9 phases complete. Next action is to plan Phase 33 (tool calling + ReAct loop — paper contribution #1).*
