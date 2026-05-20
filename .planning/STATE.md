@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-20T17:56:49.746Z"
+last_updated: "2026-05-20T18:08:53.272Z"
 last_activity: 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via `0019_enable_pgvector_corpus_tables` (round-trip safe), 3 corpus tables (`corpus_documents`, `corpus_chunks` with `vector(1024)`, `ingestion_runs` with 22 paper-grade telemetry columns), 48 corpus tests at 100% coverage on `app.corpus.*`. Real ingestion of the repo produced 619 documents / 4731 chunks (all 1024-dim, local-bge provider, status=succeeded). HNSW index built and provably used by the query planner (`test_corpus_hnsw_index.py` green). 8 docs written (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`).
 progress:
   total_phases: 9
   completed_phases: 2
   total_plans: 16
-  completed_plans: 7
-  percent: 44
+  completed_plans: 8
+  percent: 50
 ---
 
 # Project State
@@ -28,6 +28,8 @@ Branch: `feature/v1.4-phase-31-corpus-pgvector-ingestion` — ready to merge
 **Last activity:** 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via `0019_enable_pgvector_corpus_tables` (round-trip safe), 3 corpus tables (`corpus_documents`, `corpus_chunks` with `vector(1024)`, `ingestion_runs` with 22 paper-grade telemetry columns), 48 corpus tests at 100% coverage on `app.corpus.*`. Real ingestion of the repo produced 619 documents / 4731 chunks (all 1024-dim, local-bge provider, status=succeeded). HNSW index built and provably used by the query planner (`test_corpus_hnsw_index.py` green). 8 docs written (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`).
 
 **2026-05-20 — Phase 32 Plan 06 shipped (citation chips frontend):** `useCopilotStream` consumes the new `event: meta` SSE branch additively (Phase 30 token/done/error untouched). New `CitationChip` (`[N] filename` + tooltip + keyboard-accessible) and `CitationPanel` (side-panel modal, "Source consulted" header, conditional external link) components. Per-message citation snapshot keeps multi-turn history coherent. New `e2e/copilot-citations.spec.js` covered by all 6 Playwright projects via the default testMatch glob (Case A — no CI workflow edit). 243/243 vitest green, chromium Playwright green. Paired learning + publication docs (126 + 187 lines).
+
+**2026-05-20 — Phase 32 Plan 07 shipped (RAGAS rerank-lift harness):** Offline harness at `scripts/eval_rerank_lift.py` drives the Phase 32 pipeline twice (rerank ON / OFF) over a frozen 30-question testset and emits `docs/documentation/32-rag-retrieval/rerank-lift.{csv,png}` with the paper-locked column header `metric,rerank_off,rerank_on,lift`. Eval deps pinned (`ragas==0.4.3`) in a separate `backend/requirements-eval.txt` so the request-path image stays slim (constraint C6). CI smoke (`backend/tests/test_eval_script_smoke.py`) guards the artifact shapes via `pytest.importorskip("ragas")` — 2 passed / 1 skipped. `scripts/generate_testset.py` drives RAGAS `TestsetGenerator` in batches of 5 with sleeps (Pitfall 4). Paired learning + publication docs (124 + 152 lines). Real CSV/PNG values + curated/synthetic testset population are deferred to Andy's offline run (checkpoint:human-action per plan); placeholders ship with correct shape so the figure path and CI guard work end-to-end.
 
 ## Current Status
 
