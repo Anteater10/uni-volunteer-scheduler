@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-20T18:08:53.272Z"
+last_updated: "2026-05-20T18:32:50.581Z"
 last_activity: 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via `0019_enable_pgvector_corpus_tables` (round-trip safe), 3 corpus tables (`corpus_documents`, `corpus_chunks` with `vector(1024)`, `ingestion_runs` with 22 paper-grade telemetry columns), 48 corpus tests at 100% coverage on `app.corpus.*`. Real ingestion of the repo produced 619 documents / 4731 chunks (all 1024-dim, local-bge provider, status=succeeded). HNSW index built and provably used by the query planner (`test_corpus_hnsw_index.py` green). 8 docs written (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`).
 progress:
   total_phases: 9
   completed_phases: 2
   total_plans: 16
-  completed_plans: 8
-  percent: 50
+  completed_plans: 9
+  percent: 56
 ---
 
 # Project State
