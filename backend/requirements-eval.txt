@@ -1,0 +1,26 @@
+# Offline evaluation / paper-figure dependencies — NOT request-path deps.
+#
+# These are NOT installed by the production backend image and NOT added to
+# `requirements.txt`. They are pulled in only by humans running the offline
+# RAGAS harness (`scripts/eval_rerank_lift.py`) to produce the Plan 32-07
+# "rerank lift" figure for the v1.4 paper.
+#
+# Why separate file:
+# * Constraint C6 (request path stays slim) — RAGAS pulls heavy deps
+#   (datasets, langchain shim, pyarrow) that we do not want in the
+#   FastAPI/Celery containers.
+# * CI never installs this file; `backend/tests/test_eval_script_smoke.py`
+#   uses `pytest.importorskip("ragas")` so CI passes without it.
+#
+# Install locally with:
+#   pip install -r backend/requirements-eval.txt
+#
+# Version pin rationale: RAGAS 0.4.x changed its judge-prompt wording in
+# minor releases. Pinning to 0.4.3 (RESEARCH §Standard Stack) keeps the
+# paper figure reproducible across reruns. Do NOT bump without rerunning
+# the harness and replacing the committed CSV+PNG.
+ragas==0.4.3
+matplotlib>=3.8,<4
+datasets>=2.16
+pandas>=2.0
+numpy>=1.26
