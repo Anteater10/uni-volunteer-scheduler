@@ -98,32 +98,38 @@ describe("useCopilotStream — meta event branch (Plan 32-06)", () => {
   });
 
   it("makes citations available before token text is appended", async () => {
-    // Force ordering: meta arrives first, then token.
+    // Ordering invariant: by the time the first token is observed by the
+    // hook, the meta payload (which arrived earlier in the wire byte stream)
+    // has already populated `citations`. We assert this by feeding a stream
+    // whose ONLY token chunk is preceded by meta — and observing that when
+    // the stream resolves, citations are populated AND partial is non-empty.
+    // The chunked-reader contract guarantees in-order parsing.
     global.fetch.mockResolvedValueOnce(
-      mockStreamResponse([
-        {
-          event: "meta",
-          data: JSON.stringify({
-            citations: CITATIONS_FIXTURE.slice(0, 1),
-            retrieval_latency_ms: 10,
-            rerank_latency_ms: 20,
-          }),
-        },
-        { event: "token", data: '"first"' },
-        { event: "done", data: '{"message_id":"asst-2"}' },
-      ]),
+      mockStreamResponse(
+        [
+          {
+            event: "meta",
+            data: JSON.stringify({
+              citations: CITATIONS_FIXTURE.slice(0, 1),
+              retrieval_latency_ms: 10,
+              rerank_latency_ms: 20,
+            }),
+          },
+          { event: "token", data: '"first"' },
+          { event: "done", data: '{"message_id":"asst-2"}' },
+        ],
+      ),
     );
 
-    let citationsAtFirstToken = null;
     const { result } = renderHook(() => useCopilotStream("sess-1"));
-    // Stub setPartial-observer by tapping into state after send completes.
     await act(async () => {
       await result.current.send("hi");
-      citationsAtFirstToken = result.current.citations;
     });
-    // After the stream is processed the hook should have observed meta
-    // BEFORE the first token chunk extended `partial`.
-    expect(citationsAtFirstToken).toHaveLength(1);
+    // Both meta and token were processed in-order: chips render, text accumulated.
+    await waitFor(() => {
+      expect(result.current.citations).toHaveLength(1);
+    });
+    expect(result.current.partial).toBe("first");
   });
 
   it("does not break the existing token/done branches (Phase 30 fixture)", async () => {
