@@ -96,6 +96,10 @@ export function useCopilotStream(sessionId, { onDone, onError } = {}) {
       let assembled = "";
       let messageId = null;
       let streamError = null;
+      // Local copy so onDone/onError see this turn's citations even if React
+      // hasn't flushed the setCitations call into a ref yet.
+      let turnCitations = [];
+      let turnLatencies = { retrieval: null, rerank: null };
 
       try {
         while (true) {
@@ -111,11 +115,13 @@ export function useCopilotStream(sessionId, { onDone, onError } = {}) {
               // Phase 30 invariant (token/done/error untouched) is preserved.
               try {
                 const meta = JSON.parse(ev.data);
-                setCitations(Array.isArray(meta.citations) ? meta.citations : []);
-                setLatencies({
+                turnCitations = Array.isArray(meta.citations) ? meta.citations : [];
+                turnLatencies = {
                   retrieval: meta.retrieval_latency_ms ?? null,
                   rerank: meta.rerank_latency_ms ?? null,
-                });
+                };
+                setCitations(turnCitations);
+                setLatencies(turnLatencies);
               } catch {
                 // malformed meta — ignore so the stream continues
               }
@@ -153,12 +159,17 @@ export function useCopilotStream(sessionId, { onDone, onError } = {}) {
 
       if (streamError) {
         setError(streamError);
-        onError?.(streamError, { messageId, text: assembled });
-        return { messageId, text: assembled, error: streamError };
+        onError?.(streamError, {
+          messageId,
+          text: assembled,
+          citations: turnCitations,
+          latencies: turnLatencies,
+        });
+        return { messageId, text: assembled, error: streamError, citations: turnCitations };
       }
 
-      onDone?.({ messageId, text: assembled });
-      return { messageId, text: assembled, error: null };
+      onDone?.({ messageId, text: assembled, citations: turnCitations, latencies: turnLatencies });
+      return { messageId, text: assembled, error: null, citations: turnCitations };
     },
     [sessionId, onDone, onError],
   );
