@@ -70,6 +70,28 @@ class Citation(BaseModel):
         return v
 
 
+class CitationDetail(BaseModel):
+    """Click-through payload for a single corpus chunk (Phase 32 Plan 05).
+
+    Returned by ``GET /api/v1/copilot/citations/{chunk_id}`` and consumed
+    by Plan 06's citation-chip popover. Distinct from :class:`Citation`
+    (the inline retrieval reference): this shape carries the full quoted
+    ``content`` and a computed ``document_url`` for external linking.
+
+    ``document_url`` is the empty string when
+    ``settings.corpus_source_origin_url`` is unset — operators opt in to
+    external linking by populating that setting (see config.py). An empty
+    URL signals the frontend to render the chip without a hyperlink, so
+    internal repo paths never leak when the origin isn't configured.
+    """
+
+    source_path: str
+    char_start: int
+    char_end: int
+    content: str
+    document_url: str  # "" when origin unset; suppresses link in UI
+
+
 class MetaEvent(BaseModel):
     """Phase 32 SSE ``event: meta`` payload — emitted exactly once, before
     the first ``event: token``.

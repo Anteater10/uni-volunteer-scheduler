@@ -162,7 +162,9 @@ def test_get_citation_404_for_unknown_id(client, db_session):
         headers=auth_headers(client, admin),
     )
     assert rc.status_code == 404
-    assert rc.json() == {"detail": "Citation not found"}
+    # AUDIT-03 global handler in main.py wraps every HTTPException into
+    # {error, code, detail}; we assert only the detail message contract.
+    assert rc.json()["detail"] == "Citation not found"
 
 
 def test_get_citation_403_unauthorized(client, db_session):

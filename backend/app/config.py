@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     jina_embedding_model: str = "jina-embeddings-v3"
     local_embedding_model: str = "BAAI/bge-small-en-v1.5"
 
+    # --- Phase 32 Plan 05: citation click-through external linking ---
+    # Origin URL used to construct CitationDetail.document_url from a
+    # chunk's source_path. Empty default ('') means the click-through
+    # endpoint returns document_url="" — no internal repo path leak.
+    # Operators opt in by setting e.g.
+    # "https://github.com/Anteater10/uni-volunteer-scheduler/blob/main".
+    corpus_source_origin_url: str = ""
+
     # CORS
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 

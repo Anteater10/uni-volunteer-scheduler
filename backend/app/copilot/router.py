@@ -53,6 +53,7 @@ from .retrieval.hybrid import hybrid_search
 from .retrieval.rerank import rerank
 from .schemas import (
     Citation,
+    CitationDetail,
     CopilotMessageCreate,
     CopilotMessageRead,
     CopilotSessionDetail,
@@ -164,6 +165,59 @@ def get_session(
         model_id=sess.model_id,
         system_prompt_version=sess.system_prompt_version,
         messages=[CopilotMessageRead.model_validate(m) for m in sess.messages],
+    )
+
+
+@router.get("/citations/{chunk_id}", response_model=CitationDetail)
+def get_citation(
+    chunk_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> CitationDetail:
+    """Look up a single corpus chunk by id for the citation-chip popover.
+
+    Phase 32 Plan 05. Returns the full quoted ``content`` plus a
+    computed ``document_url``:
+
+    * If ``settings.corpus_source_origin_url`` is empty (default), the
+      URL is the empty string — no internal repo path leak.
+    * Otherwise the URL is ``f"{origin}/{source_path}"`` with both ends
+      normalised (``rstrip('/')`` on origin, ``lstrip('/')`` on the
+      stored path) so neither side can introduce a double-slash.
+
+    ``chunk_id`` is typed as :class:`uuid.UUID` so FastAPI 422s
+    non-UUID inputs at the parse layer — closes the path-traversal
+    threat (T-32-05-01 / RESEARCH §Pattern 6) before any DB I/O.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+
+    row = db.execute(
+        sa_text(
+            "SELECT cc.char_start, cc.char_end, cc.content, cd.source_path "
+            "FROM corpus_chunks cc "
+            "JOIN corpus_documents cd ON cd.id = cc.document_id "
+            "WHERE cc.id = :id"
+        ),
+        {"id": chunk_id},
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Citation not found",
+        )
+
+    origin = settings.corpus_source_origin_url.rstrip("/")
+    document_url = ""
+    if origin:
+        document_url = f"{origin}/{row.source_path.lstrip('/')}"
+
+    return CitationDetail(
+        source_path=row.source_path,
+        char_start=row.char_start,
+        char_end=row.char_end,
+        content=row.content,
+        document_url=document_url,
     )
 
 
