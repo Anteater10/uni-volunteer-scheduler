@@ -10,6 +10,15 @@ OFFLINE ONLY — this is not imported by the FastAPI request path. The
 ``OPENAI_BASE_URL``) are required at runtime; pip-installable from
 ``backend/requirements-eval.txt``.
 
+Free-tier setup
+---------------
+The default judge model is ``openai/gpt-oss-120b:free`` on OpenRouter
+(no paid credit required). The embedder is a *local* sentence-transformers
+BGE model (``BAAI/bge-small-en-v1.5``) that the backend container already
+caches for the request-path corpus retriever — so the whole testset
+generator runs on free resources. Override the judge with
+``--judge-model`` or ``RAGAS_JUDGE_MODEL``.
+
 Usage
 -----
 ::
@@ -19,6 +28,7 @@ Usage
     export OPENAI_API_KEY=$OPENROUTER_API_KEY
     python scripts/generate_testset.py \\
         --num-synthetic 15 \\
+        --judge-model openai/gpt-oss-120b:free \\
         --output docs/documentation/32-rag-retrieval/eval/testset.json
 
 The script *merges* into the output file: it preserves the 15
@@ -45,8 +55,14 @@ from pathlib import Path
 # without the eval virtualenv.
 
 
-BATCH_SIZE = 5
-BATCH_SLEEP = 10.0  # seconds between batches to stay under OpenRouter caps
+# Each batch triggers a full default_transforms pass over the corpus
+# (Summary/NER/Themes/Embedding extractors fire concurrently and saturate
+# OpenRouter free-tier connection limits). Running the whole testset in a
+# single batch means only ONE transform pass, which is the cheapest path
+# under the free-tier rate caps. BATCH_SLEEP is only used if we ever fall
+# back to multi-batch mode.
+BATCH_SIZE = 20
+BATCH_SLEEP = 30.0  # seconds between batches to stay under OpenRouter caps
 
 
 def _load_corpus_documents() -> list[dict]:
@@ -59,7 +75,7 @@ def _load_corpus_documents() -> list[dict]:
     """
     # Local imports — keep CLI startup cheap.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-    from app.db import SessionLocal  # type: ignore
+    from app.database import SessionLocal  # type: ignore
     from sqlalchemy import text as sa_text  # type: ignore
 
     session = SessionLocal()
@@ -72,7 +88,7 @@ def _load_corpus_documents() -> list[dict]:
                 JOIN corpus_documents cd ON cd.id = cc.document_id
                 WHERE cc.embedding_provider = 'local-bge'
                 ORDER BY random()
-                LIMIT 60
+                LIMIT 25
                 """
             )
         ).all()
@@ -83,29 +99,68 @@ def _load_corpus_documents() -> list[dict]:
         session.close()
 
 
-def _generate_synthetic(num: int) -> list[dict]:
-    """Drive RAGAS TestsetGenerator in batches of ``BATCH_SIZE``."""
-    from datasets import Dataset  # type: ignore  # noqa: F401
+def _generate_synthetic(num: int, judge_model: str | None = None) -> list[dict]:
+    """Drive RAGAS 0.4.x TestsetGenerator in batches of ``BATCH_SIZE``.
+
+    RAGAS 0.4 dropped the ``evolutions`` API. The new pipeline is:
+
+        ChatOpenAI -> LangchainLLMWrapper -> TestsetGenerator
+            .generate_with_langchain_docs(docs, testset_size=N)
+
+    Internally that runs ``default_transforms`` over a KnowledgeGraph
+    and samples from ``default_query_distribution``. The output Testset
+    exposes ``samples`` (list of ``TestsetSample``) and ``to_pandas()``
+    with columns ``user_input`` and ``reference`` (and ``reference_contexts``).
+    We map those into the legacy ``question`` / ``ground_truth`` schema
+    that ``_merge`` and the eval harness expect.
+    """
     from langchain_core.documents import Document  # type: ignore
-    from ragas.testset.generator import TestsetGenerator  # type: ignore
-    from ragas.testset.evolutions import simple, multi_context, reasoning  # type: ignore
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # type: ignore
+    from langchain_openai import ChatOpenAI  # type: ignore
+    from ragas.embeddings import LangchainEmbeddingsWrapper  # type: ignore
+    from ragas.llms import LangchainLLMWrapper  # type: ignore
+    from ragas.run_config import RunConfig  # type: ignore
+    from ragas.testset import TestsetGenerator  # type: ignore
 
-    judge_model = os.environ.get(
-        "RAGAS_JUDGE_MODEL", "anthropic/claude-3.5-sonnet"
+    # Default judge: openai/gpt-oss-120b:free on OpenRouter — free tier,
+    # JSON-friendly, no paid credit required. Override with --judge-model
+    # or RAGAS_JUDGE_MODEL.
+    judge_model = (
+        judge_model
+        or os.environ.get("RAGAS_JUDGE_MODEL")
+        or "openai/gpt-oss-120b:free"
     )
+
+    # OpenRouter proxies an OpenAI-shaped API for the judge LLM. The
+    # embedder is local: sentence-transformers BGE-small is already cached
+    # in the backend image (request-path corpus retriever), so the whole
+    # generator stays on free resources. Prefer the new
+    # ``langchain_huggingface`` package when present; fall back to the
+    # community shim otherwise.
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings  # type: ignore
+    except ImportError:
+        from langchain_community.embeddings import (  # type: ignore
+            HuggingFaceEmbeddings,
+        )
+
     embed_model = os.environ.get(
-        "RAGAS_EMBED_MODEL", "openai/text-embedding-3-small"
+        "RAGAS_EMBED_MODEL", "BAAI/bge-small-en-v1.5"
     )
 
-    generator_llm = ChatOpenAI(model=judge_model, temperature=0.0)
-    critic_llm = ChatOpenAI(model=judge_model, temperature=0.0)
-    embeddings = OpenAIEmbeddings(model=embed_model)
+    generator_llm = LangchainLLMWrapper(
+        ChatOpenAI(model=judge_model, temperature=0.0)
+    )
+    generator_embeddings = LangchainEmbeddingsWrapper(
+        HuggingFaceEmbeddings(
+            model_name=embed_model,
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True},
+        )
+    )
 
-    generator = TestsetGenerator.from_langchain(
-        generator_llm=generator_llm,
-        critic_llm=critic_llm,
-        embeddings=embeddings,
+    generator = TestsetGenerator(
+        llm=generator_llm,
+        embedding_model=generator_embeddings,
     )
 
     corpus = _load_corpus_documents()
@@ -114,29 +169,68 @@ def _generate_synthetic(num: int) -> list[dict]:
         for r in corpus
     ]
 
-    distributions = {simple: 0.5, reasoning: 0.25, multi_context: 0.25}
-
     out: list[dict] = []
     remaining = num
     while remaining > 0:
         batch = min(BATCH_SIZE, remaining)
+        # ``generate_with_langchain_docs`` builds the KG + applies
+        # default_transforms internally. Our corpus chunks are short
+        # (markdown paragraphs), so we rely on the default single-hop +
+        # multi-hop mix from default_query_distribution rather than
+        # hand-rolling a synthesizer list.
+        # max_workers=2 throttles RAGAS' default_transforms concurrency so
+        # OpenRouter free-tier connection caps don't trigger
+        # APIConnectionError mid-run. max_retries=15 + max_wait=90 gives
+        # tenacity room to back off through transient 429/503s.
+        run_config = RunConfig(max_workers=2, max_retries=15, max_wait=90, timeout=300)
         ts = generator.generate_with_langchain_docs(
-            docs, test_size=batch, distributions=distributions
+            docs, testset_size=batch, run_config=run_config
         )
-        df = ts.to_pandas()
-        for _, row in df.iterrows():
+        rows = _extract_rows(ts)
+        for row in rows:
+            question = str(row.get("user_input") or row.get("question") or "").strip()
+            ground_truth = str(
+                row.get("reference") or row.get("ground_truth") or ""
+            ).strip()
+            if not question:
+                continue
             out.append(
                 {
                     "id": f"synthetic-{len(out) + 1:02d}",
                     "source": "ragas-testsetgenerator",
-                    "question": str(row.get("question", "")),
-                    "ground_truth": str(row.get("ground_truth", "")),
+                    "question": question,
+                    "ground_truth": ground_truth,
                 }
             )
         remaining -= batch
         if remaining > 0:
             time.sleep(BATCH_SLEEP)
     return out
+
+
+def _extract_rows(testset) -> list[dict]:
+    """Coerce a RAGAS 0.4 Testset into a list[dict].
+
+    Prefer ``.to_pandas()`` because it flattens the SingleTurnSample
+    pydantic model into plain columns. Fall back to walking
+    ``.samples`` if pandas is unavailable for some reason.
+    """
+    try:
+        df = testset.to_pandas()
+        return df.to_dict(orient="records")
+    except Exception:
+        rows: list[dict] = []
+        for sample in getattr(testset, "samples", []):
+            # Each sample wraps an ``eval_sample`` (SingleTurnSample) with
+            # ``user_input`` / ``reference`` attributes.
+            eval_sample = getattr(sample, "eval_sample", sample)
+            rows.append(
+                {
+                    "user_input": getattr(eval_sample, "user_input", ""),
+                    "reference": getattr(eval_sample, "reference", ""),
+                }
+            )
+        return rows
 
 
 def _merge(existing: list[dict], synthetic: list[dict]) -> list[dict]:
@@ -159,6 +253,14 @@ def main() -> int:
         type=Path,
         default=Path("docs/documentation/32-rag-retrieval/eval/testset.json"),
     )
+    parser.add_argument(
+        "--judge-model",
+        default=None,
+        help=(
+            "OpenRouter judge model slug (default: openai/gpt-oss-120b:free "
+            "or RAGAS_JUDGE_MODEL env var)."
+        ),
+    )
     args = parser.parse_args()
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -174,7 +276,7 @@ def main() -> int:
         with args.output.open() as fh:
             existing = json.load(fh)
 
-    synthetic = _generate_synthetic(args.num_synthetic)
+    synthetic = _generate_synthetic(args.num_synthetic, judge_model=args.judge_model)
     merged = _merge(existing, synthetic)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
