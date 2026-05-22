@@ -38,6 +38,7 @@ backend/.coverage
 
 # --- local scratch ---
 screenshots/
+.eval-checkpoint/
 Untitled
 Untitled.*
 # Sample CSVs in repo root (use backend/seeds/ or backend/tests/fixtures/ instead)

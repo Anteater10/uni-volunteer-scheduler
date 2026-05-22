@@ -157,6 +157,35 @@ def _stream_one(
     }
 
 
+def stream_completion_blocking(
+    *,
+    messages: list[dict[str, str]],
+    system_prompt: str,
+    max_tokens: int | None = None,
+) -> str:
+    """Non-streaming variant of :func:`stream_completion`.
+
+    Calls the SAME OpenRouter code path (model selection, primary→fallback
+    retry, usage extraction) and accumulates every token chunk into a
+    single string. Exists for the offline RAGAS harness
+    (``scripts/eval_rerank_lift.py``) which needs a synchronous
+    string-in / string-out call, not a token iterator.
+
+    NOT used by the SSE request path. The caller passes ``system_prompt``
+    separately for ergonomics; we prepend it to ``messages`` as a
+    ``{"role": "system", ...}`` entry and delegate to
+    :func:`stream_completion` unchanged.
+    """
+    full_messages = [{"role": "system", "content": system_prompt}, *messages]
+    parts: list[str] = []
+    for chunk, meta in stream_completion(
+        messages=full_messages, max_tokens=max_tokens
+    ):
+        if not meta and chunk:
+            parts.append(chunk)
+    return "".join(parts)
+
+
 def complete(
     *,
     messages: list[dict[str, str]],
@@ -173,4 +202,9 @@ def complete(
     return "".join(text_parts), final_meta
 
 
-__all__ = ["stream_completion", "complete", "APIError"]
+__all__ = [
+    "stream_completion",
+    "stream_completion_blocking",
+    "complete",
+    "APIError",
+]

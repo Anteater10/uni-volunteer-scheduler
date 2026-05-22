@@ -242,6 +242,167 @@ describe("CopilotDrawer", () => {
     await screen.findByText(/stream failed: runtimeerror/i);
   });
 
+  // ---- Plan 32-06: citation chips wired below assistant messages ----
+  it("renders citation chips from a meta event below the assistant message", async () => {
+    const citations = [
+      { chunk_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", source_path: "docs/a/01.md", char_start: 0, char_end: 5, quote: "alpha", rrf_score: 0.9, rerank_score: 0.9 },
+      { chunk_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", source_path: "docs/b/02.md", char_start: 0, char_end: 5, quote: "beta",  rrf_score: 0.8, rerank_score: 0.8 },
+    ];
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-chips" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrom(
+            sseBlob([
+              { event: "meta", data: JSON.stringify({ citations, retrieval_latency_ms: 12, rerank_latency_ms: 34 }) },
+              { event: "token", data: '"Answer"' },
+              { event: "done",  data: '{"message_id":"asst-chips"}' },
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "hi");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await screen.findByText("Answer");
+
+    const list = await screen.findByRole("list", { name: /sources consulted/i });
+    expect(list.className).toMatch(/overflow-x-auto/);
+    expect(screen.getByRole("button", { name: /citation 1/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /citation 2/i })).toBeInTheDocument();
+  });
+
+  it("caps chips at 5 even when more citations arrive", async () => {
+    const many = Array.from({ length: 8 }).map((_, i) => ({
+      chunk_id: `cccccccc-cccc-cccc-cccc-cccccccccc0${i}`,
+      source_path: `docs/many/${i}.md`,
+      char_start: 0,
+      char_end: 1,
+      quote: `q${i}`,
+      rrf_score: 0.5,
+      rerank_score: 0.5,
+    }));
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-many" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrom(
+            sseBlob([
+              { event: "meta", data: JSON.stringify({ citations: many, retrieval_latency_ms: 1, rerank_latency_ms: 1 }) },
+              { event: "token", data: '"ok"' },
+              { event: "done",  data: '{"message_id":"asst-many"}' },
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "hi");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await screen.findByText("ok");
+    const chips = await screen.findAllByRole("button", { name: /citation \d+/i });
+    expect(chips).toHaveLength(5);
+  });
+
+  it("renders no chip section when meta carries empty citations", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-empty" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrom(
+            sseBlob([
+              { event: "meta", data: JSON.stringify({ citations: [], retrieval_latency_ms: 1, rerank_latency_ms: 1 }) },
+              { event: "token", data: '"plain"' },
+              { event: "done",  data: '{"message_id":"asst-empty"}' },
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "hi");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await screen.findByText("plain");
+    expect(screen.queryByRole("list", { name: /sources consulted/i })).toBeNull();
+  });
+
+  it("clicking a chip opens CitationPanel, closing hides it", async () => {
+    const citations = [
+      { chunk_id: "dddddddd-dddd-dddd-dddd-dddddddddddd", source_path: "docs/d.md", char_start: 0, char_end: 3, quote: "delta", rrf_score: 1, rerank_score: 1 },
+    ];
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-click" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrom(
+            sseBlob([
+              { event: "meta", data: JSON.stringify({ citations, retrieval_latency_ms: 1, rerank_latency_ms: 1 }) },
+              { event: "token", data: '"ans"' },
+              { event: "done",  data: '{"message_id":"asst-click"}' },
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      )
+      // citation detail fetch
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            source_path: "docs/d.md",
+            char_start: 0,
+            char_end: 3,
+            content: "delta-full-content",
+            document_url: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "hi");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await screen.findByText("ans");
+    await userEvent.click(screen.getByRole("button", { name: /citation 1/i }));
+    await screen.findByText(/delta-full-content/);
+    await userEvent.click(screen.getByRole("button", { name: /close source panel/i }));
+    await waitFor(() => {
+      expect(screen.queryByText(/delta-full-content/)).toBeNull();
+    });
+  });
+
   it("invokes onClose when the close button is clicked", async () => {
     const onClose = vi.fn();
     global.fetch = vi.fn().mockResolvedValueOnce(

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-13T22:30:00.000Z"
-last_activity: 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via 0019 migration, 3 corpus tables, 48 corpus tests at 100% coverage on `app.corpus.*`, real ingestion of repo produced 619 documents / 4731 chunks (1024-dim, local BGE provider), HNSW index built and confirmed used by query planner. 8 docs written (4 lectures + 4 publication writeups). Ready to plan Phase 32.
+last_updated: "2026-05-20T22:00:00.000Z"
+last_activity: 2026-05-20 — Phase 32 shipped end-to-end. Live smoke green: `event: meta` fires before first token, 5 citation chips render, side-panel quote works, chips replace on new question, answers grounded (no hallucination). Hybrid retrieval (dense+FTS+RRF in one SQL round-trip) + local CrossEncoder rerank + citations endpoint + frontend chips + RAGAS rerank-lift harness all landed across Plans 32-01..32-09. Coverage gates green at ≥95% on `app.copilot` (99.38%), `app.copilot.retrieval` (100%), `app.corpus` (98.51%). Corpus: 6054 chunks @ local-bge provider. Phase 33 (tool calling + ReAct loop, paper contribution #1) is the next action.
 progress:
   total_phases: 9
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 10
-  percent: 91
+  completed_phases: 3
+  total_plans: 25
+  completed_plans: 18
+  percent: 67
 ---
 
 # Project State
@@ -23,9 +23,13 @@ progress:
 ## Current Position
 
 Milestone: **v1.4 AI Onboarding Copilot** — in progress
-Phase: 31 (knowledge corpus + pgvector ingestion) — ✅ shipped
-Branch: `feature/v1.4-phase-31-corpus-pgvector-ingestion` — ready to merge
-**Last activity:** 2026-05-13 — Phase 31 shipped end-to-end. pgvector enabled via `0019_enable_pgvector_corpus_tables` (round-trip safe), 3 corpus tables (`corpus_documents`, `corpus_chunks` with `vector(1024)`, `ingestion_runs` with 22 paper-grade telemetry columns), 48 corpus tests at 100% coverage on `app.corpus.*`. Real ingestion of the repo produced 619 documents / 4731 chunks (all 1024-dim, local-bge provider, status=succeeded). HNSW index built and provably used by the query planner (`test_corpus_hnsw_index.py` green). 8 docs written (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`).
+Phase: 32 (RAG retrieval — hybrid + rerank + citations) — ✅ shipped
+Branch: `feature/v1.4-phase-32-rag-retrieval` — ready to merge
+**Last activity:** 2026-05-20 — Phase 32 shipped end-to-end. Live smoke green: `event: meta` fires before first token, 5 citation chips render, side-panel quote works, chips replace on new question, answers grounded (no hallucination). Hybrid retrieval (dense+FTS+RRF in one SQL round-trip) + local CrossEncoder rerank + citations endpoint + frontend chips + RAGAS rerank-lift harness all landed across Plans 32-01..32-09. Coverage gates green at ≥95% on `app.copilot` (99.38%), `app.copilot.retrieval` (100%), `app.corpus` (98.51%). Corpus: 6054 chunks @ local-bge provider. See `.planning/phases/32-rag-retrieval/32-SUMMARY.md` for full handoff to Phase 33.
+
+**2026-05-20 — Phase 32 Plan 06 shipped (citation chips frontend):** `useCopilotStream` consumes the new `event: meta` SSE branch additively (Phase 30 token/done/error untouched). New `CitationChip` (`[N] filename` + tooltip + keyboard-accessible) and `CitationPanel` (side-panel modal, "Source consulted" header, conditional external link) components. Per-message citation snapshot keeps multi-turn history coherent. New `e2e/copilot-citations.spec.js` covered by all 6 Playwright projects via the default testMatch glob (Case A — no CI workflow edit). 243/243 vitest green, chromium Playwright green. Paired learning + publication docs (126 + 187 lines).
+
+**2026-05-20 — Phase 32 Plan 07 shipped (RAGAS rerank-lift harness):** Offline harness at `scripts/eval_rerank_lift.py` drives the Phase 32 pipeline twice (rerank ON / OFF) over a frozen 30-question testset and emits `docs/documentation/32-rag-retrieval/rerank-lift.{csv,png}` with the paper-locked column header `metric,rerank_off,rerank_on,lift`. Eval deps pinned (`ragas==0.4.3`) in a separate `backend/requirements-eval.txt` so the request-path image stays slim (constraint C6). CI smoke (`backend/tests/test_eval_script_smoke.py`) guards the artifact shapes via `pytest.importorskip("ragas")` — 2 passed / 1 skipped. `scripts/generate_testset.py` drives RAGAS `TestsetGenerator` in batches of 5 with sleeps (Pitfall 4). Paired learning + publication docs (124 + 152 lines). Real CSV/PNG values + curated/synthetic testset population are deferred to Andy's offline run (checkpoint:human-action per plan); placeholders ship with correct shape so the figure path and CI guard work end-to-end.
 
 ## Current Status
 
@@ -34,7 +38,7 @@ Branch: `feature/v1.4-phase-31-corpus-pgvector-ingestion` — ready to merge
 - ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
 - ✓ v1.3 phases 21, 22, 23, 24, 25, 26, 28, 29 shipped (2026-04-17) — feature expansion complete
 - ⏸ Phase 27 (SMS reminders + no-show nudges, AWS SNS) — **deferred** to a later milestone (TCPA + flag-gated; not a blocker)
-- ▶ v1.4 (AI Onboarding Copilot) — Phase 30 + 31 shipped; phases 32–38 ahead
+- ▶ v1.4 (AI Onboarding Copilot) — Phases 30 + 31 + 32 shipped; phases 33–38 ahead
 
 **v1.3 phase outcomes (9 phases, 21–29):**
 
@@ -52,11 +56,13 @@ Branch: `feature/v1.4-phase-31-corpus-pgvector-ingestion` — ready to merge
 
 ## Next Action
 
-Merge Phase 31 to `main`, then start Phase 32 (RAG retrieval: hybrid + rerank + citations).
-Phase 32 inherits the corpus from Phase 31 — `corpus_documents`, `corpus_chunks` with 1024-dim
-embeddings, HNSW index, and the `embedding_provider` filter affordance. Locked invariants for
-Phase 32: do not change the corpus schema, do not break per-provider cosine isolation, keep 100%
-coverage on `app.copilot.*` AND `app.corpus.*`.
+Merge Phase 32 to `main`, then start Phase 33 (Tool calling + ReAct loop — paper contribution #1).
+Phase 33 inherits the hybrid retrieval modules under `app.copilot.retrieval`, the `event: meta`
+SSE frame, the per-provider invariant pushed into SQL, the working citation chip UX, and the
+RAGAS harness scaffold to extend with tool-use metrics. Locked invariants for Phase 33: do not
+change the corpus schema, do not edit Phase-32 retrieval modules in place (build new modules
+under `app.copilot.tools.*` instead), keep ≥95% coverage on `app.copilot.*`, `app.copilot.retrieval.*`,
+and `app.corpus.*`, and preserve the Phase-30 SSE `token` / `done` / `error` taxonomy.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
@@ -116,5 +122,19 @@ See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-p
 - ✓ 48 corpus tests green
 - ✓ 8 docs (4 lectures + 4 publication writeups under `docs/learning/31-…/` and `docs/documentation/31-…/`)
 
+**Phase 32 outcome (RAG retrieval — hybrid + rerank + citations):**
+
+- ✓ Alembic `0020_add_corpus_chunk_fts_column` — additive tsvector GENERATED column + GIN index (round-trip safe)
+- ✓ Hybrid retrieval (`app.copilot.retrieval`): dense + FTS + RRF in one SQL CTE; per-provider invariant pushed into SQL on both branches
+- ✓ Local CrossEncoder rerank (`BAAI/bge-reranker-base`); no external rerank API (C6 honored)
+- ✓ `event: meta` SSE frame fires before first token; strictly additive to Phase-30 taxonomy
+- ✓ `GET /api/v1/copilot/citations/{chunk_id}` click-through endpoint with UUID validation
+- ✓ Frontend: `CitationChip` + `CitationPanel` + `useCopilotStream` meta branch; per-message snapshot; Playwright spec across all 6 projects
+- ✓ RAGAS rerank-lift offline harness (`scripts/eval_rerank_lift.py`) with frozen 30-Q testset and shape-locked CSV/PNG (real numbers deferred to Andy's offline run)
+- ✓ Coverage gates ≥95%: `app.copilot` 99.38%, `app.copilot.retrieval` 100%, `app.corpus` 98.51%; CI gates locked + regression test pinning thresholds
+- ✓ Live smoke 2026-05-20 green: meta-event-first, 5 chips, side-panel, chip replacement, grounded answers
+- ✓ Corpus consumed: 6054 chunks @ local-bge / `BAAI/bge-small-en-v1.5+pad1024`
+- ✓ Paired learning + documentation writeups for all 7 topic lectures + the phase-overview indexes
+
 ---
-*Last updated: 2026-05-13 — Phase 31 shipped end-to-end. v1.4 milestone 2/9 phases complete; next action is Phase 32 planning (RAG retrieval).*
+*Last updated: 2026-05-20 — Phase 32 shipped end-to-end. v1.4 milestone 3/9 phases complete; next action is Phase 33 planning (Tool calling + ReAct loop — paper contribution #1).*

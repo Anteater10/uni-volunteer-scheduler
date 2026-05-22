@@ -73,6 +73,38 @@ def system_prompt_for(role: models.UserRole) -> str:
     raise ValueError(f"copilot prompt not defined for role {role!r}")
 
 
+def build_retrieved_context_block(citations) -> str:
+    """Render the Phase 32 ``<retrieved_context>`` block.
+
+    Accepts an iterable of :class:`app.copilot.schemas.Citation` (or any
+    object with ``source_path``, ``char_start``, ``char_end``, ``quote``).
+    Returns the empty string when ``citations`` is empty so the appended
+    block remains harmless in graceful-degradation mode.
+    """
+    citations = list(citations or [])
+    lines = ["", "<retrieved_context>"]
+    if not citations:
+        lines.append("(no relevant excerpts retrieved)")
+    else:
+        for idx, c in enumerate(citations, start=1):
+            lines.append(
+                f"[{idx}] source: {c.source_path} "
+                f"(chars {c.char_start}-{c.char_end})"
+            )
+            lines.append(c.quote)
+    lines.append("</retrieved_context>")
+    return "\n".join(lines)
+
+
+def system_prompt_with_context(role: models.UserRole, citations) -> str:
+    """Return the Phase 30 prompt with an appended ``<retrieved_context>`` block.
+
+    The Phase 30 string is preserved verbatim as the prefix — this is
+    enforced by ``test_system_prompt_preserves_phase_30_baseline``.
+    """
+    return system_prompt_for(role) + build_retrieved_context_block(citations)
+
+
 def hash_prompt(prompt: str) -> str:
     """SHA-256 hex of the prompt — recorded on each session row."""
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()

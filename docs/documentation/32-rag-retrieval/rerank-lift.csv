@@ -1,0 +1,4 @@
+metric,rerank_off,rerank_on,lift
+faithfulness,0.8276,0.7995,-0.0281
+answer_relevancy,0.7343,0.7096,-0.0247
+context_relevancy,0.6891,0.7080,0.0189

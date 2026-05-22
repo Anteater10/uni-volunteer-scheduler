@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CopilotSessionRead(BaseModel):
@@ -37,3 +37,71 @@ class CopilotSessionDetail(CopilotSessionRead):
 
 class CopilotMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
+
+
+class Citation(BaseModel):
+    """A single grounded reference returned alongside an assistant message.
+
+    Phase 32 retrieval contract — emitted over SSE before the first token
+    event and persisted on the assistant ``CopilotMessage`` row so reruns
+    of the conversation can re-render the same citations.
+
+    Field shape is load-bearing: Plan 32-04's router serializes this model
+    onto the wire and Plan 32-05's frontend consumes it. Do not rename
+    fields without updating both ends.
+    """
+
+    chunk_id: UUID
+    source_path: str
+    char_start: int
+    char_end: int
+    quote: str
+    rrf_score: float | None = None
+    rerank_score: float | None = None
+
+    @field_validator("char_end")
+    @classmethod
+    def _end_after_start(cls, v: int, info) -> int:
+        start = info.data.get("char_start")
+        if start is not None and v < start:
+            raise ValueError(
+                f"char_end ({v}) must be >= char_start ({start})"
+            )
+        return v
+
+
+class CitationDetail(BaseModel):
+    """Click-through payload for a single corpus chunk (Phase 32 Plan 05).
+
+    Returned by ``GET /api/v1/copilot/citations/{chunk_id}`` and consumed
+    by Plan 06's citation-chip popover. Distinct from :class:`Citation`
+    (the inline retrieval reference): this shape carries the full quoted
+    ``content`` and a computed ``document_url`` for external linking.
+
+    ``document_url`` is the empty string when
+    ``settings.corpus_source_origin_url`` is unset — operators opt in to
+    external linking by populating that setting (see config.py). An empty
+    URL signals the frontend to render the chip without a hyperlink, so
+    internal repo paths never leak when the origin isn't configured.
+    """
+
+    source_path: str
+    char_start: int
+    char_end: int
+    content: str
+    document_url: str  # "" when origin unset; suppresses link in UI
+
+
+class MetaEvent(BaseModel):
+    """Phase 32 SSE ``event: meta`` payload — emitted exactly once, before
+    the first ``event: token``.
+
+    Strictly additive to the Phase 30 SSE taxonomy: ``token`` / ``done`` /
+    ``error`` shapes are unchanged. The router serialises this with
+    :py:meth:`pydantic.BaseModel.model_dump_json` so the embedded
+    :class:`Citation` ``chunk_id`` UUIDs become JSON strings on the wire.
+    """
+
+    citations: list[Citation] = Field(default_factory=list)
+    retrieval_latency_ms: int
+    rerank_latency_ms: int

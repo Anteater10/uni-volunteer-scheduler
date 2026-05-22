@@ -4,12 +4,17 @@ import React, { useEffect, useRef, useState } from "react";
 import { X, Send, Loader2 } from "lucide-react";
 import copilotApi from "./api";
 import useCopilotStream from "./useCopilotStream";
+import CitationChip from "./CitationChip";
+import CitationPanel from "./CitationPanel";
+
+const MAX_CHIPS = 5; // RESEARCH §Open Q #2 — show top-5, horizontal scroll if narrow
 
 export default function CopilotDrawer({ open, onClose }) {
   const [sessionId, setSessionId] = useState(null);
-  const [messages, setMessages] = useState([]); // [{role, content}]
+  const [messages, setMessages] = useState([]); // [{role, content, citations?}]
   const [input, setInput] = useState("");
   const [bootError, setBootError] = useState(null);
+  const [activeCitation, setActiveCitation] = useState(null);
   const scrollRef = useRef(null);
 
   // Lazy session creation when the drawer first opens.
@@ -31,12 +36,20 @@ export default function CopilotDrawer({ open, onClose }) {
   }, [open, sessionId]);
 
   const { send, streaming, partial, error } = useCopilotStream(sessionId, {
-    onDone: ({ text }) => {
-      setMessages((m) => [...m, { role: "assistant", content: text }]);
+    onDone: ({ text, citations }) => {
+      // Snapshot citations at the moment the turn completes so each assistant
+      // bubble carries its own citation set (later turns won't overwrite).
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: text, citations: citations || [] },
+      ]);
     },
     onError: (_err, info) => {
       if (info?.text) {
-        setMessages((m) => [...m, { role: "assistant", content: info.text }]);
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", content: info.text, citations: info.citations || [] },
+        ]);
       }
     },
   });
@@ -101,7 +114,27 @@ export default function CopilotDrawer({ open, onClose }) {
             </p>
           )}
           {messages.map((m, i) => (
-            <MessageBubble key={i} role={m.role} content={m.content} />
+            <React.Fragment key={i}>
+              <MessageBubble role={m.role} content={m.content} />
+              {m.role === "assistant" &&
+                Array.isArray(m.citations) &&
+                m.citations.length > 0 && (
+                  <div
+                    role="list"
+                    aria-label="Sources consulted"
+                    className="flex gap-2 overflow-x-auto mt-1 mb-1 pb-1"
+                  >
+                    {m.citations.slice(0, MAX_CHIPS).map((c, idx) => (
+                      <CitationChip
+                        key={c.chunk_id || idx}
+                        index={idx + 1}
+                        citation={c}
+                        onClick={() => setActiveCitation(c.chunk_id)}
+                      />
+                    ))}
+                  </div>
+                )}
+            </React.Fragment>
           ))}
           {streaming && partial && (
             <MessageBubble role="assistant" content={partial} streaming />
@@ -136,6 +169,12 @@ export default function CopilotDrawer({ open, onClose }) {
           </button>
         </form>
       </aside>
+      {activeCitation && (
+        <CitationPanel
+          chunkId={activeCitation}
+          onClose={() => setActiveCitation(null)}
+        />
+      )}
     </>
   );
 }
