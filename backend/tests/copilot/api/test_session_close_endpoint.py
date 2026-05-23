@@ -94,6 +94,37 @@ def test_close_session_flag_off_returns_404(client, db_session, monkeypatch):
     assert resp.status_code == 404
 
 
+def test_message_append_updates_last_message_at(
+    client, db_session, monkeypatch
+):
+    """Task 9: posting a user message bumps last_message_at on the session."""
+    from app.copilot import router as copilot_router
+
+    admin = _admin(db_session, email="lma_admin@example.com")
+    sess = _make_session(db_session, admin)
+    original_ts = sess.last_message_at
+
+    # Skip the retrieval pipeline (irrelevant to this assertion and avoids
+    # hitting the embeddings stack in a unit test).
+    monkeypatch.setattr(
+        copilot_router,
+        "_run_retrieval",
+        lambda db, query_text: ([], 0, 0),
+    )
+
+    resp = client.post(
+        f"/api/v1/copilot/sessions/{sess.id}/messages",
+        headers=auth_headers(client, admin),
+        json={"content": "hi there"},
+    )
+    # The handler returns a StreamingResponse; the DB mutation for
+    # last_message_at happens synchronously before streaming starts.
+    assert resp.status_code == 200, resp.text
+    db_session.expire_all()
+    refreshed = db_session.get(models.CopilotSession, sess.id)
+    assert refreshed.last_message_at > original_ts
+
+
 def test_close_session_volunteer_forbidden(client, db_session):
     p = make_user(
         db_session,

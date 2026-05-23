@@ -455,6 +455,10 @@ def post_message(
         content=payload.content,
     )
     db.add(user_msg)
+    # Phase 34-03 Task 9: bump last_message_at so the idle sweeper can
+    # detect activity. Committed alongside the user-message insert so the
+    # signal lands in the same transaction as the data it tracks.
+    sess.last_message_at = datetime.now(timezone.utc)
     db.commit()
 
     # ----- Phase 32: retrieve BEFORE first token -----
