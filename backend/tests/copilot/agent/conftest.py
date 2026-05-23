@@ -7,14 +7,12 @@ import pytest
 from app.models import Event, UserRole
 from tests.fixtures.helpers import make_user
 
-# Auto-reset the registry between tests (registry doesn't exist yet — leave a placeholder)
-# We'll uncomment this when Task 13 lands the registry.
-# @pytest.fixture(autouse=True)
-# def _reset_registry():
-#     from app.copilot.agent.tools import registry
-#     registry._reset_for_tests()
-#     yield
-#     registry._reset_for_tests()
+@pytest.fixture(autouse=True)
+def _reset_registry():
+    from app.copilot.agent.tools import registry
+    registry._reset_for_tests()
+    yield
+    registry._reset_for_tests()
 
 
 @pytest.fixture
