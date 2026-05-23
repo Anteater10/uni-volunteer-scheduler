@@ -11,11 +11,14 @@ import uuid
 from sqlalchemy import text
 
 from app.copilot.agent.boundary.role_scope import scope_for
+from app.copilot.agent.confirmation import execute_after_confirmation, store_pending
 from app.copilot.agent.loop import run_turn
 from app.copilot.agent.tools import registry
 from app.copilot.agent.tools.find_understaffed_modules import (
     FIND_UNDERSTAFFED_MODULES_TOOL,
 )
+from app.copilot.agent.tools.get_module_roster import GET_MODULE_ROSTER_TOOL
+from app.copilot.agent.tools.send_reminder_email import SEND_REMINDER_EMAIL_TOOL
 
 
 class _StubLLM:
@@ -135,3 +138,101 @@ def test_f2_admin_most_understaffed_cross_school(db_session, seed_full_world):
     tool_result = [e for e in events if e.type == "tool_result"][0]
     schools = {row["school"] for row in tool_result.result["modules"]}
     assert {"Adams Elementary", "Brandon Middle"}.issubset(schools)
+
+
+# ---------------------------------------------------------------------------
+# F3 — organizer emails no-shows (write + confirmation)
+# ---------------------------------------------------------------------------
+
+
+def test_f3_organizer_emails_no_shows_with_confirmation(
+    db_session, seed_full_world, monkeypatch
+):
+    """Read roster, then write+confirm send_reminder_email, then execute."""
+    registry.register(GET_MODULE_ROSTER_TOOL)
+    registry.register(SEND_REMINDER_EMAIL_TOOL)
+    org_a_id = seed_full_world["org_a_id"]
+    sess = _make_session(db_session, org_a_id)
+    scope = scope_for(role="organizer", caller_id=org_a_id)
+    evt_a1 = seed_full_world["event_ids"]["A-evt-1"]
+    # First seeded signup belongs to A-evt-1.
+    target_vol_id = seed_full_world["volunteer_ids"][0]
+
+    calls = []
+    monkeypatch.setattr(
+        "app.copilot.agent.tools.send_reminder_email._dispatch",
+        lambda email, template: calls.append((email, template)) or True,
+    )
+
+    llm = _StubLLM(
+        [
+            {
+                "tool_calls": [
+                    {
+                        "name": "get_module_roster",
+                        "args": {"module_id": str(evt_a1)},
+                    }
+                ]
+            },
+            {
+                "tool_calls": [
+                    {
+                        "name": "send_reminder_email",
+                        "args": {
+                            "participant_ids": [str(target_vol_id)],
+                            "template": "reminder_v1",
+                        },
+                    }
+                ]
+            },
+        ]
+    )
+
+    events = list(
+        run_turn(
+            db=db_session,
+            llm=llm,
+            scope=scope,
+            session_id=sess,
+            user_message="email everyone on A-evt-1",
+            retrieval_context="",
+        )
+    )
+
+    types = [e.type for e in events]
+    assert "tool_call" in types
+    assert "confirmation_request" in types
+    # Loop paused — no final_answer yet.
+    assert "final_answer" not in types
+
+    confirm_evt = [e for e in events if e.type == "confirmation_request"][0]
+    call_id = confirm_evt.call_id
+
+    # Simulate the user clicking approve: the router would normally have
+    # stored the pending entry; the loop's _begin path skips that, so we
+    # park it manually before invoking execute_after_confirmation.
+    store_pending(
+        call_id=call_id,
+        tool_name="send_reminder_email",
+        args=confirm_evt.args,
+        session_id=sess,
+    )
+
+    out = execute_after_confirmation(
+        db_session,
+        call_id,
+        scope_role="organizer",
+        caller_id=org_a_id,
+    )
+    assert out["result"]["sent_count"] == 1
+    assert out["result"]["failed_count"] == 0
+    assert len(calls) == 1
+
+    row = db_session.execute(
+        text(
+            "SELECT confirmation_status FROM copilot_tool_calls "
+            "WHERE call_id = :c"
+        ),
+        {"c": call_id},
+    ).first()
+    assert row.confirmation_status == "executed"
