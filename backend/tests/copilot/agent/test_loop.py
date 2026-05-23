@@ -64,3 +64,28 @@ def test_loop_emits_tool_call_then_final_answer(db_session, seed_events):
     # call_id flows from _begin through both events
     assert events[0].call_id == events[1].call_id
     assert events[0].tool == "list_modules"
+
+
+def test_loop_stops_at_cap(db_session, seed_events):
+    uuid_a, _uuid_b, _ids = seed_events
+    sess = _make_session(db_session, uuid_a)
+    registry.register(LIST_MODULES_TOOL)
+
+    spam = [
+        {"tool_calls": [{"name": "list_modules", "args": {"week": "2026-W22"}}]}
+    ] * 10
+    llm = _StubLLM(spam)
+    scope = scope_for(role="admin", caller_id=None)
+
+    events = list(
+        run_turn(
+            db=db_session,
+            llm=llm,
+            scope=scope,
+            session_id=sess,
+            user_message="x",
+            retrieval_context="",
+        )
+    )
+    error = [e for e in events if e.type == "error"]
+    assert error and "cap" in error[0].message
