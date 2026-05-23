@@ -84,5 +84,13 @@ def invoke(
     """
     call_id = _begin(db, tool=tool, scope=scope, args=args, session_id=session_id)
     if tool.requires_confirmation:
+        from app.copilot.agent.confirmation import store_pending
+
+        store_pending(
+            call_id=call_id,
+            tool_name=tool.name,
+            args=args,
+            session_id=session_id,
+        )
         return {"call_id": call_id, "status": "pending_confirmation"}
     return _complete(db, call_id=call_id, tool=tool, scope=scope, args=args)
