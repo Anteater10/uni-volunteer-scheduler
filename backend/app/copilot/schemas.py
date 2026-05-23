@@ -92,6 +92,17 @@ class CitationDetail(BaseModel):
     document_url: str  # "" when origin unset; suppresses link in UI
 
 
+class ConfirmBody(BaseModel):
+    """Body for ``POST /api/v1/copilot/confirm/{call_id}`` (Phase 33-09).
+
+    Carries the human decision for a parked write tool call. ``approved=True``
+    runs the deferred handler; ``approved=False`` flips the audit row to
+    ``rejected`` without executing.
+    """
+
+    approved: bool
+
+
 class MetaEvent(BaseModel):
     """Phase 32 SSE ``event: meta`` payload — emitted exactly once, before
     the first ``event: token``.

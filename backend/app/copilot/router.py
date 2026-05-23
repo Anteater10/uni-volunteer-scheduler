@@ -54,11 +54,18 @@ from .retrieval.rerank import rerank
 from .schemas import (
     Citation,
     CitationDetail,
+    ConfirmBody,
     CopilotMessageCreate,
     CopilotMessageRead,
     CopilotSessionDetail,
     CopilotSessionRead,
     MetaEvent,
+)
+from .agent.audit_log import CallNotFound, update_status
+from .agent.confirmation import (
+    ConfirmationExpired,
+    ConfirmationNotFound,
+    execute_after_confirmation,
 )
 
 
@@ -475,3 +482,59 @@ def _sse_stream(
         )
     else:
         yield _sse_format("done", json.dumps({"message_id": str(assistant_msg.id)}))
+
+
+# ---------------------------------------------------------------------------
+# Phase 33-09: confirm-or-reject a parked write tool call
+# ---------------------------------------------------------------------------
+
+
+@router.post("/confirm/{call_id}")
+def confirm(
+    call_id: str,
+    body: ConfirmBody,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> dict:
+    """Resolve a parked write tool call awaiting human confirmation.
+
+    Maps :class:`ConfirmationExpired` to HTTP 410 and
+    :class:`ConfirmationNotFound` to HTTP 404. On rejection the audit row
+    is flipped to ``rejected``; on approval the deferred handler runs
+    under the caller's role + id and the redacted result is returned.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+
+    if not body.approved:
+        # Drop the pending entry if present; the audit row stamp is the
+        # source of truth for "rejected".
+        from .agent.confirmation import _PENDING
+
+        _PENDING.pop(call_id, None)
+        try:
+            update_status(db, call_id, status="rejected")
+        except CallNotFound:
+            raise HTTPException(status_code=404, detail="confirmation not found")
+        return {"call_id": call_id, "status": "rejected"}
+
+    role_value = (
+        current_user.role.value
+        if hasattr(current_user.role, "value")
+        else str(current_user.role)
+    )
+    try:
+        return execute_after_confirmation(
+            db,
+            call_id,
+            scope_role=role_value,
+            caller_id=current_user.id,
+        )
+    except ConfirmationExpired:
+        try:
+            update_status(db, call_id, status="expired")
+        except CallNotFound:
+            pass
+        raise HTTPException(status_code=410, detail="confirmation expired")
+    except ConfirmationNotFound:
+        raise HTTPException(status_code=404, detail="confirmation not found")

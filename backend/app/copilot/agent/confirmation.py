@@ -103,6 +103,9 @@ def execute_after_confirmation(
     p = _PENDING.get(call_id)
     if p is None:
         raise ConfirmationNotFound(call_id)
+    if time.time() - p.created_at > TTL_SECONDS:
+        _PENDING.pop(call_id, None)
+        raise ConfirmationExpired(call_id)
     tool = registry.get_tool(p.tool_name)
     scope = scope_for(role=scope_role, caller_id=caller_id)
     raw = tool.handler(db, scope, p.args)
