@@ -535,4 +535,11 @@ celery.conf.beat_schedule = {
         "task": "app.tasks.reminders.check_and_send_reminders",
         "schedule": 900.0,
     },
+    # Phase 34-03 Task 10 — close any copilot session whose last_message_at
+    # is older than 30 min and not yet closed, and enqueue the profile
+    # extractor for each. 5-min cadence keeps drift bounded.
+    "copilot-sweep-idle-sessions": {
+        "task": "app.tasks.extract_profile.sweep_idle_sessions",
+        "schedule": 300.0,
+    },
 }
