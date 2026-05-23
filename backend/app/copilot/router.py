@@ -62,11 +62,13 @@ from .schemas import (
     MetaEvent,
 )
 from .agent.audit_log import CallNotFound, update_status
+from .agent.boundary.role_scope import scope_for
 from .agent.confirmation import (
     ConfirmationExpired,
     ConfirmationNotFound,
     execute_after_confirmation,
 )
+from .agent.loop import run_turn
 
 
 logger = logging.getLogger(__name__)
@@ -409,11 +411,107 @@ def post_message(
     prompt_blob = json.dumps(chat_messages, sort_keys=True)
     prompt_hash = hashlib.sha256(prompt_blob.encode("utf-8")).hexdigest()
 
+    if settings.copilot_agent_loop_enabled:
+        retrieval_text = appended_block
+        role_value = (
+            current_user.role.value
+            if hasattr(current_user.role, "value")
+            else str(current_user.role)
+        )
+        agent_llm = _get_agent_llm()
+        return StreamingResponse(
+            _agent_sse_stream(
+                db=db,
+                sess=sess,
+                user_message=payload.content,
+                retrieval_context=retrieval_text,
+                role_value=role_value,
+                caller_id=current_user.id,
+                agent_llm=agent_llm,
+                meta_event=meta,
+            ),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no"},
+        )
+
     return StreamingResponse(
         _sse_stream(db, sess, chat_messages, prompt_hash, meta),
         media_type="text/event-stream",
         headers={"X-Accel-Buffering": "no"},
     )
+
+
+def _get_agent_llm():
+    """Indirection hook for the ReAct-loop LLM adapter.
+
+    Tests monkeypatch this to inject a scripted stub. The default
+    implementation raises NotImplementedError — production wiring for a
+    structured tool-calling adapter ships in a follow-up sub-phase. The
+    flag ``copilot_agent_loop_enabled`` is off by default so this is not
+    hit in deployed environments.
+    """
+    raise NotImplementedError(
+        "agent loop enabled but no structured-LLM adapter is configured; "
+        "monkeypatch app.copilot.router._get_agent_llm in tests"
+    )
+
+
+def _agent_sse_stream(
+    *,
+    db: Session,
+    sess: models.CopilotSession,
+    user_message: str,
+    retrieval_context: str,
+    role_value: str,
+    caller_id,
+    agent_llm,
+    meta_event: MetaEvent,
+) -> Iterator[bytes]:
+    """Stream :class:`run_turn` events as SSE.
+
+    Each yielded ``BaseModel`` event becomes ``event: <event.type>\\ndata:
+    <model_dump_json>\\n\\n``. A terminal ``done`` event is appended so the
+    existing client contract (a final ``done``) is preserved.
+    """
+    yield _sse_format("meta", meta_event.model_dump_json())
+    scope = scope_for(role=role_value, caller_id=caller_id)
+    final_text_parts: list[str] = []
+    try:
+        for event in run_turn(
+            db=db,
+            llm=agent_llm,
+            scope=scope,
+            session_id=sess.id,
+            user_message=user_message,
+            retrieval_context=retrieval_context,
+        ):
+            payload_json = event.model_dump_json()
+            yield _sse_format(event.type, payload_json)
+            if event.type == "final_answer":
+                final_text_parts.append(event.text)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("copilot_agent_stream_failed session_id=%s", sess.id)
+        yield _sse_format(
+            "error", json.dumps({"error": exc.__class__.__name__})
+        )
+        return
+
+    # Persist the assistant turn so /sessions/{id} replays it like Phase 30.
+    full_text = "".join(final_text_parts)
+    response_hash = (
+        hashlib.sha256(full_text.encode("utf-8")).hexdigest() if full_text else None
+    )
+    assistant_msg = models.CopilotMessage(
+        session_id=sess.id,
+        role=models.CopilotMessageRole.assistant,
+        content=full_text,
+        prompt_hash=None,
+        response_hash=response_hash,
+    )
+    db.add(assistant_msg)
+    db.commit()
+    db.refresh(assistant_msg)
+    yield _sse_format("done", json.dumps({"message_id": str(assistant_msg.id)}))
 
 
 def _sse_format(event: str, data: str) -> bytes:
