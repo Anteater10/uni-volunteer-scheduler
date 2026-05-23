@@ -116,3 +116,16 @@ class MetaEvent(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     retrieval_latency_ms: int
     rerank_latency_ms: int
+
+
+class CopilotProfileRead(BaseModel):
+    """Phase 34: cross-session profile blob (free-form text).
+
+    Returned by ``GET /api/v1/copilot/profile``. Empty rows (or missing
+    rows) serialise as ``{"profile_text": "", "updated_at": null,
+    "version": 0}`` — the frontend treats that shape as "no profile yet".
+    """
+
+    profile_text: str
+    updated_at: datetime | None
+    version: int
