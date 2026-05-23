@@ -18,6 +18,7 @@ from app.copilot.agent.tools.find_understaffed_modules import (
     FIND_UNDERSTAFFED_MODULES_TOOL,
 )
 from app.copilot.agent.tools.get_module_roster import GET_MODULE_ROSTER_TOOL
+from app.copilot.agent.tools.move_participant import MOVE_PARTICIPANT_TOOL
 from app.copilot.agent.tools.send_reminder_email import SEND_REMINDER_EMAIL_TOOL
 
 
@@ -236,3 +237,83 @@ def test_f3_organizer_emails_no_shows_with_confirmation(
         {"c": call_id},
     ).first()
     assert row.confirmation_status == "executed"
+
+
+# ---------------------------------------------------------------------------
+# F4 — admin moves participant with confirmation
+# ---------------------------------------------------------------------------
+
+
+def test_f4_admin_moves_participant_with_confirmation(db_session, seed_full_world):
+    """Admin scripts a move_participant; loop pauses, manual approval executes."""
+    from app.models import Signup
+    registry.register(MOVE_PARTICIPANT_TOOL)
+    admin_id = seed_full_world["admin_id"]
+    sess = _make_session(db_session, admin_id)
+    scope = scope_for(role="admin", caller_id=admin_id)
+
+    target_vol_id = seed_full_world["volunteer_ids"][0]
+    from_event = seed_full_world["event_ids"]["A-evt-1"]
+    to_event = seed_full_world["event_ids"]["A-evt-2"]
+    to_slot = seed_full_world["slot_ids"]["A-evt-2"]
+
+    sign = (
+        db_session.query(Signup).filter(Signup.volunteer_id == target_vol_id).first()
+    )
+    assert sign is not None
+    original_slot = sign.slot_id
+
+    llm = _StubLLM(
+        [
+            {
+                "tool_calls": [
+                    {
+                        "name": "move_participant",
+                        "args": {
+                            "participant_id": str(target_vol_id),
+                            "from_module": str(from_event),
+                            "to_module": str(to_event),
+                        },
+                    }
+                ]
+            },
+        ]
+    )
+
+    events = list(
+        run_turn(
+            db=db_session,
+            llm=llm,
+            scope=scope,
+            session_id=sess,
+            user_message="move that volunteer to A-evt-2",
+            retrieval_context="",
+        )
+    )
+
+    types = [e.type for e in events]
+    assert "tool_call" in types
+    assert "confirmation_request" in types
+    assert "final_answer" not in types
+
+    confirm_evt = [e for e in events if e.type == "confirmation_request"][0]
+    call_id = confirm_evt.call_id
+
+    store_pending(
+        call_id=call_id,
+        tool_name="move_participant",
+        args=confirm_evt.args,
+        session_id=sess,
+    )
+
+    out = execute_after_confirmation(
+        db_session,
+        call_id,
+        scope_role="admin",
+        caller_id=admin_id,
+    )
+    assert out["result"]["status"] == "confirmed"
+
+    db_session.refresh(sign)
+    assert sign.slot_id == to_slot
+    assert sign.slot_id != original_slot
