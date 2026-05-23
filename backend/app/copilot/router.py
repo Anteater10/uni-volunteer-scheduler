@@ -43,10 +43,12 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user
 from . import llm
+from .memory.profile_block import load_profile_block
 from .prompts import (
     SYSTEM_PROMPT_VERSION,
     build_retrieved_context_block,
     hash_prompt,
+    render_with_profile,
     system_prompt_for,
 )
 from .retrieval.citations import chunks_to_citations
@@ -124,11 +126,18 @@ def create_session(
     _require_flag_on()
     _require_admin_or_organizer(current_user)
 
-    prompt = system_prompt_for(current_user.role)
+    # Phase 34-07: inject the cross-session profile block exactly once at
+    # session start. The block is hashed into ``system_prompt_hash`` so the
+    # session is reproducible; mid-session profile rewrites do not affect
+    # the running session.
+    profile_block = load_profile_block(db, user_id=current_user.id)
+    prompt, prompt_hash = render_with_profile(
+        current_user.role, profile_block=profile_block
+    )
     sess = models.CopilotSession(
         user_id=current_user.id,
         model_id=settings.copilot_primary_model,
-        system_prompt_hash=hash_prompt(prompt),
+        system_prompt_hash=prompt_hash,
         system_prompt_version=SYSTEM_PROMPT_VERSION,
     )
     db.add(sess)

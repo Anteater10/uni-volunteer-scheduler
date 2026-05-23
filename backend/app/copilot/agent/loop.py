@@ -63,8 +63,21 @@ def run_turn(
     context_window: int = CONTEXT_WINDOW_DEFAULT,
 ) -> Iterator[Any]:
     tools = registry.get_tools_for_role(scope.role)
+    profile_block = ""
+    try:
+        from app.copilot.memory.profile_block import load_profile_block
+
+        profile_block = load_profile_block(db, user_id=scope.caller_id)
+    except Exception:
+        # Profile retrieval is best-effort — never break a turn over it.
+        profile_block = ""
     messages = [
-        {"role": "system", "content": _system_prompt(scope, retrieval_context)},
+        {
+            "role": "system",
+            "content": _system_prompt(
+                scope, retrieval_context, profile_block=profile_block
+            ),
+        },
         {"role": "user", "content": user_message},
     ]
     tool_calls_used = 0
@@ -172,13 +185,23 @@ def run_turn(
             )
 
 
-def _system_prompt(scope, retrieval_context: str) -> str:
-    return (
-        f"You are a copilot for a UCSB SciTrek scheduler. "
-        f"Current role: {scope.role}. "
-        f"You may only act within that role's scope. "
-        f"Retrieved context (use when helpful):\n{retrieval_context}"
-    )
+def _system_prompt(
+    scope, retrieval_context: str, *, profile_block: str = ""
+) -> str:
+    parts = [
+        (
+            f"You are a copilot for a UCSB SciTrek scheduler. "
+            f"Current role: {scope.role}. "
+            f"You may only act within that role's scope."
+        )
+    ]
+    if profile_block:
+        parts.append(profile_block)
+    if retrieval_context:
+        parts.append(
+            f"Retrieved context (use when helpful):\n{retrieval_context}"
+        )
+    return "\n\n".join(parts)
 
 
 def _preview(tool, args) -> str:
