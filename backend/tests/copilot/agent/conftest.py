@@ -9,10 +9,13 @@ from tests.fixtures.helpers import make_user
 
 @pytest.fixture(autouse=True)
 def _reset_registry():
+    from app.copilot.agent import confirmation
     from app.copilot.agent.tools import registry
     registry._reset_for_tests()
+    confirmation._reset_for_tests()
     yield
     registry._reset_for_tests()
+    confirmation._reset_for_tests()
 
 
 @pytest.fixture
