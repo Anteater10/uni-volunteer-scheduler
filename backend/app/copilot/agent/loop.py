@@ -83,6 +83,17 @@ def run_turn(
                 yield ErrorEvent(message=f"unknown tool {call['name']!r}")
                 return
 
+            # Defence-in-depth (Phase 33-11 adversarial cat 2): even though we
+            # only advertise role-appropriate tools to the LLM via
+            # ``get_tools_for_role``, a confused or adversarial LLM may still
+            # emit a tool name outside its role. Refuse here so the role
+            # boundary is enforced at call-site, not just at advertisement.
+            if scope.role not in tool.allowed_roles:
+                yield ErrorEvent(
+                    message=f"tool {tool.name!r} not allowed for role {scope.role!r}"
+                )
+                return
+
             call_id = _begin(
                 db, tool=tool, scope=scope, args=call["args"], session_id=session_id
             )
