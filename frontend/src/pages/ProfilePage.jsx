@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../state/useAuth";
 import { PageHeader, Card, Button, Label } from "../components/ui";
+import CopilotMemorySettings from "../copilot/CopilotMemorySettings";
 
 export default function ProfilePage() {
   const { user, logout } = useAuth();
@@ -32,6 +33,10 @@ export default function ProfilePage() {
           )}
         </div>
       </Card>
+
+      <div className="mt-4">
+        <CopilotMemorySettings />
+      </div>
 
       <div className="mt-4 flex flex-col gap-2">
         {/* TODO(copy): change-password route lands in a future phase */}
