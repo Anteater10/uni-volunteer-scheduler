@@ -32,7 +32,7 @@ from dataclasses import asdict
 from typing import Callable, Iterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
@@ -57,6 +57,7 @@ from .schemas import (
     ConfirmBody,
     CopilotMessageCreate,
     CopilotMessageRead,
+    CopilotProfileRead,
     CopilotSessionDetail,
     CopilotSessionRead,
     MetaEvent,
@@ -174,6 +175,32 @@ def get_session(
         model_id=sess.model_id,
         system_prompt_version=sess.system_prompt_version,
         messages=[CopilotMessageRead.model_validate(m) for m in sess.messages],
+    )
+
+
+@router.get("/profile", response_model=CopilotProfileRead)
+def get_profile(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> CopilotProfileRead:
+    """Phase 34-02: read the caller's cross-session profile blob.
+
+    Missing rows serialise as the documented "empty" shape so the frontend
+    has a stable contract regardless of whether the extractor has run yet.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    row = (
+        db.query(models.CopilotUserProfile)
+        .filter(models.CopilotUserProfile.user_id == current_user.id)
+        .first()
+    )
+    if row is None:
+        return CopilotProfileRead(profile_text="", updated_at=None, version=0)
+    return CopilotProfileRead(
+        profile_text=row.profile_text,
+        updated_at=row.updated_at,
+        version=row.version,
     )
 
 
