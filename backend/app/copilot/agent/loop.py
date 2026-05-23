@@ -108,9 +108,22 @@ def run_turn(
                 )
                 return  # pause turn; resumed by /confirm endpoint
 
-            out = _complete(
-                db, call_id=call_id, tool=tool, scope=scope, args=call["args"]
-            )
+            try:
+                out = _complete(
+                    db, call_id=call_id, tool=tool, scope=scope, args=call["args"]
+                )
+            except Exception as exc:
+                # Defence-in-depth (Phase 33-11 adversarial cat 6): if a tool
+                # handler raises (e.g. attacker-supplied args violate a
+                # database constraint), do not let the exception bubble out
+                # of the boundary — the upstream session would otherwise
+                # surface a stack trace to the LLM/UI. Emit a generic error
+                # and stop the turn. The audit row was already written by
+                # ``_begin`` so the attempt is forensically recoverable.
+                yield ErrorEvent(
+                    message=f"tool {tool.name!r} failed: {type(exc).__name__}"
+                )
+                return
             yield ToolResultEvent(
                 call_id=out["call_id"],
                 result=out["result"],
