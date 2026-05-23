@@ -780,6 +780,11 @@ class CopilotSession(Base):
     model_id = Column(String(255), nullable=False)
     system_prompt_hash = Column(String(64), nullable=False)
     system_prompt_version = Column(String(32), nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    last_message_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    profile_extracted_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User")
     messages = relationship(
@@ -1006,3 +1011,27 @@ class CorpusChunk(Base):
             "document_id", "chunk_index", name="uq_corpus_chunks_doc_idx"
         ),
     )
+
+
+class CopilotUserProfile(Base):
+    """Phase 34: cross-session free-form profile blob per user.
+
+    One row per user. Rewritten end-of-session by the extractor Celery task
+    (see ``app.tasks.extract_profile``). No history table — each rewrite
+    overwrites ``profile_text`` and bumps ``version``.
+    """
+
+    __tablename__ = "copilot_user_profiles"
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    profile_text = Column(Text, nullable=False, server_default="")
+    version = Column(Integer, nullable=False, server_default="0")
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user = relationship("User")
