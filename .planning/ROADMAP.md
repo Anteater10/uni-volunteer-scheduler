@@ -21,7 +21,7 @@ Phase numbering continues from v1.3 (ended at 29); v1.4 starts at Phase 30.
 - [x] **Phase 30 — Streaming chat MVP** — flag-gated `/api/v1/copilot` + admin/organizer FAB + SSE streaming + research-grade telemetry (`copilot_sessions`, `copilot_messages`). Shipped 2026-05-08.
 - [x] **Phase 31 — Knowledge corpus + pgvector ingestion** — enable pgvector, add `corpus_documents` + `corpus_chunks` tables, build an ingestion script that pulls docs/schemas/code-comments (no PII tables), generate embeddings, version each ingestion run. Shipped 2026-05-13.
 - [x] **Phase 32 — RAG retrieval (hybrid + rerank + citations)** — hybrid retrieval (BM25 + vector) with local CrossEncoder rerank, citation chips in the drawer, "rerank lift" RAGAS harness wired for the paper figure. Shipped 2026-05-20.
-- [ ] **Phase 33 — Tool calling + ReAct loop** ⭐ — tool-boundary PII enforcement pattern (paper contribution #1), adversarial test suite, scoped/redacted/role-checked tool results.
+- [x] **Phase 33 — Tool calling + ReAct loop** ⭐ — tool-boundary PII enforcement pattern (paper contribution #1), adversarial test suite, scoped/redacted/role-checked tool results. Shipped 2026-05-23.
 - [ ] **Phase 34 — Memory + multi-turn context** — per-session memory, conversation summarisation, token-budget management.
 - [ ] **Phase 35 — Multi-model evaluation harness** ⭐ — 5–8 OpenRouter free models compared on agentic tasks; produces paper contributions #2 (empirical) and #3 (failure taxonomy).
 - [ ] **Phase 36 — DSPy / prompt-program experiment** — optional, paper-strengthening; programmatic prompt optimisation comparison.
@@ -113,9 +113,9 @@ Flag-gated `/api/v1/copilot` API + admin/organizer FAB + SSE streaming + researc
 
 Hybrid retrieval over the Phase-31 corpus (dense + Postgres FTS fused with RRF in one SQL CTE), local CrossEncoder rerank (`BAAI/bge-reranker-base`), `event: meta` SSE frame (strictly additive to Phase 30), `GET /api/v1/copilot/citations/{chunk_id}` click-through endpoint, frontend chips + side-panel, and the offline RAGAS rerank-lift harness wired for the paper figure. See `.planning/phases/32-rag-retrieval/32-SUMMARY.md` for shipped scope, latencies, coverage, and handoff to Phase 33.
 
-### Phase 33: Tool calling + ReAct loop ⭐
+### Phase 33: Tool calling + ReAct loop ⭐ — ✅ shipped 2026-05-23
 
-**Goal:** tool-boundary PII enforcement pattern (paper contribution #1). Tools return scoped, redacted, role-checked aggregates — the model sees counts and summaries, never volunteer rows. ReAct loop with retries on tool errors. Adversarial test suite green.
+Tool-boundary PII enforcement pattern (paper contribution #1). 12 tools (8 read + 4 write) registered through a `Tool` dataclass + role-scoped registry, all flowing through a uniform `invoke()` that applies a three-layer boundary (schema filter / role scope / redactor) before any tool result reaches the LLM. Write tools gated behind a TTL-bounded confirmation card. ReAct loop (`run_turn`) caps at 6 tool calls + 2 malformed-response retries per turn. Adversarial suite: 35/35 across 7 categories (Cat 1–3 100% at 100% pass bar; Cat 4–7 100% at ≥80% pass bar). New audit table `copilot_tool_calls` (Alembic `0021`). Agent loop wired into `/api/copilot/chat` behind `COPILOT_AGENT_LOOP_ENABLED` (defaults off, preserves Phase 30/32 token-stream behavior). See `.planning/phases/33-tool-calling-react/SUMMARY.md` for shipped scope, test counts, adversarial CSV, and handoff to Phase 34.
 
 ### Phase 34: Memory + multi-turn context
 
@@ -139,4 +139,4 @@ Hybrid retrieval over the Phase-31 corpus (dense + Postgres FTS fused with RRF i
 
 ---
 
-*Last updated: 2026-05-20 — Phases 31 and 32 marked shipped. v1.4 milestone 3/9 phases complete. Next action is to plan Phase 33 (tool calling + ReAct loop — paper contribution #1).*
+*Last updated: 2026-05-23 — Phase 33 marked shipped. v1.4 milestone 4/9 phases complete. Next action is to plan Phase 34 (memory + multi-turn context).*

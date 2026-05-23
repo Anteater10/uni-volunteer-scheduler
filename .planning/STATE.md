@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-20T22:00:00.000Z"
-last_activity: 2026-05-20 — Phase 32 shipped end-to-end. Live smoke green: `event: meta` fires before first token, 5 citation chips render, side-panel quote works, chips replace on new question, answers grounded (no hallucination). Hybrid retrieval (dense+FTS+RRF in one SQL round-trip) + local CrossEncoder rerank + citations endpoint + frontend chips + RAGAS rerank-lift harness all landed across Plans 32-01..32-09. Coverage gates green at ≥95% on `app.copilot` (99.38%), `app.copilot.retrieval` (100%), `app.corpus` (98.51%). Corpus: 6054 chunks @ local-bge provider. Phase 33 (tool calling + ReAct loop, paper contribution #1) is the next action.
+last_updated: "2026-05-23T18:00:00.000Z"
+last_activity: 2026-05-23 — Phase 33 shipped (tool calling + ReAct + PII tool boundary — paper contribution #1). 12 tools (8 read + 4 write) flow through a uniform invoke() that chains a three-layer boundary (schema filter / role scope / redactor) plus an audit-log writer; write tools gated behind a TTL confirmation card. Agent loop (`run_turn`) caps at 6 tool calls + 2 malformed-response retries. Adversarial suite green at 35/35 across 7 categories (Cat 1–3 100% at 100% pass bar; Cat 4–7 100% at ≥80% pass bar). New audit table `copilot_tool_calls` via Alembic `0021`. Agent loop wired into /api/copilot/chat behind `COPILOT_AGENT_LOOP_ENABLED` (defaults off; Phase 30/32 token-stream behavior preserved). Backend copilot tests: 99 agent unit + 35 adversarial. Frontend copilot tests: 42 (ConfirmationCard, ToolCallIndicator, drawer integration). Phase 34 (memory + multi-turn / conversation summarisation) is the next action.
 progress:
   total_phases: 9
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 25
   completed_plans: 18
-  percent: 67
+  percent: 75
 ---
 
 # Project State
@@ -23,9 +23,9 @@ progress:
 ## Current Position
 
 Milestone: **v1.4 AI Onboarding Copilot** — in progress
-Phase: 32 (RAG retrieval — hybrid + rerank + citations) — ✅ shipped
-Branch: `feature/v1.4-phase-32-rag-retrieval` — ready to merge
-**Last activity:** 2026-05-20 — Phase 32 shipped end-to-end. Live smoke green: `event: meta` fires before first token, 5 citation chips render, side-panel quote works, chips replace on new question, answers grounded (no hallucination). Hybrid retrieval (dense+FTS+RRF in one SQL round-trip) + local CrossEncoder rerank + citations endpoint + frontend chips + RAGAS rerank-lift harness all landed across Plans 32-01..32-09. Coverage gates green at ≥95% on `app.copilot` (99.38%), `app.copilot.retrieval` (100%), `app.corpus` (98.51%). Corpus: 6054 chunks @ local-bge provider. See `.planning/phases/32-rag-retrieval/32-SUMMARY.md` for full handoff to Phase 33.
+Phase: 33 (Tool calling + ReAct + PII tool boundary) — ✅ shipped
+Branch: `feature/v1.4-phase-33-tool-calling-react` — ready to merge
+**Last activity:** 2026-05-23 — Phase 33 shipped (paper contribution #1). 12 tools (8 read + 4 write) registered through a `Tool` dataclass + role-scoped registry; uniform `invoke()` chains the three-layer boundary (schema filter → role scope → redactor) and writes the audit log. Write tools gated behind a TTL `_PENDING` confirmation store and surfaced via `ConfirmationCard` + a `POST /api/v1/copilot/confirm/{call_id}` endpoint. Agent loop (`run_turn`) caps at 6 tool calls + 2 malformed-response retries; SSE event taxonomy is strictly additive to Phase 30 (`tool_use` / `tool_result` / `confirmation_required`). Adversarial 35/35 across 7 categories; CSV at `docs/documentation/33-tool-calling-react/adversarial-pass-rates.csv`. Audit log table `copilot_tool_calls` via Alembic `0021`. See `.planning/phases/33-tool-calling-react/SUMMARY.md` for full handoff to Phase 34.
 
 **2026-05-20 — Phase 32 Plan 06 shipped (citation chips frontend):** `useCopilotStream` consumes the new `event: meta` SSE branch additively (Phase 30 token/done/error untouched). New `CitationChip` (`[N] filename` + tooltip + keyboard-accessible) and `CitationPanel` (side-panel modal, "Source consulted" header, conditional external link) components. Per-message citation snapshot keeps multi-turn history coherent. New `e2e/copilot-citations.spec.js` covered by all 6 Playwright projects via the default testMatch glob (Case A — no CI workflow edit). 243/243 vitest green, chromium Playwright green. Paired learning + publication docs (126 + 187 lines).
 
@@ -38,7 +38,7 @@ Branch: `feature/v1.4-phase-32-rag-retrieval` — ready to merge
 - ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
 - ✓ v1.3 phases 21, 22, 23, 24, 25, 26, 28, 29 shipped (2026-04-17) — feature expansion complete
 - ⏸ Phase 27 (SMS reminders + no-show nudges, AWS SNS) — **deferred** to a later milestone (TCPA + flag-gated; not a blocker)
-- ▶ v1.4 (AI Onboarding Copilot) — Phases 30 + 31 + 32 shipped; phases 33–38 ahead
+- ▶ v1.4 (AI Onboarding Copilot) — Phases 30 + 31 + 32 + 33 shipped; phases 34–38 ahead
 
 **v1.3 phase outcomes (9 phases, 21–29):**
 
@@ -56,13 +56,17 @@ Branch: `feature/v1.4-phase-32-rag-retrieval` — ready to merge
 
 ## Next Action
 
-Merge Phase 32 to `main`, then start Phase 33 (Tool calling + ReAct loop — paper contribution #1).
-Phase 33 inherits the hybrid retrieval modules under `app.copilot.retrieval`, the `event: meta`
-SSE frame, the per-provider invariant pushed into SQL, the working citation chip UX, and the
-RAGAS harness scaffold to extend with tool-use metrics. Locked invariants for Phase 33: do not
-change the corpus schema, do not edit Phase-32 retrieval modules in place (build new modules
-under `app.copilot.tools.*` instead), keep ≥95% coverage on `app.copilot.*`, `app.copilot.retrieval.*`,
-and `app.corpus.*`, and preserve the Phase-30 SSE `token` / `done` / `error` taxonomy.
+Merge Phase 33 to `main`, then start Phase 34 (Memory + multi-turn context — conversation
+summarisation and token-budget management). Phase 34 inherits the Phase 33 agent loop's SSE
+event taxonomy (`tool_use` / `tool_result` / `confirmation_required`), the audit log table
+`copilot_tool_calls`, the three-layer boundary (which memory recall must re-apply at read
+time so cached tool results don't bypass redaction), and the `COPILOT_AGENT_LOOP_ENABLED`
+flag (Phase 34 should not flip the default — ship behind the same flag until Phase 37).
+Locked invariants for Phase 34: do not touch the Phase 33 tool surface (additive new tools
+only — no rename/reshape of `list_modules`, `get_module_roster`, etc.), do not change the
+`_PENDING` confirmation contract (Phase 37 swaps the backing store; the interface stays
+stable), keep the Phase-30 SSE `token` / `done` / `error` taxonomy additive-only, and re-
+apply the redactor whenever previously-retrieved tool data is surfaced from memory.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
@@ -136,5 +140,27 @@ See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-p
 - ✓ Corpus consumed: 6054 chunks @ local-bge / `BAAI/bge-small-en-v1.5+pad1024`
 - ✓ Paired learning + documentation writeups for all 7 topic lectures + the phase-overview indexes
 
+**Phase 33 outcome (Tool calling + ReAct + PII tool boundary):**
+
+- ✓ Alembic `0021_add_copilot_tool_calls` — audit log table; session_id / caller_id UUID FKs; ORM relationship
+- ✓ Three-layer PII boundary in `app.copilot.agent.boundary`: `schema_filter` → `role_scope` → `redactor`
+- ✓ `Tool` dataclass + role-scoped registry; uniform `invoke()` chains audit + redactor for every tool result
+- ✓ 12 tools shipped: 8 read (`list_modules`, `get_module_roster`, `find_understaffed_modules`, `participant_history`, `signup_stats_for_week`, `signup_trend`, `find_module_by_name`, `current_user_context`) + 4 write (`send_reminder_email`, `nudge_understaffed_module`, `create_module_from_template`, `move_participant`)
+- ✓ Confirmation gate with TTL (`_PENDING` in-memory store; Phase 37 swaps to DB-backed); `execute_after_confirmation(call_id, db)` runs the deferred write only after explicit approval
+- ✓ Agent loop `run_turn()` caps at 6 tool calls + 2 malformed-response retries per turn; SSE events `tool_use` / `tool_result` / `confirmation_required` strictly additive to Phase-30 taxonomy
+- ✓ Router: `POST /api/v1/copilot/confirm/{call_id}`; agent loop wired into `/api/copilot/chat` behind `COPILOT_AGENT_LOOP_ENABLED` (defaults off; Phase 30/32 token-stream behavior preserved)
+- ✓ Frontend: `ConfirmationCard` + `ToolCallIndicator`; drawer renders confirmation cards and posts decisions; 42 frontend copilot tests green
+- ✓ F1–F5 functional scenarios green (organizer/admin × read/write × multi-hop)
+- ✓ Adversarial suite 35/35 across 7 categories — Cat 1–3 100% at 100% pass bar, Cat 4–7 100% at ≥80% pass bar; CSV at `docs/documentation/33-tool-calling-react/adversarial-pass-rates.csv`
+- ✓ Backend copilot tests: 99 agent unit + 35 adversarial (~134 total for this phase)
+- ✓ Paired learning + documentation writeups for all 10 sub-phase topics (01–09 + 11)
+
+**Phase 33 known issues / deferred:**
+
+- `Module` → `Event` model-name discrepancy handled by adaptation; LLM-facing tool names retained as `*_module*` to match org domain vocabulary
+- `_dispatch` seams in `send_reminder_email` and `nudge_understaffed_module` need production wiring to the real Celery tasks (Phase 37)
+- `participant_history` derives `school` from latest event because the `Volunteer` model has no `school` column
+- `_PENDING` is in-memory — acceptable for v1 single-worker local; Phase 37 swaps to a DB-backed pending store
+
 ---
-*Last updated: 2026-05-20 — Phase 32 shipped end-to-end. v1.4 milestone 3/9 phases complete; next action is Phase 33 planning (Tool calling + ReAct loop — paper contribution #1).*
+*Last updated: 2026-05-23 — Phase 33 shipped end-to-end. v1.4 milestone 4/9 phases complete; next action is Phase 34 planning (Memory + multi-turn context).*
