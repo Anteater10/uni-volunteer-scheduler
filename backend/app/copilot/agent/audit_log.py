@@ -9,6 +9,12 @@ Two operations:
 
 Schema is locked by Alembic ``0021_add_copilot_tool_calls`` and the
 ``CopilotToolCall`` ORM model in ``app/models.py``.
+
+Commit semantics: this module commits every row immediately. The audit
+trail is durability-over-atomicity by design — if a tool execution or
+ReAct loop rolls back its own transaction, the audit row of the attempt
+must survive. Callers should not pass a session they expect to control
+the transaction of; treat this writer as owning its own boundary.
 """
 from __future__ import annotations
 
@@ -19,6 +25,10 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+
+class CallNotFound(Exception):
+    """Raised when update_status is called with a call_id that does not exist."""
 
 
 def write_call(
@@ -74,7 +84,7 @@ def update_status(
     ``executed_at`` is only set when ``status == 'executed'`` so denied /
     errored calls keep ``executed_at IS NULL`` (useful for reporting).
     """
-    db.execute(
+    result_proxy = db.execute(
         text(
             "UPDATE copilot_tool_calls "
             "SET confirmation_status = :st, "
@@ -91,6 +101,9 @@ def update_status(
             "cid": call_id,
         },
     )
+    if result_proxy.rowcount == 0:
+        db.rollback()
+        raise CallNotFound(f"no audit row for call_id {call_id!r}")
     db.commit()
 
 

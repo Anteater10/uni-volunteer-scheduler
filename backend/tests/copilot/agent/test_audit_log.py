@@ -4,7 +4,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from app.copilot.agent.audit_log import update_status, write_call
+from app.copilot.agent.audit_log import CallNotFound, update_status, write_call
 
 
 @pytest.fixture
@@ -109,3 +109,8 @@ def test_update_status_marks_executed(db_session, seeded_session):
     assert row.result_json == {"ok": True}
     assert row.redactions_applied == 2
     assert row.executed_at is not None
+
+
+def test_update_status_raises_on_unknown_call_id(db_session):
+    with pytest.raises(CallNotFound):
+        update_status(db_session, "nonexistent", status="executed")
