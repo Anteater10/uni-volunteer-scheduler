@@ -1,4 +1,5 @@
 from . import registry
+from .create_module_from_template import CREATE_MODULE_FROM_TEMPLATE_TOOL
 from .current_user_context import CURRENT_USER_CONTEXT_TOOL
 from .find_module_by_name import FIND_MODULE_BY_NAME_TOOL
 from .find_understaffed_modules import FIND_UNDERSTAFFED_MODULES_TOOL
@@ -20,3 +21,4 @@ registry.register(FIND_MODULE_BY_NAME_TOOL)
 registry.register(CURRENT_USER_CONTEXT_TOOL)
 registry.register(SEND_REMINDER_EMAIL_TOOL)
 registry.register(NUDGE_UNDERSTAFFED_MODULE_TOOL)
+registry.register(CREATE_MODULE_FROM_TEMPLATE_TOOL)

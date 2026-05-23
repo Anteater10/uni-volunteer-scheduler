@@ -1,0 +1,116 @@
+"""create_module_from_template write tool (admin-only).
+
+Creates a new Event from a ModuleTemplate, scheduled for the given ISO week.
+
+Plan-vs-reality:
+- ModuleTemplate is slug-keyed (no integer template_id). We accept the slug
+  as ``template_id`` in the tool args; the LLM treats it as an opaque
+  string. The internal lookup uses ``ModuleTemplate.slug``.
+- Event.start_date / end_date are NOT NULL columns. We synthesize the
+  Monday of the target ISO week (00:00 UTC) and add the template's
+  ``duration_minutes`` for end_date. The richer scheduling flow (slots,
+  etc.) is intentionally out of scope here — this tool only creates the
+  skeleton Event row that organizers can then flesh out via the UI.
+- Owner: admin-only tool, so we pin Event.owner_id to the calling admin's
+  caller_id. If the admin's caller_id is None (e.g. system caller in
+  tests), the handler falls back to the first available admin user; tests
+  exercise the explicit caller path.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.copilot.agent.boundary.role_scope import Scope
+from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools.base import Tool
+from app.models import Event, ModuleTemplate, User, UserRole
+
+_PII_SCHEMA = ["new_module_id", "name", "week"]
+
+_TEMPLATE_NOT_FOUND = {"error": "template not found"}
+
+
+def _iso_week_monday(week: str) -> date:
+    """Parse e.g. ``2026-W22`` into the Monday of that ISO week."""
+    year_part, week_part = week.split("-W")
+    return date.fromisocalendar(int(year_part), int(week_part), 1)
+
+
+def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
+    template_id = args["template_id"]
+    week = args["week"]
+
+    template = (
+        db.query(ModuleTemplate)
+        .filter(ModuleTemplate.slug == template_id)
+        .one_or_none()
+    )
+    if template is None:
+        return dict(_TEMPLATE_NOT_FOUND)
+
+    year_part, week_part = week.split("-W")
+    year = int(year_part)
+    week_number = int(week_part)
+    monday = _iso_week_monday(week)
+    start_dt = datetime.combine(monday, time(0, 0), tzinfo=timezone.utc)
+    end_dt = start_dt + timedelta(minutes=template.duration_minutes)
+
+    owner_id = scope.caller_id
+    if owner_id is None:
+        admin = (
+            db.query(User).filter(User.role == UserRole.admin).first()
+        )
+        owner_id = admin.id if admin is not None else None
+    if owner_id is None:
+        # No admin exists to own the row — surface as not-found rather than
+        # crashing the agent loop.
+        return {"error": "no admin available to own the new module"}
+
+    event = Event(
+        owner_id=owner_id,
+        title=template.name,
+        module_slug=template.slug,
+        start_date=start_dt,
+        end_date=end_dt,
+        year=year,
+        week_number=week_number,
+    )
+    db.add(event)
+    db.flush()
+
+    payload = {
+        "new_module_id": str(event.id),
+        "name": event.title,
+        "week": week,
+    }
+    return schema_apply(payload, allowed_fields=_PII_SCHEMA)
+
+
+CREATE_MODULE_FROM_TEMPLATE_TOOL = Tool(
+    name="create_module_from_template",
+    description=(
+        "Create a new module (event) from a template, scheduled for the given ISO week. "
+        "Admin only. Requires user confirmation."
+    ),
+    json_schema={
+        "type": "object",
+        "properties": {
+            "template_id": {
+                "type": "string",
+                "description": "ModuleTemplate slug.",
+            },
+            "week": {
+                "type": "string",
+                "description": "ISO week, e.g. 2026-W22.",
+            },
+        },
+        "required": ["template_id", "week"],
+    },
+    allowed_roles=["admin"],
+    requires_confirmation=True,
+    pii_schema=_PII_SCHEMA,
+    handler=_handler,
+)
