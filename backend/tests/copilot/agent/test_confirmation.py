@@ -6,10 +6,12 @@ import pytest
 from sqlalchemy import text
 
 from app.copilot.agent.boundary.role_scope import scope_for
+from app.copilot.agent.audit_log import write_call
 from app.copilot.agent.confirmation import (
     ConfirmationExpired,
     ConfirmationNotFound,
     _PENDING,
+    execute_after_confirmation,
     resolve,
     store_pending,
 )
@@ -88,3 +90,68 @@ def test_invoke_stores_pending_for_write_tools(db_session, seed_events):
     p = _PENDING[out["call_id"]]
     assert p.tool_name == "fake_write"
     assert p.args == {"x": 1}
+
+
+# ---- Task 32 ----------------------------------------------------------------
+
+
+def test_execute_after_confirmation_runs_handler(db_session, seed_events):
+    uuid_a, _uuid_b, _ids = seed_events
+    session_id = _make_session(db_session, uuid_a)
+
+    fake = Tool(
+        name="fake_write2",
+        description="",
+        json_schema={"type": "object"},
+        allowed_roles=["admin"],
+        requires_confirmation=True,
+        pii_schema=["sent"],
+        handler=lambda db, scope, args: {"sent": args["n"]},
+    )
+    registry.register(fake)
+
+    call_id = write_call(
+        db_session,
+        session_id=session_id,
+        role="admin",
+        caller_id=None,
+        tool_name="fake_write2",
+        args={"n": 5},
+        requires_confirmation=True,
+    )
+    store_pending(
+        call_id=call_id,
+        tool_name="fake_write2",
+        args={"n": 5},
+        session_id=session_id,
+    )
+
+    result = execute_after_confirmation(
+        db_session,
+        call_id,
+        scope_role="admin",
+        caller_id=None,
+    )
+
+    assert result["result"] == {"sent": 5}
+    assert result["redactions"] == 0
+    assert call_id not in _PENDING
+
+    row = db_session.execute(
+        text(
+            "SELECT confirmation_status FROM copilot_tool_calls "
+            "WHERE call_id = :c"
+        ),
+        {"c": call_id},
+    ).first()
+    assert row.confirmation_status == "executed"
+
+
+def test_execute_after_confirmation_unknown_raises(db_session):
+    with pytest.raises(ConfirmationNotFound):
+        execute_after_confirmation(
+            db_session,
+            "no-such-call",
+            scope_role="admin",
+            caller_id=None,
+        )

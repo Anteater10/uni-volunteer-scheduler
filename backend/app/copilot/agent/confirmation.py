@@ -81,5 +81,43 @@ def resolve(call_id: str, *, approved: bool) -> Decision:
     return Decision(call_id=call_id, approved=approved)
 
 
+def execute_after_confirmation(
+    db,
+    call_id: str,
+    *,
+    scope_role: str,
+    caller_id: Any | None,
+) -> dict[str, Any]:
+    """Run the deferred handler for ``call_id`` and stamp the audit row.
+
+    Looks up the pending entry, resolves the tool from the registry, runs
+    the handler under the resolved scope, scrubs the result, then flips
+    the audit row to ``executed`` and consumes the pending entry. The
+    audit row was originally written as ``pending`` by ``invoke()``.
+    """
+    from app.copilot.agent.audit_log import update_status
+    from app.copilot.agent.boundary.redactor import scrub
+    from app.copilot.agent.boundary.role_scope import scope_for
+    from app.copilot.agent.tools import registry
+
+    p = _PENDING.get(call_id)
+    if p is None:
+        raise ConfirmationNotFound(call_id)
+    tool = registry.get_tool(p.tool_name)
+    scope = scope_for(role=scope_role, caller_id=caller_id)
+    raw = tool.handler(db, scope, p.args)
+    scrubbed, events = scrub(raw, declared=True)
+    redactions = len(events)
+    update_status(
+        db,
+        call_id,
+        status="executed",
+        result=scrubbed,
+        redactions=redactions,
+    )
+    _PENDING.pop(call_id, None)
+    return {"call_id": call_id, "result": scrubbed, "redactions": redactions}
+
+
 def _reset_for_tests() -> None:
     _PENDING.clear()
