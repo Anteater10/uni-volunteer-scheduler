@@ -54,3 +54,32 @@ def test_invoke_writes_audit_row_and_returns_result(db_session, seed_events):
     assert row.redactions_applied == 0
     assert row.tool_name == "list_modules"
     assert row.role == "admin"
+
+
+def test_organizer_cannot_see_other_organizers_modules(db_session, seed_events):
+    uuid_a, _uuid_b, _ids = seed_events
+    session_id = _make_session(db_session, uuid_a)
+    scope = scope_for(role="organizer", caller_id=uuid_a)
+
+    out = invoke(
+        db_session,
+        tool=LIST_MODULES_TOOL,
+        scope=scope,
+        args={"week": "2026-W22"},
+        session_id=session_id,
+    )
+
+    names = [m["name"] for m in out["result"]["modules"]]
+    # Organizer A sees their own two events, never B's.
+    assert sorted(names) == ["A-evt-1", "A-evt-2"]
+    assert "B-evt-1" not in names
+
+    row = db_session.execute(
+        text(
+            "SELECT confirmation_status, role FROM copilot_tool_calls "
+            "WHERE call_id = :c"
+        ),
+        {"c": out["call_id"]},
+    ).first()
+    assert row.confirmation_status == "executed"
+    assert row.role == "organizer"
