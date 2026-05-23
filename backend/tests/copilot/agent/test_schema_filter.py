@@ -22,3 +22,18 @@ def test_preserves_nested_structure_when_listed():
 
 def test_empty_result_when_nothing_allowed():
     assert apply({"x": 1}, allowed_fields=[]) == {}
+
+
+def test_scalar_parent_dropped_when_nested_rule_specified():
+    assert apply({"module": "Forces"}, allowed_fields=["module.name"]) == {}
+    assert apply({"module": None}, allowed_fields=["module.name"]) == {}
+    assert apply({"module": 42}, allowed_fields=["module.name"]) == {}
+
+
+def test_deeply_nested_three_levels():
+    row = {"a": {"b": {"c": 1, "d": 2}}}
+    assert apply(row, allowed_fields=["a.b.c"]) == {"a": {"b": {"c": 1}}}
+
+
+def test_missing_parent_key_no_error():
+    assert apply({"id": 1}, allowed_fields=["module.name", "id"]) == {"id": 1}
