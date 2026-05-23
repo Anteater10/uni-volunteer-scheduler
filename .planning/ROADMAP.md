@@ -23,7 +23,7 @@ Phase numbering continues from v1.3 (ended at 29); v1.4 starts at Phase 30.
 - [x] **Phase 32 — RAG retrieval (hybrid + rerank + citations)** — hybrid retrieval (BM25 + vector) with local CrossEncoder rerank, citation chips in the drawer, "rerank lift" RAGAS harness wired for the paper figure. Shipped 2026-05-20.
 - [x] **Phase 33 — Tool calling + ReAct loop** ⭐ — tool-boundary PII enforcement pattern (paper contribution #1), adversarial test suite, scoped/redacted/role-checked tool results. Shipped 2026-05-23.
 - [ ] **Phase 34 — Memory + multi-turn context** — per-session memory, conversation summarisation, token-budget management.
-- [ ] **Phase 35 — Multi-model evaluation harness** ⭐ — 5–8 OpenRouter free models compared on agentic tasks; produces paper contributions #2 (empirical) and #3 (failure taxonomy).
+- [ ] **Phase 35 — Multi-model evaluation harness** ⭐ — human-feedback collection (per-response thumbs + end-of-session 1-5 rating) + 5–8 OpenRouter free models compared on agentic tasks. Produces paper contributions #2 (empirical comparison combining RAGAS + human feedback) and #3 (failure taxonomy).
 - [ ] **Phase 36 — DSPy / prompt-program experiment** — optional, paper-strengthening; programmatic prompt optimisation comparison.
 - [ ] **Phase 37 — Production hardening** — rate limits, cost caps with warning/hard-stop, structured-log retention policy.
 - [ ] **Phase 38 — Deploy + admin handoff** — SciTrek admin uses copilot weekly for ≥2 weeks; written feedback collected for the paper.
@@ -123,7 +123,18 @@ Tool-boundary PII enforcement pattern (paper contribution #1). 12 tools (8 read 
 
 ### Phase 35: Multi-model evaluation harness ⭐
 
-**Goal:** 5–8 OpenRouter free models compared on agentic tasks; produces paper contributions #2 (empirical comparison) and #3 (failure taxonomy). Output published as `docs/documentation/35-eval-results.md`.
+**Goal:** combine automated and human evaluation signals, then compare 5–8 OpenRouter free models on agentic tasks. Produces paper contributions #2 (empirical comparison) and #3 (failure taxonomy). Output published as `docs/documentation/35-eval-results.md`.
+
+**Sub-phase 35-01 — Human-feedback collection (ships first, data starts flowing immediately):**
+- Per-response thumbs up / thumbs down on every assistant message in `CopilotDrawer`.
+- End-of-session 1-5 happiness rating prompted when the drawer closes (or session expires).
+- New tables `copilot_message_ratings` (FK → `copilot_messages.id`, value: `up | down`, optional free-text comment) and `copilot_session_ratings` (FK → `copilot_sessions.id`, value: 1-5, optional comment).
+- New endpoints `POST /api/v1/copilot/messages/{message_id}/rating` and `POST /api/v1/copilot/sessions/{session_id}/rating`.
+- Admin roll-up view: average thumbs-up rate per week, average session rating per week, low-rated message drill-down.
+
+**Sub-phases 35-02+ — Multi-model comparison:**
+- Swap LLM provider per-request via env override; replay the eval testset across N models.
+- Combine RAGAS scores (automated) with the human-feedback signal collected in 35-01 (whatever data exists at that point) to rank models on both axes.
 
 ### Phase 36: DSPy / prompt-program experiment
 
@@ -139,4 +150,4 @@ Tool-boundary PII enforcement pattern (paper contribution #1). 12 tools (8 read 
 
 ---
 
-*Last updated: 2026-05-23 — Phase 33 marked shipped. v1.4 milestone 4/9 phases complete. Next action is to plan Phase 34 (memory + multi-turn context).*
+*Last updated: 2026-05-23 — Phase 33 marked shipped; Phase 35 scope extended to include human-feedback collection (sub-phase 35-01) before multi-model comparison. v1.4 milestone 4/9 phases complete. Next action is to plan Phase 34 (memory + multi-turn context).*
