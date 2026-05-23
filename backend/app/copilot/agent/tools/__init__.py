@@ -4,9 +4,11 @@ from .get_module_roster import GET_MODULE_ROSTER_TOOL
 from .list_modules import LIST_MODULES_TOOL
 from .participant_history import PARTICIPANT_HISTORY_TOOL
 from .signup_stats_for_week import SIGNUP_STATS_FOR_WEEK_TOOL
+from .signup_trend import SIGNUP_TREND_TOOL
 
 registry.register(LIST_MODULES_TOOL)
 registry.register(GET_MODULE_ROSTER_TOOL)
 registry.register(FIND_UNDERSTAFFED_MODULES_TOOL)
 registry.register(PARTICIPANT_HISTORY_TOOL)
 registry.register(SIGNUP_STATS_FOR_WEEK_TOOL)
+registry.register(SIGNUP_TREND_TOOL)
