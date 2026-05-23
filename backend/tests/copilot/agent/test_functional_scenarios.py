@@ -89,3 +89,49 @@ def test_f1_organizer_lists_own_understaffed_modules(db_session, seed_full_world
     assert "A-evt-1" in titles
     # No B-events leaked across organizer scope.
     assert not any(t.startswith("B-") for t in titles)
+
+
+# ---------------------------------------------------------------------------
+# F2 — admin finds most-understaffed cross-school
+# ---------------------------------------------------------------------------
+
+
+def test_f2_admin_most_understaffed_cross_school(db_session, seed_full_world):
+    """Admin scope sees both schools; B-evt-1 (0/10) is the most understaffed."""
+    registry.register(FIND_UNDERSTAFFED_MODULES_TOOL)
+    admin_id = seed_full_world["admin_id"]
+    sess = _make_session(db_session, admin_id)
+    scope = scope_for(role="admin", caller_id=admin_id)
+
+    llm = _StubLLM(
+        [
+            {
+                "tool_calls": [
+                    {"name": "find_understaffed_modules", "args": {"threshold": 0.5}}
+                ]
+            },
+            {"final_answer": "Across schools, B-evt-1 at Brandon Middle is the most understaffed."},
+        ]
+    )
+
+    events = list(
+        run_turn(
+            db=db_session,
+            llm=llm,
+            scope=scope,
+            session_id=sess,
+            user_message="what is the most understaffed module across all schools?",
+            retrieval_context="",
+        )
+    )
+
+    types = [e.type for e in events]
+    assert types.count("tool_call") == 1
+    assert types.count("tool_result") == 1
+    final = [e for e in events if e.type == "final_answer"][0]
+    assert "B-evt-1" in final.text
+    assert "Brandon" in final.text
+
+    tool_result = [e for e in events if e.type == "tool_result"][0]
+    schools = {row["school"] for row in tool_result.result["modules"]}
+    assert {"Adams Elementary", "Brandon Middle"}.issubset(schools)
