@@ -37,3 +37,13 @@ def test_deeply_nested_three_levels():
 
 def test_missing_parent_key_no_error():
     assert apply({"id": 1}, allowed_fields=["module.name", "id"]) == {"id": 1}
+
+
+def test_none_value_passes_through_when_field_allowed():
+    """None at an allowed key should be kept, not dropped (None is a real value)."""
+    assert apply({"id": None, "x": 1}, allowed_fields=["id"]) == {"id": None}
+
+
+def test_missing_keys_are_simply_absent():
+    """An allowed field that's not in the source row simply isn't in the output."""
+    assert apply({"id": 1}, allowed_fields=["id", "name"]) == {"id": 1}
