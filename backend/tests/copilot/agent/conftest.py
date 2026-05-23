@@ -36,6 +36,9 @@ def seed_events(db_session):
             title="A-evt-1",
             start_date=now,
             end_date=now + timedelta(hours=2),
+            year=2026,
+            week_number=22,
+            school="Adams Elementary",
         ),
         Event(
             id=e2,
@@ -43,6 +46,9 @@ def seed_events(db_session):
             title="A-evt-2",
             start_date=now,
             end_date=now + timedelta(hours=2),
+            year=2026,
+            week_number=22,
+            school="Adams Elementary",
         ),
         Event(
             id=e3,
@@ -50,6 +56,9 @@ def seed_events(db_session):
             title="B-evt-1",
             start_date=now,
             end_date=now + timedelta(hours=2),
+            year=2026,
+            week_number=22,
+            school="Brandon Middle",
         ),
     ])
     db_session.flush()
