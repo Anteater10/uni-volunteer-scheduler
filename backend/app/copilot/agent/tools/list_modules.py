@@ -6,26 +6,17 @@ crosses the boundary back to the LLM.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools._iso_week import parse_iso_week as _parse_iso_week
 from app.copilot.agent.tools.base import Tool
 from app.models import Event
 
 _PII_SCHEMA = ["id", "name", "week", "school"]
-
-_WEEK_RE = re.compile(r"^(\d{4})-W(\d{1,2})$")
-
-
-def _parse_iso_week(s: str) -> tuple[int, int]:
-    m = _WEEK_RE.match(s)
-    if not m:
-        raise ValueError(f"bad ISO week: {s!r}")
-    return int(m.group(1)), int(m.group(2))
 
 
 def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
