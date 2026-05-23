@@ -1,4 +1,5 @@
 from . import registry
+from .current_user_context import CURRENT_USER_CONTEXT_TOOL
 from .find_module_by_name import FIND_MODULE_BY_NAME_TOOL
 from .find_understaffed_modules import FIND_UNDERSTAFFED_MODULES_TOOL
 from .get_module_roster import GET_MODULE_ROSTER_TOOL
@@ -14,3 +15,4 @@ registry.register(PARTICIPANT_HISTORY_TOOL)
 registry.register(SIGNUP_STATS_FOR_WEEK_TOOL)
 registry.register(SIGNUP_TREND_TOOL)
 registry.register(FIND_MODULE_BY_NAME_TOOL)
+registry.register(CURRENT_USER_CONTEXT_TOOL)
