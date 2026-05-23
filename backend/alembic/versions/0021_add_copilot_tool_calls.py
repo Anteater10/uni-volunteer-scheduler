@@ -18,9 +18,19 @@ def upgrade():
     op.create_table(
         "copilot_tool_calls",
         sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
-        sa.Column("session_id", sa.String(length=64), nullable=False, index=True),
+        sa.Column(
+            "session_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("copilot_sessions.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("role", sa.String(length=32), nullable=False),
-        sa.Column("caller_id", sa.Integer, nullable=True),
+        sa.Column(
+            "caller_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("users.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("tool_name", sa.String(length=128), nullable=False, index=True),
         sa.Column("args_json", postgresql.JSONB, nullable=False),
         sa.Column("result_json", postgresql.JSONB, nullable=True),
