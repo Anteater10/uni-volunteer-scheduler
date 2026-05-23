@@ -16,6 +16,19 @@ from tests.fixtures.helpers import make_user
 
 
 @pytest.fixture
+def admin_user(db_session):
+    """Phase 34-10 adversarial: lightweight admin user for memory cases."""
+    return make_user(db_session, role=UserRole.admin)
+
+
+@pytest.fixture
+def other_admin_user(db_session):
+    """Phase 34-10 adversarial: a second, isolated admin user for cross-user
+    profile-leak cases."""
+    return make_user(db_session, role=UserRole.admin)
+
+
+@pytest.fixture
 def seed_full_world(db_session):
     """Mirror of ``tests/copilot/agent/conftest.py::seed_full_world``.
 

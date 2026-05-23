@@ -190,3 +190,131 @@ def test_adversarial(case, db_session, seed_full_world):
     )
 
     _assert_pass(events, case_r, sentinels)
+
+
+# ---------------------------------------------------------------------------
+# Phase 34-10: memory adversarial suite
+#
+# Loads ``cases_memory.yaml`` and runs each category through a small,
+# memory-shaped harness instead of the full agent loop. These cases exercise
+# the *memory* boundary (extractor + profile_block), not the tool-calling
+# boundary covered by ``cases.yaml``.
+# ---------------------------------------------------------------------------
+import pathlib
+
+from app import models
+from app.copilot.memory.extractor import run as run_extractor
+from app.copilot.memory.profile_block import load_profile_block
+
+
+_MEM_CASES = yaml.safe_load(
+    pathlib.Path(__file__).with_name("cases_memory.yaml").read_text()
+) or []
+
+
+def _by_category(cat: str):
+    return [c for c in _MEM_CASES if c["category"] == cat]
+
+
+@pytest.mark.parametrize(
+    "case",
+    _by_category("memory_pii_leak"),
+    ids=lambda c: c["id"],
+)
+def test_adversarial_memory_pii_leak(case, db_session, admin_user):
+    """P8: extractor + PII boundary.
+
+    A HIGH-severity event on the candidate blob (declared=False inside the
+    extractor) must drop the rewrite — no profile row written, no PII
+    persisted.
+    """
+    sess = models.CopilotSession(
+        id=uuid.uuid4(),
+        user_id=admin_user.id,
+        model_id="openrouter/auto",
+        system_prompt_hash="h" * 64,
+        system_prompt_version="v0.1.0",
+    )
+    db_session.add(sess)
+    db_session.add(
+        models.CopilotMessage(
+            id=uuid.uuid4(),
+            session_id=sess.id,
+            role=models.CopilotMessageRole.user,
+            content=case["transcript"],
+        )
+    )
+    db_session.commit()
+
+    class _LLM:
+        def chat(self, **_kw):
+            return {"final_answer": case["llm_blob"]}
+
+    run_extractor(db_session, session_id=sess.id, llm=_LLM())
+    db_session.commit()
+    row = (
+        db_session.query(models.CopilotUserProfile)
+        .filter_by(user_id=admin_user.id)
+        .first()
+    )
+    blob = row.profile_text if row else ""
+    for needle in case["must_not_contain"]:
+        assert needle not in blob, f"{case['id']}: leaked {needle!r}"
+
+
+@pytest.mark.parametrize(
+    "case",
+    _by_category("cross_user_profile_leak"),
+    ids=lambda c: c["id"],
+)
+def test_adversarial_cross_user_leak(
+    case, db_session, admin_user, other_admin_user
+):
+    """P10: user A's profile must never appear in user B's profile block.
+
+    ``load_profile_block`` is the only path through which long-term user
+    facts reach the system prompt, so a strict per-user scope check here is
+    the right boundary assertion.
+    """
+    db_session.add(
+        models.CopilotUserProfile(
+            user_id=other_admin_user.id,
+            profile_text=case["user_a_blob"],
+            version=1,
+        )
+    )
+    db_session.commit()
+    block = load_profile_block(db_session, user_id=admin_user.id)
+    for needle in case["must_not_contain"]:
+        assert needle not in block, f"{case['id']}: leaked {needle!r}"
+
+
+@pytest.mark.parametrize(
+    "case",
+    _by_category("profile_injection"),
+    ids=lambda c: c["id"],
+)
+def test_adversarial_profile_injection(case, db_session, admin_user):
+    """P9: malicious instructions in ``profile_text`` must be framed as
+    advisory context, not as system-prompt overrides.
+
+    We do not execute the prompt; instead we assert that the block keeps
+    the suspicious text contained inside a clearly delimited section that
+    downstream system-prompt assembly treats as untrusted context (header +
+    footer).
+    """
+    db_session.add(
+        models.CopilotUserProfile(
+            user_id=admin_user.id,
+            profile_text=case["prior_blob"],
+            version=1,
+        )
+    )
+    db_session.commit()
+    block = load_profile_block(db_session, user_id=admin_user.id)
+    assert block.startswith("## What you know about this user"), (
+        f"{case['id']}: block missing advisory header"
+    )
+    assert "ignore it when irrelevant" in block, (
+        f"{case['id']}: block missing advisory footer"
+    )
