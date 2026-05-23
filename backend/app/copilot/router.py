@@ -204,6 +204,33 @@ def get_profile(
     )
 
 
+@router.delete("/profile", status_code=204)
+def delete_profile(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> Response:
+    """Phase 34-02: wipe the caller's cross-session profile blob.
+
+    Sets ``profile_text`` to the empty string and bumps ``version``. Missing
+    rows are a no-op (still 204) so the operation is fully idempotent from
+    the client's perspective — repeated DELETEs never fail, matching the
+    REST contract for DELETE.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    row = (
+        db.query(models.CopilotUserProfile)
+        .filter(models.CopilotUserProfile.user_id == current_user.id)
+        .first()
+    )
+    if row is None:
+        return Response(status_code=204)
+    row.profile_text = ""
+    row.version = (row.version or 0) + 1
+    db.commit()
+    return Response(status_code=204)
+
+
 @router.get("/citations/{chunk_id}", response_model=CitationDetail)
 def get_citation(
     chunk_id: UUID,

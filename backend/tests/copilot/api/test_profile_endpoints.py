@@ -96,3 +96,91 @@ def test_get_profile_volunteer_forbidden(client, db_session):
         headers=auth_headers(client, p),
     )
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /profile
+# ---------------------------------------------------------------------------
+
+
+def test_delete_profile_clears_text_and_bumps_version(client, db_session):
+    admin = _admin(db_session, email="del_profile_admin@example.com")
+    p = models.CopilotUserProfile(
+        user_id=admin.id, profile_text="hello", version=1
+    )
+    db_session.add(p)
+    db_session.commit()
+    resp = client.delete(
+        "/api/v1/copilot/profile",
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 204
+    db_session.expire_all()
+    refreshed = (
+        db_session.query(models.CopilotUserProfile)
+        .filter_by(user_id=admin.id)
+        .one()
+    )
+    assert refreshed.profile_text == ""
+    assert refreshed.version == 2
+
+
+def test_delete_profile_when_none_exists_is_noop(client, db_session):
+    admin = _admin(db_session, email="del_noop_admin@example.com")
+    resp = client.delete(
+        "/api/v1/copilot/profile",
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 204
+
+
+def test_delete_profile_is_idempotent(client, db_session):
+    admin = _admin(db_session, email="del_idem_admin@example.com")
+    db_session.add(
+        models.CopilotUserProfile(
+            user_id=admin.id, profile_text="x", version=1
+        )
+    )
+    db_session.commit()
+    first = client.delete(
+        "/api/v1/copilot/profile",
+        headers=auth_headers(client, admin),
+    )
+    second = client.delete(
+        "/api/v1/copilot/profile",
+        headers=auth_headers(client, admin),
+    )
+    assert first.status_code == 204
+    assert second.status_code == 204
+    db_session.expire_all()
+    refreshed = (
+        db_session.query(models.CopilotUserProfile)
+        .filter_by(user_id=admin.id)
+        .one()
+    )
+    # Two deletes against the same row both bump the version.
+    assert refreshed.profile_text == ""
+    assert refreshed.version == 3
+
+
+def test_delete_profile_flag_off_returns_404(client, db_session, monkeypatch):
+    admin = _admin(db_session, email="del_flag_off@example.com")
+    monkeypatch.setattr(settings, "copilot_enabled", False)
+    resp = client.delete(
+        "/api/v1/copilot/profile",
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 404
+
+
+def test_delete_profile_volunteer_forbidden(client, db_session):
+    p = make_user(
+        db_session, email="vol_del_profile@example.com",
+        role=models.UserRole.participant,
+    )
+    db_session.commit()
+    resp = client.delete(
+        "/api/v1/copilot/profile",
+        headers=auth_headers(client, p),
+    )
+    assert resp.status_code == 403
