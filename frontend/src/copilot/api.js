@@ -62,5 +62,32 @@ export async function confirmCall(callId, approved) {
   return jsonOrThrow(res);
 }
 
-export const copilotApi = { createSession, listSessions, getSession, confirmCall };
+export async function getProfile() {
+  const res = await fetch(`${COPILOT_BASE}/profile`, {
+    headers: authHeaders(),
+  });
+  return jsonOrThrow(res);
+}
+
+export async function deleteProfile() {
+  const res = await fetch(`${COPILOT_BASE}/profile`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok && res.status !== 204) {
+    const err = new Error(`HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return true;
+}
+
+export const copilotApi = {
+  createSession,
+  listSessions,
+  getSession,
+  confirmCall,
+  getProfile,
+  deleteProfile,
+};
 export default copilotApi;
