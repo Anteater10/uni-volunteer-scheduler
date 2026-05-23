@@ -403,6 +403,138 @@ describe("CopilotDrawer", () => {
     });
   });
 
+  // ---- Phase 33-09: tool-call indicator + confirmation card ----
+  it("renders tool-call indicator and confirmation card from SSE, posts decision", async () => {
+    const sseText = sseBlob([
+      {
+        event: "meta",
+        data: JSON.stringify({ citations: [], retrieval_latency_ms: 0, rerank_latency_ms: 0 }),
+      },
+      {
+        event: "tool_call",
+        data: JSON.stringify({
+          type: "tool_call",
+          call_id: "call-1",
+          tool: "send_reminder_email",
+          args: { to: "x@example.com" },
+        }),
+      },
+      {
+        event: "confirmation_request",
+        data: JSON.stringify({
+          type: "confirmation_request",
+          call_id: "call-1",
+          tool: "send_reminder_email",
+          args: { to: "x@example.com" },
+          preview: "Will email 1 participant",
+        }),
+      },
+    ]);
+    global.fetch = vi
+      .fn()
+      // 1: createSession
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-confirm" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      // 2: stream POST
+      .mockResolvedValueOnce(
+        new Response(streamFrom(sseText), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      )
+      // 3: POST /confirm/call-1
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ call_id: "call-1", result: { ok: true }, redactions: 0 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "do the thing");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+
+    // tool-call indicator
+    await screen.findByRole("status", { name: /calling send_reminder_email/i });
+    // confirmation card
+    const confirmBtn = await screen.findByText("Confirm");
+    await userEvent.click(confirmBtn);
+
+    // POST hit /confirm/call-1 with approved=true
+    await waitFor(() => {
+      const calls = global.fetch.mock.calls;
+      const confirmCall = calls.find((c) => String(c[0]).includes("/confirm/call-1"));
+      expect(confirmCall).toBeDefined();
+      const body = JSON.parse(confirmCall[1].body);
+      expect(body.approved).toBe(true);
+    });
+    // card is removed
+    await waitFor(() => {
+      expect(screen.queryByText("Confirm")).toBeNull();
+    });
+  });
+
+  it("posts approved=false on Reject click", async () => {
+    const sseText = sseBlob([
+      {
+        event: "meta",
+        data: JSON.stringify({ citations: [], retrieval_latency_ms: 0, rerank_latency_ms: 0 }),
+      },
+      {
+        event: "confirmation_request",
+        data: JSON.stringify({
+          type: "confirmation_request",
+          call_id: "call-2",
+          tool: "move_participant",
+          args: { id: 1 },
+          preview: "Will move 1",
+        }),
+      },
+    ]);
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-reject" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(streamFrom(sseText), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ call_id: "call-2", status: "rejected" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "x");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+
+    const rejectBtn = await screen.findByText("Reject");
+    await userEvent.click(rejectBtn);
+    await waitFor(() => {
+      const confirmCall = global.fetch.mock.calls.find((c) =>
+        String(c[0]).includes("/confirm/call-2"),
+      );
+      expect(confirmCall).toBeDefined();
+      expect(JSON.parse(confirmCall[1].body).approved).toBe(false);
+    });
+  });
+
   it("invokes onClose when the close button is clicked", async () => {
     const onClose = vi.fn();
     global.fetch = vi.fn().mockResolvedValueOnce(

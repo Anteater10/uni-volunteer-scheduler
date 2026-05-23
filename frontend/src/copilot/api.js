@@ -53,5 +53,14 @@ export async function getSession(sessionId) {
   return jsonOrThrow(res);
 }
 
-export const copilotApi = { createSession, listSessions, getSession };
+export async function confirmCall(callId, approved) {
+  const res = await fetch(`${COPILOT_BASE}/confirm/${callId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ approved }),
+  });
+  return jsonOrThrow(res);
+}
+
+export const copilotApi = { createSession, listSessions, getSession, confirmCall };
 export default copilotApi;
