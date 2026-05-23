@@ -84,3 +84,4 @@ pgvector>=0.3,<1.0
 sentence-transformers>=3.0,<4
 torch>=2.2,<3
 numpy>=1.26,<2
+tiktoken>=0.6,<1
