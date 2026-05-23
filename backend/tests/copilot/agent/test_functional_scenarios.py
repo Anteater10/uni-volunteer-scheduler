@@ -20,6 +20,8 @@ from app.copilot.agent.tools.find_understaffed_modules import (
 from app.copilot.agent.tools.get_module_roster import GET_MODULE_ROSTER_TOOL
 from app.copilot.agent.tools.move_participant import MOVE_PARTICIPANT_TOOL
 from app.copilot.agent.tools.send_reminder_email import SEND_REMINDER_EMAIL_TOOL
+from app.copilot.agent.tools.signup_stats_for_week import SIGNUP_STATS_FOR_WEEK_TOOL
+from app.copilot.agent.tools.signup_trend import SIGNUP_TREND_TOOL
 
 
 class _StubLLM:
@@ -317,3 +319,66 @@ def test_f4_admin_moves_participant_with_confirmation(db_session, seed_full_worl
     db_session.refresh(sign)
     assert sign.slot_id == to_slot
     assert sign.slot_id != original_slot
+
+
+# ---------------------------------------------------------------------------
+# F5 — admin 4-week trend (multi-hop, 4 chained tool calls)
+# ---------------------------------------------------------------------------
+
+
+def test_f5_admin_4_week_trend_multi_hop(db_session, seed_full_world):
+    """Admin chains 4 tool calls (signup_trend + 3 signup_stats_for_week)."""
+    registry.register(SIGNUP_TREND_TOOL)
+    registry.register(SIGNUP_STATS_FOR_WEEK_TOOL)
+    admin_id = seed_full_world["admin_id"]
+    sess = _make_session(db_session, admin_id)
+    scope = scope_for(role="admin", caller_id=admin_id)
+
+    # Four separate LLM responses, each carrying one tool_call, then a
+    # final_answer. Total tool_calls = 4 — under the cap of 6.
+    llm = _StubLLM(
+        [
+            {"tool_calls": [{"name": "signup_trend", "args": {"weeks": 4}}]},
+            {
+                "tool_calls": [
+                    {"name": "signup_stats_for_week", "args": {"week": "2026-W22"}}
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"name": "signup_stats_for_week", "args": {"week": "2026-W21"}}
+                ]
+            },
+            {
+                "tool_calls": [
+                    {"name": "signup_stats_for_week", "args": {"week": "2026-W20"}}
+                ]
+            },
+            {
+                "final_answer": (
+                    "Across the last 4 weeks signups trended downward and "
+                    "fill rates dropped accordingly."
+                )
+            },
+        ]
+    )
+
+    events = list(
+        run_turn(
+            db=db_session,
+            llm=llm,
+            scope=scope,
+            session_id=sess,
+            user_message="what's the 4-week signup trend?",
+            retrieval_context="",
+        )
+    )
+
+    types = [e.type for e in events]
+    assert types.count("tool_call") == 4
+    assert types.count("tool_result") == 4
+    assert types.count("final_answer") == 1
+    assert "error" not in types
+
+    final = [e for e in events if e.type == "final_answer"][0]
+    assert "weeks" in final.text
