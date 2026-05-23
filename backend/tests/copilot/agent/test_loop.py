@@ -89,3 +89,22 @@ def test_loop_stops_at_cap(db_session, seed_events):
     )
     error = [e for e in events if e.type == "error"]
     assert error and "cap" in error[0].message
+
+
+def test_loop_retries_then_aborts_on_malformed():
+    scope = scope_for(role="admin", caller_id=None)
+    llm = _StubLLM(
+        [{"garbage": "x"}, {"garbage": "y"}, {"garbage": "z"}]
+    )
+    events = list(
+        run_turn(
+            db=None,
+            llm=llm,
+            scope=scope,
+            session_id="s3",
+            user_message="x",
+            retrieval_context="",
+        )
+    )
+    assert events[-1].type == "error"
+    assert "unparseable" in events[-1].message
