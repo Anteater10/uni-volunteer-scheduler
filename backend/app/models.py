@@ -828,6 +828,40 @@ class CopilotMessage(Base):
     session = relationship("CopilotSession", back_populates="messages")
 
 
+class CopilotToolCall(Base):
+    """Phase 33 (v1.4): one row per tool invocation in the ReAct loop.
+
+    See Alembic 0021_add_copilot_tool_calls.py — schema must stay in sync.
+    """
+
+    __tablename__ = "copilot_tool_calls"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copilot_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role = Column(String(32), nullable=False)
+    caller_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    tool_name = Column(String(128), nullable=False, index=True)
+    args_json = Column(JSONB, nullable=False)
+    result_json = Column(JSONB, nullable=True)
+    redactions_applied = Column(Integer, nullable=False, server_default=text("0"))
+    confirmation_status = Column(
+        String(24), nullable=False, server_default=text("'not_required'")
+    )
+    call_id = Column(String(64), nullable=False, unique=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    executed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 # -------------------------
 # Phase 31 (v1.4): Knowledge corpus + pgvector ingestion
 # -------------------------
