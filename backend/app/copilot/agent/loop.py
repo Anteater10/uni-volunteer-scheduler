@@ -27,9 +27,28 @@ from app.copilot.agent.events import (
 )
 from app.copilot.agent.tools import registry
 from app.copilot.agent.tools.base import _begin, _complete
+from app.copilot.memory.summariser import (
+    CONTEXT_WINDOW_DEFAULT,
+    compress_if_needed,
+)
 
 MAX_TOOL_CALLS_PER_TURN = 6
 MAX_MALFORMED_RETRIES = 2
+
+
+def _default_model() -> str:
+    """Resolve the default model id for token counting.
+
+    We only need this for tiktoken's ``encoding_for_model`` lookup; if
+    settings can't be loaded (e.g. unit tests with no env), the
+    summariser falls back to ``cl100k_base`` so any string is fine.
+    """
+    try:
+        from app.core.config import settings
+
+        return settings.copilot_primary_model or "gpt-3.5-turbo"
+    except Exception:
+        return "gpt-3.5-turbo"
 
 
 def run_turn(
@@ -40,6 +59,8 @@ def run_turn(
     session_id,
     user_message: str,
     retrieval_context: str,
+    model: str | None = None,
+    context_window: int = CONTEXT_WINDOW_DEFAULT,
 ) -> Iterator[Any]:
     tools = registry.get_tools_for_role(scope.role)
     messages = [
@@ -48,6 +69,19 @@ def run_turn(
     ]
     tool_calls_used = 0
     malformed = 0
+    resolved_model = model or _default_model()
+
+    # Compress once at the top of the turn. Tool-call iterations within
+    # the same turn append tool_result messages, which are usually small
+    # enough not to re-cross the threshold; we deliberately do not
+    # re-summarise mid-turn to avoid wasting an LLM call on every
+    # iteration of the ReAct loop.
+    messages = compress_if_needed(
+        messages,
+        llm=llm,
+        model=resolved_model,
+        context_window=context_window,
+    )
 
     while True:
         response = llm.chat(
