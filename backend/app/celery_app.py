@@ -39,7 +39,11 @@ celery.conf.update(
     beat_scheduler="redbeat.RedBeatScheduler",
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    include=["app.tasks.import_csv", "app.tasks.reminders"],
+    include=[
+        "app.tasks.import_csv",
+        "app.tasks.reminders",
+        "app.tasks.extract_profile",
+    ],
 )
 
 

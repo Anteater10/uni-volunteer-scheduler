@@ -29,6 +29,7 @@ import json
 import logging
 import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Callable, Iterator
 from uuid import UUID
 
@@ -70,6 +71,7 @@ from .agent.confirmation import (
     execute_after_confirmation,
 )
 from .agent.loop import run_turn
+from ..tasks.extract_profile import extract_profile_facts
 
 
 logger = logging.getLogger(__name__)
@@ -176,6 +178,30 @@ def get_session(
         system_prompt_version=sess.system_prompt_version,
         messages=[CopilotMessageRead.model_validate(m) for m in sess.messages],
     )
+
+
+@router.post("/sessions/{session_id}/close", status_code=204)
+def close_session(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> Response:
+    """Phase 34-03 Task 8: explicitly close a copilot session.
+
+    Sets ``closed_at`` and enqueues the profile extractor exactly once.
+    Idempotent — subsequent calls see ``closed_at IS NOT NULL`` and
+    short-circuit without re-enqueueing. 404s for sessions owned by
+    another user so existence is not observable across users.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    sess = _load_owned_session(db, session_id, current_user)
+    if sess.closed_at is not None:
+        return Response(status_code=204)
+    sess.closed_at = datetime.now(timezone.utc)
+    db.commit()
+    extract_profile_facts.delay(str(sess.id))
+    return Response(status_code=204)
 
 
 @router.get("/profile", response_model=CopilotProfileRead)
