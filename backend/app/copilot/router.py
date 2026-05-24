@@ -68,6 +68,7 @@ from .schemas import (
     MetaEvent,
     SessionRatingCreate,
     SessionRatingRead,
+    WeeklyFeedbackResponse,
 )
 from .agent.audit_log import CallNotFound, update_status
 from .agent.boundary.role_scope import scope_for
@@ -889,3 +890,24 @@ def post_session_rating(
         comment=row.comment,
         created_at=row.created_at,
     )
+
+
+@router.get(
+    "/admin/feedback/weekly", response_model=WeeklyFeedbackResponse
+)
+def get_admin_feedback_weekly(
+    weeks: int = Query(12, ge=1, le=52),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> WeeklyFeedbackResponse:
+    """Phase 35-01: weekly thumbs-up rate + session-rating average.
+
+    Backed by :func:`app.copilot.feedback.aggregates.weekly_rollup`. The
+    real SQL lands in 35-01-C Task 10; the stub returns shaped empty
+    rows so the contract is stable for the frontend.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    from .feedback.aggregates import weekly_rollup
+
+    return WeeklyFeedbackResponse(weeks=weekly_rollup(db, weeks=weeks))
