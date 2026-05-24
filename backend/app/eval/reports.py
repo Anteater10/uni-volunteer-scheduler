@@ -205,7 +205,28 @@ def render_markdown(
     out_path.write_text("\n".join(lines) + "\n")
 
 
+def render_top_level_redirect(
+    *,
+    traces: list[dict[str, Any]],
+    adversarial: list[dict[str, Any]],
+    out_path: Path,
+) -> None:
+    """Generate the top-level summary at docs/documentation/35-eval-results.md.
+
+    Re-runs of the harness REGENERATE this file; do not hand-edit between
+    runs (commit hand edits before re-running).
+
+    Currently a stub: the template lives in source control as the initial
+    seed and the renderer is a follow-up after the first real multi-model
+    run produces a fillable headline ranking.
+    """
+    raise NotImplementedError(
+        "Fill from render_markdown headline table; rank by tool_use_correct "
+        "ascending then by ragas_faithfulness."
+    )
+
+
 __all__ = [
     "LOCKED_HEADER", "write_results_csv", "write_traces_json",
-    "render_markdown",
+    "render_markdown", "render_top_level_redirect",
 ]
