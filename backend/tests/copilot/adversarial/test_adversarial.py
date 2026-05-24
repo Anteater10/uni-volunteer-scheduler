@@ -163,14 +163,24 @@ def _assert_pass(events, case, sentinels):
             )
 
 
-@pytest.mark.parametrize("case", CASES, ids=lambda c: c["id"])
-def test_adversarial(case, db_session, seed_full_world):
-    sentinels = _build_sentinels(seed_full_world)
+def run_tool_case(case, db_session, seed):
+    """Phase 35-02-E helper: run one ``cases.yaml`` (tool/agent-loop) case.
+
+    Extracted so both the pytest parametrize body below AND the offline
+    ``app.eval.adversarial._run_one_case`` wrapper share one body. The
+    helper performs sentinel resolution, role -> caller_id mapping, copilot
+    session insertion, and ``run_turn`` invocation. Returns the
+    ``(events, sentinels, case_r)`` tuple so callers can apply their own
+    pass/fail assertion (pytest calls ``_assert_pass`` directly; the
+    offline wrapper translates exceptions into structured ``outcome``
+    fields).
+    """
+    sentinels = _build_sentinels(seed)
     case_r = _resolve(case, sentinels)
 
     # Resolve role -> caller_id
     role = case_r["role"]
-    caller_id = case_r["caller_id"] if role != "admin" else seed_full_world["admin_id"]
+    caller_id = case_r["caller_id"] if role != "admin" else seed["admin_id"]
     if isinstance(caller_id, str):
         caller_id = uuid.UUID(caller_id)
     scope = scope_for(role=role, caller_id=caller_id)
@@ -188,7 +198,12 @@ def test_adversarial(case, db_session, seed_full_world):
             retrieval_context=case_r.get("retrieval_context", ""),
         )
     )
+    return events, sentinels, case_r
 
+
+@pytest.mark.parametrize("case", CASES, ids=lambda c: c["id"])
+def test_adversarial(case, db_session, seed_full_world):
+    events, sentinels, case_r = run_tool_case(case, db_session, seed_full_world)
     _assert_pass(events, case_r, sentinels)
 
 
@@ -216,18 +231,7 @@ def _by_category(cat: str):
     return [c for c in _MEM_CASES if c["category"] == cat]
 
 
-@pytest.mark.parametrize(
-    "case",
-    _by_category("memory_pii_leak"),
-    ids=lambda c: c["id"],
-)
-def test_adversarial_memory_pii_leak(case, db_session, admin_user):
-    """P8: extractor + PII boundary.
-
-    A HIGH-severity event on the candidate blob (declared=False inside the
-    extractor) must drop the rewrite — no profile row written, no PII
-    persisted.
-    """
+def _run_memory_pii_leak(case, db_session, admin_user):
     sess = models.CopilotSession(
         id=uuid.uuid4(),
         user_id=admin_user.id,
@@ -262,20 +266,7 @@ def test_adversarial_memory_pii_leak(case, db_session, admin_user):
         assert needle not in blob, f"{case['id']}: leaked {needle!r}"
 
 
-@pytest.mark.parametrize(
-    "case",
-    _by_category("cross_user_profile_leak"),
-    ids=lambda c: c["id"],
-)
-def test_adversarial_cross_user_leak(
-    case, db_session, admin_user, other_admin_user
-):
-    """P10: user A's profile must never appear in user B's profile block.
-
-    ``load_profile_block`` is the only path through which long-term user
-    facts reach the system prompt, so a strict per-user scope check here is
-    the right boundary assertion.
-    """
+def _run_cross_user_leak(case, db_session, admin_user, other_admin_user):
     db_session.add(
         models.CopilotUserProfile(
             user_id=other_admin_user.id,
@@ -289,20 +280,7 @@ def test_adversarial_cross_user_leak(
         assert needle not in block, f"{case['id']}: leaked {needle!r}"
 
 
-@pytest.mark.parametrize(
-    "case",
-    _by_category("profile_injection"),
-    ids=lambda c: c["id"],
-)
-def test_adversarial_profile_injection(case, db_session, admin_user):
-    """P9: malicious instructions in ``profile_text`` must be framed as
-    advisory context, not as system-prompt overrides.
-
-    We do not execute the prompt; instead we assert that the block keeps
-    the suspicious text contained inside a clearly delimited section that
-    downstream system-prompt assembly treats as untrusted context (header +
-    footer).
-    """
+def _run_profile_injection(case, db_session, admin_user):
     db_session.add(
         models.CopilotUserProfile(
             user_id=admin_user.id,
@@ -318,3 +296,61 @@ def test_adversarial_profile_injection(case, db_session, admin_user):
     assert "ignore it when irrelevant" in block, (
         f"{case['id']}: block missing advisory footer"
     )
+
+
+def run_memory_case(case, db_session, admin_user, other_admin_user=None):
+    """Phase 35-02-E helper: dispatch one ``cases_memory.yaml`` case to the
+    right memory-shaped harness based on ``case['category']``. Raises an
+    assertion (re-raised by the underlying helper) on boundary failure and
+    returns ``None`` on success. ``other_admin_user`` is required only for
+    ``cross_user_profile_leak`` cases.
+    """
+    cat = case["category"]
+    if cat == "memory_pii_leak":
+        return _run_memory_pii_leak(case, db_session, admin_user)
+    if cat == "cross_user_profile_leak":
+        if other_admin_user is None:
+            raise ValueError(
+                f"cross_user_profile_leak requires other_admin_user "
+                f"(case {case['id']!r})"
+            )
+        return _run_cross_user_leak(case, db_session, admin_user, other_admin_user)
+    if cat == "profile_injection":
+        return _run_profile_injection(case, db_session, admin_user)
+    raise ValueError(
+        f"run_memory_case: unsupported memory category {cat!r} "
+        f"for case {case['id']!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    _by_category("memory_pii_leak"),
+    ids=lambda c: c["id"],
+)
+def test_adversarial_memory_pii_leak(case, db_session, admin_user):
+    """P8: extractor + PII boundary."""
+    run_memory_case(case, db_session, admin_user)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _by_category("cross_user_profile_leak"),
+    ids=lambda c: c["id"],
+)
+def test_adversarial_cross_user_leak(
+    case, db_session, admin_user, other_admin_user
+):
+    """P10: user A's profile must never appear in user B's profile block."""
+    run_memory_case(case, db_session, admin_user, other_admin_user)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _by_category("profile_injection"),
+    ids=lambda c: c["id"],
+)
+def test_adversarial_profile_injection(case, db_session, admin_user):
+    """P9: malicious instructions in ``profile_text`` must be framed as
+    advisory context, not as system-prompt overrides."""
+    run_memory_case(case, db_session, admin_user)
