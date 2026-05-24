@@ -1,0 +1,13 @@
+{
+  "model": "openai/gpt-oss-120b:free",
+  "status": "pending_real_run",
+  "note": "TODO(35-02-G): replace with the frozen one-shot adversarial run of the Phase 33 production primary. Generated on Andy's machine via the manual command documented in docs/superpowers/plans/2026-05-23-phase-35-02-multimodel-eval.md Task 17 (35-02-E-Task-02). Real run requires OPENROUTER_API_KEY and a wired-up driver for app.eval.adversarial._run_one_case (currently NotImplementedError because the offline harness does not stand up the db_session + seed_full_world + admin user fixtures that the case helpers consume). Until that driver lands, this placeholder documents the Phase 33 single-model adversarial pass rate observed from the CI gate: 43 of 43 cases passing (100 percent case-level pass rate at the cases.yaml + cases_memory.yaml shape level). That rate is verified every CI run via backend/tests/copilot/adversarial/test_adversarial.py; this baseline file is the artifact the multi-model report will diff against once the manual driver is in place.",
+  "ci_observed_case_pass_rate": {
+    "passed": 43,
+    "total": 43,
+    "source": "backend/tests/copilot/adversarial/test_adversarial.py",
+    "captured_at_commit": "1245cb7"
+  },
+  "cases": [],
+  "categories": {}
+}
