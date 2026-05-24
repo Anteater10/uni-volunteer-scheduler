@@ -84,3 +84,27 @@ def test_no_paid_model_referenced_in_notes():
                 raise AssertionError(
                     f"{q['id']} references potentially paid model {token!r}"
                 )
+
+
+def test_per_role_category_coverage_report(capsys):
+    """Reports coverage but does not assert - keeps CI green while Andy fills out the testset."""
+    from collections import Counter
+
+    questions = _load_testset()
+    by_role = Counter(q["role"] for q in questions)
+    by_role_cat = Counter((q["role"], q["category"]) for q in questions)
+
+    print("\n=== testset coverage ===")
+    for role in sorted(_ALLOWED_ROLES):
+        print(f"{role}: {by_role.get(role, 0)} total")
+        for cat in sorted(_ALLOWED_CATEGORIES):
+            n = by_role_cat.get((role, cat), 0)
+            if n:
+                print(f"  {cat}: {n}")
+    n_adv = sum(1 for q in questions if q["category"].startswith("adversarial"))
+    print(f"adversarial: {n_adv}")
+    captured = capsys.readouterr()
+    # Always passes - the print() output is the deliverable. CI runs in -q
+    # which suppresses captured output unless --capture=tee-sys is set;
+    # Andy can `pytest -v -s` locally to see the breakdown.
+    assert "testset coverage" in captured.out
