@@ -4,8 +4,14 @@ from __future__ import annotations
 import pytest
 
 from app import models
+from app.config import settings
 from app.copilot.memory.profile_block import load_profile_block
 from tests.fixtures.helpers import make_user
+
+
+@pytest.fixture(autouse=True)
+def _enable_copilot(monkeypatch):
+    monkeypatch.setattr(settings, "copilot_enabled", True)
 
 
 @pytest.fixture
