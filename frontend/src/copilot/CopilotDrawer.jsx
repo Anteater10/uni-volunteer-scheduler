@@ -9,6 +9,9 @@ import CitationPanel from "./CitationPanel";
 import ConfirmationCard from "./ConfirmationCard";
 import ToolCallIndicator from "./ToolCallIndicator";
 import MessageRatingButtons from "./MessageRatingButtons";
+import SessionRatingModal from "./SessionRatingModal";
+import authStorage from "../lib/authStorage";
+import { COPILOT_BASE } from "./api";
 
 const MAX_CHIPS = 5; // RESEARCH §Open Q #2 — show top-5, horizontal scroll if narrow
 
@@ -26,7 +29,41 @@ export default function CopilotDrawer({ open, onClose }) {
   // Tracks which confirmation buttons are currently posting.
   const [confirmInFlight, setConfirmInFlight] = useState({});
   const [confirmError, setConfirmError] = useState(null);
+  // Phase 35-01-E Task 18: rating modal intercepts the drawer close path.
+  const [ratingOpen, setRatingOpen] = useState(false);
   const scrollRef = useRef(null);
+
+  // Drawer close intercept (Phase 35-01-E Task 18). If at least one
+  // assistant turn has happened in this session, open the rating modal
+  // instead of closing immediately. The modal's "Cancel close" button
+  // calls back into `setRatingOpen(false)`; "Submit" calls
+  // `closeAndDismiss()` which posts to /sessions/{id}/close and then
+  // invokes the original `onClose` callback to actually dismiss the drawer.
+  function requestClose() {
+    const hasAssistant = messages.some((m) => m.role === "assistant");
+    if (hasAssistant && sessionId) {
+      setRatingOpen(true);
+      return;
+    }
+    void closeAndDismiss();
+  }
+
+  async function closeAndDismiss() {
+    setRatingOpen(false);
+    if (sessionId) {
+      try {
+        const tok = authStorage.getToken();
+        await fetch(`${COPILOT_BASE}/sessions/${sessionId}/close`, {
+          method: "POST",
+          credentials: "include",
+          headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+        });
+      } catch {
+        // best-effort close — surface drawer dismissal regardless
+      }
+    }
+    onClose?.();
+  }
 
   // Lazy session creation when the drawer first opens.
   useEffect(() => {
@@ -140,7 +177,7 @@ export default function CopilotDrawer({ open, onClose }) {
     <>
       <div
         className="fixed inset-0 bg-black/30 z-40"
-        onClick={onClose}
+        onClick={requestClose}
         aria-hidden="true"
       />
       <aside
@@ -155,7 +192,7 @@ export default function CopilotDrawer({ open, onClose }) {
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             aria-label="Close copilot"
             className="p-2 rounded hover:bg-gray-100"
           >
@@ -260,6 +297,14 @@ export default function CopilotDrawer({ open, onClose }) {
         <CitationPanel
           chunkId={activeCitation}
           onClose={() => setActiveCitation(null)}
+        />
+      )}
+      {sessionId && (
+        <SessionRatingModal
+          sessionId={sessionId}
+          open={ratingOpen}
+          onCancel={() => setRatingOpen(false)}
+          onSubmitted={closeAndDismiss}
         />
       )}
     </>
