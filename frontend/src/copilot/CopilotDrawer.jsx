@@ -46,15 +46,18 @@ export default function CopilotDrawer({ open, onClose }) {
   }, [open, sessionId]);
 
   const { send, streaming, partial, error } = useCopilotStream(sessionId, {
-    onDone: ({ text, citations }) => {
+    onDone: ({ id, text, citations }) => {
       // Snapshot citations at the moment the turn completes so each assistant
       // bubble carries its own citation set (later turns won't overwrite).
       // Only push an assistant bubble when there's actual text — otherwise
       // a confirmation-paused turn would surface an empty bubble.
+      // Phase 35-01-D Task 15: `id` arrives via `event: message_persisted`
+      // so the bubble carries a stable `data-message-id` for rating UI
+      // (which ships in 35-01-E).
       if (text) {
         setMessages((m) => [
           ...m,
-          { role: "assistant", content: text, citations: citations || [] },
+          { id: id || null, role: "assistant", content: text, citations: citations || [] },
         ]);
       }
     },
@@ -62,7 +65,12 @@ export default function CopilotDrawer({ open, onClose }) {
       if (info?.text) {
         setMessages((m) => [
           ...m,
-          { role: "assistant", content: info.text, citations: info.citations || [] },
+          {
+            id: info?.id || null,
+            role: "assistant",
+            content: info.text,
+            citations: info.citations || [],
+          },
         ]);
       }
     },
@@ -167,7 +175,11 @@ export default function CopilotDrawer({ open, onClose }) {
           )}
           {messages.map((m, i) => (
             <React.Fragment key={i}>
-              <MessageBubble role={m.role} content={m.content} />
+              <MessageBubble
+                role={m.role}
+                content={m.content}
+                messageId={m.id}
+              />
               {m.role === "assistant" &&
                 Array.isArray(m.citations) &&
                 m.citations.length > 0 && (
@@ -250,11 +262,18 @@ export default function CopilotDrawer({ open, onClose }) {
   );
 }
 
-function MessageBubble({ role, content, streaming = false }) {
+function MessageBubble({ role, content, messageId = null, streaming = false }) {
   const isUser = role === "user";
+  // Phase 35-01-D Task 15: stamp the persisted assistant message id onto
+  // the bubble so the rating UI (35-01-E) can target it directly. User
+  // bubbles never carry an id — only the assistant's `copilot_messages`
+  // row is rate-able.
+  const stamp =
+    !isUser && messageId ? { "data-message-id": messageId } : {};
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
+        {...stamp}
         className={`max-w-[85%] rounded px-3 py-2 text-sm whitespace-pre-wrap ${
           isUser ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-900"
         }`}

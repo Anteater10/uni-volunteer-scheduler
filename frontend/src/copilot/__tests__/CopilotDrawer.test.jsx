@@ -535,6 +535,123 @@ describe("CopilotDrawer", () => {
     });
   });
 
+  // ---- Phase 35-01-D Task 15: data-message-id on assistant bubbles ----
+  it("stamps data-message-id from event: message_persisted on the assistant bubble", async () => {
+    const PERSISTED = "9b0a0d6e-3e0f-4d3e-8d2a-1c0e8a7f7b00";
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-mp" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrom(
+            sseBlob([
+              { event: "token", data: '"Answer"' },
+              {
+                event: "message_persisted",
+                data: JSON.stringify({ id: PERSISTED, role: "assistant" }),
+              },
+              { event: "done", data: `{"message_id":"${PERSISTED}"}` },
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+
+    const { container } = render(
+      <CopilotDrawer open={true} onClose={() => {}} />,
+    );
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "hi");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await screen.findByText("Answer");
+
+    const stamped = container.querySelector(`[data-message-id="${PERSISTED}"]`);
+    expect(stamped).not.toBeNull();
+    expect(stamped.textContent).toContain("Answer");
+  });
+
+  it("does not stamp data-message-id on user bubbles", async () => {
+    const PERSISTED = "11111111-2222-3333-4444-555555555555";
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-mp-user" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrom(
+            sseBlob([
+              { event: "token", data: '"ok"' },
+              {
+                event: "message_persisted",
+                data: JSON.stringify({ id: PERSISTED, role: "assistant" }),
+              },
+              { event: "done", data: `{"message_id":"${PERSISTED}"}` },
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    const { container } = render(
+      <CopilotDrawer open={true} onClose={() => {}} />,
+    );
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "my-question");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await screen.findByText("ok");
+
+    // Exactly one bubble has the id (the assistant's).
+    const stamped = container.querySelectorAll(`[data-message-id]`);
+    expect(stamped).toHaveLength(1);
+    expect(stamped[0].textContent).toContain("ok");
+  });
+
+  it("falls back to done.message_id when no message_persisted event arrives (backwards compat)", async () => {
+    // Old backends without 35-01-D still expose the persisted id via
+    // `done.message_id` — the hook aliases it onto `id` so the bubble
+    // still gets a stable data-message-id stamp.
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-legacy" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrom(
+            sseBlob([
+              { event: "token", data: '"legacy"' },
+              { event: "done", data: '{"message_id":"asst-legacy"}' },
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      );
+    const { container } = render(
+      <CopilotDrawer open={true} onClose={() => {}} />,
+    );
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "hi");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await screen.findByText("legacy");
+    expect(
+      container.querySelector('[data-message-id="asst-legacy"]'),
+    ).not.toBeNull();
+  });
+
   it("invokes onClose when the close button is clicked", async () => {
     const onClose = vi.fn();
     global.fetch = vi.fn().mockResolvedValueOnce(
