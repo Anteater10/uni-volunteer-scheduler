@@ -19,8 +19,14 @@ Endpoints
 The SSE stream format is two-line events:
 
     event: token\ndata: <chunk>\n\n
+    event: message_persisted\ndata: {"id": "<uuid>", "role": "assistant"}\n\n
     event: done\ndata: {"message_id": "<uuid>"}\n\n
     event: error\ndata: {"error": "<class>"}\n\n
+
+Phase 35-01-D Task 13: ``message_persisted`` is emitted immediately
+after the assistant ``copilot_messages`` row is inserted, BEFORE the
+terminal ``done`` (or ``error``) marker. Strictly additive — clients
+that ignore unknown events continue to work.
 """
 from __future__ import annotations
 
@@ -638,6 +644,13 @@ def _agent_sse_stream(
     db.add(assistant_msg)
     db.commit()
     db.refresh(assistant_msg)
+    # Phase 35-01-D Task 13: announce the persisted assistant row so the
+    # frontend can attach a stable id (for thumbs-up/down rating) BEFORE
+    # the terminal ``done`` marker. Strictly additive.
+    yield _sse_format(
+        "message_persisted",
+        json.dumps({"id": str(assistant_msg.id), "role": "assistant"}),
+    )
     yield _sse_format("done", json.dumps({"message_id": str(assistant_msg.id)}))
 
 
@@ -700,6 +713,15 @@ def _sse_stream(
     db.add(assistant_msg)
     db.commit()
     db.refresh(assistant_msg)
+
+    # Phase 35-01-D Task 13: announce the persisted assistant row BEFORE
+    # the terminal ``done`` / ``error`` marker so the frontend can attach
+    # a stable id to the bubble for thumbs-up/down rating. Strictly
+    # additive — clients that ignore unknown events keep working.
+    yield _sse_format(
+        "message_persisted",
+        json.dumps({"id": str(assistant_msg.id), "role": "assistant"}),
+    )
 
     if error_class:
         yield _sse_format(
