@@ -66,3 +66,25 @@ def test_assert_free_tier_rejects_paid_intruder(monkeypatch):
     )
     with pytest.raises(AssertionError, match=":free"):
         eval_models.assert_free_tier()
+
+
+def test_testset_does_not_reference_non_free_models():
+    """No question's required_tools or notes can route to a paid model.
+
+    Defends against a future contributor adding a 'gpt-4o' reference that
+    bypasses the harness's :free pin. Already covered by the testset schema
+    test for notes — this test extends to required_tools entries.
+    """
+    from importlib.resources import files
+    import yaml
+
+    raw = (files("app.eval") / "testset.yaml").read_text()
+    questions = (yaml.safe_load(raw) or {}).get("questions", [])
+    for q in questions:
+        rt = q.get("required_tools") or []
+        for entry in rt:
+            for v in (entry.get("args") or {}).values():
+                if isinstance(v, str) and "/" in v and ":" in v:
+                    assert v.endswith(":free"), (
+                        f"{q['id']} arg references non-:free model id {v!r}"
+                    )
