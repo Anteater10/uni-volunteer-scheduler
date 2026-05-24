@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-23T18:00:00.000Z"
-last_activity: 2026-05-23 — Phase 33 shipped (tool calling + ReAct + PII tool boundary — paper contribution #1). 12 tools (8 read + 4 write) flow through a uniform invoke() that chains a three-layer boundary (schema filter / role scope / redactor) plus an audit-log writer; write tools gated behind a TTL confirmation card. Agent loop (`run_turn`) caps at 6 tool calls + 2 malformed-response retries. Adversarial suite green at 35/35 across 7 categories (Cat 1–3 100% at 100% pass bar; Cat 4–7 100% at ≥80% pass bar). New audit table `copilot_tool_calls` via Alembic `0021`. Agent loop wired into /api/copilot/chat behind `COPILOT_AGENT_LOOP_ENABLED` (defaults off; Phase 30/32 token-stream behavior preserved). Backend copilot tests: 99 agent unit + 35 adversarial. Frontend copilot tests: 42 (ConfirmationCard, ToolCallIndicator, drawer integration). Phase 34 (memory + multi-turn / conversation summarisation) is the next action.
+last_updated: "2026-05-23T22:00:00.000Z"
+last_activity: 2026-05-23 — Phase 34 shipped (memory + multi-turn context). Within-session summariser (`compress_if_needed`) wired into `run_turn`; end-of-session profile extraction via Celery task `extract_profile_facts` with PII redactor re-applied at `declared=False`; session-start profile injection through `load_profile_block` wrapped in advisory header/footer. New table `copilot_user_profiles` + three columns on `copilot_sessions` (`closed_at`, `last_message_at`, `profile_extracted_at`) via Alembic `0022`. Celery beat `sweep_idle_sessions` (5-min cadence) closes idle sessions and enqueues extraction. Router adds `GET /api/v1/copilot/profile`, `DELETE /api/v1/copilot/profile` (idempotent), `POST /api/v1/copilot/sessions/{id}/close`. Frontend `CopilotMemorySettings` card wired into `ProfilePage`. Full backend suite green: 743 passed / 9 skipped. Memory adversarial 8/8 active across P8 (memory PII leak), P9 (profile injection), P10 (cross-user profile leak); P11 (token budget + indirect injection) deferred as documented surfaces. Multi-model role assignment deferred to Phase 35. Phase 35 (multi-model evaluation harness — human-feedback sub-phase 35-01 first) is the next action.
 progress:
   total_phases: 9
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 25
   completed_plans: 18
   percent: 75
@@ -23,9 +23,9 @@ progress:
 ## Current Position
 
 Milestone: **v1.4 AI Onboarding Copilot** — in progress
-Phase: 33 (Tool calling + ReAct + PII tool boundary) — ✅ shipped
-Branch: `feature/v1.4-phase-33-tool-calling-react` — ready to merge
-**Last activity:** 2026-05-23 — Phase 33 shipped (paper contribution #1). 12 tools (8 read + 4 write) registered through a `Tool` dataclass + role-scoped registry; uniform `invoke()` chains the three-layer boundary (schema filter → role scope → redactor) and writes the audit log. Write tools gated behind a TTL `_PENDING` confirmation store and surfaced via `ConfirmationCard` + a `POST /api/v1/copilot/confirm/{call_id}` endpoint. Agent loop (`run_turn`) caps at 6 tool calls + 2 malformed-response retries; SSE event taxonomy is strictly additive to Phase 30 (`tool_use` / `tool_result` / `confirmation_required`). Adversarial 35/35 across 7 categories; CSV at `docs/documentation/33-tool-calling-react/adversarial-pass-rates.csv`. Audit log table `copilot_tool_calls` via Alembic `0021`. See `.planning/phases/33-tool-calling-react/SUMMARY.md` for full handoff to Phase 34.
+Phase: 34 (Memory + multi-turn context) — ✅ shipped
+Branch: `feature/v1.4-phase-34-memory-multi-turn` — ready to merge
+**Last activity:** 2026-05-23 — Phase 34 shipped. Within-session summariser (`compress_if_needed`, tiktoken + threshold + rollup) wired into `run_turn`. End-of-session profile extraction via Celery task `extract_profile_facts` re-applies the PII redactor with `declared=False` and drops HIGH-severity outputs. Session-start profile injection through `load_profile_block(db, user_id)` returns an advisory-wrapped string (`"## What you know about this user"` … `"Use this context when it helps; ignore it when irrelevant."`) — structural framing the adversarial suite asserts on. New table `copilot_user_profiles` + three columns on `copilot_sessions` (`closed_at`, `last_message_at`, `profile_extracted_at`) via Alembic `0022`. Celery beat `sweep_idle_sessions` (5-min cadence) closes sessions inactive >30 min and enqueues extraction. Router adds `GET /api/v1/copilot/profile`, `DELETE /api/v1/copilot/profile` (idempotent), `POST /api/v1/copilot/sessions/{id}/close`; message append bumps `last_message_at`. Frontend `CopilotMemorySettings` (loading / empty / populated / forget / cancel) wired into `ProfilePage`. Full backend suite green: 743 passed / 9 skipped. Functional F1–F5 multi-turn scenarios green. Memory adversarial 8/8 active across P8 (memory_pii_leak — 3/3, 100% bar), P9 (profile_injection — 3/3, ≥80% bar, structural 100%), P10 (cross_user_profile_leak — 2/2, 100% bar); P11 rows (`token_budget_exhaustion`, `indirect_injection`) kept as documented surfaces with runner assertions deferred to a later milestone. See `.planning/phases/34-memory-multi-turn/SUMMARY.md` for full handoff to Phase 35.
 
 **2026-05-20 — Phase 32 Plan 06 shipped (citation chips frontend):** `useCopilotStream` consumes the new `event: meta` SSE branch additively (Phase 30 token/done/error untouched). New `CitationChip` (`[N] filename` + tooltip + keyboard-accessible) and `CitationPanel` (side-panel modal, "Source consulted" header, conditional external link) components. Per-message citation snapshot keeps multi-turn history coherent. New `e2e/copilot-citations.spec.js` covered by all 6 Playwright projects via the default testMatch glob (Case A — no CI workflow edit). 243/243 vitest green, chromium Playwright green. Paired learning + publication docs (126 + 187 lines).
 
@@ -38,7 +38,7 @@ Branch: `feature/v1.4-phase-33-tool-calling-react` — ready to merge
 - ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
 - ✓ v1.3 phases 21, 22, 23, 24, 25, 26, 28, 29 shipped (2026-04-17) — feature expansion complete
 - ⏸ Phase 27 (SMS reminders + no-show nudges, AWS SNS) — **deferred** to a later milestone (TCPA + flag-gated; not a blocker)
-- ▶ v1.4 (AI Onboarding Copilot) — Phases 30 + 31 + 32 + 33 shipped; phases 34–38 ahead
+- ▶ v1.4 (AI Onboarding Copilot) — Phases 30 + 31 + 32 + 33 + 34 shipped; phases 35–38 ahead
 
 **v1.3 phase outcomes (9 phases, 21–29):**
 
@@ -56,17 +56,23 @@ Branch: `feature/v1.4-phase-33-tool-calling-react` — ready to merge
 
 ## Next Action
 
-Merge Phase 33 to `main`, then start Phase 34 (Memory + multi-turn context — conversation
-summarisation and token-budget management). Phase 34 inherits the Phase 33 agent loop's SSE
-event taxonomy (`tool_use` / `tool_result` / `confirmation_required`), the audit log table
-`copilot_tool_calls`, the three-layer boundary (which memory recall must re-apply at read
-time so cached tool results don't bypass redaction), and the `COPILOT_AGENT_LOOP_ENABLED`
-flag (Phase 34 should not flip the default — ship behind the same flag until Phase 37).
-Locked invariants for Phase 34: do not touch the Phase 33 tool surface (additive new tools
-only — no rename/reshape of `list_modules`, `get_module_roster`, etc.), do not change the
-`_PENDING` confirmation contract (Phase 37 swaps the backing store; the interface stays
-stable), keep the Phase-30 SSE `token` / `done` / `error` taxonomy additive-only, and re-
-apply the redactor whenever previously-retrieved tool data is surfaced from memory.
+Merge Phase 34 to `main`, then start Phase 35 (Multi-model evaluation harness — paper
+contributions #2 + #3). Sub-phase 35-01 ships first: per-response thumbs and end-of-session
+1–5 rating with new tables `copilot_message_ratings` + `copilot_session_ratings` so data
+starts flowing before the multi-model comparison sub-phases land. Sub-phases 35-02+ swap
+the LLM provider per-request via env override and replay the eval testset across 5–8
+OpenRouter free models, combining RAGAS scores with the human-feedback signal collected in
+35-01.
+
+Locked invariants for Phase 35 (carried from Phase 34 handoff): do not touch the Phase 33
+tool surface or three-layer boundary (additive new tools only — no rename/reshape of
+`list_modules`, `get_module_roster`, etc.); do not change the `_PENDING` confirmation
+contract (Phase 37 swaps the backing store; the interface stays stable); keep the Phase-30
+SSE token taxonomy additive-only; re-apply the redactor whenever previously-retrieved tool
+data is surfaced from memory; preserve the advisory header/footer wrapping
+`load_profile_block` (the adversarial suite asserts the exact strings); extend the
+adversarial YAML schema (`cases.yaml` + `cases_memory.yaml`) rather than rewriting it; do
+not fold ratings into `copilot_user_profiles.profile_text` — sibling rating tables only.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
@@ -163,4 +169,30 @@ See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-p
 - `_PENDING` is in-memory — acceptable for v1 single-worker local; Phase 37 swaps to a DB-backed pending store
 
 ---
-*Last updated: 2026-05-23 — Phase 33 shipped end-to-end. v1.4 milestone 4/9 phases complete; next action is Phase 34 planning (Memory + multi-turn context).*
+**Phase 34 outcome (Memory + multi-turn context):**
+
+- ✓ Alembic `0022_add_copilot_user_profiles_and_session_columns` — new table `copilot_user_profiles` + three columns on `copilot_sessions` (`closed_at`, `last_message_at`, `profile_extracted_at`)
+- ✓ Within-session summariser `app.copilot.memory.summariser.compress_if_needed` — tiktoken count with safe encoding fallback, threshold-driven, working-set + tool-call rollup
+- ✓ Summariser wired into `run_turn` before each `llm.chat()` (sub-phase 34-05)
+- ✓ Extractor `app.copilot.memory.extractor` — `build_prompt(transcript, prior_blob)` + `run(...)` with PII redactor at `declared=False`; HIGH-severity outputs dropped, not written
+- ✓ Celery task `app.tasks.extract_profile.extract_profile_facts` — idempotent on `profile_extracted_at`
+- ✓ Celery beat `sweep_idle_sessions` — 5-min cadence; closes sessions inactive >30 min and enqueues extraction
+- ✓ `load_profile_block(db, user_id)` — per-user-scoped loader with advisory header/footer wrapping
+- ✓ Profile block injected into the session-start system prompt (sub-phase 34-07)
+- ✓ Router: `GET /api/v1/copilot/profile`, `DELETE /api/v1/copilot/profile` (idempotent), `POST /api/v1/copilot/sessions/{id}/close`; `last_message_at` bumped on every message append
+- ✓ Frontend `CopilotMemorySettings` wired into `ProfilePage` — loading / empty / populated / forget / cancel states
+- ✓ Functional F1–F5 multi-turn integration tests green
+- ✓ Memory adversarial 8/8 active across P8 (memory_pii_leak), P9 (profile_injection), P10 (cross_user_profile_leak)
+- ✓ Full backend suite: **743 passed / 9 skipped** (no skip new in Phase 34)
+- ✓ Paired learning + documentation writeups for sub-phases 01–10
+
+**Phase 34 known issues / deferred:**
+
+- P11 rows (`token_budget_exhaustion`, `indirect_injection`) in `cases_memory.yaml` are inert at the runner level — kept as documented attack surfaces; runner assertions wait on a retrieval-grounding harness in Phase 35+
+- Multi-model role assignment (separate summariser/extractor models) deferred to Phase 35 per locked decision #6
+- Profile version history deferred to Phase 37 hardening; current shape overwrites `profile_text` on each extraction
+- Encryption at rest for `profile_text` deferred to Phase 37
+- Idle sweeper interval picked 5-min (open question in spec section 13); easy retune from `celery_app.py` if usage suggests otherwise
+
+---
+*Last updated: 2026-05-23 — Phase 34 shipped end-to-end. v1.4 milestone 5/9 phases complete; next action is Phase 35 (Multi-model evaluation harness; human-feedback sub-phase 35-01 ships first).*
