@@ -118,3 +118,43 @@ def test_replay_one_records_hard_failure(tmp_path, monkeypatch):
     payload = json.loads(trace_path.read_text())
     assert payload["outcome"] == "hard_failure"
     assert "ValueError" in payload.get("error_class", "")
+
+
+def test_replay_one_with_use_agent_loop_routes_through_run_turn(
+    tmp_path, monkeypatch
+):
+    """When `use_agent_loop=True`, replay_one calls run_turn instead of complete().
+
+    We monkeypatch run_turn to a sentinel and assert it was called.
+    """
+    from app.eval import replay
+    from app.copilot.agent import loop as agent_loop
+
+    called = {"n": 0}
+
+    def _stub_run_turn(*args, **kwargs):
+        called["n"] += 1
+
+        # mimic the shape replay expects
+        class _Result:
+            final_answer = "stub"
+            tool_calls = []
+            retrieved_context = []
+            usage = {"prompt_tokens": 1, "completion_tokens": 1, "latency_ms": 1}
+
+        return _Result()
+
+    monkeypatch.setattr(agent_loop, "run_turn", _stub_run_turn)
+    out_dir = tmp_path / "results"
+    replay.replay_one(
+        model_id="meta-llama/llama-3.2-3b-instruct:free",
+        question={
+            "id": "q-agent", "role": "admin", "category": "tool_write",
+            "prompt": "schedule something",
+            "gold": "x", "accept_set": None, "required_tools": None, "notes": "",
+        },
+        out_dir=out_dir,
+        monkeypatch=monkeypatch,
+        use_agent_loop=True,
+    )
+    assert called["n"] == 1

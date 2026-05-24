@@ -54,10 +54,11 @@ def _run_model(
     questions: list[dict[str, Any]],
     out_dir: Path,
     max_workers: int,
+    use_agent_loop: bool = False,
 ) -> None:
     set_model_for_replay(model_id, monkeypatch=None)
-    logger.info("eval_model_started model=%s n_questions=%s",
-                model_id, len(questions))
+    logger.info("eval_model_started model=%s n_questions=%s use_agent_loop=%s",
+                model_id, len(questions), use_agent_loop)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
             pool.submit(
@@ -66,6 +67,7 @@ def _run_model(
                 question=q,
                 out_dir=out_dir,
                 monkeypatch=None,
+                use_agent_loop=use_agent_loop,
             )
             for q in questions
         ]
@@ -91,6 +93,14 @@ def main(argv: list[str] | None = None) -> int:
              "backend/eval-results/{timestamp}/.",
     )
     parser.add_argument("--max-workers", type=int, default=4)
+    parser.add_argument(
+        "--use-agent-loop",
+        action="store_true",
+        default=False,
+        help="Drive replays through app.copilot.agent.loop.run_turn instead "
+             "of the bare complete() path. Requires DB / scope wiring — "
+             "still a work-in-progress (see SUMMARY).",
+    )
     args = parser.parse_args(argv)
 
     # Free-tier guard for the candidate set (spec §2.7 / §13).
@@ -121,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             questions=questions,
             out_dir=out_dir,
             max_workers=args.max_workers,
+            use_agent_loop=args.use_agent_loop,
         )
     logger.info("eval_run_finished out_dir=%s", out_dir)
     return 0

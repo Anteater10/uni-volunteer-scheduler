@@ -16,7 +16,7 @@ def test_run_main_dispatches_one_replay_per_model_per_question(
 
     calls: list[tuple[str, str]] = []
 
-    def _stub_replay_one(*, model_id, question, out_dir, monkeypatch=None):
+    def _stub_replay_one(*, model_id, question, out_dir, monkeypatch=None, **_kw):
         calls.append((model_id, question["id"]))
         model_dir = out_dir / model_id.replace("/", "-").replace(":", "-")
         model_dir.mkdir(parents=True, exist_ok=True)
