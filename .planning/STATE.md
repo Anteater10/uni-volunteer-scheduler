@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-23T23:30:00.000Z"
-last_activity: 2026-05-23 — Phase 35 sub-phase 35-01 (human-feedback collection) shipped end-to-end. New tables `copilot_message_ratings` + `copilot_session_ratings` via Alembic `0023` (with unique constraints `(message_id, user_id)` / `(session_id, user_id)` for upsert), four new router endpoints (`POST /messages/{id}/rating`, `POST /sessions/{id}/rating`, `GET /admin/feedback/weekly`, `GET /admin/feedback/bottom-messages`), additive SSE `message_persisted` event emitted after persisting each assistant `copilot_messages` row, `useCopilotStream` captures the id onto the rendered bubble, `MessageRatingButtons` (up persists on click; down opens inline comment box and persists only on submit) + `SessionRatingModal` (coercive — no skip; Cancel keeps the drawer open) + `AdminCopilotFeedbackPage` wired into `AdminLayout.jsx` for both admin and organizer roles. New package `app.copilot.feedback` with `weekly_rollup` (ISO-week via `date_trunc('week', ...)`) + `bottom_messages` (partial-index drill-down over `value = 'down'`). 95% per-package coverage gate added in `.github/workflows/ci.yml` and pinned in `backend/tests/test_coverage_gates.py`. Full backend suite green: **799 passed / 11 skipped**. Frontend green: **274 tests across 42 files**. Phase 35-02+ (multi-model comparison — eval testset replay across 5–8 OpenRouter free models, combining RAGAS scores with the human-feedback signal landed here) is the next action.
+last_updated: "2026-05-24T18:00:00.000Z"
+last_activity: 2026-05-24 — Phase 35 sub-phase 35-02 (multi-model evaluation harness) code-complete pending real-network run on Andy's machine. Offline-only `backend/app/eval/` package: 8 OpenRouter free-tier model ids registered (`:free` invariant asserted at import, replay guard, CLI guard, adversarial wrapper guard); hand-curated testset YAML + schema validator + per-role coverage report; replay CLI `python -m app.eval.run` with per-model `ThreadPoolExecutor` and `--use-agent-loop` flag (parses + routes; real DB+scope plumbing deferred); three metric families wired — RAGAS adapter (judge pinned to `meta-llama/llama-3.3-70b-instruct:free`; real `_default_judge` body deferred until `requirements-eval.txt` installed), agentic tool-use grader (with `{any}` wildcard + refusal/confirm handling), human-rating per-model rollup over the Phase 35-01 rating tables with insufficient-sample flag; `score_all_traces` orchestrator over per-question JSONs; adversarial wrapper at `app/eval/adversarial.py` that iterates models and writes per-model JSON (inner `_run_one_case` stubbed — depends on extracting `run_case(...)` from the existing single-model adversarial test file); `BASELINE_MODEL = "openai/gpt-oss-120b:free"` kept as 9th comparison point with placeholder `baseline-phase-33.json`; reports — paper-locked 12-column `results.csv` header (`model, question_id, category, role, ragas_faithfulness, ragas_answer_relevancy, ragas_context_precision, tool_use_correct, outcome, latency_ms, prompt_tokens, completion_tokens`), per-question traces JSON, auto-rendered markdown report, top-level redirect at `docs/documentation/35-eval-results.md`; 90% per-package coverage gate on `app.eval` (locked with `TODO(35-02-G+)` to bump to 95% once deferred items land — current per-module: `adversarial.py` 71%, `run.py` 82%, `replay.py` 89%, others ≥96%). CI gate untouched: existing single-model `tests/copilot/adversarial/test_adversarial.py` is untouched and remains the CI's adversarial gate. Broad-scope backend suite green: **174 passed** across `tests/eval` (48) + `tests/copilot/adversarial` (43) + `tests/copilot/api` + `tests/copilot/memory` (83 combined). Paired learning + documentation docs ×7 (sub-phases A–F + closeout) under `docs/{learning,documentation}/35-02-multimodel-eval/`. See `.planning/phases/35-02-multimodel-eval/SUMMARY.md` and `HANDOFF.md` for the exact real-network smoke command + env vars + rate-limit guidance. New tables `copilot_message_ratings` + `copilot_session_ratings` via Alembic `0023` (with unique constraints `(message_id, user_id)` / `(session_id, user_id)` for upsert), four new router endpoints (`POST /messages/{id}/rating`, `POST /sessions/{id}/rating`, `GET /admin/feedback/weekly`, `GET /admin/feedback/bottom-messages`), additive SSE `message_persisted` event emitted after persisting each assistant `copilot_messages` row, `useCopilotStream` captures the id onto the rendered bubble, `MessageRatingButtons` (up persists on click; down opens inline comment box and persists only on submit) + `SessionRatingModal` (coercive — no skip; Cancel keeps the drawer open) + `AdminCopilotFeedbackPage` wired into `AdminLayout.jsx` for both admin and organizer roles. New package `app.copilot.feedback` with `weekly_rollup` (ISO-week via `date_trunc('week', ...)`) + `bottom_messages` (partial-index drill-down over `value = 'down'`). 95% per-package coverage gate added in `.github/workflows/ci.yml` and pinned in `backend/tests/test_coverage_gates.py`. Full backend suite green: **799 passed / 11 skipped**. Frontend green: **274 tests across 42 files**. Phase 35-02+ (multi-model comparison — eval testset replay across 5–8 OpenRouter free models, combining RAGAS scores with the human-feedback signal landed here) is the next action.
 progress:
   total_phases: 9
-  completed_phases: 6
-  total_plans: 25
-  completed_plans: 19
-  percent: 76
+  completed_phases: 7
+  total_plans: 32
+  completed_plans: 26
+  percent: 81
 ---
 
 # Project State
@@ -23,8 +23,8 @@ progress:
 ## Current Position
 
 Milestone: **v1.4 AI Onboarding Copilot** — in progress
-Phase: 35 (Multi-model evaluation harness) — sub-phase 35-01 (human-feedback collection) ✅ shipped; 35-02+ ahead
-Branch: `feature/v1.4-phase-35-01-human-feedback` — ready to merge
+Phase: 35 (Multi-model evaluation harness) — sub-phase 35-01 (human-feedback collection) ✅ shipped; sub-phase 35-02 (multi-model harness) ✅ code-complete pending real-network run; Phase 36 (DSPy, optional) ahead
+Branch: `feature/v1.4-phase-35-02-multimodel-eval` — ready for PR / real-network smoke
 **Last activity:** 2026-05-23 — Phase 35 sub-phase 35-01 shipped end-to-end (see Phase 35-01 outcome block below). Phase 34 shipped earlier the same day. Within-session summariser (`compress_if_needed`, tiktoken + threshold + rollup) wired into `run_turn`. End-of-session profile extraction via Celery task `extract_profile_facts` re-applies the PII redactor with `declared=False` and drops HIGH-severity outputs. Session-start profile injection through `load_profile_block(db, user_id)` returns an advisory-wrapped string (`"## What you know about this user"` … `"Use this context when it helps; ignore it when irrelevant."`) — structural framing the adversarial suite asserts on. New table `copilot_user_profiles` + three columns on `copilot_sessions` (`closed_at`, `last_message_at`, `profile_extracted_at`) via Alembic `0022`. Celery beat `sweep_idle_sessions` (5-min cadence) closes sessions inactive >30 min and enqueues extraction. Router adds `GET /api/v1/copilot/profile`, `DELETE /api/v1/copilot/profile` (idempotent), `POST /api/v1/copilot/sessions/{id}/close`; message append bumps `last_message_at`. Frontend `CopilotMemorySettings` (loading / empty / populated / forget / cancel) wired into `ProfilePage`. Full backend suite green: 743 passed / 9 skipped. Functional F1–F5 multi-turn scenarios green. Memory adversarial 8/8 active across P8 (memory_pii_leak — 3/3, 100% bar), P9 (profile_injection — 3/3, ≥80% bar, structural 100%), P10 (cross_user_profile_leak — 2/2, 100% bar); P11 rows (`token_budget_exhaustion`, `indirect_injection`) kept as documented surfaces with runner assertions deferred to a later milestone. See `.planning/phases/34-memory-multi-turn/SUMMARY.md` for full handoff to Phase 35.
 
 **2026-05-20 — Phase 32 Plan 06 shipped (citation chips frontend):** `useCopilotStream` consumes the new `event: meta` SSE branch additively (Phase 30 token/done/error untouched). New `CitationChip` (`[N] filename` + tooltip + keyboard-accessible) and `CitationPanel` (side-panel modal, "Source consulted" header, conditional external link) components. Per-message citation snapshot keeps multi-turn history coherent. New `e2e/copilot-citations.spec.js` covered by all 6 Playwright projects via the default testMatch glob (Case A — no CI workflow edit). 243/243 vitest green, chromium Playwright green. Paired learning + publication docs (126 + 187 lines).
@@ -56,11 +56,21 @@ Branch: `feature/v1.4-phase-35-01-human-feedback` — ready to merge
 
 ## Next Action
 
-Merge Phase 35-01 to `main`, then start Phase 35-02+ (multi-model comparison). Swap the
-LLM provider per-request via env override and replay the eval testset across 5–8 OpenRouter
-free models, combining RAGAS scores (automated) with the human-feedback signal collected in
-35-01 (rating tables landed). Output goes to `docs/documentation/35-eval-results.md` and
-produces paper contributions #2 (empirical comparison) and #3 (failure taxonomy).
+Phase 35-02 is code-complete. Two parallel tracks open:
+
+1. **Open the Phase 35-02 PR** (Andy runs `gh pr create` — agents do not
+   open PRs per project convention). Branch:
+   `feature/v1.4-phase-35-02-multimodel-eval`. See
+   `.planning/phases/35-02-multimodel-eval/HANDOFF.md` for the smoke
+   runbook and the exact command + env vars to invoke the real-network
+   harness once `OPENROUTER_API_KEY` is set.
+2. **First real-network harness run** on Andy's machine. This lights
+   up the deferred items (real RAGAS judge body, adversarial
+   `_run_one_case`, frozen baseline, `--use-agent-loop` plumbing) and
+   produces the paper figure #2 CSV.
+
+After both: Phase 36 (DSPy / prompt-program experiment, optional) or
+straight to Phase 37 (production hardening).
 
 Locked invariants for Phase 35-02+ (carried from 35-01 handoff + earlier phases): do not
 touch the Phase 33 tool surface or three-layer boundary (additive new tools only — no
@@ -225,4 +235,27 @@ See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-p
 - Comment field encryption at rest deferred to Phase 37 hardening alongside `profile_text` encryption
 
 ---
-*Last updated: 2026-05-23 — Phase 35 sub-phase 35-01 (human-feedback collection) shipped end-to-end. v1.4 milestone 6/9 phases complete (Phase 35 counted with 35-01 done; 35-02+ ahead). Next action is Phase 35-02+ (multi-model comparison — eval testset replay across 5–8 OpenRouter free models combining RAGAS + the human-feedback signal collected in 35-01).*
+**Phase 35-02 outcome (Multi-model evaluation harness — code-complete pending real-network run):**
+
+- ✓ Offline-only package `app.eval` — testset YAML + schema validator + 8-id registry + replay CLI + 3 metric families + adversarial wrapper + report renderer
+- ✓ 8 free-tier OpenRouter model ids registered; `:free` invariant asserted at import, replay guard, CLI guard, adversarial wrapper guard; `BASELINE_MODEL = "openai/gpt-oss-120b:free"` kept as 9th comparison point
+- ✓ Paper-locked 12-column `results.csv` header with regression test pin
+- ✓ Per-question traces JSON + auto-rendered `results.md` + top-level redirect at `docs/documentation/35-eval-results.md`
+- ✓ Adversarial wrapper iterates models without touching the existing single-model CI gate
+- ✓ 90% per-package coverage gate on `app.eval` (with `TODO(35-02-G+)` to bump to 95%)
+- ✓ Broad-scope backend suite green: **174 passed** (tests/eval 48 + tests/copilot/adversarial 43 + tests/copilot/api + tests/copilot/memory 83)
+- ✓ Paired learning + documentation writeups for sub-phases A–F + closeout (×7 pairs)
+- ✓ No DB schema work (latest revision remains Alembic `0023` from Phase 35-01)
+
+**Phase 35-02 known issues / deferred (trigger on first real-network run):**
+
+- `app.eval.metrics.ragas._default_judge` raises `NotImplementedError` — real `ragas.evaluate()` body deferred until Andy installs `backend/requirements-eval.txt`
+- `app.eval.adversarial._run_one_case` raises `NotImplementedError` — depends on extracting `run_case(case, db_session, seed)` from the existing single-model adversarial test file
+- `backend/eval-results/baseline-phase-33.json` is a placeholder — real frozen run depends on the case-runner extraction above
+- `--use-agent-loop` flag emits `hard_failure` until DB session + role scope injection lands in the replay driver
+- Per-module coverage gaps below the 95% project convention: `adversarial.py` 71%, `run.py` 82%, `replay.py` 89% — each closes when its corresponding deferred item lands
+- Top-level results renderer (`render_top_level_redirect`) is a no-op until first real run produces numbers
+- Token-bucket rate limiting in `run.py::_run_model` deferred — currently relies on HTTP 429 + OpenRouter retry; may need tuning if Andy hits rate limits on the overnight run
+
+---
+*Last updated: 2026-05-24 — Phase 35 sub-phase 35-02 (multi-model harness) code-complete pending real-network run on Andy's machine. v1.4 milestone effectively 7/9 phases complete. Next action is the PR (Andy opens) + the first overnight harness run that lights up paper figure #2.*

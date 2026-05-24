@@ -23,7 +23,7 @@ Phase numbering continues from v1.3 (ended at 29); v1.4 starts at Phase 30.
 - [x] **Phase 32 — RAG retrieval (hybrid + rerank + citations)** — hybrid retrieval (BM25 + vector) with local CrossEncoder rerank, citation chips in the drawer, "rerank lift" RAGAS harness wired for the paper figure. Shipped 2026-05-20.
 - [x] **Phase 33 — Tool calling + ReAct loop** ⭐ — tool-boundary PII enforcement pattern (paper contribution #1), adversarial test suite, scoped/redacted/role-checked tool results. Shipped 2026-05-23.
 - [x] **Phase 34 — Memory + multi-turn context** — per-session memory, conversation summarisation, token-budget management. Shipped 2026-05-23.
-- [~] **Phase 35 — Multi-model evaluation harness** ⭐ — human-feedback collection (per-response thumbs + end-of-session 1-5 rating) + 5–8 OpenRouter free models compared on agentic tasks. Produces paper contributions #2 (empirical comparison combining RAGAS + human feedback) and #3 (failure taxonomy). **Sub-phase 35-01 (human-feedback collection) shipped 2026-05-23**; sub-phases 35-02+ (multi-model comparison) ahead.
+- [~] **Phase 35 — Multi-model evaluation harness** ⭐ — human-feedback collection (per-response thumbs + end-of-session 1-5 rating) + 5–8 OpenRouter free models compared on agentic tasks. Produces paper contributions #2 (empirical comparison combining RAGAS + human feedback) and #3 (failure taxonomy). **Sub-phase 35-01 (human-feedback collection) shipped 2026-05-23**; **sub-phase 35-02 (multi-model harness) code-complete 2026-05-24, pending real-network run on Andy's machine** — see `.planning/phases/35-02-multimodel-eval/SUMMARY.md` + `HANDOFF.md`.
 - [ ] **Phase 36 — DSPy / prompt-program experiment** — optional, paper-strengthening; programmatic prompt optimisation comparison.
 - [ ] **Phase 37 — Production hardening** — rate limits, cost caps with warning/hard-stop, structured-log retention policy.
 - [ ] **Phase 38 — Deploy + admin handoff** — SciTrek admin uses copilot weekly for ≥2 weeks; written feedback collected for the paper.
@@ -132,9 +132,25 @@ Per-session memory beyond the current turn, within-session summarisation (rollin
 - New endpoints `POST /api/v1/copilot/messages/{message_id}/rating` and `POST /api/v1/copilot/sessions/{session_id}/rating`.
 - Admin roll-up view: average thumbs-up rate per week, average session rating per week, low-rated message drill-down.
 
-**Sub-phases 35-02+ — Multi-model comparison:**
-- Swap LLM provider per-request via env override; replay the eval testset across N models.
-- Combine RAGAS scores (automated) with the human-feedback signal collected in 35-01 (whatever data exists at that point) to rank models on both axes.
+**Sub-phase 35-02 — Multi-model harness — code-complete 2026-05-24, pending real-network run.**
+Offline-only `backend/app/eval/` package shipped: 8 free-tier OpenRouter
+models registered (`:free` invariant asserted), hand-curated testset
+with schema validator, replay CLI (`python -m app.eval.run`) with
+per-model `ThreadPoolExecutor`, three metric families wired (RAGAS
+adapter / agentic tool-use grader with `{any}` wildcard / human-rating
+join over the Phase 35-01 rating tables), adversarial wrapper that
+iterates models without touching the existing single-model CI gate,
+locked 12-column `results.csv` header + per-question JSON traces +
+auto-rendered markdown report, and a 90% per-package coverage gate on
+`app.eval`. Broad-scope test suite (eval + adversarial + copilot api +
+memory) green at **174 passed**. Deferred to Andy's machine: real RAGAS
+`_default_judge` body, adversarial `_run_one_case` extraction, frozen
+Phase 33 baseline JSON, `--use-agent-loop` DB/scope plumbing — all
+trigger on the first overnight harness run. See
+`.planning/phases/35-02-multimodel-eval/SUMMARY.md` for full handoff.
+
+**Sub-phases 35-03+ — TBD** (likely fold into Phase 36 or 37 once the
+first real-network run surfaces what gaps actually matter).
 
 ### Phase 36: DSPy / prompt-program experiment
 
@@ -150,4 +166,4 @@ Per-session memory beyond the current turn, within-session summarisation (rollin
 
 ---
 
-*Last updated: 2026-05-23 — Phase 35 sub-phase 35-01 (human-feedback collection) shipped. v1.4 milestone 6/9 phases complete (counting Phase 35 as in-progress with 35-01 done). Next action is Phase 35-02+ (multi-model comparison — eval testset replay across 5–8 OpenRouter free models using the 35-01 rating tables as ground truth).*
+*Last updated: 2026-05-24 — Phase 35 sub-phase 35-02 (multi-model harness) code-complete pending real-network run. v1.4 milestone effectively 7/9 phases complete (Phase 35 = 35-01 shipped + 35-02 code-complete; first real overnight run on Andy's machine produces paper figure #2 and lights up the deferred items). Next action is Phase 36 (DSPy / prompt-program experiment) — optional, paper-strengthening — OR the first real-network harness invocation, whichever Andy prioritises.*
