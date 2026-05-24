@@ -66,6 +66,7 @@ from .schemas import (
     MessageRatingCreate,
     MessageRatingRead,
     MetaEvent,
+    BottomMessagesResponse,
     SessionRatingCreate,
     SessionRatingRead,
     WeeklyFeedbackResponse,
@@ -911,3 +912,24 @@ def get_admin_feedback_weekly(
     from .feedback.aggregates import weekly_rollup
 
     return WeeklyFeedbackResponse(weeks=weekly_rollup(db, weeks=weeks))
+
+
+@router.get(
+    "/admin/feedback/bottom-messages",
+    response_model=BottomMessagesResponse,
+)
+def get_admin_feedback_bottom_messages(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> BottomMessagesResponse:
+    """Phase 35-01: bottom-quartile assistant messages by rating.
+
+    Backed by :func:`app.copilot.feedback.aggregates.bottom_messages`;
+    real SQL lands in 35-01-C Task 11.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    from .feedback.aggregates import bottom_messages
+
+    return BottomMessagesResponse(messages=bottom_messages(db, limit=limit))

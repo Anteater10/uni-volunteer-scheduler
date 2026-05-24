@@ -115,3 +115,74 @@ def test_weekly_404_when_copilot_disabled(client, db_session, monkeypatch):
         headers=auth_headers(client, admin),
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/feedback/bottom-messages
+# ---------------------------------------------------------------------------
+
+
+def test_bottom_messages_default_returns_shape(client, db_session):
+    admin = _admin(db_session, email="bm_default@example.com")
+    resp = client.get(
+        "/api/v1/copilot/admin/feedback/bottom-messages",
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "messages" in body
+    assert isinstance(body["messages"], list)
+
+
+def test_bottom_messages_limit_bounds(client, db_session):
+    admin = _admin(db_session, email="bm_bounds@example.com")
+    headers = auth_headers(client, admin)
+    assert (
+        client.get(
+            "/api/v1/copilot/admin/feedback/bottom-messages?limit=0",
+            headers=headers,
+        ).status_code
+        == 422
+    )
+    assert (
+        client.get(
+            "/api/v1/copilot/admin/feedback/bottom-messages?limit=200",
+            headers=headers,
+        ).status_code
+        == 422
+    )
+
+
+def test_bottom_messages_organizer_allowed(client, db_session):
+    org = _organizer(db_session, email="bm_org@example.com")
+    resp = client.get(
+        "/api/v1/copilot/admin/feedback/bottom-messages",
+        headers=auth_headers(client, org),
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_bottom_messages_participant_403(client, db_session):
+    part = make_user(
+        db_session,
+        email="bm_part@example.com",
+        role=models.UserRole.participant,
+    )
+    db_session.commit()
+    resp = client.get(
+        "/api/v1/copilot/admin/feedback/bottom-messages",
+        headers=auth_headers(client, part),
+    )
+    assert resp.status_code == 403
+
+
+def test_bottom_messages_404_when_copilot_disabled(
+    client, db_session, monkeypatch
+):
+    admin = _admin(db_session, email="bm_flag@example.com")
+    monkeypatch.setattr(settings, "copilot_enabled", False)
+    resp = client.get(
+        "/api/v1/copilot/admin/feedback/bottom-messages",
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 404
