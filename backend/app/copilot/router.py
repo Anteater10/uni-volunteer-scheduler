@@ -66,6 +66,8 @@ from .schemas import (
     MessageRatingCreate,
     MessageRatingRead,
     MetaEvent,
+    SessionRatingCreate,
+    SessionRatingRead,
 )
 from .agent.audit_log import CallNotFound, update_status
 from .agent.boundary.role_scope import scope_for
@@ -818,4 +820,72 @@ def post_message_rating(
         value=row.value,
         comment=row.comment,
         updated_at=row.updated_at,
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/rating",
+    response_model=SessionRatingRead,
+    status_code=201,
+)
+def post_session_rating(
+    session_id: UUID,
+    body: SessionRatingCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> SessionRatingRead:
+    """Phase 35-01: end-of-session 1-5 rating (insert-only).
+
+    A session with zero assistant turns can't be rated (404). A second
+    submission by the same user returns 409 — the row is write-once by
+    design (the session is gone; minds cannot meaningfully change).
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    sess = _load_owned_session(db, session_id, current_user)
+    n_assistant = (
+        db.query(models.CopilotMessage)
+        .filter(
+            models.CopilotMessage.session_id == sess.id,
+            models.CopilotMessage.role == models.CopilotMessageRole.assistant,
+        )
+        .count()
+    )
+    if n_assistant == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Not Found"
+        )
+    existing = (
+        db.query(models.CopilotSessionRating)
+        .filter_by(session_id=sess.id, user_id=current_user.id)
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Already rated"
+        )
+    row = models.CopilotSessionRating(
+        session_id=sess.id,
+        user_id=current_user.id,
+        value=body.value,
+        comment=body.comment or None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    logger.info(
+        "copilot_session_rated session_id=%s user_id=%s role=%s value=%s "
+        "has_comment=%s n_messages=%s",
+        sess.id,
+        current_user.id,
+        current_user.role.value,
+        row.value,
+        bool(row.comment),
+        n_assistant,
+    )
+    return SessionRatingRead(
+        session_id=str(sess.id),
+        value=row.value,
+        comment=row.comment,
+        created_at=row.created_at,
     )
