@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app import models
-from app.copilot.feedback.aggregates import weekly_rollup
+from app.copilot.feedback.aggregates import bottom_messages, weekly_rollup
 from tests.fixtures.helpers import make_user
 
 
@@ -135,3 +135,130 @@ def test_weekly_rollup_excludes_outside_window(db_session, admin_user):
     _seed_msg_rating(db_session, admin_user, sess, "up", created_at=very_old)
     rows = weekly_rollup(db_session, weeks=4)
     assert all(r["n_messages"] == 0 for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# bottom_messages
+# ---------------------------------------------------------------------------
+
+
+def test_bottom_messages_only_returns_downs(db_session, admin_user):
+    sess = _seed_sess(db_session, admin_user)
+    _seed_msg_rating(db_session, admin_user, sess, "up")
+    _seed_msg_rating(db_session, admin_user, sess, "down", comment="bad week")
+    out = bottom_messages(db_session, limit=10)
+    assert len(out) == 1
+    assert out[0]["comment"] == "bad week"
+    # ensure all required keys present
+    expected_keys = {
+        "message_id",
+        "session_id",
+        "model_id",
+        "rater_role",
+        "rated_at",
+        "comment",
+        "assistant_text",
+        "prior_user_text",
+    }
+    assert expected_keys.issubset(out[0].keys())
+
+
+def test_bottom_messages_newest_first(db_session, admin_user):
+    sess = _seed_sess(db_session, admin_user)
+    older = datetime.now(timezone.utc) - timedelta(days=2)
+    newer = datetime.now(timezone.utc)
+    _seed_msg_rating(
+        db_session, admin_user, sess, "down", comment="A", created_at=older
+    )
+    _seed_msg_rating(
+        db_session, admin_user, sess, "down", comment="B", created_at=newer
+    )
+    out = bottom_messages(db_session, limit=10)
+    assert [m["comment"] for m in out] == ["B", "A"]
+
+
+def test_bottom_messages_includes_prior_user_text(db_session, admin_user):
+    sess = _seed_sess(db_session, admin_user)
+    user_msg = models.CopilotMessage(
+        id=uuid.uuid4(),
+        session_id=sess.id,
+        role=models.CopilotMessageRole.user,
+        content="prior question",
+    )
+    db_session.add(user_msg)
+    db_session.flush()
+    assistant_msg = models.CopilotMessage(
+        id=uuid.uuid4(),
+        session_id=sess.id,
+        role=models.CopilotMessageRole.assistant,
+        content="reply",
+    )
+    db_session.add(assistant_msg)
+    db_session.flush()
+    db_session.add(
+        models.CopilotMessageRating(
+            message_id=assistant_msg.id,
+            user_id=admin_user.id,
+            value="down",
+            comment="bad",
+        )
+    )
+    db_session.commit()
+    out = bottom_messages(db_session, limit=10)
+    assert out[0]["prior_user_text"] == "prior question"
+    assert out[0]["assistant_text"] == "reply"
+
+
+def test_bottom_messages_limit_caps_results(db_session, admin_user):
+    sess = _seed_sess(db_session, admin_user)
+    for i in range(5):
+        _seed_msg_rating(
+            db_session, admin_user, sess, "down", comment=f"c{i}"
+        )
+    out = bottom_messages(db_session, limit=3)
+    assert len(out) == 3
+
+
+def test_bottom_messages_no_prior_user_yields_none(db_session, admin_user):
+    """If the down-rated assistant message has no preceding user turn,
+    prior_user_text is None."""
+    sess = _seed_sess(db_session, admin_user)
+    _seed_msg_rating(db_session, admin_user, sess, "down", comment="orphan")
+    out = bottom_messages(db_session, limit=10)
+    assert out[0]["prior_user_text"] is None
+
+
+def test_bottom_messages_does_not_re_scrub_pii(db_session, admin_user):
+    """The aggregator returns persisted text verbatim — it must NOT re-run
+    the redactor. Phase 33 scrubbed on persist; double-scrubbing would
+    indicate a layering regression.
+
+    We seed text that *looks* like an email (and would be scrubbed by the
+    Phase 33 redactor) and assert it round-trips byte-for-byte. If a future
+    refactor were to introduce a redact() call in this code path, this would
+    catch it.
+    """
+    sess = _seed_sess(db_session, admin_user)
+    # Pretend the persisted assistant text already contains an email-shaped
+    # string (in real life Phase 33 would have rejected/redacted on persist;
+    # here we are asserting NO further scrubbing happens at the aggregator).
+    looks_like_email = "see foo@example.com for context"
+    msg = models.CopilotMessage(
+        id=uuid.uuid4(),
+        session_id=sess.id,
+        role=models.CopilotMessageRole.assistant,
+        content=looks_like_email,
+    )
+    db_session.add(msg)
+    db_session.flush()
+    db_session.add(
+        models.CopilotMessageRating(
+            message_id=msg.id,
+            user_id=admin_user.id,
+            value="down",
+            comment="raw",
+        )
+    )
+    db_session.commit()
+    out = bottom_messages(db_session, limit=10)
+    assert out[0]["assistant_text"] == looks_like_email

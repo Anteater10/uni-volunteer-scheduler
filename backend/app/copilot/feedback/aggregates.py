@@ -120,5 +120,61 @@ def weekly_rollup(db: Session, *, weeks: int) -> list[dict[str, Any]]:
 
 
 def bottom_messages(db: Session, *, limit: int) -> list[dict[str, Any]]:
-    """Stub — replaced by the real drill-down in 35-01-C Task 11."""
-    return []
+    """Return the most-recent ``limit`` thumbs-down message ratings.
+
+    Uses the ``WHERE value = 'down'`` partial index from migration 0023.
+    Joins back to ``copilot_messages`` for the assistant text and a
+    correlated sub-select for the immediately preceding ``role='user'``
+    turn (``prior_user_text``). ``rater_role`` is included so the admin
+    UI can distinguish self-ratings from cross-role feedback.
+    """
+    rows = db.execute(
+        sa_text(
+            """
+            SELECT
+              r.id          AS rating_id,
+              r.message_id  AS message_id,
+              r.comment     AS comment,
+              r.created_at  AS rated_at,
+              m.content     AS assistant_text,
+              m.session_id  AS session_id,
+              s.model_id    AS model_id,
+              u.role        AS rater_role,
+              (
+                SELECT prev.content
+                FROM copilot_messages prev
+                WHERE prev.session_id = m.session_id
+                  AND prev.role = 'user'
+                  AND prev.id <> m.id
+                  AND prev.created_at <= m.created_at
+                ORDER BY prev.created_at DESC, prev.id DESC
+                LIMIT 1
+              ) AS prior_user_text
+            FROM copilot_message_ratings r
+            JOIN copilot_messages m  ON m.id = r.message_id
+            JOIN copilot_sessions s  ON s.id = m.session_id
+            JOIN users u             ON u.id = r.user_id
+            WHERE r.value = 'down'
+            ORDER BY r.created_at DESC
+            LIMIT :limit
+            """
+        ),
+        {"limit": limit},
+    ).all()
+    return [
+        {
+            "message_id": str(r.message_id),
+            "session_id": str(r.session_id),
+            "model_id": r.model_id,
+            "rater_role": (
+                r.rater_role.value
+                if hasattr(r.rater_role, "value")
+                else str(r.rater_role)
+            ),
+            "rated_at": r.rated_at,
+            "comment": r.comment,
+            "assistant_text": r.assistant_text or "",
+            "prior_user_text": r.prior_user_text,
+        }
+        for r in rows
+    ]
