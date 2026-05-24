@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: milestone
 status: in-progress
-last_updated: "2026-05-23T22:00:00.000Z"
-last_activity: 2026-05-23 — Phase 34 shipped (memory + multi-turn context). Within-session summariser (`compress_if_needed`) wired into `run_turn`; end-of-session profile extraction via Celery task `extract_profile_facts` with PII redactor re-applied at `declared=False`; session-start profile injection through `load_profile_block` wrapped in advisory header/footer. New table `copilot_user_profiles` + three columns on `copilot_sessions` (`closed_at`, `last_message_at`, `profile_extracted_at`) via Alembic `0022`. Celery beat `sweep_idle_sessions` (5-min cadence) closes idle sessions and enqueues extraction. Router adds `GET /api/v1/copilot/profile`, `DELETE /api/v1/copilot/profile` (idempotent), `POST /api/v1/copilot/sessions/{id}/close`. Frontend `CopilotMemorySettings` card wired into `ProfilePage`. Full backend suite green: 743 passed / 9 skipped. Memory adversarial 8/8 active across P8 (memory PII leak), P9 (profile injection), P10 (cross-user profile leak); P11 (token budget + indirect injection) deferred as documented surfaces. Multi-model role assignment deferred to Phase 35. Phase 35 (multi-model evaluation harness — human-feedback sub-phase 35-01 first) is the next action.
+last_updated: "2026-05-23T23:30:00.000Z"
+last_activity: 2026-05-23 — Phase 35 sub-phase 35-01 (human-feedback collection) shipped end-to-end. New tables `copilot_message_ratings` + `copilot_session_ratings` via Alembic `0023` (with unique constraints `(message_id, user_id)` / `(session_id, user_id)` for upsert), four new router endpoints (`POST /messages/{id}/rating`, `POST /sessions/{id}/rating`, `GET /admin/feedback/weekly`, `GET /admin/feedback/bottom-messages`), additive SSE `message_persisted` event emitted after persisting each assistant `copilot_messages` row, `useCopilotStream` captures the id onto the rendered bubble, `MessageRatingButtons` (up persists on click; down opens inline comment box and persists only on submit) + `SessionRatingModal` (coercive — no skip; Cancel keeps the drawer open) + `AdminCopilotFeedbackPage` wired into `AdminLayout.jsx` for both admin and organizer roles. New package `app.copilot.feedback` with `weekly_rollup` (ISO-week via `date_trunc('week', ...)`) + `bottom_messages` (partial-index drill-down over `value = 'down'`). 95% per-package coverage gate added in `.github/workflows/ci.yml` and pinned in `backend/tests/test_coverage_gates.py`. Full backend suite green: **799 passed / 11 skipped**. Frontend green: **274 tests across 42 files**. Phase 35-02+ (multi-model comparison — eval testset replay across 5–8 OpenRouter free models, combining RAGAS scores with the human-feedback signal landed here) is the next action.
 progress:
   total_phases: 9
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 25
-  completed_plans: 18
-  percent: 75
+  completed_plans: 19
+  percent: 76
 ---
 
 # Project State
@@ -23,9 +23,9 @@ progress:
 ## Current Position
 
 Milestone: **v1.4 AI Onboarding Copilot** — in progress
-Phase: 34 (Memory + multi-turn context) — ✅ shipped
-Branch: `feature/v1.4-phase-34-memory-multi-turn` — ready to merge
-**Last activity:** 2026-05-23 — Phase 34 shipped. Within-session summariser (`compress_if_needed`, tiktoken + threshold + rollup) wired into `run_turn`. End-of-session profile extraction via Celery task `extract_profile_facts` re-applies the PII redactor with `declared=False` and drops HIGH-severity outputs. Session-start profile injection through `load_profile_block(db, user_id)` returns an advisory-wrapped string (`"## What you know about this user"` … `"Use this context when it helps; ignore it when irrelevant."`) — structural framing the adversarial suite asserts on. New table `copilot_user_profiles` + three columns on `copilot_sessions` (`closed_at`, `last_message_at`, `profile_extracted_at`) via Alembic `0022`. Celery beat `sweep_idle_sessions` (5-min cadence) closes sessions inactive >30 min and enqueues extraction. Router adds `GET /api/v1/copilot/profile`, `DELETE /api/v1/copilot/profile` (idempotent), `POST /api/v1/copilot/sessions/{id}/close`; message append bumps `last_message_at`. Frontend `CopilotMemorySettings` (loading / empty / populated / forget / cancel) wired into `ProfilePage`. Full backend suite green: 743 passed / 9 skipped. Functional F1–F5 multi-turn scenarios green. Memory adversarial 8/8 active across P8 (memory_pii_leak — 3/3, 100% bar), P9 (profile_injection — 3/3, ≥80% bar, structural 100%), P10 (cross_user_profile_leak — 2/2, 100% bar); P11 rows (`token_budget_exhaustion`, `indirect_injection`) kept as documented surfaces with runner assertions deferred to a later milestone. See `.planning/phases/34-memory-multi-turn/SUMMARY.md` for full handoff to Phase 35.
+Phase: 35 (Multi-model evaluation harness) — sub-phase 35-01 (human-feedback collection) ✅ shipped; 35-02+ ahead
+Branch: `feature/v1.4-phase-35-01-human-feedback` — ready to merge
+**Last activity:** 2026-05-23 — Phase 35 sub-phase 35-01 shipped end-to-end (see Phase 35-01 outcome block below). Phase 34 shipped earlier the same day. Within-session summariser (`compress_if_needed`, tiktoken + threshold + rollup) wired into `run_turn`. End-of-session profile extraction via Celery task `extract_profile_facts` re-applies the PII redactor with `declared=False` and drops HIGH-severity outputs. Session-start profile injection through `load_profile_block(db, user_id)` returns an advisory-wrapped string (`"## What you know about this user"` … `"Use this context when it helps; ignore it when irrelevant."`) — structural framing the adversarial suite asserts on. New table `copilot_user_profiles` + three columns on `copilot_sessions` (`closed_at`, `last_message_at`, `profile_extracted_at`) via Alembic `0022`. Celery beat `sweep_idle_sessions` (5-min cadence) closes sessions inactive >30 min and enqueues extraction. Router adds `GET /api/v1/copilot/profile`, `DELETE /api/v1/copilot/profile` (idempotent), `POST /api/v1/copilot/sessions/{id}/close`; message append bumps `last_message_at`. Frontend `CopilotMemorySettings` (loading / empty / populated / forget / cancel) wired into `ProfilePage`. Full backend suite green: 743 passed / 9 skipped. Functional F1–F5 multi-turn scenarios green. Memory adversarial 8/8 active across P8 (memory_pii_leak — 3/3, 100% bar), P9 (profile_injection — 3/3, ≥80% bar, structural 100%), P10 (cross_user_profile_leak — 2/2, 100% bar); P11 rows (`token_budget_exhaustion`, `indirect_injection`) kept as documented surfaces with runner assertions deferred to a later milestone. See `.planning/phases/34-memory-multi-turn/SUMMARY.md` for full handoff to Phase 35.
 
 **2026-05-20 — Phase 32 Plan 06 shipped (citation chips frontend):** `useCopilotStream` consumes the new `event: meta` SSE branch additively (Phase 30 token/done/error untouched). New `CitationChip` (`[N] filename` + tooltip + keyboard-accessible) and `CitationPanel` (side-panel modal, "Source consulted" header, conditional external link) components. Per-message citation snapshot keeps multi-turn history coherent. New `e2e/copilot-citations.spec.js` covered by all 6 Playwright projects via the default testMatch glob (Case A — no CI workflow edit). 243/243 vitest green, chromium Playwright green. Paired learning + publication docs (126 + 187 lines).
 
@@ -38,7 +38,7 @@ Branch: `feature/v1.4-phase-34-memory-multi-turn` — ready to merge
 - ✓ v1.2-prod phases 14–20 shipped (2026-04-16) — production-ready by role (participant, admin, organizer) + cross-role integration
 - ✓ v1.3 phases 21, 22, 23, 24, 25, 26, 28, 29 shipped (2026-04-17) — feature expansion complete
 - ⏸ Phase 27 (SMS reminders + no-show nudges, AWS SNS) — **deferred** to a later milestone (TCPA + flag-gated; not a blocker)
-- ▶ v1.4 (AI Onboarding Copilot) — Phases 30 + 31 + 32 + 33 + 34 shipped; phases 35–38 ahead
+- ▶ v1.4 (AI Onboarding Copilot) — Phases 30 + 31 + 32 + 33 + 34 shipped; Phase 35 sub-phase 35-01 (human-feedback collection) shipped 2026-05-23; sub-phases 35-02+ + phases 36–38 ahead
 
 **v1.3 phase outcomes (9 phases, 21–29):**
 
@@ -56,23 +56,26 @@ Branch: `feature/v1.4-phase-34-memory-multi-turn` — ready to merge
 
 ## Next Action
 
-Merge Phase 34 to `main`, then start Phase 35 (Multi-model evaluation harness — paper
-contributions #2 + #3). Sub-phase 35-01 ships first: per-response thumbs and end-of-session
-1–5 rating with new tables `copilot_message_ratings` + `copilot_session_ratings` so data
-starts flowing before the multi-model comparison sub-phases land. Sub-phases 35-02+ swap
-the LLM provider per-request via env override and replay the eval testset across 5–8
-OpenRouter free models, combining RAGAS scores with the human-feedback signal collected in
-35-01.
+Merge Phase 35-01 to `main`, then start Phase 35-02+ (multi-model comparison). Swap the
+LLM provider per-request via env override and replay the eval testset across 5–8 OpenRouter
+free models, combining RAGAS scores (automated) with the human-feedback signal collected in
+35-01 (rating tables landed). Output goes to `docs/documentation/35-eval-results.md` and
+produces paper contributions #2 (empirical comparison) and #3 (failure taxonomy).
 
-Locked invariants for Phase 35 (carried from Phase 34 handoff): do not touch the Phase 33
-tool surface or three-layer boundary (additive new tools only — no rename/reshape of
-`list_modules`, `get_module_roster`, etc.); do not change the `_PENDING` confirmation
-contract (Phase 37 swaps the backing store; the interface stays stable); keep the Phase-30
-SSE token taxonomy additive-only; re-apply the redactor whenever previously-retrieved tool
-data is surfaced from memory; preserve the advisory header/footer wrapping
-`load_profile_block` (the adversarial suite asserts the exact strings); extend the
+Locked invariants for Phase 35-02+ (carried from 35-01 handoff + earlier phases): do not
+touch the Phase 33 tool surface or three-layer boundary (additive new tools only — no
+rename/reshape of `list_modules`, `get_module_roster`, etc.); do not change the `_PENDING`
+confirmation contract (Phase 37 swaps the backing store; the interface stays stable); keep
+the Phase-30 / Phase-32 SSE token + meta taxonomy additive-only (the `message_persisted`
+event added in 35-01-D is the precedent); re-apply the redactor whenever previously-
+retrieved tool data is surfaced from memory; preserve the advisory header/footer wrapping
+`load_profile_block` (the Phase 34 adversarial suite asserts the exact strings); extend the
 adversarial YAML schema (`cases.yaml` + `cases_memory.yaml`) rather than rewriting it; do
-not fold ratings into `copilot_user_profiles.profile_text` — sibling rating tables only.
+not fold ratings into `copilot_user_profiles.profile_text` — sibling rating tables only;
+preserve the `(message_id, user_id)` and `(session_id, user_id)` unique constraints on the
+new rating tables — overwrites are the contract; extend (don't rewrite) the
+`app.copilot.feedback.weekly_rollup` aggregator with a `model` dimension column when
+per-model breakdowns land.
 
 **v1.1 closing notes (still relevant for v1.2-prod handoff):**
 
@@ -195,4 +198,31 @@ See `.planning/PROJECT.md` → Open Questions and `.planning/REQUIREMENTS-v1.2-p
 - Idle sweeper interval picked 5-min (open question in spec section 13); easy retune from `celery_app.py` if usage suggests otherwise
 
 ---
-*Last updated: 2026-05-23 — Phase 34 shipped end-to-end. v1.4 milestone 5/9 phases complete; next action is Phase 35 (Multi-model evaluation harness; human-feedback sub-phase 35-01 ships first).*
+**Phase 35-01 outcome (Human-feedback collection):**
+
+- ✓ Alembic `0023_add_copilot_feedback_tables` — `copilot_message_ratings` (FK → `copilot_messages.id`, value `up | down`, optional `comment`, unique `(message_id, user_id)`) + `copilot_session_ratings` (FK → `copilot_sessions.id`, value 1–5 CHECK, optional `comment`, unique `(session_id, user_id)`); partial index on message-ratings `value = 'down'` for the drill-down query
+- ✓ ORM models `CopilotMessageRating` + `CopilotSessionRating` with `back_populates` wiring
+- ✓ Pydantic schemas (`MessageRatingWrite`, `SessionRatingWrite`, `WeeklyFeedbackRow`, `BottomMessageRow`) — comment validator enforces "required for thumbs-down" + "required for session rating ≤2"
+- ✓ Four router endpoints reusing `_require_flag_on` + `_require_admin_or_organizer`: `POST /api/v1/copilot/messages/{id}/rating`, `POST /api/v1/copilot/sessions/{id}/rating`, `GET /api/v1/copilot/admin/feedback/weekly`, `GET /api/v1/copilot/admin/feedback/bottom-messages`
+- ✓ New package `app.copilot.feedback` with `weekly_rollup(db, weeks)` (ISO-week via Postgres `date_trunc('week', ...)`, Monday start, per locked decision (f)) + `bottom_messages(db, limit)` (partial-index drill-down; assistant + prior-user text already redacted at persist, regression assertion pinned)
+- ✓ SSE `message_persisted` event emitted after persisting each assistant `copilot_messages` row; strictly additive to the Phase 30/32 SSE taxonomy (token/done/error/meta untouched)
+- ✓ Frontend `useCopilotStream` captures `message_persisted` and stores assistant id on the rendered bubble; `CopilotDrawer.jsx` renders `data-message-id`, mounts `MessageRatingButtons` under each bubble, and intercepts the close action with `SessionRatingModal` when the session has ≥1 assistant turn
+- ✓ `MessageRatingButtons.jsx` — icon-only thumbs, `aria-pressed` state, up persists on click, down opens inline comment box and persists only on submit (no half-state rows)
+- ✓ `SessionRatingModal.jsx` — coercive (no skip), 1–5 `role=radiogroup`, comment textarea conditionally required when score ≤2, Cancel-close keeps the drawer open
+- ✓ `AdminCopilotFeedbackPage.jsx` — weekly table + bottom-messages drill-down; route in `App.jsx`; nav entry in `AdminLayout.jsx` (visible to admin + organizer)
+- ✓ 95% per-package coverage gate on `app.copilot.feedback` added to `.github/workflows/ci.yml` and pinned in `backend/tests/test_coverage_gates.py`
+- ✓ Full backend suite: **799 passed / 11 skipped** (no skip new in 35-01)
+- ✓ Frontend: **274 tests passed across 42 files**
+- ✓ Paired learning + documentation writeups for sub-phases A–E in `docs/learning/35-01-human-feedback/` and `docs/documentation/35-01-human-feedback/`
+
+**Phase 35-01 known issues / deferred:**
+
+- No adversarial sweep on comment text (prompt injection via rating comments, PII smuggling) — per spec section 8, deferred to the 35-02+ multi-model eval sweep
+- Multi-model comparison (paper contribution #2) deferred to sub-phases 35-02+
+- No rate-limit on rating endpoints — unique constraints prevent row explosion (one row per `(message_id, user_id)`); rate-limit can land with Phase 37 if logs show spam
+- Admin response-rate metric (% of assistant messages rated; % of closed sessions rated) not in the weekly view yet — easy add when paper analysis surfaces the need
+- No `beforeunload` interception per locked decision (c); tab close / refresh proceeds silently (dark-pattern cost outweighs data win)
+- Comment field encryption at rest deferred to Phase 37 hardening alongside `profile_text` encryption
+
+---
+*Last updated: 2026-05-23 — Phase 35 sub-phase 35-01 (human-feedback collection) shipped end-to-end. v1.4 milestone 6/9 phases complete (Phase 35 counted with 35-01 done; 35-02+ ahead). Next action is Phase 35-02+ (multi-model comparison — eval testset replay across 5–8 OpenRouter free models combining RAGAS + the human-feedback signal collected in 35-01).*
