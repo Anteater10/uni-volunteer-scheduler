@@ -40,7 +40,12 @@ def _discover_paths() -> tuple[Path, Path, Path]:
 CI_YAML, COVERAGERC, TESTS_DIR = _discover_paths()
 
 MIN_THRESHOLD = 95
-PACKAGES = ("app.copilot", "app.copilot.retrieval", "app.corpus")
+PACKAGES = (
+    "app.copilot",
+    "app.copilot.retrieval",
+    "app.copilot.feedback",
+    "app.corpus",
+)
 
 
 def _iter_run_commands(ci_doc: dict) -> list[str]:
@@ -131,6 +136,7 @@ def test_coveragerc_has_branch_coverage_on() -> None:
         "test_copilot_*.py",
         "test_retrieval_*.py",
         "test_corpus_*.py",
+        "copilot/feedback/test_*.py",
     ],
 )
 def test_namespace_has_test_files(glob_pattern: str) -> None:

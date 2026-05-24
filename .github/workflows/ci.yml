@@ -129,6 +129,7 @@ jobs:
           per_pkg = {
               "app/copilot": 0.95,
               "app/copilot/retrieval": 0.95,
+              "app/copilot/feedback": 0.95,
               "app/corpus": 0.95,
           }
           for prefix, floor in per_pkg.items():
@@ -171,6 +172,13 @@ jobs:
         run: |
           cd backend
           pytest -o addopts="" --cov=app.corpus --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
+
+      - name: Coverage gate — app.copilot.feedback
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
+        run: |
+          cd backend
+          pytest -o addopts="" --cov=app.copilot.feedback --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
 
   phase0-frontend-tests:
     name: phase0 frontend vitest
