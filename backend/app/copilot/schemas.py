@@ -4,7 +4,9 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, conint, field_validator, model_validator
 
 
 class CopilotSessionRead(BaseModel):
@@ -129,3 +131,91 @@ class CopilotProfileRead(BaseModel):
     profile_text: str
     updated_at: datetime | None
     version: int
+
+
+# ---------------------------------------------------------------------------
+# Phase 35-01: human-feedback schemas
+# ---------------------------------------------------------------------------
+
+
+_MAX_COMMENT_LEN = 1000
+
+
+class MessageRatingCreate(BaseModel):
+    """Body for ``POST /api/v1/copilot/messages/{message_id}/rating``.
+
+    A thumbs-down (``value == "down"``) requires a non-whitespace comment;
+    the validator below enforces that cross-field rule because it cannot be
+    expressed as a per-field ``field_validator``.
+    """
+
+    value: Literal["up", "down"]
+    comment: str | None = None
+
+    @model_validator(mode="after")
+    def _validate(self) -> "MessageRatingCreate":
+        if self.comment is not None and len(self.comment) > _MAX_COMMENT_LEN:
+            raise ValueError("comment exceeds 1000 characters")
+        if self.value == "down" and not (self.comment or "").strip():
+            raise ValueError("comment is required for thumbs-down ratings")
+        return self
+
+
+class MessageRatingRead(BaseModel):
+    message_id: str
+    value: Literal["up", "down"]
+    comment: str | None
+    updated_at: datetime
+
+
+class SessionRatingCreate(BaseModel):
+    """Body for ``POST /api/v1/copilot/sessions/{session_id}/rating``.
+
+    Ratings of 2 or lower require a non-whitespace comment so we always
+    have a reason on file for low scores.
+    """
+
+    value: conint(ge=1, le=5)
+    comment: str | None = None
+
+    @model_validator(mode="after")
+    def _validate(self) -> "SessionRatingCreate":
+        if self.comment is not None and len(self.comment) > _MAX_COMMENT_LEN:
+            raise ValueError("comment exceeds 1000 characters")
+        if self.value <= 2 and not (self.comment or "").strip():
+            raise ValueError("comment is required for ratings of 2 or lower")
+        return self
+
+
+class SessionRatingRead(BaseModel):
+    session_id: str
+    value: int
+    comment: str | None
+    created_at: datetime
+
+
+class WeeklyFeedback(BaseModel):
+    iso_week: str
+    thumbs_up_rate: float | None
+    session_rating_avg: float | None
+    n_messages: int
+    n_sessions: int
+
+
+class WeeklyFeedbackResponse(BaseModel):
+    weeks: list[WeeklyFeedback]
+
+
+class BottomMessageEntry(BaseModel):
+    message_id: str
+    session_id: str
+    model_id: str | None
+    rater_role: str
+    rated_at: datetime
+    comment: str | None
+    assistant_text: str
+    prior_user_text: str | None
+
+
+class BottomMessagesResponse(BaseModel):
+    messages: list[BottomMessageEntry]
