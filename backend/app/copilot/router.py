@@ -19,8 +19,14 @@ Endpoints
 The SSE stream format is two-line events:
 
     event: token\ndata: <chunk>\n\n
+    event: message_persisted\ndata: {"id": "<uuid>", "role": "assistant"}\n\n
     event: done\ndata: {"message_id": "<uuid>"}\n\n
     event: error\ndata: {"error": "<class>"}\n\n
+
+Phase 35-01-D Task 13: ``message_persisted`` is emitted immediately
+after the assistant ``copilot_messages`` row is inserted, BEFORE the
+terminal ``done`` (or ``error``) marker. Strictly additive — clients
+that ignore unknown events continue to work.
 """
 from __future__ import annotations
 
@@ -33,7 +39,7 @@ from datetime import datetime, timezone
 from typing import Callable, Iterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
@@ -63,7 +69,13 @@ from .schemas import (
     CopilotProfileRead,
     CopilotSessionDetail,
     CopilotSessionRead,
+    MessageRatingCreate,
+    MessageRatingRead,
     MetaEvent,
+    BottomMessagesResponse,
+    SessionRatingCreate,
+    SessionRatingRead,
+    WeeklyFeedbackResponse,
 )
 from .agent.audit_log import CallNotFound, update_status
 from .agent.boundary.role_scope import scope_for
@@ -111,6 +123,34 @@ def _load_owned_session(
     if not sess:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return sess
+
+
+def _load_owned_message(
+    db: Session, message_id: UUID, user: models.User
+) -> models.CopilotMessage:
+    """Return a message whose parent session belongs to ``user``.
+
+    Mirrors :func:`_load_owned_session` — returns 404 (not 403) when the
+    message exists but lives in another user's session so existence is
+    not observable across users.
+    """
+    msg = (
+        db.query(models.CopilotMessage)
+        .join(
+            models.CopilotSession,
+            models.CopilotMessage.session_id == models.CopilotSession.id,
+        )
+        .filter(
+            models.CopilotMessage.id == message_id,
+            models.CopilotSession.user_id == user.id,
+        )
+        .first()
+    )
+    if msg is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Not Found"
+        )
+    return msg
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +644,13 @@ def _agent_sse_stream(
     db.add(assistant_msg)
     db.commit()
     db.refresh(assistant_msg)
+    # Phase 35-01-D Task 13: announce the persisted assistant row so the
+    # frontend can attach a stable id (for thumbs-up/down rating) BEFORE
+    # the terminal ``done`` marker. Strictly additive.
+    yield _sse_format(
+        "message_persisted",
+        json.dumps({"id": str(assistant_msg.id), "role": "assistant"}),
+    )
     yield _sse_format("done", json.dumps({"message_id": str(assistant_msg.id)}))
 
 
@@ -667,6 +714,15 @@ def _sse_stream(
     db.commit()
     db.refresh(assistant_msg)
 
+    # Phase 35-01-D Task 13: announce the persisted assistant row BEFORE
+    # the terminal ``done`` / ``error`` marker so the frontend can attach
+    # a stable id to the bubble for thumbs-up/down rating. Strictly
+    # additive — clients that ignore unknown events keep working.
+    yield _sse_format(
+        "message_persisted",
+        json.dumps({"id": str(assistant_msg.id), "role": "assistant"}),
+    )
+
     if error_class:
         yield _sse_format(
             "error", json.dumps({"error": error_class, "message_id": str(assistant_msg.id)})
@@ -729,3 +785,173 @@ def confirm(
         raise HTTPException(status_code=410, detail="confirmation expired")
     except ConfirmationNotFound:
         raise HTTPException(status_code=404, detail="confirmation not found")
+
+
+# ---------------------------------------------------------------------------
+# Phase 35-01: human-feedback endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/messages/{message_id}/rating", response_model=MessageRatingRead
+)
+def post_message_rating(
+    message_id: UUID,
+    body: MessageRatingCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> MessageRatingRead:
+    """Phase 35-01: per-message thumbs-up/down rating (upsert).
+
+    Only the session owner can rate messages in that session; messages
+    belonging to other users return 404 (mirrors ``_load_owned_session``)
+    so cross-user existence is not observable.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    msg = _load_owned_message(db, message_id, current_user)
+    row = (
+        db.query(models.CopilotMessageRating)
+        .filter_by(message_id=msg.id, user_id=current_user.id)
+        .first()
+    )
+    if row is None:
+        row = models.CopilotMessageRating(
+            message_id=msg.id,
+            user_id=current_user.id,
+            value=body.value,
+            comment=(body.comment or None),
+        )
+        db.add(row)
+    else:
+        row.value = body.value
+        row.comment = body.comment or None
+        row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    logger.info(
+        "copilot_message_rated message_id=%s session_id=%s user_id=%s "
+        "role=%s value=%s has_comment=%s",
+        msg.id,
+        msg.session_id,
+        current_user.id,
+        current_user.role.value,
+        row.value,
+        bool(row.comment),
+    )
+    return MessageRatingRead(
+        message_id=str(msg.id),
+        value=row.value,
+        comment=row.comment,
+        updated_at=row.updated_at,
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/rating",
+    response_model=SessionRatingRead,
+    status_code=201,
+)
+def post_session_rating(
+    session_id: UUID,
+    body: SessionRatingCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> SessionRatingRead:
+    """Phase 35-01: end-of-session 1-5 rating (insert-only).
+
+    A session with zero assistant turns can't be rated (404). A second
+    submission by the same user returns 409 — the row is write-once by
+    design (the session is gone; minds cannot meaningfully change).
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    sess = _load_owned_session(db, session_id, current_user)
+    n_assistant = (
+        db.query(models.CopilotMessage)
+        .filter(
+            models.CopilotMessage.session_id == sess.id,
+            models.CopilotMessage.role == models.CopilotMessageRole.assistant,
+        )
+        .count()
+    )
+    if n_assistant == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Not Found"
+        )
+    existing = (
+        db.query(models.CopilotSessionRating)
+        .filter_by(session_id=sess.id, user_id=current_user.id)
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Already rated"
+        )
+    row = models.CopilotSessionRating(
+        session_id=sess.id,
+        user_id=current_user.id,
+        value=body.value,
+        comment=body.comment or None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    logger.info(
+        "copilot_session_rated session_id=%s user_id=%s role=%s value=%s "
+        "has_comment=%s n_messages=%s",
+        sess.id,
+        current_user.id,
+        current_user.role.value,
+        row.value,
+        bool(row.comment),
+        n_assistant,
+    )
+    return SessionRatingRead(
+        session_id=str(sess.id),
+        value=row.value,
+        comment=row.comment,
+        created_at=row.created_at,
+    )
+
+
+@router.get(
+    "/admin/feedback/weekly", response_model=WeeklyFeedbackResponse
+)
+def get_admin_feedback_weekly(
+    weeks: int = Query(12, ge=1, le=52),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> WeeklyFeedbackResponse:
+    """Phase 35-01: weekly thumbs-up rate + session-rating average.
+
+    Backed by :func:`app.copilot.feedback.aggregates.weekly_rollup`. The
+    real SQL lands in 35-01-C Task 10; the stub returns shaped empty
+    rows so the contract is stable for the frontend.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    from .feedback.aggregates import weekly_rollup
+
+    return WeeklyFeedbackResponse(weeks=weekly_rollup(db, weeks=weeks))
+
+
+@router.get(
+    "/admin/feedback/bottom-messages",
+    response_model=BottomMessagesResponse,
+)
+def get_admin_feedback_bottom_messages(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> BottomMessagesResponse:
+    """Phase 35-01: bottom-quartile assistant messages by rating.
+
+    Backed by :func:`app.copilot.feedback.aggregates.bottom_messages`;
+    real SQL lands in 35-01-C Task 11.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    from .feedback.aggregates import bottom_messages
+
+    return BottomMessagesResponse(messages=bottom_messages(db, limit=limit))

@@ -62,6 +62,8 @@ import EventsSection from "./pages/admin/EventsSection";
 import HelpSection from "./pages/admin/HelpSection";
 // Phase 24 — scheduled reminder emails admin page
 import AdminRemindersPage from "./pages/admin/AdminRemindersPage";
+// Phase 35-01 — copilot human-feedback admin page
+import AdminCopilotFeedbackPage from "./pages/admin/AdminCopilotFeedbackPage";
 
 import SelfCheckInPage from "./pages/SelfCheckInPage";
 import EventCheckInPage from "./pages/EventCheckInPage";
@@ -124,6 +126,10 @@ export default function App() {
             <Route path="imports" element={<ImportsSection />} />
             <Route path="templates" element={<TemplatesSection />} />
             <Route path="reminders" element={<AdminRemindersPage />} />
+            <Route
+              path="copilot-feedback"
+              element={<AdminCopilotFeedbackPage />}
+            />
             <Route path="help" element={<HelpSection />} />
             {/* Admin-only surfaces */}
             <Route element={<ProtectedRoute roles={["admin"]} />}>

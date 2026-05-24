@@ -14,6 +14,7 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
     Integer,
+    SmallInteger,
     Enum as SqlEnum,
     Text,
     JSON,
@@ -1035,3 +1036,85 @@ class CopilotUserProfile(Base):
     )
 
     user = relationship("User")
+
+
+class CopilotMessageRating(Base):
+    """Phase 35-01: per-message thumbs-up/down rating.
+
+    Unique on (message_id, user_id). Subsequent ratings overwrite via the
+    upsert path in the router (see ``POST /messages/{id}/rating``).
+    """
+
+    __tablename__ = "copilot_message_ratings"
+
+    id = Column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    message_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copilot_messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    value = Column(String(8), nullable=False)
+    comment = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    message = relationship("CopilotMessage")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "message_id", "user_id", name="uq_message_rating_per_user"
+        ),
+        CheckConstraint("value IN ('up', 'down')", name="ck_message_rating_value"),
+    )
+
+
+class CopilotSessionRating(Base):
+    """Phase 35-01: end-of-session 1-5 rating.
+
+    Write-once. Unique on (session_id, user_id); second submission 409s.
+    """
+
+    __tablename__ = "copilot_session_ratings"
+
+    id = Column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copilot_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    value = Column(SmallInteger, nullable=False)
+    comment = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    session = relationship("CopilotSession")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id", "user_id", name="uq_session_rating_per_user"
+        ),
+        CheckConstraint(
+            "value BETWEEN 1 AND 5", name="ck_session_rating_value_range"
+        ),
+    )
