@@ -57,6 +57,12 @@ const allNavItems = [
     label: "Reminders",
     roles: ["admin", "organizer"],
   },
+  // Phase 35-01 — copilot human-feedback aggregates
+  {
+    to: "/admin/copilot-feedback",
+    label: "Copilot feedback",
+    roles: ["admin", "organizer"],
+  },
 ];
 
 function NavItem({ to, label, end }) {
