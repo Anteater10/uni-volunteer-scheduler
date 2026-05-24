@@ -92,6 +92,17 @@ class CitationDetail(BaseModel):
     document_url: str  # "" when origin unset; suppresses link in UI
 
 
+class ConfirmBody(BaseModel):
+    """Body for ``POST /api/v1/copilot/confirm/{call_id}`` (Phase 33-09).
+
+    Carries the human decision for a parked write tool call. ``approved=True``
+    runs the deferred handler; ``approved=False`` flips the audit row to
+    ``rejected`` without executing.
+    """
+
+    approved: bool
+
+
 class MetaEvent(BaseModel):
     """Phase 32 SSE ``event: meta`` payload — emitted exactly once, before
     the first ``event: token``.
@@ -105,3 +116,16 @@ class MetaEvent(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     retrieval_latency_ms: int
     rerank_latency_ms: int
+
+
+class CopilotProfileRead(BaseModel):
+    """Phase 34: cross-session profile blob (free-form text).
+
+    Returned by ``GET /api/v1/copilot/profile``. Empty rows (or missing
+    rows) serialise as ``{"profile_text": "", "updated_at": null,
+    "version": 0}`` — the frontend treats that shape as "no profile yet".
+    """
+
+    profile_text: str
+    updated_at: datetime | None
+    version: int

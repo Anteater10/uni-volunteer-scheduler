@@ -780,12 +780,23 @@ class CopilotSession(Base):
     model_id = Column(String(255), nullable=False)
     system_prompt_hash = Column(String(64), nullable=False)
     system_prompt_version = Column(String(32), nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    last_message_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    profile_extracted_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User")
     messages = relationship(
         "CopilotMessage",
         back_populates="session",
         order_by="CopilotMessage.created_at",
+        cascade="all, delete-orphan",
+    )
+    tool_calls = relationship(
+        "CopilotToolCall",
+        back_populates="session",
+        order_by="CopilotToolCall.created_at",
         cascade="all, delete-orphan",
     )
 
@@ -826,6 +837,42 @@ class CopilotMessage(Base):
     error = Column(Text, nullable=True)
 
     session = relationship("CopilotSession", back_populates="messages")
+
+
+class CopilotToolCall(Base):
+    """Phase 33 (v1.4): one row per tool invocation in the ReAct loop.
+
+    See Alembic 0021_add_copilot_tool_calls.py — schema must stay in sync.
+    """
+
+    __tablename__ = "copilot_tool_calls"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copilot_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role = Column(String(32), nullable=False)
+    caller_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    tool_name = Column(String(128), nullable=False, index=True)
+    args_json = Column(JSONB, nullable=False)
+    result_json = Column(JSONB, nullable=True)
+    redactions_applied = Column(Integer, nullable=False, server_default=text("0"))
+    confirmation_status = Column(
+        String(24), nullable=False, server_default=text("'not_required'")
+    )
+    call_id = Column(String(64), nullable=False, unique=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    executed_at = Column(DateTime(timezone=True), nullable=True)
+
+    session = relationship("CopilotSession", back_populates="tool_calls")
 
 
 # -------------------------
@@ -964,3 +1011,27 @@ class CorpusChunk(Base):
             "document_id", "chunk_index", name="uq_corpus_chunks_doc_idx"
         ),
     )
+
+
+class CopilotUserProfile(Base):
+    """Phase 34: cross-session free-form profile blob per user.
+
+    One row per user. Rewritten end-of-session by the extractor Celery task
+    (see ``app.tasks.extract_profile``). No history table — each rewrite
+    overwrites ``profile_text`` and bumps ``version``.
+    """
+
+    __tablename__ = "copilot_user_profiles"
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    profile_text = Column(Text, nullable=False, server_default="")
+    version = Column(Integer, nullable=False, server_default="0")
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user = relationship("User")

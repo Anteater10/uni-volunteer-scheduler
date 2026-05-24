@@ -21,9 +21,9 @@ Phase numbering continues from v1.3 (ended at 29); v1.4 starts at Phase 30.
 - [x] **Phase 30 — Streaming chat MVP** — flag-gated `/api/v1/copilot` + admin/organizer FAB + SSE streaming + research-grade telemetry (`copilot_sessions`, `copilot_messages`). Shipped 2026-05-08.
 - [x] **Phase 31 — Knowledge corpus + pgvector ingestion** — enable pgvector, add `corpus_documents` + `corpus_chunks` tables, build an ingestion script that pulls docs/schemas/code-comments (no PII tables), generate embeddings, version each ingestion run. Shipped 2026-05-13.
 - [x] **Phase 32 — RAG retrieval (hybrid + rerank + citations)** — hybrid retrieval (BM25 + vector) with local CrossEncoder rerank, citation chips in the drawer, "rerank lift" RAGAS harness wired for the paper figure. Shipped 2026-05-20.
-- [ ] **Phase 33 — Tool calling + ReAct loop** ⭐ — tool-boundary PII enforcement pattern (paper contribution #1), adversarial test suite, scoped/redacted/role-checked tool results.
-- [ ] **Phase 34 — Memory + multi-turn context** — per-session memory, conversation summarisation, token-budget management.
-- [ ] **Phase 35 — Multi-model evaluation harness** ⭐ — 5–8 OpenRouter free models compared on agentic tasks; produces paper contributions #2 (empirical) and #3 (failure taxonomy).
+- [x] **Phase 33 — Tool calling + ReAct loop** ⭐ — tool-boundary PII enforcement pattern (paper contribution #1), adversarial test suite, scoped/redacted/role-checked tool results. Shipped 2026-05-23.
+- [x] **Phase 34 — Memory + multi-turn context** — per-session memory, conversation summarisation, token-budget management. Shipped 2026-05-23.
+- [ ] **Phase 35 — Multi-model evaluation harness** ⭐ — human-feedback collection (per-response thumbs + end-of-session 1-5 rating) + 5–8 OpenRouter free models compared on agentic tasks. Produces paper contributions #2 (empirical comparison combining RAGAS + human feedback) and #3 (failure taxonomy).
 - [ ] **Phase 36 — DSPy / prompt-program experiment** — optional, paper-strengthening; programmatic prompt optimisation comparison.
 - [ ] **Phase 37 — Production hardening** — rate limits, cost caps with warning/hard-stop, structured-log retention policy.
 - [ ] **Phase 38 — Deploy + admin handoff** — SciTrek admin uses copilot weekly for ≥2 weeks; written feedback collected for the paper.
@@ -113,17 +113,28 @@ Flag-gated `/api/v1/copilot` API + admin/organizer FAB + SSE streaming + researc
 
 Hybrid retrieval over the Phase-31 corpus (dense + Postgres FTS fused with RRF in one SQL CTE), local CrossEncoder rerank (`BAAI/bge-reranker-base`), `event: meta` SSE frame (strictly additive to Phase 30), `GET /api/v1/copilot/citations/{chunk_id}` click-through endpoint, frontend chips + side-panel, and the offline RAGAS rerank-lift harness wired for the paper figure. See `.planning/phases/32-rag-retrieval/32-SUMMARY.md` for shipped scope, latencies, coverage, and handoff to Phase 33.
 
-### Phase 33: Tool calling + ReAct loop ⭐
+### Phase 33: Tool calling + ReAct loop ⭐ — ✅ shipped 2026-05-23
 
-**Goal:** tool-boundary PII enforcement pattern (paper contribution #1). Tools return scoped, redacted, role-checked aggregates — the model sees counts and summaries, never volunteer rows. ReAct loop with retries on tool errors. Adversarial test suite green.
+Tool-boundary PII enforcement pattern (paper contribution #1). 12 tools (8 read + 4 write) registered through a `Tool` dataclass + role-scoped registry, all flowing through a uniform `invoke()` that applies a three-layer boundary (schema filter / role scope / redactor) before any tool result reaches the LLM. Write tools gated behind a TTL-bounded confirmation card. ReAct loop (`run_turn`) caps at 6 tool calls + 2 malformed-response retries per turn. Adversarial suite: 35/35 across 7 categories (Cat 1–3 100% at 100% pass bar; Cat 4–7 100% at ≥80% pass bar). New audit table `copilot_tool_calls` (Alembic `0021`). Agent loop wired into `/api/copilot/chat` behind `COPILOT_AGENT_LOOP_ENABLED` (defaults off, preserves Phase 30/32 token-stream behavior). See `.planning/phases/33-tool-calling-react/SUMMARY.md` for shipped scope, test counts, adversarial CSV, and handoff to Phase 34.
 
-### Phase 34: Memory + multi-turn context
+### Phase 34: Memory + multi-turn context — ✅ shipped 2026-05-23
 
-**Goal:** per-session memory beyond the current turn, conversation summarisation to fit the token budget, multi-turn integration tests.
+Per-session memory beyond the current turn, within-session summarisation (rolling summary + recent N turns verbatim) wired into `run_turn` via `compress_if_needed`, async end-of-session profile extraction via Celery (`extract_profile_facts`) with PII redactor re-applied at `declared=False`, session-start profile injection wrapped in an advisory header/footer, and a user-facing "Copilot memory" card on `/profile` for view + clear. New table `copilot_user_profiles` + three columns on `copilot_sessions` (`closed_at`, `last_message_at`, `profile_extracted_at`) via Alembic `0022`. Celery beat job `sweep_idle_sessions` (5-min cadence) closes idle sessions and enqueues extraction. Full backend suite green at 743 passed / 9 skipped. Memory adversarial suite at 8/8 active cases across P8 (memory PII leak), P9 (profile injection), P10 (cross-user profile leak); two P11 rows (token budget + indirect injection) kept as documented surfaces, runner assertions deferred. Multi-model role assignment deferred to Phase 35. See `.planning/phases/34-memory-multi-turn/SUMMARY.md` for shipped scope, test counts, locked decisions, and handoff to Phase 35.
 
 ### Phase 35: Multi-model evaluation harness ⭐
 
-**Goal:** 5–8 OpenRouter free models compared on agentic tasks; produces paper contributions #2 (empirical comparison) and #3 (failure taxonomy). Output published as `docs/documentation/35-eval-results.md`.
+**Goal:** combine automated and human evaluation signals, then compare 5–8 OpenRouter free models on agentic tasks. Produces paper contributions #2 (empirical comparison) and #3 (failure taxonomy). Output published as `docs/documentation/35-eval-results.md`.
+
+**Sub-phase 35-01 — Human-feedback collection (ships first, data starts flowing immediately):**
+- Per-response thumbs up / thumbs down on every assistant message in `CopilotDrawer`.
+- End-of-session 1-5 happiness rating prompted when the drawer closes (or session expires).
+- New tables `copilot_message_ratings` (FK → `copilot_messages.id`, value: `up | down`, optional free-text comment) and `copilot_session_ratings` (FK → `copilot_sessions.id`, value: 1-5, optional comment).
+- New endpoints `POST /api/v1/copilot/messages/{message_id}/rating` and `POST /api/v1/copilot/sessions/{session_id}/rating`.
+- Admin roll-up view: average thumbs-up rate per week, average session rating per week, low-rated message drill-down.
+
+**Sub-phases 35-02+ — Multi-model comparison:**
+- Swap LLM provider per-request via env override; replay the eval testset across N models.
+- Combine RAGAS scores (automated) with the human-feedback signal collected in 35-01 (whatever data exists at that point) to rank models on both axes.
 
 ### Phase 36: DSPy / prompt-program experiment
 
@@ -139,4 +150,4 @@ Hybrid retrieval over the Phase-31 corpus (dense + Postgres FTS fused with RRF i
 
 ---
 
-*Last updated: 2026-05-20 — Phases 31 and 32 marked shipped. v1.4 milestone 3/9 phases complete. Next action is to plan Phase 33 (tool calling + ReAct loop — paper contribution #1).*
+*Last updated: 2026-05-23 — Phase 34 marked shipped (memory + multi-turn context). v1.4 milestone 5/9 phases complete. Next action is Phase 35 (multi-model evaluation harness — human feedback collection sub-phase 35-01 ships first).*

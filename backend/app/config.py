@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     copilot_fallback_model: str = "meta-llama/llama-3.3-70b-instruct:free"
     copilot_request_timeout_seconds: int = 60
     copilot_max_completion_tokens: int = 1024
+    # Phase 33-09: when True the chat endpoint streams ReAct-loop events
+    # (tool_call / tool_result / confirmation_request / final_answer)
+    # instead of raw token chunks. Defaults off so the Phase 30/32 SSE
+    # contract is unchanged for callers that haven't opted in.
+    copilot_agent_loop_enabled: bool = False
 
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is

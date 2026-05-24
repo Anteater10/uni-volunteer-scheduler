@@ -1,0 +1,128 @@
+"""Phase 33 Task 35: create_module_from_template write tool."""
+import uuid
+
+import pytest
+from sqlalchemy import text
+
+from app.copilot.agent.boundary.role_scope import scope_for
+from app.copilot.agent.confirmation import (
+    _PENDING,
+    execute_after_confirmation,
+)
+from app.copilot.agent.tools import registry
+from app.copilot.agent.tools.base import invoke
+from app.copilot.agent.tools.create_module_from_template import (
+    CREATE_MODULE_FROM_TEMPLATE_TOOL,
+)
+from app.models import Event, ModuleTemplate, ModuleType, UserRole
+from tests.fixtures.helpers import make_user
+
+
+def _make_session(db_session, user_id):
+    session_id = uuid.uuid4()
+    db_session.execute(
+        text(
+            "INSERT INTO copilot_sessions (id, user_id, model_id, "
+            "system_prompt_hash, system_prompt_version) "
+            "VALUES (:s, :u, 'test-model', 'hash', 'v1')"
+        ),
+        {"s": session_id, "u": user_id},
+    )
+    db_session.flush()
+    return session_id
+
+
+def _make_template(db_session, *, slug=None):
+    if slug is None:
+        slug = f"tpl-{uuid.uuid4().hex[:8]}"
+    tpl = ModuleTemplate(
+        slug=slug,
+        name="CRISPR Basics",
+        default_capacity=20,
+        duration_minutes=90,
+        type=ModuleType.module,
+        session_count=1,
+    )
+    db_session.add(tpl)
+    db_session.flush()
+    return tpl
+
+
+@pytest.fixture(autouse=True)
+def _register_tool():
+    registry.register(CREATE_MODULE_FROM_TEMPLATE_TOOL)
+    yield
+
+
+def test_invoke_returns_pending(db_session):
+    admin = make_user(db_session, role=UserRole.admin)
+    tpl = _make_template(db_session)
+    session_id = _make_session(db_session, admin.id)
+    scope = scope_for(role="admin", caller_id=admin.id)
+
+    out = invoke(
+        db_session,
+        tool=CREATE_MODULE_FROM_TEMPLATE_TOOL,
+        scope=scope,
+        args={"template_id": tpl.slug, "week": "2026-W22"},
+        session_id=session_id,
+    )
+    assert out["status"] == "pending_confirmation"
+    assert out["call_id"] in _PENDING
+    # Handler did NOT run yet — no event row created.
+    assert (
+        db_session.query(Event).filter(Event.module_slug == tpl.slug).count()
+        == 0
+    )
+
+
+def test_execute_after_confirmation_creates_event(db_session):
+    admin = make_user(db_session, role=UserRole.admin)
+    tpl = _make_template(db_session)
+    session_id = _make_session(db_session, admin.id)
+    scope = scope_for(role="admin", caller_id=admin.id)
+
+    out = invoke(
+        db_session,
+        tool=CREATE_MODULE_FROM_TEMPLATE_TOOL,
+        scope=scope,
+        args={"template_id": tpl.slug, "week": "2026-W22"},
+        session_id=session_id,
+    )
+
+    result = execute_after_confirmation(
+        db_session,
+        out["call_id"],
+        scope_role="admin",
+        caller_id=admin.id,
+    )
+
+    assert result["result"]["name"] == "CRISPR Basics"
+    assert result["result"]["week"] == "2026-W22"
+    new_id = uuid.UUID(result["result"]["new_module_id"])
+    event = db_session.query(Event).filter(Event.id == new_id).one()
+    assert event.owner_id == admin.id
+    assert event.module_slug == tpl.slug
+    assert event.year == 2026
+    assert event.week_number == 22
+
+
+def test_unknown_template_returns_not_found(db_session):
+    admin = make_user(db_session, role=UserRole.admin)
+    session_id = _make_session(db_session, admin.id)
+    scope = scope_for(role="admin", caller_id=admin.id)
+
+    out = invoke(
+        db_session,
+        tool=CREATE_MODULE_FROM_TEMPLATE_TOOL,
+        scope=scope,
+        args={"template_id": "does-not-exist", "week": "2026-W22"},
+        session_id=session_id,
+    )
+    result = execute_after_confirmation(
+        db_session,
+        out["call_id"],
+        scope_role="admin",
+        caller_id=admin.id,
+    )
+    assert "error" in result["result"]

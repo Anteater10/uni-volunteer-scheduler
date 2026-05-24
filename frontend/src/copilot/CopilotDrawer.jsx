@@ -6,6 +6,8 @@ import copilotApi from "./api";
 import useCopilotStream from "./useCopilotStream";
 import CitationChip from "./CitationChip";
 import CitationPanel from "./CitationPanel";
+import ConfirmationCard from "./ConfirmationCard";
+import ToolCallIndicator from "./ToolCallIndicator";
 
 const MAX_CHIPS = 5; // RESEARCH §Open Q #2 — show top-5, horizontal scroll if narrow
 
@@ -15,6 +17,14 @@ export default function CopilotDrawer({ open, onClose }) {
   const [input, setInput] = useState("");
   const [bootError, setBootError] = useState(null);
   const [activeCitation, setActiveCitation] = useState(null);
+  // Active tool calls keyed by call_id; flipped to status: 'done' when
+  // the matching tool_result arrives, removed at turn end.
+  const [toolCalls, setToolCalls] = useState({}); // { [call_id]: { tool, status } }
+  // Outstanding confirmation cards keyed by call_id.
+  const [pendingConfirmations, setPendingConfirmations] = useState({});
+  // Tracks which confirmation buttons are currently posting.
+  const [confirmInFlight, setConfirmInFlight] = useState({});
+  const [confirmError, setConfirmError] = useState(null);
   const scrollRef = useRef(null);
 
   // Lazy session creation when the drawer first opens.
@@ -39,10 +49,14 @@ export default function CopilotDrawer({ open, onClose }) {
     onDone: ({ text, citations }) => {
       // Snapshot citations at the moment the turn completes so each assistant
       // bubble carries its own citation set (later turns won't overwrite).
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: text, citations: citations || [] },
-      ]);
+      // Only push an assistant bubble when there's actual text — otherwise
+      // a confirmation-paused turn would surface an empty bubble.
+      if (text) {
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", content: text, citations: citations || [] },
+        ]);
+      }
     },
     onError: (_err, info) => {
       if (info?.text) {
@@ -52,7 +66,43 @@ export default function CopilotDrawer({ open, onClose }) {
         ]);
       }
     },
+    onToolCall: ({ call_id, tool }) => {
+      setToolCalls((cs) => ({ ...cs, [call_id]: { tool, status: "running" } }));
+    },
+    onToolResult: ({ call_id }) => {
+      setToolCalls((cs) => {
+        if (!cs[call_id]) return cs;
+        return { ...cs, [call_id]: { ...cs[call_id], status: "done" } };
+      });
+    },
+    onConfirmationRequest: ({ call_id, tool, args, preview }) => {
+      setPendingConfirmations((p) => ({
+        ...p,
+        [call_id]: { tool, args, preview },
+      }));
+    },
   });
+
+  async function decide(callId, approved) {
+    setConfirmInFlight((m) => ({ ...m, [callId]: true }));
+    setConfirmError(null);
+    try {
+      await copilotApi.confirmCall(callId, approved);
+      setPendingConfirmations((p) => {
+        const next = { ...p };
+        delete next[callId];
+        return next;
+      });
+    } catch (err) {
+      setConfirmError(err);
+    } finally {
+      setConfirmInFlight((m) => {
+        const next = { ...m };
+        delete next[callId];
+        return next;
+      });
+    }
+  }
 
   // Auto-scroll on new content.
   useEffect(() => {
@@ -66,6 +116,8 @@ export default function CopilotDrawer({ open, onClose }) {
     if (!content || streaming || !sessionId) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", content }]);
+    setToolCalls({});
+    setConfirmError(null);
     try {
       await send(content);
     } catch {
@@ -136,6 +188,25 @@ export default function CopilotDrawer({ open, onClose }) {
                 )}
             </React.Fragment>
           ))}
+          {Object.entries(toolCalls).map(([cid, info]) => (
+            <ToolCallIndicator key={cid} tool={info.tool} status={info.status} />
+          ))}
+          {Object.entries(pendingConfirmations).map(([cid, info]) => (
+            <ConfirmationCard
+              key={cid}
+              tool={info.tool}
+              args={info.args}
+              preview={info.preview}
+              disabled={!!confirmInFlight[cid]}
+              onApprove={() => decide(cid, true)}
+              onReject={() => decide(cid, false)}
+            />
+          ))}
+          {confirmError && (
+            <p className="text-sm text-red-600">
+              Confirmation failed: {confirmError.message}
+            </p>
+          )}
           {streaming && partial && (
             <MessageBubble role="assistant" content={partial} streaming />
           )}

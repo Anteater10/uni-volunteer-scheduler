@@ -39,7 +39,11 @@ celery.conf.update(
     beat_scheduler="redbeat.RedBeatScheduler",
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    include=["app.tasks.import_csv", "app.tasks.reminders"],
+    include=[
+        "app.tasks.import_csv",
+        "app.tasks.reminders",
+        "app.tasks.extract_profile",
+    ],
 )
 
 
@@ -530,5 +534,12 @@ celery.conf.beat_schedule = {
     "check-reminders": {
         "task": "app.tasks.reminders.check_and_send_reminders",
         "schedule": 900.0,
+    },
+    # Phase 34-03 Task 10 — close any copilot session whose last_message_at
+    # is older than 30 min and not yet closed, and enqueue the profile
+    # extractor for each. 5-min cadence keeps drift bounded.
+    "copilot-sweep-idle-sessions": {
+        "task": "app.tasks.extract_profile.sweep_idle_sessions",
+        "schedule": 300.0,
     },
 }

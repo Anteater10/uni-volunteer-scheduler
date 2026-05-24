@@ -108,3 +108,19 @@ def system_prompt_with_context(role: models.UserRole, citations) -> str:
 def hash_prompt(prompt: str) -> str:
     """SHA-256 hex of the prompt — recorded on each session row."""
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
+def render_with_profile(
+    role: models.UserRole, *, profile_block: str = ""
+) -> tuple[str, str]:
+    """Phase 34-07: return (prompt_text, sha256) including the profile block.
+
+    Wraps :func:`system_prompt_for` and appends the rendered profile block
+    when present. This is what the router calls at session-creation time so
+    the cross-session memory block is hashed into ``system_prompt_hash``
+    exactly once — mid-session profile rewrites do not affect the running
+    session (locked decision #7).
+    """
+    base = system_prompt_for(role)
+    text = f"{base}\n\n{profile_block}" if profile_block else base
+    return text, hash_prompt(text)

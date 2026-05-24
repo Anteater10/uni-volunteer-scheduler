@@ -39,7 +39,17 @@ function parseSseChunk(buffer) {
   return [events, rest];
 }
 
-export function useCopilotStream(sessionId, { onDone, onError } = {}) {
+export function useCopilotStream(
+  sessionId,
+  {
+    onDone,
+    onError,
+    onToolCall,
+    onToolResult,
+    onConfirmationRequest,
+    onFinalAnswer,
+  } = {},
+) {
   const [streaming, setStreaming] = useState(false);
   const [partial, setPartial] = useState("");
   const [error, setError] = useState(null);
@@ -139,6 +149,33 @@ export function useCopilotStream(sessionId, { onDone, onError } = {}) {
               } catch {
                 // ignore
               }
+            } else if (ev.event === "tool_call") {
+              try {
+                onToolCall?.(JSON.parse(ev.data));
+              } catch {
+                // malformed — skip
+              }
+            } else if (ev.event === "tool_result") {
+              try {
+                onToolResult?.(JSON.parse(ev.data));
+              } catch {
+                // malformed — skip
+              }
+            } else if (ev.event === "confirmation_request") {
+              try {
+                onConfirmationRequest?.(JSON.parse(ev.data));
+              } catch {
+                // malformed — skip
+              }
+            } else if (ev.event === "final_answer") {
+              try {
+                const body = JSON.parse(ev.data);
+                assembled = body.text || assembled;
+                setPartial(assembled);
+                onFinalAnswer?.(body);
+              } catch {
+                // malformed — skip
+              }
             } else if (ev.event === "error") {
               try {
                 const body = JSON.parse(ev.data);
@@ -171,7 +208,15 @@ export function useCopilotStream(sessionId, { onDone, onError } = {}) {
       onDone?.({ messageId, text: assembled, citations: turnCitations, latencies: turnLatencies });
       return { messageId, text: assembled, error: null, citations: turnCitations };
     },
-    [sessionId, onDone, onError],
+    [
+      sessionId,
+      onDone,
+      onError,
+      onToolCall,
+      onToolResult,
+      onConfirmationRequest,
+      onFinalAnswer,
+    ],
   );
 
   const cancel = useCallback(() => {

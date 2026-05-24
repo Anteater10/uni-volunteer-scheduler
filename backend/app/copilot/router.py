@@ -29,10 +29,11 @@ import json
 import logging
 import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Callable, Iterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
@@ -42,10 +43,12 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user
 from . import llm
+from .memory.profile_block import load_profile_block
 from .prompts import (
     SYSTEM_PROMPT_VERSION,
     build_retrieved_context_block,
     hash_prompt,
+    render_with_profile,
     system_prompt_for,
 )
 from .retrieval.citations import chunks_to_citations
@@ -54,12 +57,23 @@ from .retrieval.rerank import rerank
 from .schemas import (
     Citation,
     CitationDetail,
+    ConfirmBody,
     CopilotMessageCreate,
     CopilotMessageRead,
+    CopilotProfileRead,
     CopilotSessionDetail,
     CopilotSessionRead,
     MetaEvent,
 )
+from .agent.audit_log import CallNotFound, update_status
+from .agent.boundary.role_scope import scope_for
+from .agent.confirmation import (
+    ConfirmationExpired,
+    ConfirmationNotFound,
+    execute_after_confirmation,
+)
+from .agent.loop import run_turn
+from ..tasks.extract_profile import extract_profile_facts
 
 
 logger = logging.getLogger(__name__)
@@ -112,11 +126,18 @@ def create_session(
     _require_flag_on()
     _require_admin_or_organizer(current_user)
 
-    prompt = system_prompt_for(current_user.role)
+    # Phase 34-07: inject the cross-session profile block exactly once at
+    # session start. The block is hashed into ``system_prompt_hash`` so the
+    # session is reproducible; mid-session profile rewrites do not affect
+    # the running session.
+    profile_block = load_profile_block(db, user_id=current_user.id)
+    prompt, prompt_hash = render_with_profile(
+        current_user.role, profile_block=profile_block
+    )
     sess = models.CopilotSession(
         user_id=current_user.id,
         model_id=settings.copilot_primary_model,
-        system_prompt_hash=hash_prompt(prompt),
+        system_prompt_hash=prompt_hash,
         system_prompt_version=SYSTEM_PROMPT_VERSION,
     )
     db.add(sess)
@@ -166,6 +187,83 @@ def get_session(
         system_prompt_version=sess.system_prompt_version,
         messages=[CopilotMessageRead.model_validate(m) for m in sess.messages],
     )
+
+
+@router.post("/sessions/{session_id}/close", status_code=204)
+def close_session(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> Response:
+    """Phase 34-03 Task 8: explicitly close a copilot session.
+
+    Sets ``closed_at`` and enqueues the profile extractor exactly once.
+    Idempotent — subsequent calls see ``closed_at IS NOT NULL`` and
+    short-circuit without re-enqueueing. 404s for sessions owned by
+    another user so existence is not observable across users.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    sess = _load_owned_session(db, session_id, current_user)
+    if sess.closed_at is not None:
+        return Response(status_code=204)
+    sess.closed_at = datetime.now(timezone.utc)
+    db.commit()
+    extract_profile_facts.delay(str(sess.id))
+    return Response(status_code=204)
+
+
+@router.get("/profile", response_model=CopilotProfileRead)
+def get_profile(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> CopilotProfileRead:
+    """Phase 34-02: read the caller's cross-session profile blob.
+
+    Missing rows serialise as the documented "empty" shape so the frontend
+    has a stable contract regardless of whether the extractor has run yet.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    row = (
+        db.query(models.CopilotUserProfile)
+        .filter(models.CopilotUserProfile.user_id == current_user.id)
+        .first()
+    )
+    if row is None:
+        return CopilotProfileRead(profile_text="", updated_at=None, version=0)
+    return CopilotProfileRead(
+        profile_text=row.profile_text,
+        updated_at=row.updated_at,
+        version=row.version,
+    )
+
+
+@router.delete("/profile", status_code=204)
+def delete_profile(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> Response:
+    """Phase 34-02: wipe the caller's cross-session profile blob.
+
+    Sets ``profile_text`` to the empty string and bumps ``version``. Missing
+    rows are a no-op (still 204) so the operation is fully idempotent from
+    the client's perspective — repeated DELETEs never fail, matching the
+    REST contract for DELETE.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    row = (
+        db.query(models.CopilotUserProfile)
+        .filter(models.CopilotUserProfile.user_id == current_user.id)
+        .first()
+    )
+    if row is None:
+        return Response(status_code=204)
+    row.profile_text = ""
+    row.version = (row.version or 0) + 1
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/citations/{chunk_id}", response_model=CitationDetail)
@@ -366,6 +464,10 @@ def post_message(
         content=payload.content,
     )
     db.add(user_msg)
+    # Phase 34-03 Task 9: bump last_message_at so the idle sweeper can
+    # detect activity. Committed alongside the user-message insert so the
+    # signal lands in the same transaction as the data it tracks.
+    sess.last_message_at = datetime.now(timezone.utc)
     db.commit()
 
     # ----- Phase 32: retrieve BEFORE first token -----
@@ -402,11 +504,107 @@ def post_message(
     prompt_blob = json.dumps(chat_messages, sort_keys=True)
     prompt_hash = hashlib.sha256(prompt_blob.encode("utf-8")).hexdigest()
 
+    if settings.copilot_agent_loop_enabled:
+        retrieval_text = appended_block
+        role_value = (
+            current_user.role.value
+            if hasattr(current_user.role, "value")
+            else str(current_user.role)
+        )
+        agent_llm = _get_agent_llm()
+        return StreamingResponse(
+            _agent_sse_stream(
+                db=db,
+                sess=sess,
+                user_message=payload.content,
+                retrieval_context=retrieval_text,
+                role_value=role_value,
+                caller_id=current_user.id,
+                agent_llm=agent_llm,
+                meta_event=meta,
+            ),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no"},
+        )
+
     return StreamingResponse(
         _sse_stream(db, sess, chat_messages, prompt_hash, meta),
         media_type="text/event-stream",
         headers={"X-Accel-Buffering": "no"},
     )
+
+
+def _get_agent_llm():
+    """Indirection hook for the ReAct-loop LLM adapter.
+
+    Tests monkeypatch this to inject a scripted stub. The default
+    implementation raises NotImplementedError — production wiring for a
+    structured tool-calling adapter ships in a follow-up sub-phase. The
+    flag ``copilot_agent_loop_enabled`` is off by default so this is not
+    hit in deployed environments.
+    """
+    raise NotImplementedError(
+        "agent loop enabled but no structured-LLM adapter is configured; "
+        "monkeypatch app.copilot.router._get_agent_llm in tests"
+    )
+
+
+def _agent_sse_stream(
+    *,
+    db: Session,
+    sess: models.CopilotSession,
+    user_message: str,
+    retrieval_context: str,
+    role_value: str,
+    caller_id,
+    agent_llm,
+    meta_event: MetaEvent,
+) -> Iterator[bytes]:
+    """Stream :class:`run_turn` events as SSE.
+
+    Each yielded ``BaseModel`` event becomes ``event: <event.type>\\ndata:
+    <model_dump_json>\\n\\n``. A terminal ``done`` event is appended so the
+    existing client contract (a final ``done``) is preserved.
+    """
+    yield _sse_format("meta", meta_event.model_dump_json())
+    scope = scope_for(role=role_value, caller_id=caller_id)
+    final_text_parts: list[str] = []
+    try:
+        for event in run_turn(
+            db=db,
+            llm=agent_llm,
+            scope=scope,
+            session_id=sess.id,
+            user_message=user_message,
+            retrieval_context=retrieval_context,
+        ):
+            payload_json = event.model_dump_json()
+            yield _sse_format(event.type, payload_json)
+            if event.type == "final_answer":
+                final_text_parts.append(event.text)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("copilot_agent_stream_failed session_id=%s", sess.id)
+        yield _sse_format(
+            "error", json.dumps({"error": exc.__class__.__name__})
+        )
+        return
+
+    # Persist the assistant turn so /sessions/{id} replays it like Phase 30.
+    full_text = "".join(final_text_parts)
+    response_hash = (
+        hashlib.sha256(full_text.encode("utf-8")).hexdigest() if full_text else None
+    )
+    assistant_msg = models.CopilotMessage(
+        session_id=sess.id,
+        role=models.CopilotMessageRole.assistant,
+        content=full_text,
+        prompt_hash=None,
+        response_hash=response_hash,
+    )
+    db.add(assistant_msg)
+    db.commit()
+    db.refresh(assistant_msg)
+    yield _sse_format("done", json.dumps({"message_id": str(assistant_msg.id)}))
 
 
 def _sse_format(event: str, data: str) -> bytes:
@@ -475,3 +673,59 @@ def _sse_stream(
         )
     else:
         yield _sse_format("done", json.dumps({"message_id": str(assistant_msg.id)}))
+
+
+# ---------------------------------------------------------------------------
+# Phase 33-09: confirm-or-reject a parked write tool call
+# ---------------------------------------------------------------------------
+
+
+@router.post("/confirm/{call_id}")
+def confirm(
+    call_id: str,
+    body: ConfirmBody,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> dict:
+    """Resolve a parked write tool call awaiting human confirmation.
+
+    Maps :class:`ConfirmationExpired` to HTTP 410 and
+    :class:`ConfirmationNotFound` to HTTP 404. On rejection the audit row
+    is flipped to ``rejected``; on approval the deferred handler runs
+    under the caller's role + id and the redacted result is returned.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+
+    if not body.approved:
+        # Drop the pending entry if present; the audit row stamp is the
+        # source of truth for "rejected".
+        from .agent.confirmation import _PENDING
+
+        _PENDING.pop(call_id, None)
+        try:
+            update_status(db, call_id, status="rejected")
+        except CallNotFound:
+            raise HTTPException(status_code=404, detail="confirmation not found")
+        return {"call_id": call_id, "status": "rejected"}
+
+    role_value = (
+        current_user.role.value
+        if hasattr(current_user.role, "value")
+        else str(current_user.role)
+    )
+    try:
+        return execute_after_confirmation(
+            db,
+            call_id,
+            scope_role=role_value,
+            caller_id=current_user.id,
+        )
+    except ConfirmationExpired:
+        try:
+            update_status(db, call_id, status="expired")
+        except CallNotFound:
+            pass
+        raise HTTPException(status_code=410, detail="confirmation expired")
+    except ConfirmationNotFound:
+        raise HTTPException(status_code=404, detail="confirmation not found")
