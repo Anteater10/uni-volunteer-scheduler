@@ -13,6 +13,15 @@
 //          — Plan 32-06: emitted exactly once, before the first token. Strictly
 //          additive — Phase 30 token/done/error parsing is unchanged.
 //   token: JSON-encoded string chunk
+//   message_persisted: {"id": "<uuid>", "role": "assistant"}
+//          — Phase 35-01-D Task 14: emitted by the backend immediately
+//          after the assistant copilot_messages row is inserted, BEFORE
+//          the terminal `done`/`error` marker. The hook captures the id
+//          and surfaces it on the onDone/onError callback (and the send()
+//          return value) as `id` alongside `role: "assistant"` so the
+//          drawer can stamp `data-message-id` on the rendered bubble.
+//          Strictly additive — older clients that ignore unknown events
+//          keep working.
 //   done:  {"message_id": "<uuid>"}
 //   error: {"error": "<class>", "message_id": "<uuid>"}
 import { useCallback, useRef, useState } from "react";
@@ -105,6 +114,12 @@ export function useCopilotStream(
       let buffer = "";
       let assembled = "";
       let messageId = null;
+      // Phase 35-01-D Task 14: id surfaced by the backend's
+      // `event: message_persisted` once the assistant row is in the DB.
+      // Falls back to `messageId` (from `done`/`error`) if the older
+      // backend is still in front of us.
+      let persistedId = null;
+      let persistedRole = null;
       let streamError = null;
       // Local copy so onDone/onError see this turn's citations even if React
       // hasn't flushed the setCitations call into a ref yet.
@@ -142,6 +157,20 @@ export function useCopilotStream(
                 setPartial(assembled);
               } catch {
                 // malformed token chunk — skip
+              }
+            } else if (ev.event === "message_persisted") {
+              // Phase 35-01-D Task 14: capture the persisted assistant
+              // message id (and role) so consumers can stamp it onto the
+              // rendered bubble for rating. Strictly additive — the
+              // existing token/done/error branches are untouched.
+              try {
+                const body = JSON.parse(ev.data);
+                if (body && typeof body.id === "string") {
+                  persistedId = body.id;
+                  persistedRole = body.role || "assistant";
+                }
+              } catch {
+                // malformed — skip
               }
             } else if (ev.event === "done") {
               try {
@@ -194,19 +223,47 @@ export function useCopilotStream(
         abortRef.current = null;
       }
 
+      // Phase 35-01-D Task 14: prefer the id from `message_persisted`;
+      // fall back to `done`/`error`'s `message_id` for old backends.
+      const resolvedId = persistedId || messageId;
+      const role = persistedRole || "assistant";
+
       if (streamError) {
         setError(streamError);
         onError?.(streamError, {
-          messageId,
+          id: resolvedId,
+          role,
+          messageId: resolvedId,
           text: assembled,
           citations: turnCitations,
           latencies: turnLatencies,
         });
-        return { messageId, text: assembled, error: streamError, citations: turnCitations };
+        return {
+          id: resolvedId,
+          role,
+          messageId: resolvedId,
+          text: assembled,
+          error: streamError,
+          citations: turnCitations,
+        };
       }
 
-      onDone?.({ messageId, text: assembled, citations: turnCitations, latencies: turnLatencies });
-      return { messageId, text: assembled, error: null, citations: turnCitations };
+      onDone?.({
+        id: resolvedId,
+        role,
+        messageId: resolvedId,
+        text: assembled,
+        citations: turnCitations,
+        latencies: turnLatencies,
+      });
+      return {
+        id: resolvedId,
+        role,
+        messageId: resolvedId,
+        text: assembled,
+        error: null,
+        citations: turnCitations,
+      };
     },
     [
       sessionId,
