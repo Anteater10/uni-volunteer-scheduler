@@ -32,7 +32,11 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("email", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")),
     ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
     ("phone", re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")),
-    ("ucsb_nid", re.compile(r"\b[A-Za-z]{1,3}\d{5,7}\b")),
+    # Exclude tokens adjacent to `-` so hex UUID segments like
+    # `aaa21697-88d...` don't false-match (those start with 1-3 hex letters
+    # followed by 5+ digits before the dash). Real UCSB NIDs appear
+    # standalone, not inside hyphenated identifiers.
+    ("ucsb_nid", re.compile(r"(?<!-)\b[A-Za-z]{1,3}\d{5,7}\b(?!-)")),
 ]
 
 
