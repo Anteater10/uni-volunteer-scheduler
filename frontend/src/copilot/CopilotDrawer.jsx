@@ -8,6 +8,7 @@ import CitationChip from "./CitationChip";
 import CitationPanel from "./CitationPanel";
 import ConfirmationCard from "./ConfirmationCard";
 import ToolCallIndicator from "./ToolCallIndicator";
+import MessageRatingButtons from "./MessageRatingButtons";
 
 const MAX_CHIPS = 5; // RESEARCH §Open Q #2 — show top-5, horizontal scroll if narrow
 
@@ -180,6 +181,9 @@ export default function CopilotDrawer({ open, onClose }) {
                 content={m.content}
                 messageId={m.id}
               />
+              {m.role === "assistant" && m.id && (
+                <MessageRatingButtons messageId={m.id} />
+              )}
               {m.role === "assistant" &&
                 Array.isArray(m.citations) &&
                 m.citations.length > 0 && (
