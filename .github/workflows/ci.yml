@@ -180,6 +180,15 @@ jobs:
           cd backend
           pytest -o addopts="" --cov=app.copilot.feedback --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
 
+      - name: Coverage gate — app.eval
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
+        # 35-02-F TODO(35-02-G+): bump to 95 once adversarial._run_one_case + ragas.evaluate wiring land
+        # Current branch-coverage reality is 90.53% (displays as 91%); gate floor sits at 90 to lock that in.
+        run: |
+          cd backend
+          pytest -o addopts="" --cov=app.eval --cov-branch --cov-fail-under=90 --cov-report=term-missing tests/
+
   phase0-frontend-tests:
     name: phase0 frontend vitest
     runs-on: ubuntu-latest
