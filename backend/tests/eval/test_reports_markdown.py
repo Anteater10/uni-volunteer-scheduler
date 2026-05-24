@@ -67,6 +67,71 @@ def test_render_markdown_ascii_bars_present(tmp_path):
     assert "█" in text or "#" in text
 
 
+def test_render_markdown_sample_size_table_with_failures(tmp_path):
+    """Cover the empty_response + transient_failure sample-size table branch."""
+    from app.eval.reports import render_markdown
+
+    traces = [
+        {
+            "model": "m1:free", "question_id": "q-1", "category": "refusal",
+            "role": "admin",
+            "ragas": {"faithfulness": None, "answer_relevancy": None,
+                      "context_precision": None},
+            "tool_use_grade": None,
+            "outcome": "empty_response",
+            "usage": {"latency_ms": 1, "prompt_tokens": 1, "completion_tokens": 0},
+        },
+        {
+            "model": "m2:free", "question_id": "q-2", "category": "refusal",
+            "role": "admin",
+            "ragas": {"faithfulness": None, "answer_relevancy": None,
+                      "context_precision": None},
+            "tool_use_grade": None,
+            "outcome": "transient_failure",
+            "usage": {"latency_ms": 1, "prompt_tokens": 1, "completion_tokens": 0},
+        },
+        # Trace for one model in a category, but the other model has none —
+        # exercises the per-category "if not sub: continue" branch.
+        {
+            "model": "m1:free", "question_id": "q-3", "category": "tool_use",
+            "role": "admin",
+            "ragas": {"faithfulness": 0.5, "answer_relevancy": 0.5,
+                      "context_precision": 0.5},
+            "tool_use_grade": {"tool_use_correct": True},
+            "outcome": "ok",
+            "usage": {"latency_ms": 1, "prompt_tokens": 1, "completion_tokens": 1},
+        },
+    ]
+    md_path = tmp_path / "results.md"
+    render_markdown(traces=traces, adversarial=[], human=[], out_path=md_path)
+    text = md_path.read_text()
+    assert "Empty responses" in text
+    assert "Transient failures" in text
+    assert "m1:free" in text
+    assert "m2:free" in text
+
+
+def test_bar_handles_zero_total():
+    """_bar with total <= 0 returns the empty string."""
+    from app.eval.reports import _bar
+
+    assert _bar(0, 0) == ""
+    assert _bar(5, -1) == ""
+
+
+def test_render_top_level_redirect_not_implemented(tmp_path):
+    """The renderer is a documented NotImplementedError stub until the first
+    real multi-model run produces a fillable headline ranking."""
+    import pytest
+
+    from app.eval.reports import render_top_level_redirect
+
+    with pytest.raises(NotImplementedError):
+        render_top_level_redirect(
+            traces=[], adversarial=[], out_path=tmp_path / "x.md",
+        )
+
+
 def test_write_traces_json_bundle(tmp_path):
     from app.eval.reports import write_traces_json
 
