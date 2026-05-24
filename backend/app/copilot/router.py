@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from typing import Callable, Iterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
@@ -63,6 +63,8 @@ from .schemas import (
     CopilotProfileRead,
     CopilotSessionDetail,
     CopilotSessionRead,
+    MessageRatingCreate,
+    MessageRatingRead,
     MetaEvent,
 )
 from .agent.audit_log import CallNotFound, update_status
@@ -111,6 +113,34 @@ def _load_owned_session(
     if not sess:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return sess
+
+
+def _load_owned_message(
+    db: Session, message_id: UUID, user: models.User
+) -> models.CopilotMessage:
+    """Return a message whose parent session belongs to ``user``.
+
+    Mirrors :func:`_load_owned_session` — returns 404 (not 403) when the
+    message exists but lives in another user's session so existence is
+    not observable across users.
+    """
+    msg = (
+        db.query(models.CopilotMessage)
+        .join(
+            models.CopilotSession,
+            models.CopilotMessage.session_id == models.CopilotSession.id,
+        )
+        .filter(
+            models.CopilotMessage.id == message_id,
+            models.CopilotSession.user_id == user.id,
+        )
+        .first()
+    )
+    if msg is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Not Found"
+        )
+    return msg
 
 
 # ---------------------------------------------------------------------------
@@ -729,3 +759,63 @@ def confirm(
         raise HTTPException(status_code=410, detail="confirmation expired")
     except ConfirmationNotFound:
         raise HTTPException(status_code=404, detail="confirmation not found")
+
+
+# ---------------------------------------------------------------------------
+# Phase 35-01: human-feedback endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/messages/{message_id}/rating", response_model=MessageRatingRead
+)
+def post_message_rating(
+    message_id: UUID,
+    body: MessageRatingCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> MessageRatingRead:
+    """Phase 35-01: per-message thumbs-up/down rating (upsert).
+
+    Only the session owner can rate messages in that session; messages
+    belonging to other users return 404 (mirrors ``_load_owned_session``)
+    so cross-user existence is not observable.
+    """
+    _require_flag_on()
+    _require_admin_or_organizer(current_user)
+    msg = _load_owned_message(db, message_id, current_user)
+    row = (
+        db.query(models.CopilotMessageRating)
+        .filter_by(message_id=msg.id, user_id=current_user.id)
+        .first()
+    )
+    if row is None:
+        row = models.CopilotMessageRating(
+            message_id=msg.id,
+            user_id=current_user.id,
+            value=body.value,
+            comment=(body.comment or None),
+        )
+        db.add(row)
+    else:
+        row.value = body.value
+        row.comment = body.comment or None
+        row.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    logger.info(
+        "copilot_message_rated message_id=%s session_id=%s user_id=%s "
+        "role=%s value=%s has_comment=%s",
+        msg.id,
+        msg.session_id,
+        current_user.id,
+        current_user.role.value,
+        row.value,
+        bool(row.comment),
+    )
+    return MessageRatingRead(
+        message_id=str(msg.id),
+        value=row.value,
+        comment=row.comment,
+        updated_at=row.updated_at,
+    )
