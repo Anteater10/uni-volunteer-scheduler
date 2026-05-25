@@ -30,7 +30,7 @@ from .models import (
     assert_free_tier,
     set_model_for_replay,
 )
-from .replay import _model_slug, replay_one
+from .replay import _model_slug, replay_grounded, replay_one
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,19 @@ logger = logging.getLogger(__name__)
 # resume. Anything else (notably ``hard_failure`` from a rate-limit 429)
 # is re-attempted so a chunked, day-by-day free-tier run can make progress.
 _DONE_OUTCOMES = frozenset({"ok", "empty_response"})
+
+
+def _make_session():
+    """Open a DB session for the grounded path.
+
+    Lazy import so the bare/offline path (and its unit tests) never need a
+    configured database. Monkeypatched in CLI tests. The grounded run must
+    execute where ``SessionLocal`` can reach the ingested corpus — i.e.
+    inside the docker network (``docker exec ... python -m app.eval.run``).
+    """
+    from app.database import SessionLocal
+
+    return SessionLocal()
 
 
 def _load_testset(path: str) -> list[dict[str, Any]]:
@@ -78,6 +91,7 @@ def _run_model(
     out_dir: Path,
     max_workers: int,
     use_agent_loop: bool = False,
+    grounded: bool = False,
     resume: bool = True,
 ) -> None:
     set_model_for_replay(model_id, monkeypatch=None)
@@ -91,23 +105,40 @@ def _run_model(
         if skipped:
             logger.info("eval_model_resume model=%s skipped_done=%s remaining=%s",
                         model_id, skipped, len(pending))
-    logger.info("eval_model_started model=%s n_questions=%s use_agent_loop=%s",
-                model_id, len(pending), use_agent_loop)
+    logger.info("eval_model_started model=%s n_questions=%s grounded=%s "
+                "use_agent_loop=%s",
+                model_id, len(pending), grounded, use_agent_loop)
     if not pending:
         logger.info("eval_model_finished model=%s (nothing to do)", model_id)
         return
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [
-            pool.submit(
-                replay_one,
-                model_id=model_id,
-                question=q,
-                out_dir=out_dir,
+
+    def _grounded_task(q):
+        # One session per question — SQLAlchemy sessions are not thread-safe,
+        # so the ThreadPoolExecutor workers must not share one.
+        db = _make_session()
+        try:
+            return replay_grounded(
+                model_id=model_id, question=q, db=db, out_dir=out_dir,
                 monkeypatch=None,
-                use_agent_loop=use_agent_loop,
             )
-            for q in pending
-        ]
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        if grounded:
+            futures = [pool.submit(_grounded_task, q) for q in pending]
+        else:
+            futures = [
+                pool.submit(
+                    replay_one,
+                    model_id=model_id,
+                    question=q,
+                    out_dir=out_dir,
+                    monkeypatch=None,
+                    use_agent_loop=use_agent_loop,
+                )
+                for q in pending
+            ]
         for fut in as_completed(futures):
             try:
                 fut.result()
@@ -145,8 +176,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         default=False,
         help="Drive replays through app.copilot.agent.loop.run_turn instead "
-             "of the bare complete() path. Requires DB / scope wiring — "
-             "still a work-in-progress (see SUMMARY).",
+             "of the bare complete() path. Requires a structured "
+             "tool-calling LLM adapter that is NOT yet built (Phase 35-04).",
+    )
+    parser.add_argument(
+        "--grounded",
+        action="store_true",
+        default=False,
+        help="Drive replays through the deployed retrieval-grounded path "
+             "(Phase 32 retrieve -> <retrieved_context> -> complete). "
+             "Populates retrieved_context so RAGAS faithfulness / "
+             "context_precision are valid. Needs a DB reaching the ingested "
+             "corpus — run inside the docker network.",
     )
     args = parser.parse_args(argv)
 
@@ -179,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=out_dir,
             max_workers=args.max_workers,
             use_agent_loop=args.use_agent_loop,
+            grounded=args.grounded,
             resume=args.resume,
         )
     logger.info("eval_run_finished out_dir=%s", out_dir)
