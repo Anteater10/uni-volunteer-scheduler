@@ -83,21 +83,39 @@ Output lands in `backend/eval-results/{timestamp}/`:
   hard_failure` (spec section 13(a)) — no silent contamination
   of the per-model row.
 
-## What lights up after the first real run (SUMMARY deferred items)
+## Stub wiring complete (post-closeout fix-up)
 
-The following stay stubbed until the first real-network run completes:
+The two `NotImplementedError` stubs that previously blocked a real run
+are now wired with real implementations (commits `5433896`, `855e79c`):
 
-1. `app.eval.metrics.ragas._default_judge` body → real
-   `ragas.evaluate()` call.
-2. `backend/eval-results/baseline-phase-33.json` → real frozen
+- ✓ `app.eval.metrics.ragas._default_judge` → real `ragas.evaluate()`
+  call (judge pinned to `RAGAS_JUDGE_MODEL`). Real-network test is
+  skip-guarded; CI stays green via offline fake-module tests.
+- ✓ `app.eval.adversarial._run_one_case` → real dispatch to
+  `run_tool_case` / `run_memory_case` over an isolated rolled-back
+  session, reusing the extracted `tests/copilot/adversarial/seed.py`.
+
+`app.eval` coverage now 93% (gate still 90%). **The harness is ready
+for a real end-to-end run** — the smoke command above will exercise
+both wired paths.
+
+## What still fills in only AFTER the first real run
+
+These genuinely require live OpenRouter output and cannot be
+pre-generated:
+
+1. `backend/eval-results/baseline-phase-33.json` → real frozen
    adversarial run against `openai/gpt-oss-120b:free`.
-3. `app.eval.adversarial._run_one_case` → real `run_case(...)`
-   from the extracted single-model adversarial test helper.
-4. `--use-agent-loop` → real DB + role scope plumbing.
-5. Top-level `docs/documentation/35-eval-results.md` → filled with
+2. Top-level `docs/documentation/35-eval-results.md` → filled with
    headline ranking from the first real run.
-6. Per-module coverage gates → bumped to 95% as each deferred
-   item lands.
+3. Per-module coverage gates → bumped to 95% as remaining optional
+   items land.
+
+Still optional / not needed for the standard run:
+
+- `--use-agent-loop` → real DB + role scope plumbing (the default
+  `stream_completion` path does NOT need this; only matters if you
+  later want full agent-loop replay).
 
 See SUMMARY.md "Deferred items" for the full list with trigger
 conditions.
