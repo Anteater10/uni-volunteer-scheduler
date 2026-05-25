@@ -13,16 +13,20 @@ plan-vs-reality preamble #2 point 2).
 
 The case-iteration bodies live in the pytest module as
 ``run_tool_case`` / ``run_memory_case`` helpers (Phase 35-02-E
-refactor). ``_run_one_case`` here dispatches on the ``source`` tag
-that ``_load_cases()`` attaches to every case (``"cases.yaml"`` ->
-tool/agent-loop path, ``"cases_memory.yaml"`` -> memory path), runs
-the helper, and translates assertion / boundary failures into a
-structured ``outcome`` field. The real implementation requires DB
-state (``db_session`` + ``seed_full_world`` + admin users) that the
-offline harness does not set up on its own; it therefore raises
-``NotImplementedError`` until invoked from a context that wires the
-DB fixtures up manually. The CI-safe path monkeypatches
-``_run_one_case`` to a stub and exercises only the wrapper shape.
+refactor), and the world-seeding logic lives in
+``tests/copilot/adversarial/seed.py``. ``_run_one_case`` here
+dispatches on the ``source`` tag that ``_load_cases()`` attaches to
+every case (``"cases.yaml"`` -> tool/agent-loop path,
+``"cases_memory.yaml"`` -> memory path). It replicates the pytest
+fixture setup programmatically — opens an isolated SQLAlchemy session
+(same join-external-transaction pattern as the ``db_session``
+fixture), registers every production tool, seeds the full-world
+fixture / creates the admin user(s), runs the helper, and translates
+pass / assertion-failure / error into a structured ``outcome`` field.
+Each case rolls its transaction back so it never contaminates the
+next. The CI-safe wrapper test monkeypatches ``_run_one_case`` to a
+stub and exercises only the wrapper shape; a separate test drives the
+real ``_run_one_case`` against a stubbed LLM (no real network).
 """
 from __future__ import annotations
 
@@ -37,6 +41,30 @@ from .models import set_model_for_replay
 from .replay import _model_slug
 
 logger = logging.getLogger(__name__)
+
+
+def _open_isolated_session():
+    """Open a SQLAlchemy session bound to its own outer transaction.
+
+    Mirrors ``backend/conftest.py::db_session`` (join-external-transaction +
+    create_savepoint) so router/tool code that calls ``db.commit()`` does not
+    escape the rollback. Returns ``(session, connection, trans)`` — the caller
+    rolls back ``trans`` and closes ``connection`` to discard the case's writes
+    so cases never contaminate each other.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+
+    connection = engine.connect()
+    trans = connection.begin()
+    Session = sessionmaker(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+        future=True,
+    )
+    return Session(), connection, trans
 
 
 _CASES_DIR = Path(__file__).resolve().parents[2] / (
@@ -69,26 +97,74 @@ def _run_one_case(model_id: str, case: dict[str, Any]) -> dict[str, Any]:
     ``run_tool_case`` (cases.yaml / agent loop) or ``run_memory_case``
     (cases_memory.yaml / memory-shaped harness).
 
-    Requires DB state (``db_session`` + ``seed_full_world`` + admin
-    users) that the offline harness does not set up. Callers that
-    want to drive this against a real OpenRouter session must build a
-    SQLAlchemy session, seed the full-world fixture, create the admin
-    user(s), and invoke the helpers from
-    ``backend/tests/copilot/adversarial/test_adversarial.py`` directly.
+    Replicates the pytest fixture setup programmatically: opens an isolated
+    SQLAlchemy session (same join-external-transaction pattern as the
+    ``db_session`` fixture), registers every production tool, seeds the
+    full-world fixture, creates the admin user(s), runs the helper, and
+    translates pass -> ``{"outcome": "pass"}`` / assertion failure ->
+    ``{"outcome": "fail", ...}``. The transaction is always rolled back so
+    one case never contaminates the next.
 
-    Left as ``NotImplementedError`` here so CI never accidentally
-    invokes it; the wrapper tests monkeypatch this function with a
-    stub (see ``test_adversarial_wrapper.py``).
+    The shared bodies live in the pytest module
+    (``run_tool_case`` / ``run_memory_case``) and the seeding logic lives in
+    ``tests/copilot/adversarial/seed.py`` — both imported here so the offline
+    path and the CI path exercise identical code.
     """
-    raise NotImplementedError(
-        "Real adversarial case runner — requires DB session, "
-        "seed_full_world, and admin user fixtures. Drive "
-        "run_tool_case / run_memory_case from "
-        "backend/tests/copilot/adversarial/test_adversarial.py "
-        "directly, or monkeypatch this function from the offline "
-        "harness driver script. See backend/app/eval/adversarial.py "
-        "docstring for the rationale."
+    # Imports are local so importing this module never drags the test tree in
+    # (it only matters when the offline driver actually runs a case).
+    from tests.copilot.adversarial import seed as _seed
+    from tests.copilot.adversarial.test_adversarial import (
+        _assert_pass,
+        run_memory_case,
+        run_tool_case,
     )
+
+    source = case.get("source", "cases.yaml")
+    session, connection, trans = _open_isolated_session()
+    base = {"id": case.get("id"), "category": case.get("category")}
+    try:
+        _seed.register_all_tools()
+        if source == "cases_memory.yaml":
+            admin_user = _seed.make_admin_user(session)
+            other_admin_user = _seed.make_admin_user(session)
+            session.flush()
+            run_memory_case(
+                case,
+                session,
+                admin_user,
+                other_admin_user=other_admin_user,
+            )
+        else:
+            world = _seed.seed_full_world(session)
+            session.flush()
+            events, sentinels, case_r = run_tool_case(case, session, world)
+            _assert_pass(events, case_r, sentinels)
+    except AssertionError as exc:
+        return {
+            **base,
+            "outcome": "fail",
+            "error_class": exc.__class__.__name__,
+            "error": str(exc),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            **base,
+            "outcome": "error",
+            "error_class": exc.__class__.__name__,
+            "error": str(exc),
+        }
+    else:
+        return {**base, "outcome": "pass"}
+    finally:
+        session.close()
+        if trans.is_active:
+            trans.rollback()
+        connection.close()
+        from app.copilot.agent import confirmation
+        from app.copilot.agent.tools import registry
+
+        registry._reset_for_tests()
+        confirmation._reset_for_tests()
 
 
 def run_adversarial(
