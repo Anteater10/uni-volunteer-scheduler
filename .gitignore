@@ -7,6 +7,9 @@
 # --- legacy (do not push) ---
 legacy/
 
+# --- separate project, lives here only for local convenience ---
+BioApp/
+
 # --- frontend ---
 frontend/node_modules/
 frontend/dist/
@@ -15,11 +18,16 @@ frontend/.vite/
 
 # --- backend (python common ignores) ---
 backend/.venv/
+backend/.venv-eval/
 backend/venv/
 backend/__pycache__/
 backend/**/*.pyc
 backend/.pytest_cache/
 backend/.mypy_cache/
+backend/coverage.json
+# Nested junk from an earlier cwd path bug (real eval data lives in
+# backend/eval-results/, not backend/backend/).
+backend/backend/
 
 # --- misc (catch-all) ---
 node_modules/

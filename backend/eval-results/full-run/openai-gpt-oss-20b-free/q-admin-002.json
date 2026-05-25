@@ -1,0 +1,33 @@
+{
+  "model": "openai/gpt-oss-20b:free",
+  "question_id": "admin-002",
+  "role": "admin",
+  "category": "signup_stats",
+  "prompt": "How many participants signed up this week?",
+  "final_answer": "I\u2019m sorry, but I don\u2019t have access to that information.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How many participants signed up this week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 75,
+    "completion_tokens": 34,
+    "latency_ms": 1436
+  },
+  "outcome": "ok"
+}

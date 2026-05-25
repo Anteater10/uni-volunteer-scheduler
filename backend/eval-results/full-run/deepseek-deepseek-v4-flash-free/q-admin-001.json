@@ -1,0 +1,33 @@
+{
+  "model": "deepseek/deepseek-v4-flash:free",
+  "question_id": "admin-001",
+  "role": "admin",
+  "category": "roster_query",
+  "prompt": "Who's signed up for Bio Module 3 next week?",
+  "final_answer": "I don\u2019t have access to personal information about specific students or to any school\u2019s registration system, so I can\u2019t tell you who is signed up for Bio Module 3. \n\nHowever, you can usually check this by logging into your school\u2019s student portal, course management system (like Canvas, Blackboard, or Moodle), or by contacting your instructor or the registrar\u2019s office directly.\n\nIf you need help understanding the course material or preparing for Bio Module 3, I\u2019d be happy to assist with that!",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Who's signed up for Bio Module 3 next week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 16,
+    "completion_tokens": 341,
+    "latency_ms": 6898
+  },
+  "outcome": "ok"
+}

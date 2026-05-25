@@ -1,0 +1,33 @@
+{
+  "model": "nousresearch/hermes-3-llama-3.1-405b:free",
+  "question_id": "organizer-002",
+  "role": "organizer",
+  "category": "scheduling",
+  "prompt": "When is my next session?",
+  "final_answer": "I do not have access to your calendar or schedule. You would need to check your own calendar or scheduling system to find out when your next session is. I am not able to track or provide information about your personal appointments or meetings.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "When is my next session?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 47,
+    "latency_ms": 28004
+  },
+  "outcome": "ok"
+}

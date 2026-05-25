@@ -1,0 +1,33 @@
+{
+  "model": "google/gemma-4-31b-it:free",
+  "question_id": "participant-002",
+  "role": "participant",
+  "category": "profile_recall",
+  "prompt": "What's my school?",
+  "final_answer": "I do not know which school you attend. As an AI, I don\u2019t have access to your personal records, your location, or your identity unless you have told me previously in this conversation.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's my school?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 7,
+    "completion_tokens": 40,
+    "latency_ms": 2920
+  },
+  "outcome": "ok"
+}

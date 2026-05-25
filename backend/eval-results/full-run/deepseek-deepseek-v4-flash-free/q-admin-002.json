@@ -1,0 +1,33 @@
+{
+  "model": "deepseek/deepseek-v4-flash:free",
+  "question_id": "admin-002",
+  "role": "admin",
+  "category": "signup_stats",
+  "prompt": "How many participants signed up this week?",
+  "final_answer": "I'm happy to help, but I need more context to answer your question. Could you provide details about the event, program, or platform where participants are signing up? Without any data, I can't determine the number of sign-ups this week.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How many participants signed up this week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 137,
+    "latency_ms": 3885
+  },
+  "outcome": "ok"
+}

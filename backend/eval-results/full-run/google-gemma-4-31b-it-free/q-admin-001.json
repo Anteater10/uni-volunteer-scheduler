@@ -1,0 +1,33 @@
+{
+  "model": "google/gemma-4-31b-it:free",
+  "question_id": "admin-001",
+  "role": "admin",
+  "category": "roster_query",
+  "prompt": "Who's signed up for Bio Module 3 next week?",
+  "final_answer": "I don't have access to your personal emails, school portal, or private class rosters. \n\nTo find out who is signed up, you should check:\n1. **Your Learning Management System (LMS)** (like Canvas, Blackboard, or Google Classroom).\n2. **A shared sign-up sheet** (like a Google Sheet or Doodle poll).\n3. **Your course coordinator or professor.**",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Who's signed up for Bio Module 3 next week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 14,
+    "completion_tokens": 85,
+    "latency_ms": 4549
+  },
+  "outcome": "ok"
+}

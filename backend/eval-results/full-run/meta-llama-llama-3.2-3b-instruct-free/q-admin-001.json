@@ -1,0 +1,33 @@
+{
+  "model": "meta-llama/llama-3.2-3b-instruct:free",
+  "question_id": "admin-001",
+  "role": "admin",
+  "category": "roster_query",
+  "prompt": "Who's signed up for Bio Module 3 next week?",
+  "final_answer": "I don't have any information about a Bio Module 3 or who may be signed up for it. I'm a large language model, I don't have access to specific class rosters or schedules. I'm here to help with any questions or topics you'd like to discuss, but I don't have any context about the Bio Module 3 you're asking about.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Who's signed up for Bio Module 3 next week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 22,
+    "completion_tokens": 76,
+    "latency_ms": 30760
+  },
+  "outcome": "ok"
+}

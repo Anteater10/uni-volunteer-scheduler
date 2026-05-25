@@ -1,0 +1,33 @@
+{
+  "model": "openai/gpt-oss-20b:free",
+  "question_id": "participant-001",
+  "role": "participant",
+  "category": "scheduling",
+  "prompt": "Am I orientation-cleared for Chem Module 1?",
+  "final_answer": "I\u2019m sorry, but I don\u2019t have enough information to determine whether you\u2019ve been orientation\u2011cleared for Chem Module\u202f1. You\u2019ll need to check your student portal, contact the registrar\u2019s office, or reach out to the chemistry department to confirm your status.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Am I orientation-cleared for Chem Module 1?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 78,
+    "completion_tokens": 78,
+    "latency_ms": 2331
+  },
+  "outcome": "ok"
+}

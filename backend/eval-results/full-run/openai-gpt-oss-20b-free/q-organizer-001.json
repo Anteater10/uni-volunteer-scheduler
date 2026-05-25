@@ -1,0 +1,33 @@
+{
+  "model": "openai/gpt-oss-20b:free",
+  "question_id": "organizer-001",
+  "role": "organizer",
+  "category": "signup_stats",
+  "prompt": "How many participants signed up across my modules last week?",
+  "final_answer": "I don\u2019t have direct access to your course analytics or database, so I can\u2019t fetch the exact number of participants who signed up last week.  \nHowever, I can show you a few quick ways you can pull that data yourself, depending on the platform you\u2019re using:\n\n---\n\n## 1. **If you\u2019re using an LMS or webinar platform**\n\n| Platform | Quick steps to find weekly sign\u2011ups |\n|----------|------------------------------------|\n| **Moodle** | \u2022 Go to *Site administration* \u2192 *Reports* \u2192 *Logs*.<br>\u2022 Apply a filter for *Event type* = \u201cUser registered\u201d and set the date range to last week.<br>\u2022 Export the report (CSV/Excel). |\n| **Canvas** | \u2022 Site Admin \u2192 *Analytics* \u2192 *Data* \u2192 *Registration Events*.<br>\u2022 Drill into the \u201cLast Week\u201d period. |\n| **Udemy** | \u2022 In the Instructor dashboard \u2192 *Course analytics* \u2192 *Enrollment* tab.<br>\u2022 Set the date range to last week. |\n| **Zoom/Teams** | \u2022 Participant list export for the required dates. |\n\n---\n\n## 2. **If you store registrations in a Google Sheet or Airtable**\n\n```text\n# Google Sheets (sample formula)\n=COUNTIFS(A:A,\">=\"&DATEVALUE(\"2026-05-14\"),A:A,\"<=\"&DATEVALUE(\"2026-05-20\"))\n```\n\n> *Assuming column A is the signup date.*\n\n---\n\n## 3. **If you have a database (SQL)**\n\n```sql\nSELECT COUNT(*) AS weekly_signups\nFROM registrations\nWHERE signup_date >= '2026-05-14' AND signup_date <= '2026-05-20';\n```\n\nReplace `registrations` and `signup_date` with your actual table/column names.\n\n---\n\n## 4. **If you\u2019re using an analytics tool (e.g., Google Analytics, Mixpanel)**\n\n- **Google Analytics:**  \n  1. Go to *Acquisition* \u2192 *All Traffic* \u2192 *Source/Medium*.  \n  2. Add a secondary dimension: *User Type* or *Event Category*.  \n  3. Set the date range to the last week.\n\n- **Mixpanel:**  \n  1. Open the *Insights* panel.  \n  2. Select the *Signed Up* event.  \n  3. Apply a filter for the last 7 days.\n\n---\n\n### Quick sanity check\n\nIf you already have an automated report, it might be scheduled to email you weekly. Just open the latest email; the signup count is usually in the first few lines.\n\n---\n\n**Bottom line:**  \n- If you\u2019re using a pre\u2011built platform, check its built\u2011in reporting for registration events.  \n- If you manage your own database or spreadsheets, run a count query/filter using the date range for the previous week.  \n\nFeel free to share which platform or data source you\u2019re using, and I can give you more targeted instructions!",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How many participants signed up across my modules last week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 78,
+    "completion_tokens": 664,
+    "latency_ms": 12905
+  },
+  "outcome": "ok"
+}

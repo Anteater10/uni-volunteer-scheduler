@@ -1,0 +1,33 @@
+{
+  "model": "nousresearch/hermes-3-llama-3.1-405b:free",
+  "question_id": "admin-002",
+  "role": "admin",
+  "category": "signup_stats",
+  "prompt": "How many participants signed up this week?",
+  "final_answer": "I don't have any data on participant sign ups for this week. You would need to provide me with that information or check whatever system you use to track sign ups.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How many participants signed up this week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 17,
+    "completion_tokens": 34,
+    "latency_ms": 8243
+  },
+  "outcome": "ok"
+}

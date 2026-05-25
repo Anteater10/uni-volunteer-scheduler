@@ -1,0 +1,33 @@
+{
+  "model": "openai/gpt-oss-20b:free",
+  "question_id": "participant-002",
+  "role": "participant",
+  "category": "profile_recall",
+  "prompt": "What's my school?",
+  "final_answer": "I don\u2019t have that information. If you\u2019d like, you can tell me and I can help with anything related to your school!",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's my school?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 71,
+    "completion_tokens": 40,
+    "latency_ms": 1509
+  },
+  "outcome": "ok"
+}

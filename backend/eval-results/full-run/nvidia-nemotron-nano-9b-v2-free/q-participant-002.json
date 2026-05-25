@@ -1,0 +1,33 @@
+{
+  "model": "nvidia/nemotron-nano-9b-v2:free",
+  "question_id": "participant-002",
+  "role": "participant",
+  "category": "profile_recall",
+  "prompt": "What's my school?",
+  "final_answer": "I don't have access to personal information about users, including details about your school. If you share more context or specific information (like your location, name of the school, or any other details), I\u2019d be happy to help!\n",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's my school?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 17,
+    "completion_tokens": 372,
+    "latency_ms": 16109
+  },
+  "outcome": "ok"
+}

@@ -1,0 +1,33 @@
+{
+  "model": "meta-llama/llama-3.2-3b-instruct:free",
+  "question_id": "participant-002",
+  "role": "participant",
+  "category": "profile_recall",
+  "prompt": "What's my school?",
+  "final_answer": "I don't have any information about your school. Our conversation just started. Would you like to tell me about your school?",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's my school?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 26,
+    "latency_ms": 60661
+  },
+  "outcome": "ok"
+}

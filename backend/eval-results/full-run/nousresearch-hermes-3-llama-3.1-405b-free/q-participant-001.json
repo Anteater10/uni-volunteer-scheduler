@@ -1,0 +1,35 @@
+{
+  "model": "nousresearch/hermes-3-llama-3.1-405b:free",
+  "question_id": "participant-001",
+  "role": "participant",
+  "category": "scheduling",
+  "prompt": "Am I orientation-cleared for Chem Module 1?",
+  "final_answer": "",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Am I orientation-cleared for Chem Module 1?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": null,
+    "completion_tokens": null,
+    "latency_ms": 120770
+  },
+  "outcome": "hard_failure",
+  "error_class": "RateLimitError",
+  "error": "Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {'raw': 'nousresearch/hermes-3-llama-3.1-405b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations', 'provider_name': 'Venice', 'is_byok': False, 'retry_after_seconds': 30, 'retry_after_seconds_raw': 29.173, 'headers': {'Retry-After': '30'}}}, 'user_id': 'user_3ArIbwGp2qDV6LNEiZZUsOCnTsW'}"
+}

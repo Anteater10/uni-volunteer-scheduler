@@ -1,0 +1,33 @@
+{
+  "model": "deepseek/deepseek-v4-flash:free",
+  "question_id": "participant-002",
+  "role": "participant",
+  "category": "profile_recall",
+  "prompt": "What's my school?",
+  "final_answer": "I don't actually know who you are, so I can't tell you which school you attend. I don't have access to your personal information, location, or identity.\n\nIf you tell me the name of your school, I can help with information about it! For example:\n- Tell me your school's name and I can look up facts about it.\n- Describe your school (like its mascot, colors, or location) and I might be able to identify it if enough details are unique.\n\nWould you like to share more details so I can help?",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's my school?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 9,
+    "completion_tokens": 325,
+    "latency_ms": 8185
+  },
+  "outcome": "ok"
+}

@@ -1,0 +1,33 @@
+{
+  "model": "google/gemma-4-31b-it:free",
+  "question_id": "organizer-002",
+  "role": "organizer",
+  "category": "scheduling",
+  "prompt": "When is my next session?",
+  "final_answer": "I do not have access to your personal calendar, emails, or private appointment data. To find out when your next session is, I recommend checking your:\n\n1. **Calendar app** (Google Calendar, Outlook, Apple Calendar).\n2. **Email confirmation** or appointment reminders.\n3. **Scheduling portal** (if you use a specific app for your sessions).\n4. **Direct messages** with the person you are meeting.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "When is my next session?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 7,
+    "completion_tokens": 90,
+    "latency_ms": 3386
+  },
+  "outcome": "ok"
+}

@@ -1,0 +1,33 @@
+{
+  "model": "meta-llama/llama-3.2-3b-instruct:free",
+  "question_id": "participant-001",
+  "role": "participant",
+  "category": "scheduling",
+  "prompt": "Am I orientation-cleared for Chem Module 1?",
+  "final_answer": "I can tell you more about the typical requirements for getting orientation-cleared for a course like Chem Module 1. However, I don't have access to your specific registration or information about the course requirements. Can you tell me a bit more about your situation? What's the next step you need to take?",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Am I orientation-cleared for Chem Module 1?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 21,
+    "completion_tokens": 63,
+    "latency_ms": 61263
+  },
+  "outcome": "ok"
+}

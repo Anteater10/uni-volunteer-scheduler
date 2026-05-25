@@ -1,0 +1,33 @@
+{
+  "model": "nousresearch/hermes-3-llama-3.1-405b:free",
+  "question_id": "participant-002",
+  "role": "participant",
+  "category": "profile_recall",
+  "prompt": "What's my school?",
+  "final_answer": "I do not have enough information to determine what school you attend. You would need to provide me with more details about your school's name or location for me to be able to answer that question.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's my school?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 14,
+    "completion_tokens": 39,
+    "latency_ms": 59522
+  },
+  "outcome": "ok"
+}

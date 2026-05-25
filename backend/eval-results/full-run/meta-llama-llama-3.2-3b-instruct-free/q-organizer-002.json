@@ -1,0 +1,33 @@
+{
+  "model": "meta-llama/llama-3.2-3b-instruct:free",
+  "question_id": "organizer-002",
+  "role": "organizer",
+  "category": "scheduling",
+  "prompt": "When is my next session?",
+  "final_answer": "I'm a large language model, I don't have any information about your personal schedule or upcoming sessions. I'm a new conversation each time you interact with me, and I don't retain any information about previous conversations.\n\nIf you need to schedule or track your sessions, I recommend checking your personal calendar or contacting the person or organization that manages your sessions. Is there anything else I can help you with today?",
+  "messages": [
+    {
+      "role": "user",
+      "content": "When is my next session?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 16,
+    "completion_tokens": 83,
+    "latency_ms": 30235
+  },
+  "outcome": "ok"
+}

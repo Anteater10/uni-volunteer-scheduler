@@ -1,0 +1,33 @@
+{
+  "model": "meta-llama/llama-3.3-70b-instruct:free",
+  "question_id": "admin-001",
+  "role": "admin",
+  "category": "roster_query",
+  "prompt": "Who's signed up for Bio Module 3 next week?",
+  "final_answer": "This is the beginning of our conversation, and I'm a large language model, I don't have any information about a Bio Module 3 or any specific individuals who may be signed up for it. I'm here to help answer your questions and provide information, but I don't have any prior knowledge or context about your question. Can you please provide more context or clarify what you're referring to? I'll do my best to help!",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Who's signed up for Bio Module 3 next week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 22,
+    "completion_tokens": 89,
+    "latency_ms": 73116
+  },
+  "outcome": "ok"
+}

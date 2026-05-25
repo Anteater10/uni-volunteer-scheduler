@@ -1,0 +1,33 @@
+{
+  "model": "google/gemma-4-31b-it:free",
+  "question_id": "admin-002",
+  "role": "admin",
+  "category": "signup_stats",
+  "prompt": "How many participants signed up this week?",
+  "final_answer": "I do not have access to your private data, databases, or sign-up sheets. To answer this question, please provide the relevant data or a document containing the sign-up information.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How many participants signed up this week?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 9,
+    "completion_tokens": 38,
+    "latency_ms": 1854
+  },
+  "outcome": "ok"
+}

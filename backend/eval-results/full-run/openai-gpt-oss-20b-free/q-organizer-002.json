@@ -1,0 +1,33 @@
+{
+  "model": "openai/gpt-oss-20b:free",
+  "question_id": "organizer-002",
+  "role": "organizer",
+  "category": "scheduling",
+  "prompt": "When is my next session?",
+  "final_answer": "I\u2019m not able to see your personal schedule. If you\u2019re referring to a booked appointment with a service or a class you\u2019ve signed up for, the best way to confirm your next session is to check the confirmation email or the online portal you used to book it. \n\nIf you\u2019d like me to help look for that information, you can let me know the name of the service or the platform you used to book (e.g., a gym app, a tutoring platform, a therapy session scheduler, etc.) and the date you think it might be. From there, I can walk you through how to retrieve the details.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "When is my next session?"
+    }
+  ],
+  "tool_calls": [],
+  "retrieved_context": [],
+  "ragas": {
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": null
+  },
+  "tool_use_grade": {
+    "tool_match": false,
+    "confirmation_match": null,
+    "refusal_match": null,
+    "tool_use_correct": false
+  },
+  "usage": {
+    "prompt_tokens": 73,
+    "completion_tokens": 151,
+    "latency_ms": 3745
+  },
+  "outcome": "ok"
+}
