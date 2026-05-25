@@ -159,5 +159,102 @@ questions:
     required_tools: null
     notes: "Cross-role PII boundary."
 
+  # ---- Phase 35-03: policy_recall (knowledge the corpus can ground) ----
+  # These questions are answerable from the ingested corpus (docs/ +
+  # .planning/). Each gold was verified retrievable on 2026-05-25 via
+  # app.copilot.router._run_retrieval. They are what gives the grounded run
+  # (--grounded) a non-trivial faithfulness/context_precision signal vs the
+  # raw 35-02 baseline. No tools — pure knowledge grounding.
+
+  - id: knowledge-001
+    role: participant
+    category: policy_recall
+    prompt: "Do volunteers need to create an account to sign up?"
+    gold: |
+      No. Signup is account-less: volunteers are identified by email. The
+      first signup with a new email creates a lightweight Volunteer row
+      (first name, last name, email, phone); later signups from the same
+      email attach to the same row.
+    accept_set:
+      - "account-less"
+      - "no account"
+      - "identified by email"
+    required_tools: null
+    notes: "Grounded in .planning/REQUIREMENTS-v1.1-accountless.md (locked)."
+
+  - id: knowledge-002
+    role: participant
+    category: policy_recall
+    prompt: "Is orientation required before I can sign up for a module?"
+    gold: |
+      No. Orientation is a soft warning only - a volunteer can sign up
+      without it. The form shows a recommendation if they have no past
+      attended orientation under the same email, but it does not block the
+      signup.
+    accept_set:
+      - "soft warning"
+      - "not required"
+      - "can sign up"
+    required_tools: null
+    notes: "Grounded in REQUIREMENTS-v1.1-accountless 'Orientation as soft warning'."
+
+  - id: knowledge-003
+    role: admin
+    category: policy_recall
+    prompt: "What is a magic link and what is it used for?"
+    gold: |
+      A single-use bearer token embedded in an emailed URL that grants
+      passwordless access: the user clicks it, the server consumes the token
+      and issues a session/JWT. No password is stored anywhere.
+    accept_set:
+      - "single-use"
+      - "passwordless"
+      - "no password"
+    required_tools: null
+    notes: "Grounded in docs/learning/concepts/jwt-and-magic-links.md."
+
+  - id: knowledge-004
+    role: admin
+    category: policy_recall
+    prompt: "What information is collected when a volunteer signs up?"
+    gold: |
+      First name, last name, email, and phone - stored on a lightweight
+      Volunteer row keyed by email.
+    accept_set:
+      - "first name"
+      - "email"
+      - "phone"
+    required_tools: null
+    notes: "Grounded in REQUIREMENTS-v1.1-accountless Identity (Q1)."
+
+  - id: knowledge-005
+    role: organizer
+    category: policy_recall
+    prompt: "How are volunteers reminded about upcoming sessions?"
+    gold: |
+      By scheduled reminder emails: a kickoff reminder plus reminders ~24
+      hours and ~2 hours before the session (Celery-scheduled), with a
+      token-gated preferences page to manage them.
+    accept_set:
+      - "reminder email"
+      - "24 hours"
+      - "2 hours"
+    required_tools: null
+    notes: "Grounded in .planning/phases/24-scheduled-reminder-emails."
+
+  - id: knowledge-006
+    role: admin
+    category: policy_recall
+    prompt: "What user roles exist in the system?"
+    gold: |
+      Three roles: admin, organizer, and participant. The copilot conditions
+      its system prompt on the caller's role.
+    accept_set:
+      - "admin"
+      - "organizer"
+      - "participant"
+    required_tools: null
+    notes: "Grounded in docs/documentation/30-streaming-chat-mvp/role-aware-system-prompts.md."
+
 # Andy: append remaining ~90 entries here. Each must satisfy the schema
 # validator above. Per-role coverage targets in the header comment.

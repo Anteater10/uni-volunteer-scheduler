@@ -17,6 +17,7 @@ _ALLOWED_CATEGORIES = {
     "scheduling",
     "signup_stats",
     "profile_recall",
+    "policy_recall",  # Phase 35-03: knowledge questions the corpus can ground
     "tool_write",
     "adversarial_injection",
     "adversarial_overreach",
