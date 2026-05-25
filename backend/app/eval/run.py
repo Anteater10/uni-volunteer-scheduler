@@ -53,6 +53,72 @@ def _make_session():
     return SessionLocal()
 
 
+_RETRIEVAL_CACHE_NAME = "_retrieval_cache.json"
+
+
+def _ensure_retrieval_cache(
+    questions: list[dict[str, Any]],
+    out_dir: Path,
+    *,
+    retrieve: Any | None = None,
+    make_session: Any | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Retrieve grounding context once per question and persist it.
+
+    Retrieval (embed → hybrid → rerank) is **model-independent** and the
+    rerank stage is the run's most expensive step. Computing it once per
+    question — instead of once per (model, question) — and persisting it to
+    ``out_dir/_retrieval_cache.json`` cuts the retrieval cost by Nx (N =
+    model count) and makes chunked/resume runs skip it entirely.
+
+    Cache shape: ``{question_id: {"citations": [dict, ...],
+    "retrieval_ms": int, "rerank_ms": int}}``. Citations are stored as plain
+    dicts (Citation field shape) and rebuilt into Citation objects at use.
+    """
+    cache_path = Path(out_dir) / _RETRIEVAL_CACHE_NAME
+    cache: dict[str, dict[str, Any]] = {}
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text()) or {}
+        except (json.JSONDecodeError, OSError):
+            cache = {}
+
+    if retrieve is None:
+        from .replay import _default_retrieve as retrieve  # noqa: PLC0415
+    make_session = make_session or _make_session
+
+    missing = [q for q in questions if q["id"] not in cache]
+    if missing:
+        logger.info("eval_retrieval_cache computing=%s cached=%s",
+                    len(missing), len(cache))
+    for q in missing:
+        db = make_session()
+        try:
+            citations, retrieval_ms, rerank_ms = retrieve(db, q["prompt"])
+        finally:
+            db.close()
+        cache[q["id"]] = {
+            "citations": [
+                c if isinstance(c, dict) else {
+                    "chunk_id": str(getattr(c, "chunk_id", "")),
+                    "source_path": getattr(c, "source_path", None),
+                    "char_start": getattr(c, "char_start", None),
+                    "char_end": getattr(c, "char_end", None),
+                    "quote": getattr(c, "quote", "") or "",
+                    "rrf_score": getattr(c, "rrf_score", None),
+                    "rerank_score": getattr(c, "rerank_score", None),
+                }
+                for c in (citations or [])
+            ],
+            "retrieval_ms": retrieval_ms,
+            "rerank_ms": rerank_ms,
+        }
+        cache_path.write_text(json.dumps(cache, indent=2, default=str))
+        logger.info("eval_retrieval_cached question_id=%s n_citations=%s",
+                    q["id"], len(cache[q["id"]]["citations"]))
+    return cache
+
+
 def _load_testset(path: str) -> list[dict[str, Any]]:
     if path in {"", "ignored", "default"}:
         raw = (files("app.eval") / "testset.yaml").read_text()
@@ -92,6 +158,7 @@ def _run_model(
     max_workers: int,
     use_agent_loop: bool = False,
     grounded: bool = False,
+    retrieval_cache: dict[str, dict[str, Any]] | None = None,
     resume: bool = True,
 ) -> None:
     set_model_for_replay(model_id, monkeypatch=None)
@@ -113,8 +180,20 @@ def _run_model(
         return
 
     def _grounded_task(q):
-        # One session per question — SQLAlchemy sessions are not thread-safe,
-        # so the ThreadPoolExecutor workers must not share one.
+        cached = (retrieval_cache or {}).get(q["id"])
+        if cached is not None:
+            # Reuse the once-per-question retrieval; no DB session needed.
+            from app.copilot.schemas import Citation
+
+            cits = [Citation(**c) for c in cached["citations"]]
+            ms, rrms = cached["retrieval_ms"], cached["rerank_ms"]
+            return replay_grounded(
+                model_id=model_id, question=q, db=None, out_dir=out_dir,
+                retrieve=lambda _db, _p, _c=cits, _m=ms, _r=rrms: (_c, _m, _r),
+                monkeypatch=None,
+            )
+        # Fallback (no precomputed cache): retrieve live. One session per
+        # question — SQLAlchemy sessions are not thread-safe.
         db = _make_session()
         try:
             return replay_grounded(
@@ -212,6 +291,12 @@ def main(argv: list[str] | None = None) -> int:
         out_dir = Path("backend") / "eval-results" / ts
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Grounded runs retrieve once per question (model-independent, expensive)
+    # and persist the result so every model + resume pass reuses it.
+    retrieval_cache = None
+    if args.grounded:
+        retrieval_cache = _ensure_retrieval_cache(questions, out_dir)
+
     # Models run sequentially; questions parallelise within a model.
     for model_id in models:
         _run_model(
@@ -221,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             max_workers=args.max_workers,
             use_agent_loop=args.use_agent_loop,
             grounded=args.grounded,
+            retrieval_cache=retrieval_cache,
             resume=args.resume,
         )
     logger.info("eval_run_finished out_dir=%s", out_dir)
