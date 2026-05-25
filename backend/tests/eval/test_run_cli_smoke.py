@@ -54,6 +54,75 @@ def test_run_main_dispatches_one_replay_per_model_per_question(
     assert (out_dir / "results.csv").exists() or True  # CSV lands in 35-02-F
 
 
+def test_run_main_resume_skips_successful_retries_failed(tmp_path, monkeypatch):
+    """Resume: a pre-existing ``ok`` trace is skipped; a ``hard_failure``
+    trace is re-attempted."""
+    from app.eval import run as eval_run
+
+    model_id = "meta-llama/llama-3.2-3b-instruct:free"
+    slug = model_id.replace("/", "-").replace(":", "-")
+    out_dir = tmp_path / "results"
+    model_dir = out_dir / slug
+    model_dir.mkdir(parents=True)
+    # q-0 already succeeded; q-1 previously rate-limited (hard_failure).
+    (model_dir / "q-q-0.json").write_text(json.dumps({"outcome": "ok"}))
+    (model_dir / "q-q-1.json").write_text(json.dumps({"outcome": "hard_failure"}))
+
+    calls: list[str] = []
+
+    def _stub_replay_one(*, model_id, question, out_dir, monkeypatch=None, **_kw):
+        calls.append(question["id"])
+        d = out_dir / slug
+        d.mkdir(parents=True, exist_ok=True)
+        trace = d / f"q-{question['id']}.json"
+        trace.write_text(json.dumps({"outcome": "ok"}))
+        return trace
+
+    monkeypatch.setattr(eval_run, "replay_one", _stub_replay_one)
+    questions = [
+        {"id": f"q-{i}", "role": "admin", "category": "refusal",
+         "prompt": "hi", "gold": "x"}
+        for i in range(3)
+    ]
+    monkeypatch.setattr(eval_run, "_load_testset", lambda *_a, **_kw: questions)
+
+    eval_run.main(argv=[
+        "--models", model_id, "--testset", "ignored",
+        "--out-dir", str(out_dir), "--max-workers", "1",
+    ])
+    # q-0 skipped (ok); q-1 (hard_failure) + q-2 (missing) re-attempted.
+    assert sorted(calls) == ["q-1", "q-2"]
+
+
+def test_run_main_no_resume_runs_everything(tmp_path, monkeypatch):
+    """``--no-resume`` re-runs every question regardless of prior traces."""
+    from app.eval import run as eval_run
+
+    model_id = "meta-llama/llama-3.2-3b-instruct:free"
+    slug = model_id.replace("/", "-").replace(":", "-")
+    out_dir = tmp_path / "results"
+    model_dir = out_dir / slug
+    model_dir.mkdir(parents=True)
+    (model_dir / "q-q-0.json").write_text(json.dumps({"outcome": "ok"}))
+
+    calls: list[str] = []
+
+    def _stub_replay_one(*, model_id, question, out_dir, monkeypatch=None, **_kw):
+        calls.append(question["id"])
+        return out_dir / slug / f"q-{question['id']}.json"
+
+    monkeypatch.setattr(eval_run, "replay_one", _stub_replay_one)
+    questions = [{"id": f"q-{i}", "role": "admin", "category": "refusal",
+                  "prompt": "hi", "gold": "x"} for i in range(2)]
+    monkeypatch.setattr(eval_run, "_load_testset", lambda *_a, **_kw: questions)
+
+    eval_run.main(argv=[
+        "--models", model_id, "--testset", "ignored",
+        "--out-dir", str(out_dir), "--no-resume",
+    ])
+    assert sorted(calls) == ["q-0", "q-1"]
+
+
 def test_run_main_rejects_paid_model(tmp_path, monkeypatch):
     """Free-tier startup guard fires on CLI."""
     from app.eval import run as eval_run

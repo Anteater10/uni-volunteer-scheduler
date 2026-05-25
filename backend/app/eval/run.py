@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import logging
 import os
 import sys
@@ -29,9 +30,14 @@ from .models import (
     assert_free_tier,
     set_model_for_replay,
 )
-from .replay import replay_one
+from .replay import _model_slug, replay_one
 
 logger = logging.getLogger(__name__)
+
+# A trace with one of these outcomes is a real result and is skipped on
+# resume. Anything else (notably ``hard_failure`` from a rate-limit 429)
+# is re-attempted so a chunked, day-by-day free-tier run can make progress.
+_DONE_OUTCOMES = frozenset({"ok", "empty_response"})
 
 
 def _load_testset(path: str) -> list[dict[str, Any]]:
@@ -40,6 +46,23 @@ def _load_testset(path: str) -> list[dict[str, Any]]:
     else:
         raw = Path(path).read_text()
     return (yaml.safe_load(raw) or {}).get("questions", []) or []
+
+
+def _already_done(out_dir: Path, model_id: str, question_id: str) -> bool:
+    """True if a successful trace for this (model, question) already exists.
+
+    Lets a free-tier run resume: re-running the same command with the same
+    ``--out-dir`` skips questions that already succeeded and re-attempts the
+    ones a 429 turned into ``hard_failure``.
+    """
+    trace_path = Path(out_dir) / _model_slug(model_id) / f"q-{question_id}.json"
+    if not trace_path.exists():
+        return False
+    try:
+        data = json.loads(trace_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return False
+    return data.get("outcome") in _DONE_OUTCOMES
 
 
 def _resolve_models(arg: str) -> list[str]:
@@ -55,10 +78,24 @@ def _run_model(
     out_dir: Path,
     max_workers: int,
     use_agent_loop: bool = False,
+    resume: bool = True,
 ) -> None:
     set_model_for_replay(model_id, monkeypatch=None)
+    pending = questions
+    if resume:
+        pending = [
+            q for q in questions
+            if not _already_done(out_dir, model_id, q["id"])
+        ]
+        skipped = len(questions) - len(pending)
+        if skipped:
+            logger.info("eval_model_resume model=%s skipped_done=%s remaining=%s",
+                        model_id, skipped, len(pending))
     logger.info("eval_model_started model=%s n_questions=%s use_agent_loop=%s",
-                model_id, len(questions), use_agent_loop)
+                model_id, len(pending), use_agent_loop)
+    if not pending:
+        logger.info("eval_model_finished model=%s (nothing to do)", model_id)
+        return
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
             pool.submit(
@@ -69,7 +106,7 @@ def _run_model(
                 monkeypatch=None,
                 use_agent_loop=use_agent_loop,
             )
-            for q in questions
+            for q in pending
         ]
         for fut in as_completed(futures):
             try:
@@ -93,6 +130,16 @@ def main(argv: list[str] | None = None) -> int:
              "backend/eval-results/{timestamp}/.",
     )
     parser.add_argument("--max-workers", type=int, default=4)
+    parser.add_argument(
+        "--no-resume",
+        dest="resume",
+        action="store_false",
+        default=True,
+        help="Re-run every question even if a successful trace already "
+             "exists. Default is to resume: skip questions that already "
+             "succeeded and re-attempt 429-failed ones. Use a fixed "
+             "--out-dir across days to chunk a free-tier run.",
+    )
     parser.add_argument(
         "--use-agent-loop",
         action="store_true",
@@ -132,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=out_dir,
             max_workers=args.max_workers,
             use_agent_loop=args.use_agent_loop,
+            resume=args.resume,
         )
     logger.info("eval_run_finished out_dir=%s", out_dir)
     return 0
