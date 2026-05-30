@@ -87,6 +87,50 @@ def test_replay_grounded_populates_retrieved_context(tmp_path, monkeypatch):
     assert payload["usage"]["rerank_ms"] == 33
 
 
+def test_replay_grounded_participant_role_uses_base_prompt(tmp_path, monkeypatch):
+    """Participant-role questions must NOT crash.
+
+    Regression for Phase 35-03: production blocks the participant role at the
+    router, so ``prompts.system_prompt_for`` defines no template for it and
+    raised ``ValueError``. The grounded eval still asks participant-role
+    knowledge/refusal questions, so the driver falls back to the neutral
+    ``_BASE`` prompt + retrieved-context block instead of crashing. Before the
+    fix every participant question landed as ``hard_failure`` / empty answer.
+    """
+    from app.eval import replay
+    from app.copilot import llm as copilot_llm
+
+    monkeypatch.setattr(copilot_llm, "stream_completion", _canned_stream)
+
+    q = _question()
+    q["id"] = "know-participant-001"
+    q["role"] = "participant"
+
+    def _fake_retrieve(db, query_text):
+        return [_one_citation()], 21, 33
+
+    out_dir = tmp_path / "results"
+    trace_path = replay.replay_grounded(
+        model_id="x:free",
+        question=q,
+        db=object(),
+        out_dir=out_dir,
+        retrieve=_fake_retrieve,
+        monkeypatch=monkeypatch,
+    )
+    payload = json.loads(trace_path.read_text())
+
+    assert payload["outcome"] == "ok"
+    assert payload["final_answer"] == "Quarterly — every 11 weeks."
+    # base prompt is present (hard rules) without an admin/organizer role tail
+    system = payload["messages"][0]["content"]
+    assert "SciTrek Copilot" in system
+    assert "speaking with an admin" not in system
+    assert "speaking with an event organizer" not in system
+    # grounding block still appended
+    assert "retrieved_context" in system or payload["retrieved_context"]
+
+
 def test_replay_grounded_empty_citations_degrades_gracefully(tmp_path, monkeypatch):
     """No citations (retrieval miss) → still completes, retrieved_context empty."""
     from app.eval import replay

@@ -177,7 +177,11 @@ def replay_grounded(
     inside the docker network.
     """
     from app import models
-    from app.copilot.prompts import system_prompt_with_context
+    from app.copilot.prompts import (
+        _BASE,
+        build_retrieved_context_block,
+        system_prompt_with_context,
+    )
 
     set_model_for_replay(model_id, monkeypatch=monkeypatch)
     retrieve = retrieve or _default_retrieve
@@ -235,8 +239,17 @@ def replay_grounded(
         try:
             role = models.UserRole(question.get("role"))
         except (ValueError, KeyError):
-            role = models.UserRole.participant
-        system = system_prompt_with_context(role, citations or [])
+            role = None
+        if role in (models.UserRole.admin, models.UserRole.organizer):
+            system = system_prompt_with_context(role, citations or [])
+        else:
+            # Participant (and any unknown) roles are blocked at the router in
+            # production, so prompts.py defines no template for them. The
+            # grounded eval still asks participant-role knowledge/refusal
+            # questions, so give them a neutral grounded-assistant prompt: the
+            # same _BASE hard rules, no admin/organizer role tail, plus the
+            # retrieved-context block.
+            system = _BASE + build_retrieved_context_block(citations or [])
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": question["prompt"]},
