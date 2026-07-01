@@ -57,11 +57,13 @@ const allNavItems = [
     label: "Reminders",
     roles: ["admin", "organizer"],
   },
-  // Phase 35-01 — copilot human-feedback aggregates
+  // Phase 35-01 — copilot human-feedback aggregates. Hidden alongside the
+  // FAB when the copilot flag is off (same gate as CopilotFab).
   {
     to: "/admin/copilot-feedback",
     label: "Copilot feedback",
     roles: ["admin", "organizer"],
+    copilotOnly: true,
   },
 ];
 
@@ -90,7 +92,13 @@ export default function AdminLayout() {
   const isDesktop = useIsDesktop();
   const [pageTitle, setPageTitle] = useState("");
 
-  const navItems = allNavItems.filter((item) => item.roles.includes(role));
+  // Evaluated per render (not module scope) so tests can stub the env var.
+  const copilotEnabled =
+    import.meta.env.VITE_COPILOT_ENABLED === "true" ||
+    import.meta.env.VITE_COPILOT_ENABLED === "1";
+  const navItems = allNavItems.filter(
+    (item) => item.roles.includes(role) && (!item.copilotOnly || copilotEnabled),
+  );
 
   const rootLabel = role === "organizer" ? "Organizer" : "Admin";
   const rootTarget = role === "organizer" ? "/admin/events" : "/admin";
