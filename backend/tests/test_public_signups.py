@@ -468,3 +468,33 @@ def test_manage_response_includes_volunteer_name(client, db_session, monkeypatch
     body = r.json()
     assert body["volunteer_first_name"] == "Hung"
     assert body["volunteer_last_name"] == "Khuu"
+
+
+def test_confirmation_email_enqueued_only_after_commit(client, db_session, monkeypatch):
+    """The Celery worker reads rows from its own session, so enqueuing the
+    confirmation email before db.commit() intermittently made the worker see
+    nothing ("missing entity, skipping") and silently drop the email. Pin the
+    order: commit must precede the enqueue."""
+    event = _make_event(db_session)
+    slot = _make_slot(db_session, event.id)
+    db_session.commit()
+
+    calls = []
+    original_commit = db_session.commit
+
+    def spying_commit():
+        calls.append("commit")
+        return original_commit()
+
+    monkeypatch.setattr(db_session, "commit", spying_commit)
+    monkeypatch.setattr(
+        "app.celery_app.send_signup_confirmation_email.delay",
+        lambda *a, **k: calls.append("enqueue"),
+    )
+
+    resp = client.post("/api/v1/public/signups", json=_signup_payload(slot.id))
+    assert resp.status_code == 201, resp.text
+    assert "enqueue" in calls, "confirmation email was never enqueued"
+    assert calls.index("commit") < calls.index("enqueue"), (
+        f"email enqueued before commit — worker race reintroduced (order: {calls})"
+    )
