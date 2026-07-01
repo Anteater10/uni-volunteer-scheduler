@@ -264,6 +264,10 @@ def main() -> int:
     _admin_upsert_user(admin_token, ORGANIZER["email"], ORGANIZER["password"],
                        ORGANIZER["name"], "organizer")
     log("organizer user ensured")
+    # Events are created AS THE ORGANIZER so the organizer demo path works:
+    # ensure_event_owner_or_admin gates "Add a question" / event detail on
+    # ownership, and admins retain full access regardless of owner.
+    organizer_token = _login(ORGANIZER["email"], ORGANIZER["password"])
 
     # SciTrek modules
     _ensure_module(admin_token, "intro-chem", "Intro to Chemistry")
@@ -306,7 +310,7 @@ def main() -> int:
     ]
     for ev in standard:
         event = _create_event(
-            admin_token,
+            organizer_token,
             title=ev["title"],
             description=f"SciTrek classroom science module at {ev['school']}. "
                         "Volunteers run a hands-on inquiry lesson with K-6 students.",
@@ -328,7 +332,7 @@ def main() -> int:
 
     # ----- MARQUEE: full session + populated waitlist (cancel -> auto-promote) -----
     full_event = _create_event(
-        admin_token,
+        organizer_token,
         title="SciTrek Module 1 — Biology @ Isla Vista Elementary",
         description="High-demand SciTrek Biology session. Classroom capacity is "
                     "capped; extra volunteers join the waitlist and are auto-promoted "
@@ -353,7 +357,7 @@ def main() -> int:
 
     # ----- SWAP: two populated period sessions with spare room -----
     swap_event = _create_event(
-        admin_token,
+        organizer_token,
         title="SciTrek Module 2 — Physics @ Adelante Charter",
         description="Two parallel SciTrek Physics sessions. Admins can swap a "
                     "volunteer between the morning and afternoon classroom slots.",
