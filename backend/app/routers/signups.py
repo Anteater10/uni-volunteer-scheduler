@@ -107,14 +107,19 @@ def cancel_signup(
     # Audit log before commit
     log_action(db, current_user, "signup_cancelled", "Signup", str(signup.id))
 
+    # Capture before commit — expire_on_commit would force refresh queries.
+    promoted_signup_ids = [str(s.id) for s in promoted_signups]
+
     db.commit()
     db.refresh(signup)
 
     # Emails after commit — dispatched via app.emails.BUILDERS by kind.
     send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
-    # Phase 2: promoted signups get magic-link email from promote_waitlist_fifo
-    # instead of direct confirmation notification (they go to 'pending' first)
+    # Promoted volunteers get the branded waitlist_promote email — same kind
+    # pipeline the organizer manual-promote path uses.
+    for promoted_id in promoted_signup_ids:
+        send_email_notification.delay(signup_id=promoted_id, kind="waitlist_promote")
 
     return signup
 

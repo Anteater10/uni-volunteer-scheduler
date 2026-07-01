@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ... import models, schemas
+from ...celery_app import send_email_notification
 from ...database import get_db
 from ...deps import log_action, rate_limit
 from ...magic_link_service import (
@@ -259,14 +260,15 @@ def cancel_signup(
 
     # Phase 25 (WAIT-02): auto-promote the FIFO head until the slot is full
     # or the waitlist is empty. Each promotion bumps current_count.
-    promoted_count = 0
+    promoted_signup_ids: list[str] = []
     if slot:
         while slot.current_count < slot.capacity:
             promoted = promote_waitlist_fifo(db, slot.id)
             if promoted is None:
                 break
             slot.current_count += 1
-            promoted_count += 1
+            promoted_signup_ids.append(str(promoted.id))
+    promoted_count = len(promoted_signup_ids)
 
     log_action(
         db, actor=None, action="signup_cancelled",
@@ -278,6 +280,13 @@ def cancel_signup(
         },
     )
     db.commit()
+
+    # Emails only after commit — the worker reads rows from its own session.
+    # Promoted volunteers get the branded waitlist_promote email, same kind
+    # pipeline the organizer manual-promote path uses.
+    for promoted_id in promoted_signup_ids:
+        send_email_notification.delay(signup_id=promoted_id, kind="waitlist_promote")
+
     return {
         "cancelled": True,
         "signup_id": str(signup_id),

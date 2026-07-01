@@ -498,3 +498,47 @@ def test_confirmation_email_enqueued_only_after_commit(client, db_session, monke
     assert calls.index("commit") < calls.index("enqueue"), (
         f"email enqueued before commit — worker race reintroduced (order: {calls})"
     )
+
+
+def test_public_cancel_sends_waitlist_promote_email(client, db_session, monkeypatch):
+    """Public (token) cancel also auto-promotes — the promoted volunteer must
+    get the branded waitlist_promote email."""
+    monkeypatch.setattr(
+        "app.celery_app.send_signup_confirmation_email.delay",
+        lambda *a, **k: None,
+    )
+    sent = []
+    monkeypatch.setattr(
+        "app.celery_app.send_email_notification.delay",
+        lambda **kw: sent.append(kw),
+    )
+    event = _make_event(db_session)
+    slot = _make_slot(db_session, event.id, capacity=1)
+    db_session.commit()
+
+    with _TokenCapture(monkeypatch) as cap:
+        r1 = client.post(
+            "/api/v1/public/signups",
+            json=_signup_payload(slot.id, email="wl_promote_a@example.com"),
+        )
+    assert r1.status_code == 201
+    a_id = r1.json()["signup_ids"][0]
+    a_token = cap.last_token
+    if a_token is None:
+        pytest.skip("Token capture failed")
+
+    r2 = client.post(
+        "/api/v1/public/signups",
+        json=_signup_payload(slot.id, email="wl_promote_b@example.com"),
+    )
+    assert r2.status_code == 201
+    b_id = r2.json()["signup_ids"][0]
+
+    resp = client.delete(f"/api/v1/public/signups/{a_id}", params={"token": a_token})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["promoted_from_waitlist"] == 1
+
+    pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
+    assert ("waitlist_promote", str(b_id)) in pairs, (
+        f"promoted volunteer got no waitlist_promote email (sent: {sent})"
+    )
