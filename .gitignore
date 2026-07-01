@@ -45,3 +45,6 @@ Untitled
 Untitled.*
 # Sample CSVs in repo root (use backend/seeds/ or backend/tests/fixtures/ instead)
 /*.csv
+
+# demo-day golden database dump (local artifact, not source)
+/uvs-demo-golden.sql
