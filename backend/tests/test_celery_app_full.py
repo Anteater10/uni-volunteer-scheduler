@@ -466,3 +466,20 @@ def test_signup_confirmation_email_missing_entity_returns(
         token="t",
         event_id=str(_uuid.uuid4()),
     )
+
+
+# ---------------------------------------------------------------------------
+# Beat / RedBeat configuration invariants
+# ---------------------------------------------------------------------------
+
+
+def test_redbeat_lock_timeout_outlives_beat_loop_interval():
+    """RedBeat extends its scheduler lock once per beat tick, and ticks can be
+    up to beat_max_loop_interval (celery default 300s) apart. A lock TTL at or
+    below that interval expires before the next extend, raising
+    LockNotOwnedError and crash-looping the beat container. RedBeat's own
+    default keeps a 5x safety ratio (lock_timeout = max_interval * 5)."""
+    from celery.beat import DEFAULT_MAX_INTERVAL
+
+    max_interval = celery_mod.celery.conf.beat_max_loop_interval or DEFAULT_MAX_INTERVAL
+    assert celery_mod.celery.conf.redbeat_lock_timeout >= 5 * max_interval
