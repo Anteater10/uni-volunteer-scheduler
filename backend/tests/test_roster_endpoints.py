@@ -71,3 +71,33 @@ class TestGetRoster:
         headers = auth_headers(client, admin)
         resp = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
         assert resp.status_code == 200
+
+
+class TestVenueCodePersistence:
+    def test_venue_code_survives_session_rollback(self, client, db_session):
+        """The organizer reads the code off the roster screen, but the
+        volunteer's self-check-in validates it in a DIFFERENT request/session.
+        A flush-only write is rolled back when the request session closes, so
+        every roster view minted a fresh code and self-check-in compared the
+        volunteer's input against NULL. The GET must commit the generated code."""
+        from app.models import Event
+
+        organizer = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=organizer)
+        db_session.commit()
+
+        headers = auth_headers(client, organizer)
+        resp = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
+        assert resp.status_code == 200
+        code = resp.json()["venue_code"]
+        assert code is not None
+
+        # Discard anything the endpoint left uncommitted, as the real
+        # request-scoped session teardown does, then re-read from the DB.
+        db_session.rollback()
+        db_session.expire_all()
+        refreshed = db_session.get(Event, event.id)
+        assert refreshed.venue_code == code, (
+            "venue code was only flushed, not committed — self-check-in "
+            "in a separate request will always fail with WRONG_VENUE_CODE"
+        )
