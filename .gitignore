@@ -2,6 +2,8 @@
 .DS_Store
 .env
 .env.*
+# but DO track the production env TEMPLATE (placeholders only, no real secrets)
+!backend/.env.production.example
 *.log
 
 # --- legacy (do not push) ---
