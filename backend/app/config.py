@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # instead of raw token chunks. Defaults off so the Phase 30/32 SSE
     # contract is unchanged for callers that haven't opted in.
     copilot_agent_loop_enabled: bool = False
+    # Release guardrails (pre-Phase-37 minimum) — see app.copilot.guardrails.
+    copilot_rate_limit_messages_per_minute: int = 10
+    copilot_daily_token_budget: int = 500_000  # org-wide tokens/day; 0 disables
 
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is
