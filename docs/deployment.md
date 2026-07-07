@@ -106,9 +106,28 @@ Celery Beat schedules.
 - [ ] Rotate the dev secrets that were exposed (OpenRouter, SendGrid keys).
 - [ ] `EMAIL_MODE=sendgrid` with a **verified** sender domain.
 - [ ] Strong `SEED_ADMIN_PASSWORD` (or change the admin password after first login).
-- [ ] Backups for the Postgres volume / managed DB.
+- [ ] Backups for the Postgres volume / managed DB — see **Backups** below.
+- [ ] `ENVIRONMENT=production` set (compose sets it; disables /docs and
+      hard-blocks `EXPOSE_TOKENS_FOR_TESTING` at boot).
+- [ ] `SENTRY_DSN` set if you want error monitoring (empty = off).
 - [ ] Ingest the corpus once after deploy so the copilot has something to retrieve
       (`python -m app.corpus ...`) — otherwise RAG answers come back empty.
+
+## Backups
+
+`scripts/backup_db.sh` dumps the compose `db` service to `./backups/` (gzip,
+timestamped) and prunes dumps older than `RETENTION_DAYS` (default 14).
+Wire it into cron on the host:
+
+```cron
+0 3 * * * cd /opt/uni-volunteer-scheduler && ./scripts/backup_db.sh >> backups/backup.log 2>&1
+```
+
+Copy `backups/` somewhere off the host (object storage, another machine) —
+a backup on the same disk as the database only survives software mistakes,
+not hardware ones. Run one restore drill before go-live (command in the
+script header). Take a manual dump immediately **before** every
+`alembic upgrade head` on prod.
 
 ## Known issues (not deploy blockers)
 

@@ -10,6 +10,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import settings
 from .database import get_db
+from .observability import configure_logging, init_sentry
+
+configure_logging()
+init_sentry()
 from .routers import auth, users, events, slots, signups, notifications, admin, portals, magic, roster, check_in, organizer
 from .routers.public import events as public_events
 from .routers.public import signups as public_signups

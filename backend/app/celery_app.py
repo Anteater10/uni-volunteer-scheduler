@@ -23,8 +23,13 @@ from .config import settings
 from .database import SessionLocal
 from . import models
 from .emails import BUILDERS
+from .observability import init_sentry
 
 logger = logging.getLogger(__name__)
+
+# Celery configures worker logging itself (-l flag); Sentry still wants an
+# explicit init in this process so task exceptions are captured.
+init_sentry()
 
 # Celery app configured to use Redis (broker + result backend)
 celery = Celery(
