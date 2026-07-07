@@ -1,0 +1,25 @@
+# Caddy edge proxy: terminates TLS (automatic HTTPS via Let's Encrypt) and routes
+# traffic for the production single-host stack (docker-compose.prod.yml).
+#
+# Requirements for automatic HTTPS to work:
+#   - DOMAIN env var set (e.g. scitrek.example.org)
+#   - a DNS A/AAAA record for that domain pointing at this host
+#   - ports 80 and 443 reachable from the public internet
+#
+# For local testing without a real domain, set DOMAIN=localhost (Caddy issues a
+# local self-signed cert) or use `http://` to skip TLS.
+{$DOMAIN} {
+    encode gzip
+
+    # API surface (REST + SSE streaming + OpenAPI/docs) -> FastAPI backend.
+    # reverse_proxy streams Server-Sent Events correctly out of the box.
+    @api path /api/* /openapi.json /docs /redoc
+    handle @api {
+        reverse_proxy backend:8000
+    }
+
+    # Everything else -> the static React SPA.
+    handle {
+        reverse_proxy frontend:80
+    }
+}

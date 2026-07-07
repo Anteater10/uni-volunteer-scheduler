@@ -73,4 +73,9 @@ def get_roster(
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    return _build_roster(db, event)
+    roster = _build_roster(db, event)
+    # A lazily-generated venue code must outlive this request: the volunteer's
+    # self-check-in validates it from a separate session, and get_db never
+    # commits — without this the flushed code rolls back on session close.
+    db.commit()
+    return roster

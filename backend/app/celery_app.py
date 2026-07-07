@@ -35,7 +35,11 @@ celery = Celery(
 
 celery.conf.update(
     redbeat_redis_url=settings.redis_url,
-    redbeat_lock_timeout=300,
+    # RedBeat extends this lock once per beat tick, and ticks can be up to
+    # beat_max_loop_interval (300s default) apart — the TTL must stay well
+    # above that or the lock expires mid-sleep and beat crash-loops on
+    # LockNotOwnedError. 5x is RedBeat's own default safety ratio.
+    redbeat_lock_timeout=1500,
     beat_scheduler="redbeat.RedBeatScheduler",
     task_acks_late=True,
     task_reject_on_worker_lost=True,

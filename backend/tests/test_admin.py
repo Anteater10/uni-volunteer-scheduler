@@ -132,3 +132,48 @@ def test_admin_audit_logs_filter(client, db_session):
     body = resp.json()
     assert "items" in body
     assert any(entry["action"] == "admin_summary" for entry in body["items"])
+
+
+def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session, monkeypatch):
+    """The on-camera cancel→auto-promote must notify the promoted volunteer.
+    Regression: the admin cancel path promoted silently ("email dispatch
+    deferred to Phase 12") while the organizer manual promote already sends
+    the branded waitlist_promote email."""
+    sent = []
+    monkeypatch.setattr(
+        "app.celery_app.send_email_notification.delay",
+        lambda **kw: sent.append(kw),
+    )
+    admin = _make_admin(db_session, email="admin_pf_email@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import VolunteerFactory
+    vol_a = VolunteerFactory(email="vol_a_pfe@example.com")
+    vol_b = VolunteerFactory(email="vol_b_pfe@example.com")
+    a_signup = SignupFactory(
+        volunteer=vol_a,
+        slot=slot,
+        status=models.SignupStatus.confirmed,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    slot.current_count = 1
+    b_signup = SignupFactory(
+        volunteer=vol_b,
+        slot=slot,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/admin/signups/{a_signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert rc.status_code == 200, rc.text
+
+    pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
+    assert ("cancellation", str(a_signup.id)) in pairs
+    assert ("waitlist_promote", str(b_signup.id)) in pairs, (
+        f"promoted volunteer got no waitlist_promote email (sent: {sent})"
+    )

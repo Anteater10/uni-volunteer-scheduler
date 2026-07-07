@@ -46,6 +46,27 @@ describe("AdminLayout", () => {
     expect(screen.queryByRole("link", { name: /portals/i })).toBeNull();
   });
 
+  it("hides the Copilot feedback nav item when the copilot flag is off", () => {
+    // Same gate as CopilotFab: the analytics page for an invisible feature
+    // must not be reachable from the nav.
+    renderAtDesktop();
+    expect(
+      screen.queryByRole("link", { name: /copilot feedback/i })
+    ).toBeNull();
+  });
+
+  it("shows the Copilot feedback nav item when VITE_COPILOT_ENABLED=true", () => {
+    vi.stubEnv("VITE_COPILOT_ENABLED", "true");
+    try {
+      renderAtDesktop();
+      expect(
+        screen.getByRole("link", { name: /copilot feedback/i })
+      ).toBeInTheDocument();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("renders the child outlet when window width >= 768px", () => {
     renderAtDesktop(1200);
     expect(screen.getByTestId("child-outlet")).toBeInTheDocument();

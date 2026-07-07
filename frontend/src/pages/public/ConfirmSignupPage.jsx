@@ -56,11 +56,12 @@ export default function ConfirmSignupPage() {
   if (state === "error") {
     // The current state machine collapses expired vs invalid into a single
     // "error" branch. Per UI-SPEC §Error states, the expired copy is the
-    // most common case (24h TTL); use it as the default.
+    // most common case; use it as the default. TTL matches
+    // SIGNUP_CONFIRM_TTL (14 days) in magic_link_service.py.
     return (
       <ErrorState
         title="This link has expired"
-        body="Magic links are good for 24 hours. Open the event again and re-submit your signup to get a new one."
+        body="Magic links are good for 14 days. Open the event again and re-submit your signup to get a new one."
         action={
           <Button variant="primary" onClick={() => navigate("/volunteer")}>
             Back to events
