@@ -1,11 +1,6 @@
 // Phase 3: Self check-in API helpers
 import authStorage from "../lib/authStorage";
-
-const RAW_BASE = (
-  (typeof import.meta !== "undefined" ? import.meta.env?.VITE_API_URL : null) ||
-  "http://localhost:8000"
-).replace(/\/+$/, "");
-const API_BASE = RAW_BASE.endsWith("/api/v1") ? RAW_BASE : `${RAW_BASE}/api/v1`;
+import { API_BASE } from "../lib/apiBase";
 
 async function _request(method, path, body) {
   const token = authStorage.getToken();

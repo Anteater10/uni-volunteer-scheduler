@@ -1,11 +1,6 @@
 // src/lib/api.js
 import authStorage from "./authStorage";
-
-// .env example:
-// VITE_API_URL=http://localhost:8000
-// (do NOT include /api/v1; we'll append it safely)
-const RAW_BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
-const API_BASE = RAW_BASE.endsWith("/api/v1") ? RAW_BASE : `${RAW_BASE}/api/v1`;
+import { API_BASE } from "./apiBase";
 
 // -------------------------
 // Single-flight refresh-on-401
@@ -282,16 +277,6 @@ async function generateSlots(eventId, payload) {
 }
 
 // --------------------
-// SIGNUPS
-// --------------------
-// TODO(phase0): no backend endpoint at /events/{id}/signups — tracked in API-AUDIT.md.
-// Admin/organizer callers should use api.admin.eventRoster(eventId) instead.
-// A public endpoint will be added in Plan 05 or 06.
-async function listEventSignups(eventId) {
-  return request(`/events/${eventId}/signups`, { method: "GET" });
-}
-
-// --------------------
 // QUESTIONS
 // --------------------
 async function listEventQuestions(eventId) {
@@ -545,9 +530,6 @@ export const api = {
   updateSlot,
   deleteSlot,
   generateSlots,
-
-  // signups
-  listEventSignups,
 
   // magic link
   resendMagicLink,
