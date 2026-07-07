@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     # "https://github.com/Anteater10/uni-volunteer-scheduler/blob/main".
     corpus_source_origin_url: str = ""
 
+    # --- Ops (release minimum) — see app.observability ---
+    log_level: str = "INFO"
+    sentry_dsn: str = ""  # empty = error monitoring off
+
     # CORS
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 
