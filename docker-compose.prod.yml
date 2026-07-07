@@ -64,6 +64,8 @@ services:
       dockerfile: Dockerfile
     env_file:
       - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
     depends_on:
       db:
         condition: service_healthy
@@ -71,7 +73,11 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    # --proxy-headers: trust X-Forwarded-For from Caddy so the per-IP rate
+    # limiter keys on the real client, not Caddy's network IP. Trusting all
+    # proxies is safe here because port 8000 is never published — only Caddy
+    # can reach the backend on the compose network.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=*
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)\""]
       interval: 15s
@@ -86,12 +92,20 @@ services:
       dockerfile: Dockerfile
     env_file:
       - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
     depends_on:
       redis:
         condition: service_healthy
       backend:
         condition: service_started
     command: celery -A app.celery_app.celery worker -l info
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app.celery inspect ping -d celery@$$HOSTNAME --timeout 10"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   celery_beat:
@@ -100,12 +114,21 @@ services:
       dockerfile: Dockerfile
     env_file:
       - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
     depends_on:
       redis:
         condition: service_healthy
       backend:
         condition: service_started
     command: celery -A app.celery_app.celery beat -l info -S redbeat.RedBeatScheduler
+    # beat has no inspect/ping — a wedged scheduler shows up as a dead process
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery.*beat' > /dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   frontend:

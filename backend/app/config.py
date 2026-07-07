@@ -4,6 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Core
+    # "development" | "production" — production disables API docs and hard-blocks
+    # EXPOSE_TOKENS_FOR_TESTING (see assert_test_mode_allowed).
+    environment: str = "development"
     database_url: str
 
     # JWT
@@ -110,3 +113,19 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def assert_test_mode_allowed(environment: str, *, expose_tokens: bool) -> None:
+    """Refuse to run with EXPOSE_TOKENS_FOR_TESTING in production.
+
+    The flag simultaneously mounts unauthenticated destructive test-helper
+    endpoints, disables rate limiting, and leaks confirmation tokens in
+    signup responses — one stray env var must never turn all three on
+    against a reachable host.
+    """
+    if expose_tokens and environment == "production":
+        raise RuntimeError(
+            "EXPOSE_TOKENS_FOR_TESTING=1 is set while ENVIRONMENT=production. "
+            "This flag mounts unauthenticated destructive endpoints, disables "
+            "rate limiting, and leaks auth tokens. Unset it before starting."
+        )
