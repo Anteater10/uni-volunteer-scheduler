@@ -232,11 +232,13 @@ async function me() {
 // EVENTS
 // --------------------
 async function listEvents(params) {
-  return request("/events", { method: "GET", auth: false, params });
+  // Staff-only endpoint since the release hardening pass — anonymous
+  // callers use api.public.listEvents (/public/events) instead.
+  return request("/events", { method: "GET", auth: true, params });
 }
 
 async function getEvent(eventId) {
-  return request(`/events/${eventId}`, { method: "GET", auth: false });
+  return request(`/events/${eventId}`, { method: "GET", auth: true });
 }
 
 async function createEvent(payload) {

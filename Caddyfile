@@ -11,7 +11,12 @@
 {$DOMAIN} {
     encode gzip
 
-    # API surface (REST + SSE streaming + OpenAPI/docs) -> FastAPI backend.
+    # Browsers may only ever reach this host over HTTPS after first contact.
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    # API surface (REST + SSE streaming) -> FastAPI backend. /docs, /redoc
+    # and /openapi.json stay routed but the backend disables them when
+    # ENVIRONMENT=production, so they 404 in prod.
     # reverse_proxy streams Server-Sent Events correctly out of the box.
     @api path /api/* /openapi.json /docs /redoc
     handle @api {

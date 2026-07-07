@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .config import settings
+from .config import assert_test_mode_allowed, settings
 from .database import get_db
 from .routers import auth, users, events, slots, signups, notifications, admin, portals, magic, roster, check_in, organizer
 from .routers.public import events as public_events
@@ -22,9 +22,17 @@ from .copilot import router as copilot_router
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="University Volunteer Scheduler API")
+_expose_tokens = os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1"
+assert_test_mode_allowed(settings.environment, expose_tokens=_expose_tokens)
 
-if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+_docs_kwargs = (
+    {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    if settings.environment == "production"
+    else {}
+)
+app = FastAPI(title="University Volunteer Scheduler API", **_docs_kwargs)
+
+if _expose_tokens:
     logger.warning(
         "EXPOSE_TOKENS_FOR_TESTING is ON — confirm tokens will be returned in signup "
         "responses. DO NOT use in production."
@@ -78,7 +86,13 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    # TEMP: no CSP so Swagger UI can load CDN assets
+    # JSON API — nothing should load subresources or frame it. The docs UI
+    # (dev only; disabled entirely in production) needs CDN assets, so those
+    # paths stay exempt.
+    if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'"
+        )
     return response
 
 
@@ -117,5 +131,5 @@ app.include_router(broadcasts.router, prefix="/api/v1")
 app.include_router(copilot_router.router, prefix="/api/v1")
 
 # Test helpers — only included when EXPOSE_TOKENS_FOR_TESTING=1
-if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
+if _expose_tokens:
     app.include_router(test_helpers_router)
