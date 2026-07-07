@@ -63,9 +63,16 @@ def _dedup_insert(db: Session, signup_id, kind: str) -> bool:
 def _check_daily_send_limit(db: Session) -> bool:
     """Check if daily send limit is approaching. Returns False if limit exceeded."""
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    count = db.query(func.count(models.SentNotification.id)).filter(
+    kind_count = db.query(func.count(models.SentNotification.id)).filter(
         models.SentNotification.sent_at >= today_start
     ).scalar() or 0
+    # The transactional user_id path logs Notification rows, not
+    # SentNotification — count both or real sends blow past the provider cap.
+    txn_count = db.query(func.count(models.Notification.id)).filter(
+        models.Notification.type == models.NotificationType.email,
+        models.Notification.delivered_at >= today_start,
+    ).scalar() or 0
+    count = kind_count + txn_count
 
     limit = settings.resend_daily_limit
     if count >= limit:
@@ -205,9 +212,13 @@ def send_email_notification(
             if not signup:
                 return
 
-            # Dedup: insert before send
+            # Dedup: commit the marker BEFORE sending, so a session failure
+            # after a successful send can't roll the marker back and
+            # double-send on the autoretry. If the send itself fails, the
+            # except branch releases the marker so the retry can send.
             if not _dedup_insert(db, signup.id, kind):
                 return  # Already sent by another worker
+            db.commit()
 
             payload = builder(signup)
             # Phase 09: signup.user removed — use volunteer
@@ -218,11 +229,19 @@ def send_email_notification(
             to_email = v.email if v else None
             if not to_email:
                 return
-            _send_email(to_email, subject, body, html_body=html_body)
+            try:
+                _send_email(to_email, subject, body, html_body=html_body)
+            except Exception:
+                db.rollback()
+                db.query(models.SentNotification).filter(
+                    models.SentNotification.signup_id == signup.id,
+                    models.SentNotification.kind == kind,
+                ).delete()
+                db.commit()
+                raise
             # Phase 09 (D-11): skip Notification row for volunteer-backed signups;
             # migration 0010 adds volunteer_id FK but this pipeline uses dedup kind pattern
             # which doesn't map cleanly. Phase 11 will add audit rows here.
-            db.commit()
         else:
             if user_id is None:
                 return
