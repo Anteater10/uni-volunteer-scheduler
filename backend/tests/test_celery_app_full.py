@@ -483,3 +483,114 @@ def test_redbeat_lock_timeout_outlives_beat_loop_interval():
 
     max_interval = celery_mod.celery.conf.beat_max_loop_interval or DEFAULT_MAX_INTERVAL
     assert celery_mod.celery.conf.redbeat_lock_timeout >= 5 * max_interval
+
+
+# ---------------------------------------------------------------------------
+# Release hardening — dedup marker durability, daily-cap accounting, and
+# waitlist-promote copy
+# ---------------------------------------------------------------------------
+
+
+def test_send_marker_survives_post_send_failure(db_session, monkeypatch):
+    """If the send succeeds but the session dies right after, the retry must
+    NOT send a second email — the dedup marker has to be durable (committed)
+    before the send happens."""
+    s = _seed_confirmed_signup(db_session, email_tag="ms")
+    db_session.commit()
+
+    sends = []
+    monkeypatch.setattr(celery_mod, "_send_email", lambda *a, **k: sends.append(a))
+
+    class _FlakySession:
+        """Proxies the test session; first commit AFTER a send raises."""
+
+        def __init__(self, session):
+            self._s = session
+            self.exploded = False
+
+        def __getattr__(self, name):
+            return getattr(self._s, name)
+
+        def commit(self):
+            if sends and not self.exploded:
+                self.exploded = True
+                raise RuntimeError("connection lost after send")
+            self._s.commit()
+
+        def close(self):
+            pass
+
+    flaky = _FlakySession(db_session)
+    monkeypatch.setattr(celery_mod, "SessionLocal", lambda: flaky)
+
+    try:
+        send_email_notification.run(signup_id=str(s.id), kind="cancellation")
+    except RuntimeError:
+        pass
+    # What a real worker does between retries: the broken session is torn down.
+    db_session.rollback()
+
+    send_email_notification.run(signup_id=str(s.id), kind="cancellation")
+    assert len(sends) == 1, (
+        f"retry after post-send session failure re-sent the email ({len(sends)} sends)"
+    )
+
+
+def test_send_failure_releases_marker(db_session, monkeypatch, patch_session_local):
+    """If the send itself fails, the marker must not stick around — the retry
+    has to be able to actually send."""
+    s = _seed_confirmed_signup(db_session, email_tag="rf")
+    db_session.commit()
+
+    def _boom(*a, **k):
+        raise RuntimeError("smtp down")
+
+    monkeypatch.setattr(celery_mod, "_send_email", _boom)
+    with pytest.raises(RuntimeError, match="smtp down"):
+        send_email_notification.run(signup_id=str(s.id), kind="cancellation")
+    db_session.rollback()
+
+    marker = (
+        db_session.query(models.SentNotification)
+        .filter(
+            models.SentNotification.signup_id == s.id,
+            models.SentNotification.kind == "cancellation",
+        )
+        .first()
+    )
+    assert marker is None, "failed send left a dedup marker — retries will never send"
+
+
+def test_daily_send_limit_counts_transactional_notifications(db_session, monkeypatch):
+    """The circuit breaker must count the user_id transactional path
+    (Notification rows), not just the kind-based SentNotification path —
+    otherwise real sends blow past the provider cap uncounted."""
+    monkeypatch.setattr(celery_mod.settings, "resend_daily_limit", 5)
+    user = make_user(db_session, email="cap_txn@example.com")
+    now = datetime.now(timezone.utc)
+    for i in range(5):
+        db_session.add(models.Notification(
+            user_id=user.id,
+            type=models.NotificationType.email,
+            subject=f"t{i}",
+            body="b",
+            delivery_method="email",
+            delivered_at=now,
+        ))
+    db_session.flush()
+
+    assert celery_mod._check_daily_send_limit(db_session) is False
+
+
+def test_waitlist_promote_email_does_not_ask_to_confirm(db_session):
+    """Promotees are already confirmed (promote_waitlist_fifo sets status
+    directly) — the email must not tell them to 'confirm your spot'."""
+    from app.emails import BUILDERS
+
+    s = _seed_confirmed_signup(db_session, email_tag="wp")
+    db_session.commit()
+
+    payload = BUILDERS["waitlist_promote"](s)
+    assert "confirm your spot" not in payload["subject"].lower()
+    assert "waitlist" in payload["subject"].lower()
+    assert "confirmed" in payload["subject"].lower()
