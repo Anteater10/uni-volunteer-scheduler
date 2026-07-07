@@ -22,6 +22,20 @@ def _to_utc_naive(dt: datetime | None) -> datetime | None:
     return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _to_utc_aware(dt: datetime | None) -> datetime | None:
+    """Serialization direction: keep the UTC offset on the wire.
+
+    Every datetime column is timestamptz. Read schemas must emit an offset
+    ("+00:00"/"Z") or `new Date()` in the browser reads the value as local
+    time and shifts every displayed clock time.
+    """
+    if dt is None:
+        return dt
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 # =========================
 # AUTH / TOKEN
 # =========================
@@ -111,6 +125,13 @@ class SlotRead(ORMBase, SlotBase):
     date: Optional[DateType] = None
     location: Optional[str] = None
 
+    # Same method name as SlotBase's validator → replaces it, so Read
+    # payloads keep the UTC offset instead of stripping it.
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalize_slot_datetimes(cls, value: datetime) -> datetime:
+        return _to_utc_aware(value)
+
 
 class SlotUpdate(BaseModel):
     start_time: Optional[datetime] = None
@@ -178,6 +199,13 @@ class EventRead(ORMBase, EventBase):
     week_number: Optional[int] = None
     created_at: Optional[datetime] = None
     slots: List[SlotRead] = []
+
+    # Same method name as EventBase's validator → replaces it, so Read
+    # payloads keep the UTC offset instead of stripping it.
+    @field_validator("start_date", "end_date", "signup_open_at", "signup_close_at")
+    @classmethod
+    def normalize_event_datetimes(cls, value: datetime | None) -> datetime | None:
+        return _to_utc_aware(value)
 
 
 class EventUpdate(BaseModel):
