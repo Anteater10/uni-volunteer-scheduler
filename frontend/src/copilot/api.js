@@ -4,9 +4,7 @@
 // useCopilotStream.js because fetch + ReadableStream is more flexible
 // than the lib/api wrapper, which assumes JSON responses.
 import authStorage from "../lib/authStorage";
-
-const RAW_BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
-const API_BASE = RAW_BASE.endsWith("/api/v1") ? RAW_BASE : `${RAW_BASE}/api/v1`;
+import { API_BASE } from "../lib/apiBase";
 
 export const COPILOT_BASE = `${API_BASE}/copilot`;
 
