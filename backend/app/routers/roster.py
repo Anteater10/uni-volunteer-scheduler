@@ -13,6 +13,16 @@ from ..schemas import RosterResponse, RosterRow
 
 router = APIRouter(tags=["roster"])
 
+# Statuses that represent an expected attendee. `total` feeds the check-in
+# progress metric, so waitlisted and cancelled signups must not inflate it.
+_ATTENDEE_STATUSES = (
+    SignupStatus.pending,
+    SignupStatus.confirmed,
+    SignupStatus.checked_in,
+    SignupStatus.attended,
+    SignupStatus.no_show,
+)
+
 
 def _build_roster(db: Session, event: Event) -> RosterResponse:
     """Build a RosterResponse for the given event. Shared by roster + resolve endpoints."""
@@ -58,7 +68,7 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
         event_id=event.id,
         event_name=event.title,
         venue_code=event.venue_code,
-        total=len(rows),
+        total=sum(1 for s in signups if s.status in _ATTENDEE_STATUSES),
         checked_in_count=checked,
         rows=rows,
     )

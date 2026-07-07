@@ -101,3 +101,33 @@ class TestVenueCodePersistence:
             "venue code was only flushed, not committed — self-check-in "
             "in a separate request will always fail with WRONG_VENUE_CODE"
         )
+
+
+class TestRosterTotal:
+    def test_total_counts_expected_attendees_only(self, client, db_session):
+        """`total` feeds the check-in progress metric — waitlisted and
+        cancelled signups must not count toward it."""
+        organizer = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=organizer, capacity=5)
+        for status in (
+            SignupStatus.confirmed,
+            SignupStatus.checked_in,
+            SignupStatus.waitlisted,
+            SignupStatus.cancelled,
+        ):
+            vol = _make_volunteer(db_session)
+            db_session.add(Signup(volunteer_id=vol.id, slot_id=slot.id, status=status))
+        db_session.flush()
+
+        resp = client.get(
+            f"/api/v1/events/{event.id}/roster",
+            headers=auth_headers(client, organizer),
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 2, (
+            "total must count only seat-holding/attendance statuses, "
+            f"got {data['total']}"
+        )
+        assert data["checked_in_count"] == 1
