@@ -177,3 +177,79 @@ def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session,
     assert ("waitlist_promote", str(b_signup.id)) in pairs, (
         f"promoted volunteer got no waitlist_promote email (sent: {sent})"
     )
+
+
+def test_admin_move_pending_signup_frees_source_capacity(client, db_session):
+    """Moving a pending signup must free its source seat — pending holds
+    capacity (see _confirmed_count_for_slot), so skipping the decrement
+    leaves the source slot overcounted forever."""
+    admin = _make_admin(db_session, email="admin_mv_pending@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import SlotFactory, VolunteerFactory
+    slot_b = SlotFactory(event=event, event_id=event.id, capacity=1, current_count=0)
+    vol = VolunteerFactory(email="mv_pending@example.com")
+    pending = SignupFactory(
+        volunteer=vol,
+        slot=slot_a,
+        status=models.SignupStatus.pending,
+    )
+    slot_a.current_count = 1
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/signups/{pending.id}/move",
+        json={"target_slot_id": str(slot_b.id)},
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    slot_a_row = db_session.get(models.Slot, slot_a.id)
+    slot_b_row = db_session.get(models.Slot, slot_b.id)
+    assert slot_a_row.current_count == 0, (
+        "source slot still counts the moved pending signup"
+    )
+    assert slot_b_row.current_count == 1
+
+
+def test_admin_move_pending_signup_promotes_source_waitlist(client, db_session):
+    """Freeing a seat by moving a pending signup must promote the source
+    waitlist, exactly as moving a confirmed signup does."""
+    admin = _make_admin(db_session, email="admin_mv_wl@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import SlotFactory, VolunteerFactory
+    slot_b = SlotFactory(event=event, event_id=event.id, capacity=1, current_count=0)
+    vol_p = VolunteerFactory(email="mv_wl_pending@example.com")
+    vol_w = VolunteerFactory(email="mv_wl_waiting@example.com")
+    pending = SignupFactory(
+        volunteer=vol_p,
+        slot=slot_a,
+        status=models.SignupStatus.pending,
+    )
+    slot_a.current_count = 1
+    waitlisted = SignupFactory(
+        volunteer=vol_w,
+        slot=slot_a,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/signups/{pending.id}/move",
+        json={"target_slot_id": str(slot_b.id)},
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    w = db_session.get(models.Signup, waitlisted.id)
+    slot_a_row = db_session.get(models.Slot, slot_a.id)
+    assert w.status == models.SignupStatus.confirmed, (
+        "source waitlist was not promoted after the pending move freed a seat"
+    )
+    assert slot_a_row.current_count == 1

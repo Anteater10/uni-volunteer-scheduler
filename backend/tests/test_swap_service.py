@@ -151,6 +151,57 @@ def test_swap_auto_promotes_source_waitlist(db_session):
     assert waitlisted.status == models.SignupStatus.confirmed
 
 
+def test_swap_auto_promote_restores_source_count(db_session):
+    """The promoted waitlister occupies the seat freed by the swap, so the
+    source slot's current_count must be re-incremented (promote_waitlist_fifo
+    contract: the caller owns the increment)."""
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    vol_conf = VolunteerFactory()
+    vol_wait = VolunteerFactory()
+    confirmed = SignupFactory(
+        volunteer=vol_conf, volunteer_id=vol_conf.id,
+        slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.confirmed,
+    )
+    slot_a.current_count = 1
+    waitlisted = SignupFactory(
+        volunteer=vol_wait, volunteer_id=vol_wait.id,
+        slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    db_session.flush()
+
+    swap_signup(db_session, confirmed.id, slot_b.id)
+    db_session.flush()
+    db_session.refresh(waitlisted)
+    db_session.refresh(slot_a)
+
+    assert waitlisted.status == models.SignupStatus.confirmed
+    assert slot_a.current_count == 1
+
+
+def test_swap_no_waitlist_leaves_source_count_freed(db_session):
+    """With no waitlist to promote, the freed source seat stays freed."""
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, volunteer_id=vol.id,
+        slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.confirmed,
+    )
+    slot_a.current_count = 1
+    db_session.flush()
+
+    swap_signup(db_session, signup.id, slot_b.id)
+    db_session.flush()
+    db_session.refresh(slot_a)
+
+    assert slot_a.current_count == 0
+
+
 def test_swap_writes_audit_row(db_session):
     _bind_factories(db_session)
     _event, slot_a, slot_b = _make_event_with_two_slots(db_session)

@@ -863,7 +863,13 @@ def admin_move_signup(
         target_slot.current_count = target_confirmed
 
     previous_status = signup.status
-    if previous_status == models.SignupStatus.confirmed and source_slot.current_count > 0:
+    # Pending signups hold capacity too (_confirmed_count_for_slot counts
+    # confirmed AND pending), so moving one must free its source seat.
+    held_source_capacity = previous_status in (
+        models.SignupStatus.confirmed,
+        models.SignupStatus.pending,
+    )
+    if held_source_capacity and source_slot.current_count > 0:
         source_slot.current_count -= 1
 
     if target_slot.current_count < target_slot.capacity:
@@ -875,7 +881,7 @@ def admin_move_signup(
     signup.slot_id = target_slot.id
     signup.status = new_status
 
-    if previous_status == models.SignupStatus.confirmed:
+    if held_source_capacity:
         _promote_waitlist_fifo(db, source_slot)
 
     log_action(db, actor, "admin_signup_move", "Signup", str(signup.id))
