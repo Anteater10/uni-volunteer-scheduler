@@ -257,7 +257,9 @@ jobs:
         run: |
           cd frontend
           npm ci
-          (npm run dev -- --host 0.0.0.0 --port 5173 &)
+          # VITE_COPILOT_ENABLED gates the copilot FAB (CopilotFab.jsx); the
+          # copilot e2e specs mock all copilot backend routes, so no LLM calls.
+          (VITE_COPILOT_ENABLED=true npm run dev -- --host 0.0.0.0 --port 5173 &)
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:5173 >/dev/null 2>&1; then
               echo "frontend up"; break
