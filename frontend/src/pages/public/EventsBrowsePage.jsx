@@ -135,7 +135,7 @@ function EventCard({ event }) {
               {Object.entries(types).map(([type, n]) => (
                 <span
                   key={type}
-                  className="inline-flex items-center rounded-md bg-[var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent)] capitalize"
+                  className="inline-flex items-center rounded-md bg-[var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-strong)] capitalize"
                 >
                   {n} {type}
                 </span>
