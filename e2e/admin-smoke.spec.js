@@ -8,6 +8,11 @@ import { test, expect } from '@playwright/test';
 import { ADMIN } from './fixtures.js';
 
 async function loginAsAdmin(page) {
+  // Admin content is desktop-only by design — AdminLayout swaps <Outlet/> for
+  // DesktopOnlyBanner below 768px. Force a desktop viewport so the mobile
+  // Playwright projects exercise the real admin UI (same pattern as
+  // admin-a11y.spec.js and cross-role's ensureAdminViewport).
+  await page.setViewportSize({ width: 1280, height: 800 });
   // LoginPage.jsx uses id="login-email" and id="login-password"
   await page.goto('/login');
   await page.locator('#login-email').fill(ADMIN.email);

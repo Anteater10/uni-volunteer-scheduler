@@ -16,7 +16,8 @@
 // Composition notes (from 20-RESEARCH.md "Don't Hand-Roll"):
 // - NO shared helper module extracted in this plan (additive-only scope).
 // - Login flow is inlined per spec (5-line pattern from admin-smoke.spec.js).
-// - clickSlotByLabel copied verbatim from public-signup.spec.js (not imported).
+// - clickSlotByLabel now imported from fixtures.js (extracted when it became
+//   layout-aware: desktop table vs mobile card list).
 // - Direct-API signup uses the fetch pattern from organizer-check-in.spec.js.
 //
 // Audit-log findings (verified during Task 1 inspection):
@@ -42,6 +43,7 @@ import {
   VOLUNTEER_IDENTITY,
   ephemeralEmail,
   getSeed,
+  clickSlotByLabel,
 } from './fixtures.js';
 
 // PART-02-style console-error capture. Cross-role specs MUST NOT ship with
@@ -152,16 +154,6 @@ async function logout(page) {
   } catch {
     // page may be on about:blank early in the test — safe to ignore.
   }
-}
-
-// Copy of clickSlotByLabel from public-signup.spec.js (no import — scope).
-async function clickSlotByLabel(page, label) {
-  const labelDiv = page
-    .locator('table div.font-medium', { hasText: label })
-    .first();
-  await labelDiv.waitFor({ state: 'visible' });
-  const row = labelDiv.locator('xpath=ancestor::tr[1]');
-  await row.getByRole('button', { name: /^sign up$/i }).click();
 }
 
 // ---------------------------------------------------------------------------

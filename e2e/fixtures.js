@@ -26,3 +26,32 @@ export function ephemeralEmail(tag = 'vol') {
   const rand = Math.random().toString(36).slice(2, 8);
   return `${tag}-${Date.now()}-${rand}@e2e.example.com`;
 }
+
+// EventDetailPage renders two mutually exclusive slot layouts split at the
+// Tailwind `md` (768px) breakpoint:
+//   desktop (md+): a <table> whose label cells are div.font-medium ("Orientation",
+//                  "Period N") with an in-row "Sign Up" button
+//   mobile (<md):  a card list (div.rounded-xl) whose labels are p.font-medium
+//                  with an in-card "Sign up" button
+// slotLabel resolves the label element in whichever layout is visible at the
+// current viewport, so specs exercise the real mobile UI on mobile projects.
+export function slotLabel(page, label) {
+  return page
+    .locator(
+      'table div.font-medium:visible, div.rounded-xl p.font-medium:visible',
+      { hasText: label }
+    )
+    .first();
+}
+
+// Click the "Sign Up"/"Sign up" button for the slot with the given label, in
+// whichever layout (desktop table row or mobile card) is currently visible.
+export async function clickSlotByLabel(page, label) {
+  const labelEl = slotLabel(page, label);
+  await labelEl.waitFor({ state: 'visible' });
+  // Nearest clickable container: <tr> on desktop, rounded-xl card on mobile.
+  const container = labelEl.locator(
+    'xpath=ancestor::*[self::tr or contains(@class, "rounded-xl")][1]'
+  );
+  await container.getByRole('button', { name: /^sign up$/i }).click();
+}
