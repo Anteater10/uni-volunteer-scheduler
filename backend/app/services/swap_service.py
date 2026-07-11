@@ -141,9 +141,13 @@ def swap_signup(
 
     db.flush()
 
-    # Auto-promote source waitlist if we freed capacity.
+    # Auto-promote source waitlist if we freed capacity. The promoted
+    # signup takes over the freed seat, so the source count goes back up —
+    # promote_waitlist_fifo leaves the increment to the caller.
     if holds_capacity:
-        promote_waitlist_fifo(db, source_slot.id)
+        promoted = promote_waitlist_fifo(db, source_slot.id)
+        if promoted is not None:
+            source_slot.current_count += 1
 
     # Audit row — reuse the AuditLog model directly so we can include
     # structured ``extra`` without the log_action helper's signature.

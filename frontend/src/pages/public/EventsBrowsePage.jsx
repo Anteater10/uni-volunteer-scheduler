@@ -4,7 +4,7 @@
 // No auth required — renders for logged-out users (REQ-10-07).
 // URL shape: /events?quarter=spring&year=2026&week=3
 
-import React from "react";
+import React, { useContext } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Calendar, Users, MapPin } from "lucide-react";
@@ -13,6 +13,7 @@ import api from "../../lib/api";
 import { getNextWeek, getPrevWeek, formatWeekLabel } from "../../lib/weekUtils";
 import { Button, Skeleton, EmptyState, ErrorState } from "../../components/ui";
 import { toast } from "../../state/toast";
+import { AuthContext } from "../../state/AuthContext";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,7 +135,7 @@ function EventCard({ event }) {
               {Object.entries(types).map(([type, n]) => (
                 <span
                   key={type}
-                  className="inline-flex items-center rounded-md bg-[var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent)] capitalize"
+                  className="inline-flex items-center rounded-md bg-[var(--color-accent-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-strong)] capitalize"
                 >
                   {n} {type}
                 </span>
@@ -167,6 +168,11 @@ function LoadingSkeletons() {
 
 export default function EventsBrowsePage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  // Read auth context directly (not useAuth) so the public page still renders
+  // when there's no AuthProvider wrapper (REQ-10-07). role is null when
+  // logged out / no provider → the admin shortcut below stays hidden.
+  const auth = useContext(AuthContext);
+  const role = auth?.role ?? null;
 
   const currentWeekQ = useQuery({
     queryKey: ["publicCurrentWeek"],
@@ -252,6 +258,18 @@ export default function EventsBrowsePage() {
 
   return (
     <div className="flex flex-col">
+      {/* ---- Admin/organizer shortcut (hidden for public + participants) ---- */}
+      {(role === "admin" || role === "organizer") && (
+        <div className="flex justify-end pt-4">
+          <Link
+            to="/admin"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition"
+          >
+            Admin control panel →
+          </Link>
+        </div>
+      )}
+
       {/* ---- Hero / week navigator ---- */}
       <section className="animate-fade-up relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-[var(--color-brand)] via-indigo-600 to-indigo-800 text-white px-5 py-7 sm:px-8 sm:py-10 md:px-12 md:py-14 mt-4">
         {/* decorative blobs */}

@@ -145,12 +145,25 @@ def create_event(
 
 
 @router.get("/", response_model=List[schemas.EventRead])
-def list_events(db: Session = Depends(get_db)):
+def list_events(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.organizer, models.UserRole.admin)
+    ),
+):
+    # Staff-only: EventRead exposes owner_id and non-public events. The
+    # anonymous surface is /public/events (PublicEventRead).
     return db.query(models.Event).all()
 
 
 @router.get("/{event_id}", response_model=schemas.EventRead)
-def get_event(event_id: str, db: Session = Depends(get_db)):
+def get_event(
+    event_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.organizer, models.UserRole.admin)
+    ),
+):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")

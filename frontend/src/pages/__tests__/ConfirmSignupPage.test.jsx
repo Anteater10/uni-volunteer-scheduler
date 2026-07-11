@@ -127,7 +127,7 @@ describe("ConfirmSignupPage", () => {
 
     // Body copy + "Back to events" primary action present.
     expect(
-      screen.getByText(/Magic links are good for 24 hours/i)
+      screen.getByText(/Magic links are good for 14 days/i)
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /back to events/i })

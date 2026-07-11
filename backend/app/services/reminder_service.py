@@ -56,15 +56,25 @@ def get_preferences(
     )
     if pref is not None:
         return pref
-    pref = models.VolunteerPreference(
-        volunteer_email=email,
-        email_reminders_enabled=True,
-        sms_opt_in=False,
-        phone_e164=None,
+    # Two clients can race this get-or-create (e.g. the manage page fetching
+    # twice concurrently for a brand-new volunteer). ON CONFLICT DO NOTHING
+    # makes the loser a no-op instead of a duplicate-PK IntegrityError (a 500
+    # on the public endpoints); the re-select then sees the winner's row.
+    db.execute(
+        pg_insert(models.VolunteerPreference)
+        .values(
+            volunteer_email=email,
+            email_reminders_enabled=True,
+            sms_opt_in=False,
+            phone_e164=None,
+        )
+        .on_conflict_do_nothing(index_elements=["volunteer_email"])
     )
-    db.add(pref)
-    db.flush()
-    return pref
+    return (
+        db.query(models.VolunteerPreference)
+        .filter(models.VolunteerPreference.volunteer_email == email)
+        .first()
+    )
 
 
 def update_preferences(

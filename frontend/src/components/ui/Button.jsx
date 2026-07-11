@@ -5,6 +5,7 @@ const BASE =
   'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--color-brand)] disabled:opacity-50 disabled:cursor-not-allowed'
 
 const SIZES = {
+  sm: 'min-h-9 px-3 text-sm',
   md: 'min-h-11 px-4 text-base',
   lg: 'min-h-[52px] px-5 text-base',
 }

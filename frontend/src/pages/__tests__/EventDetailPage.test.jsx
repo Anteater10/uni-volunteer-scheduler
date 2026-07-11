@@ -387,6 +387,32 @@ describe("EventDetailPage", () => {
     });
   });
 
+  it("shows 'already signed up' toast on duplicate-signup 409, not the slots-full copy", async () => {
+    const dupErr = new Error(
+      "already signed up for slot 123e4567-e89b-12d3-a456-426614174000"
+    );
+    dupErr.status = 409;
+    api.public.createSignup.mockRejectedValue(dupErr);
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+
+    await clickFirstSignUpButton();
+    await screen.findByLabelText(/^first name$/i);
+
+    await fillIdentityForm();
+    clickFormSubmitButton(container);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/already signed up/i)
+      );
+    });
+    expect(toast.error).not.toHaveBeenCalledWith(
+      expect.stringMatching(/now full/i)
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Add to calendar (PART-13 surface A, Task 2)
   // -------------------------------------------------------------------------
