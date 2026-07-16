@@ -313,3 +313,35 @@ def test_swap_participant_forbidden(client, db_session):
         json={"target_slot_id": str(slot_b.id)},
     )
     assert rc.status_code == 403
+
+
+def test_cancel_via_signups_sends_waitlist_promote_email(client, db_session, monkeypatch):
+    """Cancel-triggered promotion must email the promoted volunteer, same as
+    the organizer manual-promote path does."""
+    sent = []
+    monkeypatch.setattr(
+        "app.celery_app.send_email_notification.delay",
+        lambda **kw: sent.append(kw),
+    )
+    admin = _make_admin(db_session, email="admin_wpe@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    vol_a = VolunteerFactory(email="vol_a_wpe@example.com")
+    vol_b = VolunteerFactory(email="vol_b_wpe@example.com")
+    a = _seed_confirmed(db_session, slot, vol_a)
+    b = SignupFactory(
+        volunteer=vol_b,
+        slot=slot,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.commit()
+
+    rc = client.post(f"/api/v1/signups/{a.id}/cancel", headers=auth_headers(client, admin))
+    assert rc.status_code == 200, rc.text
+
+    pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
+    assert ("cancellation", str(a.id)) in pairs
+    assert ("waitlist_promote", str(b.id)) in pairs, (
+        f"promoted volunteer got no waitlist_promote email (sent: {sent})"
+    )

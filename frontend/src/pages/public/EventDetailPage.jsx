@@ -752,6 +752,15 @@ export default function EventDetailPage() {
         }
         setStep("form");
       } else if (
+        err.status === 409 &&
+        err.message?.toLowerCase().includes("already signed up")
+      ) {
+        // Duplicate signup (same email + slot) — not a capacity problem.
+        toast.error(
+          "You've already signed up for this session with that email — check your inbox for the confirmation link."
+        );
+        setStep("form");
+      } else if (
         err.message?.toLowerCase().includes("capacity") ||
         err.message?.toLowerCase().includes("full") ||
         err.status === 409

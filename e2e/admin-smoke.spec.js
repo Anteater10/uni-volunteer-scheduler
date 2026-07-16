@@ -8,6 +8,11 @@ import { test, expect } from '@playwright/test';
 import { ADMIN } from './fixtures.js';
 
 async function loginAsAdmin(page) {
+  // Admin content is desktop-only by design — AdminLayout swaps <Outlet/> for
+  // DesktopOnlyBanner below 768px. Force a desktop viewport so the mobile
+  // Playwright projects exercise the real admin UI (same pattern as
+  // admin-a11y.spec.js and cross-role's ensureAdminViewport).
+  await page.setViewportSize({ width: 1280, height: 800 });
   // LoginPage.jsx uses id="login-email" and id="login-password"
   await page.goto('/login');
   await page.locator('#login-email').fill(ADMIN.email);
@@ -27,17 +32,24 @@ test.describe('admin dashboard smoke', () => {
   test('admin overview page loads', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto('/admin');
-    // AdminLayout renders heading "Admin" (from AdminLayout.jsx or OverviewSection)
-    await expect(page.getByRole('heading', { name: 'Admin' })).toBeVisible({ timeout: 8000 });
+    // Phase 16 redesign: the overview renders stat-card headings; the old
+    // standalone "Admin" h1 became a breadcrumb link.
+    await expect(
+      page.getByRole('heading', { name: /hours this quarter/i })
+    ).toBeVisible({ timeout: 8000 });
   });
 
   test('audit logs page loads', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto('/admin/audit-logs');
     await page.waitForLoadState('networkidle');
-    // AuditLogsPage renders a filter form — look for the Keyword Search input.
+    // AuditLogsPage renders an "Audit logs" h1 and a filter form whose
+    // keyword input is #al-search (renamed from #al-q in the redesign).
     // AdminLayout renders both mobile and desktop DOM; use .first() to avoid strict violation.
-    await expect(page.locator('#al-q').first()).toBeVisible({ timeout: 8000 });
+    await expect(
+      page.getByRole('heading', { name: /audit logs/i }).first()
+    ).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('#al-search').first()).toBeVisible({ timeout: 8000 });
   });
 
   test('templates page loads', async ({ page }) => {

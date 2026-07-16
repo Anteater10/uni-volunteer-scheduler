@@ -4,6 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Core
+    # "development" | "production" — production disables API docs and hard-blocks
+    # EXPOSE_TOKENS_FOR_TESTING (see assert_test_mode_allowed).
+    environment: str = "development"
     database_url: str
 
     # JWT
@@ -73,6 +76,9 @@ class Settings(BaseSettings):
     # instead of raw token chunks. Defaults off so the Phase 30/32 SSE
     # contract is unchanged for callers that haven't opted in.
     copilot_agent_loop_enabled: bool = False
+    # Release guardrails (pre-Phase-37 minimum) — see app.copilot.guardrails.
+    copilot_rate_limit_messages_per_minute: int = 10
+    copilot_daily_token_budget: int = 500_000  # org-wide tokens/day; 0 disables
 
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is
@@ -95,6 +101,10 @@ class Settings(BaseSettings):
     # "https://github.com/Anteater10/uni-volunteer-scheduler/blob/main".
     corpus_source_origin_url: str = ""
 
+    # --- Ops (release minimum) — see app.observability ---
+    log_level: str = "INFO"
+    sentry_dsn: str = ""  # empty = error monitoring off
+
     # CORS
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
 
@@ -110,3 +120,19 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def assert_test_mode_allowed(environment: str, *, expose_tokens: bool) -> None:
+    """Refuse to run with EXPOSE_TOKENS_FOR_TESTING in production.
+
+    The flag simultaneously mounts unauthenticated destructive test-helper
+    endpoints, disables rate limiting, and leaks confirmation tokens in
+    signup responses — one stray env var must never turn all three on
+    against a reachable host.
+    """
+    if expose_tokens and environment == "production":
+        raise RuntimeError(
+            "EXPOSE_TOKENS_FOR_TESTING=1 is set while ENVIRONMENT=production. "
+            "This flag mounts unauthenticated destructive endpoints, disables "
+            "rate limiting, and leaks auth tokens. Unset it before starting."
+        )

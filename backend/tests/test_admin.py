@@ -132,3 +132,124 @@ def test_admin_audit_logs_filter(client, db_session):
     body = resp.json()
     assert "items" in body
     assert any(entry["action"] == "admin_summary" for entry in body["items"])
+
+
+def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session, monkeypatch):
+    """The on-camera cancel→auto-promote must notify the promoted volunteer.
+    Regression: the admin cancel path promoted silently ("email dispatch
+    deferred to Phase 12") while the organizer manual promote already sends
+    the branded waitlist_promote email."""
+    sent = []
+    monkeypatch.setattr(
+        "app.celery_app.send_email_notification.delay",
+        lambda **kw: sent.append(kw),
+    )
+    admin = _make_admin(db_session, email="admin_pf_email@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import VolunteerFactory
+    vol_a = VolunteerFactory(email="vol_a_pfe@example.com")
+    vol_b = VolunteerFactory(email="vol_b_pfe@example.com")
+    a_signup = SignupFactory(
+        volunteer=vol_a,
+        slot=slot,
+        status=models.SignupStatus.confirmed,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    slot.current_count = 1
+    b_signup = SignupFactory(
+        volunteer=vol_b,
+        slot=slot,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/admin/signups/{a_signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert rc.status_code == 200, rc.text
+
+    pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
+    assert ("cancellation", str(a_signup.id)) in pairs
+    assert ("waitlist_promote", str(b_signup.id)) in pairs, (
+        f"promoted volunteer got no waitlist_promote email (sent: {sent})"
+    )
+
+
+def test_admin_move_pending_signup_frees_source_capacity(client, db_session):
+    """Moving a pending signup must free its source seat — pending holds
+    capacity (see _confirmed_count_for_slot), so skipping the decrement
+    leaves the source slot overcounted forever."""
+    admin = _make_admin(db_session, email="admin_mv_pending@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import SlotFactory, VolunteerFactory
+    slot_b = SlotFactory(event=event, event_id=event.id, capacity=1, current_count=0)
+    vol = VolunteerFactory(email="mv_pending@example.com")
+    pending = SignupFactory(
+        volunteer=vol,
+        slot=slot_a,
+        status=models.SignupStatus.pending,
+    )
+    slot_a.current_count = 1
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/signups/{pending.id}/move",
+        json={"target_slot_id": str(slot_b.id)},
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    slot_a_row = db_session.get(models.Slot, slot_a.id)
+    slot_b_row = db_session.get(models.Slot, slot_b.id)
+    assert slot_a_row.current_count == 0, (
+        "source slot still counts the moved pending signup"
+    )
+    assert slot_b_row.current_count == 1
+
+
+def test_admin_move_pending_signup_promotes_source_waitlist(client, db_session):
+    """Freeing a seat by moving a pending signup must promote the source
+    waitlist, exactly as moving a confirmed signup does."""
+    admin = _make_admin(db_session, email="admin_mv_wl@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import SlotFactory, VolunteerFactory
+    slot_b = SlotFactory(event=event, event_id=event.id, capacity=1, current_count=0)
+    vol_p = VolunteerFactory(email="mv_wl_pending@example.com")
+    vol_w = VolunteerFactory(email="mv_wl_waiting@example.com")
+    pending = SignupFactory(
+        volunteer=vol_p,
+        slot=slot_a,
+        status=models.SignupStatus.pending,
+    )
+    slot_a.current_count = 1
+    waitlisted = SignupFactory(
+        volunteer=vol_w,
+        slot=slot_a,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/signups/{pending.id}/move",
+        json={"target_slot_id": str(slot_b.id)},
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    w = db_session.get(models.Signup, waitlisted.id)
+    slot_a_row = db_session.get(models.Slot, slot_a.id)
+    assert w.status == models.SignupStatus.confirmed, (
+        "source waitlist was not promoted after the pending move freed a seat"
+    )
+    assert slot_a_row.current_count == 1

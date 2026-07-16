@@ -215,7 +215,12 @@ export default function UsersAdminPage() {
       ) : filtered.length === 0 ? (
         <EmptyState title="No users found" />
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div
+          className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm"
+          tabIndex={0}
+          role="region"
+          aria-label="Users table"
+        >
           <table className="min-w-full text-2xl">
             <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
               <tr>

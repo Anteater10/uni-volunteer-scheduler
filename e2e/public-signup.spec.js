@@ -11,7 +11,13 @@
 // runs, or ensure CI sets it (see .github/workflows/ci.yml).
 
 import { test, expect } from '@playwright/test';
-import { getSeed, ephemeralEmail, VOLUNTEER_IDENTITY } from './fixtures.js';
+import {
+  getSeed,
+  ephemeralEmail,
+  VOLUNTEER_IDENTITY,
+  clickSlotByLabel,
+  slotLabel,
+} from './fixtures.js';
 
 // PART-02 — no console errors / pageerrors on any public route during the
 // golden path. Allow-list is empty today; add an entry ONLY with an explicit
@@ -19,17 +25,6 @@ import { getSeed, ephemeralEmail, VOLUNTEER_IDENTITY } from './fixtures.js';
 const ALLOWED_CONSOLE_PATTERNS = [
   // e.g. /Download the React DevTools/ — dev-only noise (uncomment if it appears in CI)
 ];
-
-// Slot table helper — after 15-04 the EventDetailPage uses a <table> with a
-// "Sign Up" button per row and a slot label cell ("Orientation" or "Period N").
-// Locate the label <div> by its exact slot-name text, walk up to the <tr>, and
-// click the in-row "Sign Up" button.
-async function clickSlotByLabel(page, label) {
-  const labelDiv = page.locator('table div.font-medium', { hasText: label }).first();
-  await labelDiv.waitFor({ state: 'visible' });
-  const row = labelDiv.locator('xpath=ancestor::tr[1]');
-  await row.getByRole('button', { name: /^sign up$/i }).click();
-}
 
 test.describe.serial('public volunteer flow', () => {
   let token;
@@ -79,17 +74,18 @@ test.describe.serial('public volunteer flow', () => {
     await page.goto('/events');
     await page.getByText('E2E Seed Event').click();
     await expect(page).toHaveURL(/\/events\//);
-    // After 15-04 the slot list is a single <table>; rows carry "Orientation"
-    // or "Period N" labels rather than separate <section> wrappers.
-    await expect(page.locator('table').getByText(/orientation/i).first()).toBeVisible();
-    await expect(page.locator('table').getByText(/period/i).first()).toBeVisible();
+    // Slot labels render in the desktop <table> (md+) or the mobile card list
+    // (<md) — slotLabel resolves whichever layout is visible (fixtures.js).
+    await expect(slotLabel(page, /orientation/i)).toBeVisible();
+    await expect(slotLabel(page, /^period/i)).toBeVisible();
   });
 
   test('select both slots, fill form, submit, capture token', async ({ page }) => {
     const seed = getSeed();
     await page.goto(`/events/${seed.event_id}`);
 
-    // Click the in-row "Sign Up" buttons for one orientation + one period slot.
+    // Click the "Sign Up" buttons for one orientation + one period slot
+    // (table row on desktop, card on mobile — see fixtures.js).
     await clickSlotByLabel(page, /orientation/i);
     await clickSlotByLabel(page, /^period/i);
 

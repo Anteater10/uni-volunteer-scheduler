@@ -16,7 +16,8 @@
 // Composition notes (from 20-RESEARCH.md "Don't Hand-Roll"):
 // - NO shared helper module extracted in this plan (additive-only scope).
 // - Login flow is inlined per spec (5-line pattern from admin-smoke.spec.js).
-// - clickSlotByLabel copied verbatim from public-signup.spec.js (not imported).
+// - clickSlotByLabel now imported from fixtures.js (extracted when it became
+//   layout-aware: desktop table vs mobile card list).
 // - Direct-API signup uses the fetch pattern from organizer-check-in.spec.js.
 //
 // Audit-log findings (verified during Task 1 inspection):
@@ -42,6 +43,7 @@ import {
   VOLUNTEER_IDENTITY,
   ephemeralEmail,
   getSeed,
+  clickSlotByLabel,
 } from './fixtures.js';
 
 // PART-02-style console-error capture. Cross-role specs MUST NOT ship with
@@ -152,16 +154,6 @@ async function logout(page) {
   } catch {
     // page may be on about:blank early in the test — safe to ignore.
   }
-}
-
-// Copy of clickSlotByLabel from public-signup.spec.js (no import — scope).
-async function clickSlotByLabel(page, label) {
-  const labelDiv = page
-    .locator('table div.font-medium', { hasText: label })
-    .first();
-  await labelDiv.waitFor({ state: 'visible' });
-  const row = labelDiv.locator('xpath=ancestor::tr[1]');
-  await row.getByRole('button', { name: /^sign up$/i }).click();
 }
 
 // ---------------------------------------------------------------------------
@@ -545,15 +537,23 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
 
   // Shared routes (positive checks — organizer MUST be able to reach these).
   // /admin/templates and /admin/imports are the Phase 17 / Phase 18 surfaces.
-  // /organizer is the Phase 19 dashboard.
+  // /organizer is the Phase 19 dashboard entry point; App.jsx client-side
+  // redirects it to /admin/preview, so that is the landing URL to assert.
+  // (Asserting /organizer only ever passed when the URL poll won the race
+  // against the React <Navigate> — timing-dependent, not a real pass.)
   // We assert these pages are NOT the Forbidden panel — they must mount the
   // real shared-admin shell. Some (e.g. /admin/imports) expose a backend API
   // that denies organizer access; the page-level UI still renders the admin
   // shell + section content and surfaces the API denial as a retryable
   // in-page error. That is the correct UX, not a routing problem.
-  for (const path of ['/admin/templates', '/admin/imports', '/organizer']) {
+  const sharedRoutes = [
+    ['/admin/templates', /\/admin\/templates$/],
+    ['/admin/imports', /\/admin\/imports$/],
+    ['/organizer', /\/admin\/preview$/],
+  ];
+  for (const [path, landingUrl] of sharedRoutes) {
     await page.goto(path);
-    await expect(page).toHaveURL(new RegExp(path.replace(/\//g, '\\/') + '$'));
+    await expect(page).toHaveURL(landingUrl);
     // Must NOT be the ProtectedRoute Forbidden panel.
     await expect(
       page.getByRole('heading', { name: /^forbidden$/i }),

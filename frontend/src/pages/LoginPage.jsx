@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../state/useAuth";
 
 export default function LoginPage() {
@@ -210,6 +210,13 @@ export default function LoginPage() {
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
+
+          <Link
+            to="/volunteer"
+            className="mt-6 block w-full rounded-xl border border-gray-300 bg-white text-center text-xl font-semibold text-gray-700 py-4 hover:bg-gray-50 transition"
+          >
+            Browse events →
+          </Link>
 
           <p className="mt-10 text-center text-lg text-gray-500">
             For authorised organisers and administrators only.

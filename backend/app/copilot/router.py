@@ -49,6 +49,7 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user
 from . import llm
+from .guardrails import enforce_daily_token_budget, enforce_message_rate_limit
 from .memory.profile_block import load_profile_block
 from .prompts import (
     SYSTEM_PROMPT_VERSION,
@@ -494,6 +495,10 @@ def post_message(
 ) -> StreamingResponse:
     _require_flag_on()
     _require_admin_or_organizer(current_user)
+    # Guardrails run before the session load and any retrieval/LLM work —
+    # a throttled request must cost nothing.
+    enforce_message_rate_limit(current_user)
+    enforce_daily_token_budget(db)
     sess = _load_owned_session(db, session_id, current_user)
 
     # Persist the user turn before streaming begins so the stream can

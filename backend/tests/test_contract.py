@@ -121,7 +121,9 @@ def test_error_response_shape(client, db_session):
     assert body1["code"] == "AUTH_REFRESH_INVALID"
 
     # b) events router — 404 on non-existent event (Phase 09: old POST /signups/ deleted D-10)
-    user = make_user(db_session, email="shaper@example.com")
+    # Organizer: /events/{id} is staff-only since the release hardening pass;
+    # an organizer still draws the 403 from the admin-only route in (c).
+    user = make_user(db_session, email="shaper@example.com", role=models.UserRole.organizer)
     db_session.commit()
     headers = auth_headers(client, user)
 

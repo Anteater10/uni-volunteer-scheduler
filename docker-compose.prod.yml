@@ -1,0 +1,162 @@
+# Production single-host stack (one VPS). Differences from the dev
+# docker-compose.yml:
+#   - no mailpit — email goes through SendGrid (backend/.env.production)
+#   - Postgres password is REQUIRED (no insecure default)
+#   - db/redis are NOT published to the host — internal network only
+#   - backend runs multiple uvicorn workers + a real container healthcheck
+#   - migrate runs to completion BEFORE backend starts serving
+#   - adds a frontend (nginx static) + a Caddy edge with automatic HTTPS
+#
+# Usage:
+#   cp backend/.env.production.example backend/.env.production   # then fill it in
+#   export POSTGRES_PASSWORD='<same as in DATABASE_URL>'
+#   export DOMAIN='scitrek.example.org'
+#   export VITE_API_URL="https://${DOMAIN}"
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Managed-services variant (Render/Railway/Fly/RDS): drop the db and/or redis
+# services here and point DATABASE_URL / REDIS_URL at the managed endpoints.
+# The Postgres MUST have the pgvector extension available.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: uni_volunteer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d uni_volunteer"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env.production
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && python -m app.seed_admin"
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # --proxy-headers: trust X-Forwarded-For from Caddy so the per-IP rate
+    # limiter keys on the real client, not Caddy's network IP. Trusting all
+    # proxies is safe here because port 8000 is never published — only Caddy
+    # can reach the backend on the compose network.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=*
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    command: celery -A app.celery_app.celery worker -l info
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app.celery inspect ping -d celery@$$HOSTNAME --timeout 10"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    command: celery -A app.celery_app.celery beat -l info -S redbeat.RedBeatScheduler
+    # beat has no inspect/ping — a wedged scheduler shows up as a dead process
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery.*beat' > /dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:?set VITE_API_URL e.g. https://scitrek.example.org}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - backend
+      - frontend
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN e.g. scitrek.example.org}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

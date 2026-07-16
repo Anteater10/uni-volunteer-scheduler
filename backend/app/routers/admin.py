@@ -61,7 +61,8 @@ def _promote_waitlist_fifo(db: Session, slot: models.Slot) -> List[str]:
     Loops until capacity is full, delegating each promotion to the single
     source of truth in app.signup_service. Caller is responsible for
     already holding a FOR UPDATE lock on the slot row.
-    Returns list of promoted signup IDs (Phase 09: volunteer_id replaces user_id).
+    Returns the promoted signup IDs so callers can enqueue the
+    waitlist_promote email after their commit.
     """
     promoted_ids: List[str] = []
     while slot.current_count < slot.capacity:
@@ -69,8 +70,7 @@ def _promote_waitlist_fifo(db: Session, slot: models.Slot) -> List[str]:
         if promoted is None:
             break
         slot.current_count += 1
-        # Phase 09: return volunteer_id (user_id removed from Signup in Phase 08)
-        promoted_ids.append(str(promoted.volunteer_id))
+        promoted_ids.append(str(promoted.id))
     return promoted_ids
 
 
@@ -665,26 +665,20 @@ def admin_cancel_signup(
     if previous_status in (models.SignupStatus.confirmed, models.SignupStatus.pending) and slot.current_count > 0:
         slot.current_count -= 1
 
-    promoted_user_ids = _promote_waitlist_fifo(db, slot)
+    promoted_signup_ids = _promote_waitlist_fifo(db, slot)
 
     log_action(db, actor, "admin_signup_cancel", "Signup", str(signup.id))
     db.commit()
     db.refresh(signup)
 
-    # Phase 09: signup.user removed; send notification via kind-based task
+    # Emails only after commit — the worker reads rows from its own session.
     # The cancellation email is dispatched via the deduped kind pipeline (volunteer-backed).
     send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
-    # Phase 12: waitlist promotion emails (promoted_user_ids is empty for volunteer-based signups)
-    # since promote_waitlist_fifo returns Signup, not user_ids. _promote_waitlist_fifo
-    # internal variable name kept as promoted_user_ids but contains signup.volunteer_ids.
-    if promoted_user_ids:
-        # Phase 12: send promotion emails to promoted volunteers
-        # For now, log only — full email dispatch deferred to Phase 12 admin rewrite
-        logger.info(
-            "admin_cancel_signup: %d signups promoted from waitlist; email dispatch deferred to Phase 12",
-            len(promoted_user_ids),
-        )
+    # Promoted volunteers get the branded waitlist_promote email — same kind
+    # pipeline the organizer manual-promote path uses.
+    for promoted_id in promoted_signup_ids:
+        send_email_notification.delay(signup_id=promoted_id, kind="waitlist_promote")
 
     return signup
 
@@ -869,7 +863,13 @@ def admin_move_signup(
         target_slot.current_count = target_confirmed
 
     previous_status = signup.status
-    if previous_status == models.SignupStatus.confirmed and source_slot.current_count > 0:
+    # Pending signups hold capacity too (_confirmed_count_for_slot counts
+    # confirmed AND pending), so moving one must free its source seat.
+    held_source_capacity = previous_status in (
+        models.SignupStatus.confirmed,
+        models.SignupStatus.pending,
+    )
+    if held_source_capacity and source_slot.current_count > 0:
         source_slot.current_count -= 1
 
     if target_slot.current_count < target_slot.capacity:
@@ -881,7 +881,7 @@ def admin_move_signup(
     signup.slot_id = target_slot.id
     signup.status = new_status
 
-    if previous_status == models.SignupStatus.confirmed:
+    if held_source_capacity:
         _promote_waitlist_fifo(db, source_slot)
 
     log_action(db, actor, "admin_signup_move", "Signup", str(signup.id))

@@ -155,10 +155,13 @@ def create_public_signup(
         ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
     )
 
-    # 5. Enqueue confirmation email (Celery task in Task 8)
+    # 5. Capture confirmation-email args now (IDs are stable after flush). The
+    # actual enqueue is deferred until AFTER db.commit() below: the Celery
+    # worker opens its own session, so enqueuing before commit caused an
+    # intermittent "missing entity, skipping" race when the worker queried
+    # rows that hadn't committed yet.
     event_id = signups[0].slot.event_id
-    from ..celery_app import send_signup_confirmation_email
-    send_signup_confirmation_email.delay(
+    confirmation_email_args = dict(
         volunteer_id=str(volunteer.id),
         signup_ids=[str(s.id) for s in signups],
         token=raw_token,
@@ -212,4 +215,11 @@ def create_public_signup(
     if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
         response_kwargs["confirm_token"] = raw_token
     db.commit()
+
+    # 5b. Rows are committed and now visible to other sessions — safe to enqueue
+    # the confirmation email (see step 5). This ordering fixes the race where the
+    # worker logged "missing entity, skipping" and no email was sent.
+    from ..celery_app import send_signup_confirmation_email
+    send_signup_confirmation_email.delay(**confirmation_email_args)
+
     return PublicSignupResponse(**response_kwargs)

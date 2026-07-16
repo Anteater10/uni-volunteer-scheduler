@@ -18,12 +18,7 @@ export async function resolveEvent(eventId, { attended, no_show }) {
 
 // Internal: thin wrapper matching the api.js request pattern
 import authStorage from "../lib/authStorage";
-
-const RAW_BASE = (
-  (typeof import.meta !== "undefined" ? import.meta.env?.VITE_API_URL : null) ||
-  "http://localhost:8000"
-).replace(/\/+$/, "");
-const API_BASE = RAW_BASE.endsWith("/api/v1") ? RAW_BASE : `${RAW_BASE}/api/v1`;
+import { API_BASE } from "../lib/apiBase";
 
 async function _authedRequest(method, path, body) {
   const token = authStorage.getToken();

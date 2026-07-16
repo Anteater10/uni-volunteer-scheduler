@@ -329,13 +329,15 @@ def send_waitlist_promote(signup: models.Signup) -> dict:
     from the original ``confirmation`` kind so repeat promotions across
     multiple cancel/promote cycles each earn one email.
 
-    The magic-link confirm URL itself ships via ``send_magic_link``
-    from ``promote_waitlist_fifo`` / ``waitlist_service.manual_promote``.
+    Promotion needs no action from the volunteer: ``promote_waitlist_fifo``
+    sets the signup straight to ``confirmed`` (they already consented at
+    signup time), so the copy states the new status — it must not ask them
+    to confirm anything.
     """
     payload = send_confirmation(signup)
     event = signup.slot.event
     payload["subject"] = (
-        "You're in from the waitlist — confirm your spot for "
+        "You're in from the waitlist — you're confirmed for "
         f"'{event.title}'"
     )
     return payload

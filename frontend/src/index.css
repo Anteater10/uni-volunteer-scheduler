@@ -11,6 +11,7 @@
   --color-brand-soft: #e0f2fe;  /* sky-100 — subtle tint backgrounds */
   --color-accent: #f97316;      /* orange-500 — warm counterpoint for chips/highlights */
   --color-accent-soft: #ffedd5; /* orange-100 */
+  --color-accent-strong: #c2410c; /* orange-700 — text on -soft, WCAG AA (4.9:1) */
   --color-danger: #dc2626;
   --color-success: #16a34a;
   --color-warn: #d97706;        /* amber-600 — "filling fast" chip */
