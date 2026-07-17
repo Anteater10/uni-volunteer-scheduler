@@ -115,6 +115,7 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
         quarter=event.quarter,
         year=event.year,
         week_number=event.week_number,
+        quarter_id=event.quarter_id,
         school=event.school,
         module_slug=event.module_slug,
         start_date=event.start_date,

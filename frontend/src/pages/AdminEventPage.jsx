@@ -19,6 +19,8 @@ import DuplicateEventDrawer from "../components/admin/DuplicateEventDrawer";
 import BroadcastModal from "../components/BroadcastModal";
 import CheckInQRModal from "../components/admin/CheckInQRModal";
 import { toast } from "../state/toast";
+import { useQuarters } from "../lib/useQuarters";
+import { findQuarterById } from "../lib/weekUtils";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 import { useAuth } from "../state/useAuth";
 
@@ -153,25 +155,28 @@ export default function AdminEventPage() {
   });
 
   // Phase 23 — list sibling events in the same quarter/module so the
-  // drawer can highlight conflict weeks.
+  // drawer can highlight conflict weeks. Issue #24: keyed on the quarter
+  // ROW (quarter_id) with its real week count — session-aware.
+  const quartersQ = useQuarters();
+  const eventQuarterRow = findQuarterById(
+    quartersQ.data || [],
+    eventQ.data?.quarter_id,
+  );
   const siblingEventsQ = useQuery({
     queryKey: [
       "adminSiblingEvents",
-      eventQ.data?.quarter,
-      eventQ.data?.year,
+      eventQ.data?.quarter_id,
       eventQ.data?.module_slug,
     ],
-    enabled: !!eventQ.data?.quarter && !!eventQ.data?.year,
+    enabled: !!eventQ.data?.quarter_id && !!eventQuarterRow,
     queryFn: async () => {
-      // Reuse public list endpoint across each week 1..11; cheap enough.
-      const quarter = eventQ.data.quarter;
-      const year = eventQ.data.year;
+      // Reuse public list endpoint across each week of the quarter row.
+      const quarterId = eventQ.data.quarter_id;
       const results = [];
-      for (let w = 1; w <= 11; w += 1) {
+      for (let w = 1; w <= eventQuarterRow.weeks_in_quarter; w += 1) {
         // eslint-disable-next-line no-await-in-loop
         const weekEvents = await api.public.listEvents({
-          quarter,
-          year,
+          quarter_id: quarterId,
           week_number: w,
         });
         for (const e of weekEvents || []) {
@@ -182,6 +187,7 @@ export default function AdminEventPage() {
               week_number: e.week_number,
               year: e.year,
               quarter: e.quarter,
+              quarter_id: e.quarter_id,
             });
           }
         }
@@ -581,10 +587,12 @@ export default function AdminEventPage() {
                 quarter: eventQ.data.quarter,
                 year: eventQ.data.year,
                 week_number: eventQ.data.week_number,
+                quarter_id: eventQ.data.quarter_id,
               }
             : null
         }
         existingEvents={siblingEventsQ.data || []}
+        quarters={quartersQ.data}
         submitting={duplicateMut.isPending}
         onSubmit={(payload) => duplicateMut.mutateAsync(payload)}
       />

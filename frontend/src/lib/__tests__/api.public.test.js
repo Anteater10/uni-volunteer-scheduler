@@ -249,3 +249,40 @@ describe("api.public error propagation", () => {
     expect(caught.status).toBe(409);
   });
 });
+
+describe("api.public.getQuarters", () => {
+  it("calls GET /api/v1/public/quarters with auth:false", async () => {
+    const mockFetch = makeOkFetch([
+      { id: "q1", season: "spring", year: 2026, weeks_in_quarter: 11 },
+    ]);
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { api } = await import("../api.js");
+    const rows = await api.public.getQuarters();
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(capturedUrl(mockFetch)).toContain("/api/v1/public/quarters");
+    expect(capturedInit(mockFetch).headers?.Authorization).toBeUndefined();
+    expect(rows[0].weeks_in_quarter).toBe(11);
+  });
+});
+
+describe("api.admin.quarters", () => {
+  it("maps list/create/update/remove onto /admin/quarters", async () => {
+    const mockFetch = makeOkFetch({});
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { api } = await import("../api.js");
+    await api.admin.quarters.list();
+    await api.admin.quarters.create({ season: "spring", year: 2026 });
+    await api.admin.quarters.update("q1", { end_date: "2026-06-14" });
+    await api.admin.quarters.remove("q1");
+
+    const urls = mockFetch.mock.calls.map((c) => c[0]);
+    const methods = mockFetch.mock.calls.map((c) => c[1]?.method || "GET");
+    expect(urls[0]).toContain("/api/v1/admin/quarters");
+    expect(methods).toEqual(["GET", "POST", "PATCH", "DELETE"]);
+    expect(urls[2]).toContain("/api/v1/admin/quarters/q1");
+    expect(urls[3]).toContain("/api/v1/admin/quarters/q1");
+  });
+});

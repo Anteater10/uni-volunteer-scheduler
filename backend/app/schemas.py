@@ -197,6 +197,7 @@ class EventRead(ORMBase, EventBase):
     quarter: Optional[Quarter] = None
     year: Optional[int] = None
     week_number: Optional[int] = None
+    quarter_id: Optional[UUID] = None
     created_at: Optional[datetime] = None
     slots: List[SlotRead] = []
 
@@ -656,6 +657,7 @@ class PublicEventRead(BaseModel):
     quarter: Optional[Quarter] = None
     year: Optional[int] = None
     week_number: Optional[int] = None
+    quarter_id: Optional[UUID] = None
     school: Optional[str] = None
     module_slug: Optional[str] = None
     start_date: datetime  # Event.start_date is DateTime not Date in model

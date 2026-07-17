@@ -71,6 +71,7 @@ def test_create_derives_quarter_from_entered_range(
     assert body["quarter"] == "spring"
     assert body["year"] == 2026
     assert body["week_number"] == 3
+    assert body["quarter_id"] == str(spring.id)
 
     event = db_session.get(models.Event, uuid.UUID(body["id"]))
     assert event.quarter_id == spring.id

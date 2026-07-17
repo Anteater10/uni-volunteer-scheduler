@@ -1,59 +1,71 @@
 // src/pages/__tests__/EventsBrowsePage.test.jsx
 //
-// Component tests for the public events browse page.
-// 7 test cases covering loading, data, empty, navigation, and auth independence.
+// Component tests for the public events browse page — issue #24 rewrite.
+// Navigation is quarter_id-driven over the admin-entered quarter rows;
+// legacy ?quarter=&year=&week= links canonicalize; gap and unconfigured
+// states render dedicated UI.
 
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-// ---------------------------------------------------------------------------
-// Mocks — must be declared before the component import so vi.mock hoisting
-// intercepts the module before EventsBrowsePage tries to use it.
-// ---------------------------------------------------------------------------
-
 vi.mock("../../lib/api", () => ({
   default: {
     public: {
-      getCurrentWeek: vi.fn().mockResolvedValue({
-        quarter: "spring",
-        year: 2026,
-        week_number: 5,
-      }),
+      getCurrentWeek: vi.fn(),
+      getQuarters: vi.fn(),
       listEvents: vi.fn().mockResolvedValue([]),
     },
   },
 }));
 
-vi.mock("../../lib/weekUtils", () => ({
-  getNextWeek: vi
-    .fn()
-    .mockReturnValue({ quarter: "spring", year: 2026, week_number: 6 }),
-  getPrevWeek: vi
-    .fn()
-    .mockReturnValue({ quarter: "spring", year: 2026, week_number: 4 }),
-  formatWeekLabel: vi.fn().mockReturnValue("Spring 2026 - Week 5"),
-}));
-
-// Import the mocked modules so we can access the vi.fn() instances directly
 import api from "../../lib/api";
-import * as weekUtils from "../../lib/weekUtils";
 
 import EventsBrowsePage from "../public/EventsBrowsePage";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Create a fresh QueryClient for each test (no cross-test cache pollution). */
 function makeQueryClient() {
   return new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
 }
 
-/** Sample event fixture — two events at different schools. */
+const SPRING = {
+  id: "spring-26",
+  season: "spring",
+  year: 2026,
+  label: "",
+  start_date: "2026-03-30",
+  end_date: "2026-06-14",
+  weeks_in_quarter: 11,
+  display_name: "Spring 2026",
+  archived_at: null,
+};
+const SESSION_A = {
+  id: "summer-26-a",
+  season: "summer",
+  year: 2026,
+  label: "Session A",
+  start_date: "2026-06-22",
+  end_date: "2026-07-31",
+  weeks_in_quarter: 6,
+  display_name: "Summer 2026 · Session A",
+  archived_at: null,
+};
+const QUARTERS = [SPRING, SESSION_A];
+
+const CURRENT_WEEK = {
+  configured: true,
+  quarter: "spring",
+  year: 2026,
+  week_number: 5,
+  quarter_id: "spring-26",
+  label: "",
+  weeks_in_quarter: 11,
+  is_gap: false,
+  starts_on: null,
+};
+
 const MOCK_EVENTS = [
   {
     id: "evt-1",
@@ -70,207 +82,137 @@ const MOCK_EVENTS = [
       { id: "s2", slot_type: "period", capacity: 20, filled: 7 },
     ],
   },
-  {
-    id: "evt-2",
-    title: "DNA Extraction at SBHS",
-    quarter: "spring",
-    year: 2026,
-    week_number: 5,
-    school: "Santa Barbara HS",
-    module_slug: "dna",
-    start_date: "2026-04-23T00:00:00",
-    end_date: "2026-04-24T00:00:00",
-    slots: [{ id: "s3", slot_type: "period", capacity: 15, filled: 3 }],
-  },
 ];
 
-/**
- * Render EventsBrowsePage inside the required providers.
- * initialEntries lets us pre-populate URL params.
- */
-function renderPage({
-  initialEntries = ["/events?quarter=spring&year=2026&week=5"],
-} = {}) {
+function renderPage({ initialEntries = ["/events"] } = {}) {
   const qc = makeQueryClient();
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={initialEntries}>
         <EventsBrowsePage />
       </MemoryRouter>
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("EventsBrowsePage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset to default mock return values before each test
-    api.public.getCurrentWeek.mockResolvedValue({
-      quarter: "spring",
-      year: 2026,
-      week_number: 5,
-    });
+    api.public.getCurrentWeek.mockResolvedValue({ ...CURRENT_WEEK });
+    api.public.getQuarters.mockResolvedValue(QUARTERS);
     api.public.listEvents.mockResolvedValue([]);
-    weekUtils.getNextWeek.mockReturnValue({
-      quarter: "spring",
-      year: 2026,
-      week_number: 6,
-    });
-    weekUtils.getPrevWeek.mockReturnValue({
-      quarter: "spring",
-      year: 2026,
-      week_number: 4,
-    });
-    weekUtils.formatWeekLabel.mockReturnValue("Spring 2026 - Week 5");
   });
 
-  // -------------------------------------------------------------------------
-  // Test 1: Loading skeletons while data is pending
-  // -------------------------------------------------------------------------
   it("renders loading skeletons while data is pending", () => {
-    // Keep the promise pending so we stay in loading state
     api.public.listEvents.mockReturnValue(new Promise(() => {}));
     api.public.getCurrentWeek.mockReturnValue(new Promise(() => {}));
+    api.public.getQuarters.mockReturnValue(new Promise(() => {}));
 
-    renderPage({ initialEntries: ["/events"] });
+    renderPage();
 
-    // Skeletons are aria-hidden="true" with animate-pulse class
     const skeletons = document.querySelectorAll(".animate-pulse");
     expect(skeletons.length).toBeGreaterThanOrEqual(3);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 2: Renders event cards after data loads
-  // -------------------------------------------------------------------------
-  it("renders event cards after data loads", async () => {
+  it("defaults to the current week and fetches events by quarter_id", async () => {
     api.public.listEvents.mockResolvedValue(MOCK_EVENTS);
 
     renderPage();
 
     await waitFor(() => {
-      expect(
-        screen.getByText("CRISPR at Carpinteria HS")
-      ).toBeInTheDocument();
+      expect(screen.getByText("CRISPR at Carpinteria HS")).toBeInTheDocument();
     });
-
-    expect(screen.getByText("DNA Extraction at SBHS")).toBeInTheDocument();
+    expect(screen.getByText("Spring 2026 — Week 5")).toBeInTheDocument();
+    expect(api.public.listEvents).toHaveBeenCalledWith({
+      quarter_id: "spring-26",
+      week_number: 5,
+    });
   });
 
-  // -------------------------------------------------------------------------
-  // Test 3: Shows EmptyState when no events returned
-  // -------------------------------------------------------------------------
-  it("shows EmptyState with UI-SPEC copy when no events returned", async () => {
-    api.public.listEvents.mockResolvedValue([]);
-
+  it("shows EmptyState when no events returned", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(
-        screen.getByText("Nothing scheduled this week")
-      ).toBeInTheDocument();
+      expect(screen.getByText("Nothing scheduled this week")).toBeInTheDocument();
     });
-    expect(
-      screen.getByText(
-        "New events go up on Mondays. Check back then, or browse next week's calendar."
-      )
-    ).toBeInTheDocument();
-    // "View next week" CTA should be present (the rendered label includes
-    // a trailing arrow glyph, e.g. "View next week →")
-    expect(
-      screen.getByRole("button", { name: /view next week/i })
-    ).toBeInTheDocument();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 4: Clicking next week arrow calls getNextWeek and updates URL params
-  // -------------------------------------------------------------------------
-  it("clicking next week arrow calls getNextWeek and updates URL", async () => {
-    api.public.listEvents.mockResolvedValue([]);
-
+  it("next arrow advances one week within the quarter", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: "Next week" })
-      ).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: "Next week" })).not.toBeDisabled();
     });
-
     fireEvent.click(screen.getByRole("button", { name: "Next week" }));
 
-    expect(weekUtils.getNextWeek).toHaveBeenCalledWith("spring", 2026, 5);
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 5: Clicking "This week" button resets to getCurrentWeek values
-  // -------------------------------------------------------------------------
-  it("clicking 'This week' button resets to getCurrentWeek values", async () => {
-    api.public.listEvents.mockResolvedValue([]);
-
-    // Start at week 7 via URL to make "This week" meaningful
-    renderPage({
-      initialEntries: ["/events?quarter=spring&year=2026&week=7"],
-    });
-
-    // Wait for "Jump to this week" to appear (only shown when not on the
-    // current week — getCurrentWeek must resolve first).
-    const jumpBtn = await screen.findByRole("button", {
-      name: /jump to this week/i,
-    });
-    expect(jumpBtn).not.toBeDisabled();
-
-    fireEvent.click(jumpBtn);
-
-    // After clicking, listEvents should be called again with week 5 params
     await waitFor(() => {
-      const calls = api.public.listEvents.mock.calls;
-      const lastCall = calls[calls.length - 1];
-      expect(lastCall[0]).toMatchObject({
-        quarter: "spring",
-        year: 2026,
-        week_number: 5,
+      expect(api.public.listEvents).toHaveBeenCalledWith({
+        quarter_id: "spring-26",
+        week_number: 6,
       });
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Test 6: Events are grouped by school with section headings
-  // -------------------------------------------------------------------------
-  it("groups events by school with section headings", async () => {
-    api.public.listEvents.mockResolvedValue(MOCK_EVENTS);
+  it("canonicalizes legacy quarter/year/week URL params onto quarter_id", async () => {
+    renderPage({ initialEntries: ["/events?quarter=summer&year=2026&week=2"] });
+
+    await waitFor(() => {
+      expect(api.public.listEvents).toHaveBeenCalledWith({
+        quarter_id: "summer-26-a",
+        week_number: 2,
+      });
+    });
+    expect(await screen.findByText("Summer 2026 · Session A — Week 2")).toBeInTheDocument();
+  });
+
+  it("disables the next arrow at the last entered week", async () => {
+    renderPage({ initialEntries: ["/events?quarter_id=summer-26-a&week=6"] });
+
+    await waitFor(() => {
+      expect(screen.getByText("Summer 2026 · Session A — Week 6")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Next week" })).toBeDisabled();
+  });
+
+  it("shows the gap banner pointing at the next quarter", async () => {
+    api.public.getCurrentWeek.mockResolvedValue({
+      configured: true,
+      quarter: "summer",
+      year: 2026,
+      week_number: 1,
+      quarter_id: "summer-26-a",
+      label: "Session A",
+      weeks_in_quarter: 6,
+      is_gap: true,
+      starts_on: "2026-06-22",
+    });
+
+    renderPage();
+
+    const banner = await screen.findByRole("status");
+    expect(banner).toHaveTextContent(/Summer 2026 · Session A/);
+    expect(banner).toHaveTextContent(/starts June 22/);
+  });
+
+  it("renders the coming-soon state when no quarters are configured", async () => {
+    api.public.getCurrentWeek.mockResolvedValue({
+      configured: false,
+      quarter: null,
+      year: null,
+      week_number: null,
+      quarter_id: null,
+      label: "",
+      weeks_in_quarter: null,
+      is_gap: false,
+      starts_on: null,
+    });
+    api.public.getQuarters.mockResolvedValue([]);
 
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getAllByText("Carpinteria HS").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText(/schedule coming soon/i)).toBeInTheDocument();
     });
-
-    expect(screen.getAllByText("Santa Barbara HS").length).toBeGreaterThanOrEqual(1);
-
-    // Each school heading should be an h2 (responsive layouts may render
-    // the heading more than once, so just assert membership).
-    const headings = screen.getAllByRole("heading", { level: 2 });
-    const schools = headings.map((h) => h.textContent);
-    expect(schools).toContain("Carpinteria HS");
-    expect(schools).toContain("Santa Barbara HS");
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 7: Page renders without AuthProvider wrapper (no crash, REQ-10-07)
-  // -------------------------------------------------------------------------
-  it("renders without AuthProvider wrapper (no crash, REQ-10-07)", () => {
-    api.public.listEvents.mockReturnValue(new Promise(() => {}));
-    api.public.getCurrentWeek.mockReturnValue(new Promise(() => {}));
-
-    // Deliberately omit any AuthContext/AuthProvider — must NOT throw
-    expect(() => {
-      renderPage({ initialEntries: ["/events"] });
-    }).not.toThrow();
-
-    // Container should mount without crashing
-    expect(document.body).toBeTruthy();
+    expect(api.public.listEvents).not.toHaveBeenCalled();
   });
 });

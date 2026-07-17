@@ -200,3 +200,15 @@ describe("OverviewSection", () => {
     expect(firstCallArg).toEqual(expect.objectContaining({ limit: 20 }));
   });
 });
+
+describe("OverviewSection — between quarters (issue #24)", () => {
+  it("renders the between-quarters card when quarter_progress is null", async () => {
+    api.admin.summary.mockResolvedValueOnce({
+      ...SUMMARY_FIXTURE,
+      quarter_progress: null,
+    });
+    renderPage();
+    expect(await screen.findByText(/between quarters/i)).toBeInTheDocument();
+    expect(screen.queryByText(/through the quarter/i)).toBeNull();
+  });
+});

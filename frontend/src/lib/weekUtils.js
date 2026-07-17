@@ -1,69 +1,98 @@
 /**
- * weekUtils.js
+ * weekUtils.js — issue #24.
  *
- * Pure week navigation utilities for UCSB quarter-based scheduling.
- * Quarters cycle: winter → spring → summer → fall → winter (next year).
- * Each quarter has exactly 11 teaching weeks (MAX_WEEK).
+ * Week navigation and quarter selectors over the admin-entered quarter rows
+ * returned by GET /public/quarters (see useQuarters). Each row carries its
+ * real length (weeks_in_quarter) — 6-week summer sessions and 11-week
+ * regular quarters need no special casing, and navigation returns null past
+ * the ends so callers can disable arrows.
  *
  * No side effects. No network calls. Safe to use in any rendering context.
  */
 
-const QUARTER_ORDER = ["winter", "spring", "summer", "fall"];
-const MAX_WEEK = 11;
+function sortedByStart(quarters) {
+  return [...(quarters || [])].sort((a, b) =>
+    a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : 0,
+  );
+}
 
-/**
- * Return the {quarter, year, week_number} for the week after the given one.
- * Rolls over quarter boundaries: week 11 advances to next quarter week 1.
- * When "fall" rolls over, year increments.
- *
- * @param {string} quarter - "winter" | "spring" | "summer" | "fall"
- * @param {number} year
- * @param {number} weekNumber - 1–11
- * @returns {{ quarter: string, year: number, week_number: number }}
- */
-export function getNextWeek(quarter, year, weekNumber) {
-  if (weekNumber < MAX_WEEK) {
-    return { quarter, year, week_number: weekNumber + 1 };
-  }
-  // Roll over to next quarter
-  const idx = QUARTER_ORDER.indexOf(quarter);
-  const nextIdx = (idx + 1) % QUARTER_ORDER.length;
-  const nextQuarter = QUARTER_ORDER[nextIdx];
-  const nextYear = nextQuarter === "winter" ? year + 1 : year;
-  return { quarter: nextQuarter, year: nextYear, week_number: 1 };
+/** Non-archived rows, ordered by start date. */
+export function activeQuarters(quarters) {
+  return sortedByStart(quarters).filter((q) => !q.archived_at);
+}
+
+export function findQuarterById(quarters, quarterId) {
+  return (quarters || []).find((q) => q.id === quarterId) || null;
 }
 
 /**
- * Return the {quarter, year, week_number} for the week before the given one.
- * Rolls over quarter boundaries: week 1 goes back to previous quarter week 11.
- * When "winter" rolls back, year decrements.
- *
- * @param {string} quarter - "winter" | "spring" | "summer" | "fall"
- * @param {number} year
- * @param {number} weekNumber - 1–11
- * @returns {{ quarter: string, year: number, week_number: number }}
+ * The week after {quarterId, weekNumber}, rolling into the next entered
+ * (non-archived) row. Null past the last entered week.
  */
-export function getPrevWeek(quarter, year, weekNumber) {
+export function getNextWeek(quarters, quarterId, weekNumber) {
+  const list = activeQuarters(quarters);
+  const idx = list.findIndex((q) => q.id === quarterId);
+  if (idx === -1) return null;
+  if (weekNumber < list[idx].weeks_in_quarter) {
+    return { quarter_id: quarterId, week_number: weekNumber + 1 };
+  }
+  const next = list[idx + 1];
+  return next ? { quarter_id: next.id, week_number: 1 } : null;
+}
+
+/**
+ * The week before {quarterId, weekNumber}, rolling back into the previous
+ * entered (non-archived) row's final week. Null before the first entered week.
+ */
+export function getPrevWeek(quarters, quarterId, weekNumber) {
+  const list = activeQuarters(quarters);
+  const idx = list.findIndex((q) => q.id === quarterId);
+  if (idx === -1) return null;
   if (weekNumber > 1) {
-    return { quarter, year, week_number: weekNumber - 1 };
+    return { quarter_id: quarterId, week_number: weekNumber - 1 };
   }
-  // Roll back to previous quarter
-  const idx = QUARTER_ORDER.indexOf(quarter);
-  const prevIdx = (idx - 1 + QUARTER_ORDER.length) % QUARTER_ORDER.length;
-  const prevQuarter = QUARTER_ORDER[prevIdx];
-  const prevYear = quarter === "winter" ? year - 1 : year;
-  return { quarter: prevQuarter, year: prevYear, week_number: MAX_WEEK };
+  const prev = list[idx - 1];
+  return prev ? { quarter_id: prev.id, week_number: prev.weeks_in_quarter } : null;
+}
+
+/** "Summer 2026 · Session A — Week 2" */
+export function formatWeekLabel(quarterRow, weekNumber) {
+  if (!quarterRow) return `Week ${weekNumber}`;
+  return `${quarterRow.display_name} — Week ${weekNumber}`;
 }
 
 /**
- * Return a human-readable week label, e.g. "Spring 2026 - Week 3".
- *
- * @param {string} quarter - "winter" | "spring" | "summer" | "fall"
- * @param {number} year
- * @param {number} weekNumber - 1–11
- * @returns {string}
+ * Resolve a legacy ?quarter=&year=&week= link onto a quarter row.
+ * Summer links are ambiguous between sessions — the first session wins.
  */
-export function formatWeekLabel(quarter, year, weekNumber) {
-  const capitalised = quarter.charAt(0).toUpperCase() + quarter.slice(1);
-  return `${capitalised} ${year} - Week ${weekNumber}`;
+export function resolveLegacyParams(quarters, { quarter, year, week }) {
+  const match = sortedByStart(quarters).find(
+    (q) => q.season === quarter && Number(q.year) === Number(year),
+  );
+  if (!match) return null;
+  return { quarter_id: match.id, week_number: Number(week) };
+}
+
+function toIsoDate(d) {
+  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+}
+
+/** The row whose inclusive [start_date, end_date] covers the given date. */
+export function quarterContaining(quarters, date) {
+  const iso = toIsoDate(date);
+  return (
+    (quarters || []).find((q) => q.start_date <= iso && q.end_date >= iso) || null
+  );
+}
+
+/**
+ * The row covering the date, else the most recently ended one (gaps) —
+ * mirrors the backend dashboard semantics. Null before all entered quarters.
+ */
+export function activeOrRecentQuarter(quarters, date) {
+  const active = quarterContaining(quarters, date);
+  if (active) return active;
+  const iso = toIsoDate(date);
+  const past = sortedByStart(quarters).filter((q) => q.end_date < iso);
+  return past.length ? past[past.length - 1] : null;
 }

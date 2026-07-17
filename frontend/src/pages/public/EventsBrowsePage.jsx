@@ -2,18 +2,36 @@
 //
 // Public events browse page with week navigation.
 // No auth required — renders for logged-out users (REQ-10-07).
-// URL shape: /events?quarter=spring&year=2026&week=3
+// URL shape (issue #24): /events?quarter_id=<uuid>&week=3 — navigation walks
+// the admin-entered quarter rows (summer Sessions A/B are separate rows).
+// Legacy ?quarter=spring&year=2026&week=3 links canonicalize on load.
 
-import React, { useContext } from "react";
+import React, { useContext, useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Calendar, Users, MapPin } from "lucide-react";
 
 import api from "../../lib/api";
-import { getNextWeek, getPrevWeek, formatWeekLabel } from "../../lib/weekUtils";
+import { useQuarters } from "../../lib/useQuarters";
+import {
+  findQuarterById,
+  formatWeekLabel,
+  getNextWeek,
+  getPrevWeek,
+  resolveLegacyParams,
+} from "../../lib/weekUtils";
 import { Button, Skeleton, EmptyState, ErrorState } from "../../components/ui";
 import { toast } from "../../state/toast";
 import { AuthContext } from "../../state/AuthContext";
+
+function formatLongDate(isoDate) {
+  if (!isoDate) return "";
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -179,37 +197,60 @@ export default function EventsBrowsePage() {
     queryFn: () => api.public.getCurrentWeek(),
     staleTime: 5 * 60 * 1000,
   });
+  const quartersQ = useQuarters();
+  const quarters = quartersQ.data;
 
   const defaultWeek = currentWeekQ.data;
+  const unconfigured = !!defaultWeek && defaultWeek.configured === false;
 
-  const quarter =
-    searchParams.get("quarter") || (defaultWeek ? defaultWeek.quarter : null);
-  const year = searchParams.get("year")
-    ? Number(searchParams.get("year"))
-    : defaultWeek
-    ? defaultWeek.year
-    : null;
-  const weekNumber = searchParams.get("week")
-    ? Number(searchParams.get("week"))
-    : defaultWeek
-    ? defaultWeek.week_number
-    : null;
+  const urlQuarterId = searchParams.get("quarter_id");
+  const urlWeek = searchParams.get("week") ? Number(searchParams.get("week")) : null;
+  const legacyQuarter = searchParams.get("quarter");
+  const legacyYear = searchParams.get("year");
+  const pendingLegacy = !urlQuarterId && !!legacyQuarter && !!legacyYear && !!urlWeek;
 
-  const allParamsReady = !!quarter && !!year && !!weekNumber;
+  // Legacy links (?quarter=&year=&week=) rewrite to quarter_id form once the
+  // quarters list is available — summer resolves to its first session.
+  useEffect(() => {
+    if (!pendingLegacy || !quarters) return;
+    const resolved = resolveLegacyParams(quarters, {
+      quarter: legacyQuarter,
+      year: legacyYear,
+      week: urlWeek,
+    });
+    if (resolved) {
+      setSearchParams(
+        { quarter_id: resolved.quarter_id, week: String(resolved.week_number) },
+        { replace: true },
+      );
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  }, [pendingLegacy, quarters, legacyQuarter, legacyYear, urlWeek, setSearchParams]);
+
+  const quarterId =
+    urlQuarterId || (!pendingLegacy && defaultWeek ? defaultWeek.quarter_id : null);
+  const weekNumber =
+    urlQuarterId && urlWeek
+      ? urlWeek
+      : !pendingLegacy && defaultWeek
+      ? defaultWeek.week_number
+      : null;
+
+  const allParamsReady = !unconfigured && !pendingLegacy && !!quarterId && !!weekNumber;
+  const quarterRow = findQuarterById(quarters || [], quarterId);
   const isCurrentWeek =
     allParamsReady &&
     defaultWeek &&
-    quarter === defaultWeek.quarter &&
-    year === defaultWeek.year &&
+    quarterId === defaultWeek.quarter_id &&
     weekNumber === defaultWeek.week_number;
 
   const eventsQ = useQuery({
-    queryKey: ["publicEvents", quarter, year, weekNumber],
+    queryKey: ["publicEvents", quarterId, weekNumber],
     queryFn: async () => {
       try {
         return await api.public.listEvents({
-          quarter,
-          year,
+          quarter_id: quarterId,
           week_number: weekNumber,
         });
       } catch (err) {
@@ -222,25 +263,31 @@ export default function EventsBrowsePage() {
     enabled: allParamsReady,
   });
 
-  function applyWeek({ quarter: q, year: y, week_number: w }) {
-    setSearchParams({ quarter: q, year: String(y), week: String(w) });
+  function applyWeek(target) {
+    if (!target) return;
+    setSearchParams({
+      quarter_id: target.quarter_id,
+      week: String(target.week_number),
+    });
   }
 
+  const nextTarget =
+    allParamsReady && quarters ? getNextWeek(quarters, quarterId, weekNumber) : null;
+  const prevTarget =
+    allParamsReady && quarters ? getPrevWeek(quarters, quarterId, weekNumber) : null;
+
   function handlePrev() {
-    if (!allParamsReady) return;
-    applyWeek(getPrevWeek(quarter, year, weekNumber));
+    applyWeek(prevTarget);
   }
 
   function handleNext() {
-    if (!allParamsReady) return;
-    applyWeek(getNextWeek(quarter, year, weekNumber));
+    applyWeek(nextTarget);
   }
 
   function handleThisWeek() {
-    if (!defaultWeek) return;
+    if (!defaultWeek || !defaultWeek.quarter_id) return;
     applyWeek({
-      quarter: defaultWeek.quarter,
-      year: defaultWeek.year,
+      quarter_id: defaultWeek.quarter_id,
       week_number: defaultWeek.week_number,
     });
   }
@@ -252,9 +299,41 @@ export default function EventsBrowsePage() {
     return acc;
   }, {});
 
-  const weekLabel = allParamsReady
-    ? formatWeekLabel(quarter, year, weekNumber)
-    : "Loading…";
+  const weekLabel =
+    allParamsReady && quarterRow
+      ? formatWeekLabel(quarterRow, weekNumber)
+      : "Loading…";
+
+  // Gap messaging: the resolved current week can point ahead at the next
+  // quarter (starts_on set) or trail the last entered one (starts_on null).
+  const gapRow = defaultWeek?.is_gap
+    ? findQuarterById(quarters || [], defaultWeek.quarter_id)
+    : null;
+  const gapName =
+    defaultWeek?.is_gap &&
+    (gapRow?.display_name ||
+      `${(defaultWeek.quarter || "").charAt(0).toUpperCase()}${(defaultWeek.quarter || "").slice(1)} ${defaultWeek.year}${defaultWeek.label ? ` · ${defaultWeek.label}` : ""}`);
+
+  if (unconfigured) {
+    return (
+      <div className="flex flex-col">
+        <section className="mt-8 animate-fade-up relative overflow-hidden rounded-3xl border border-[var(--color-border)] bg-gradient-to-br from-white to-[var(--color-brand-soft)] px-6 py-20 sm:py-28 text-center shadow-sm">
+          <div className="relative z-10 max-w-lg mx-auto">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--color-brand-soft)] text-[var(--color-brand)] shadow-sm">
+              <Calendar size={28} />
+            </div>
+            <h3 className="text-2xl sm:text-3xl font-bold text-[var(--color-fg)] tracking-tight">
+              Schedule coming soon
+            </h3>
+            <p className="mt-3 text-[var(--color-fg-muted)]">
+              The volunteer schedule hasn't been published yet. Check back
+              soon!
+            </p>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col">
@@ -301,7 +380,7 @@ export default function EventsBrowsePage() {
             <div className="flex items-center gap-2 rounded-2xl bg-white/10 backdrop-blur ring-1 ring-white/20 p-1.5">
               <button
                 onClick={handlePrev}
-                disabled={!allParamsReady}
+                disabled={!prevTarget}
                 aria-label="Previous week"
                 className="h-10 w-10 flex items-center justify-center rounded-xl hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
@@ -312,7 +391,7 @@ export default function EventsBrowsePage() {
               </span>
               <button
                 onClick={handleNext}
-                disabled={!allParamsReady}
+                disabled={!nextTarget}
                 aria-label="Next week"
                 className="h-10 w-10 flex items-center justify-center rounded-xl hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
@@ -331,6 +410,27 @@ export default function EventsBrowsePage() {
           </div>
         </div>
       </section>
+
+      {/* ---- Between-quarters banner (issue #24) ---- */}
+      {defaultWeek?.is_gap && (
+        <div
+          role="status"
+          className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900"
+        >
+          {defaultWeek.starts_on ? (
+            <>
+              We're between quarters — <strong>{gapName}</strong> starts{" "}
+              {formatLongDate(defaultWeek.starts_on)}. You're viewing its
+              upcoming schedule.
+            </>
+          ) : (
+            <>
+              The <strong>{gapName}</strong> schedule has wrapped up — check
+              back soon for the next quarter.
+            </>
+          )}
+        </div>
+      )}
 
       {/* ---- Event list ---- */}
       <section className="mt-6 sm:mt-8">
