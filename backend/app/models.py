@@ -21,9 +21,10 @@ from sqlalchemy import (
     Index,
     UniqueConstraint,
     func,
+    literal_column,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID, ExcludeConstraint
 from sqlalchemy.orm import backref, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -169,6 +170,51 @@ class User(Base):
 
 
 # -------------------------
+# AcademicQuarter table (feat/24-quarters, issue #24)
+# -------------------------
+
+
+class AcademicQuarter(Base):
+    """Admin-entered academic quarter (or summer session) with real dates.
+
+    (season, year, label) names the row — label distinguishes summer
+    Sessions A/B and stays '' for regular quarters. Weeks derive purely
+    from the inclusive [start_date, end_date] range; dates are transcribed
+    from the UCSB academic calendar, never guessed by the app.
+    """
+
+    __tablename__ = "quarters"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    season = Column(
+        SqlEnum(Quarter, values_callable=lambda x: [e.value for e in x], name="quarter"),
+        nullable=False,
+    )
+    year = Column(Integer, nullable=False)
+    label = Column(String(64), nullable=False, default="", server_default="")
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)  # inclusive: the quarter's last day
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("season", "year", "label", name="uq_quarters_season_year_label"),
+        CheckConstraint("start_date < end_date", name="ck_quarters_start_before_end"),
+        # A date must map to at most one quarter row, even under concurrent
+        # admin writes — enforced with a gist exclusion over the date range
+        # (requires the btree_gist extension).
+        ExcludeConstraint(
+            (literal_column("daterange(start_date, end_date, '[]')"), "&&"),
+            name="ex_quarters_no_overlap",
+            using="gist",
+        ),
+    )
+
+
+# -------------------------
 # Event table
 # -------------------------
 
@@ -200,6 +246,8 @@ class Event(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Phase 08: new structured columns (R08-02)
+    # feat/24-quarters: quarter/year/week_number are now a derived cache,
+    # recomputed from the linked AcademicQuarter row (quarter_id below).
     quarter = Column(
         SqlEnum(Quarter, values_callable=lambda x: [e.value for e in x], name="quarter"),
         nullable=True,
@@ -207,12 +255,14 @@ class Event(Base):
     year = Column(Integer, nullable=True)
     week_number = Column(Integer, nullable=True)
     school = Column(String(255), nullable=True)
+    quarter_id = Column(UUID(as_uuid=True), ForeignKey("quarters.id"), nullable=True)
 
     # Phase 22: per-event form schema override. NULL means "use template default".
     form_schema = Column(JSONB, nullable=True, server_default=None)
 
     # Relationships
     owner = relationship("User", back_populates="events")
+    academic_quarter = relationship("AcademicQuarter")
     slots = relationship("Slot", back_populates="event", cascade="all, delete-orphan")
     questions = relationship("CustomQuestion", back_populates="event", cascade="all, delete-orphan")
     portal_links = relationship("PortalEvent", back_populates="event", cascade="all, delete-orphan")
