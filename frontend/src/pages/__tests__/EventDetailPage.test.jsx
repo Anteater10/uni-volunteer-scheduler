@@ -137,6 +137,18 @@ async function clickFirstSignUpButton() {
   fireEvent.click(buttons[0]);
 }
 
+// EventDetailPage renders BOTH the desktop table and the mobile card layout in
+// the DOM (CSS toggles visibility at md). jsdom applies no CSS, so button
+// ordering is not a reliable proxy for slot type. Target a slot deterministically
+// by its label ("Period N" / "Orientation") and click the Sign up button inside
+// its own row (<tr>) or card (.rounded-xl).
+async function clickSignUpForLabel(labelRegex) {
+  const labels = await screen.findAllByText(labelRegex);
+  const container = labels[0].closest("tr, .rounded-xl");
+  const btn = within(container).getByRole("button", { name: /^sign up$/i });
+  fireEvent.click(btn);
+}
+
 // The identity form submit button is the only <button type="submit"> on the page.
 // Use this to disambiguate from the slot-row "Sign Up" buttons which share copy.
 function clickFormSubmitButton(container) {
@@ -349,10 +361,9 @@ describe("EventDetailPage", () => {
     const { container } = renderDetailPage();
     await screen.findByText("CRISPR at Carpinteria HS");
 
-    // Sign Up buttons render in slot order: [orientation, period] (FULL_SLOT is a span chip, not a button)
-    const signUpButtons = await screen.findAllByRole("button", { name: /^sign up$/i });
-    // Click the second Sign Up button → period slot
-    fireEvent.click(signUpButtons[1]);
+    // Select the period slot (not an orientation) so the credit check fires.
+    // Match "Period 1" (the row label), not the "Period" column header.
+    await clickSignUpForLabel(/^Period 1$/);
 
     await screen.findByLabelText(/^first name$/i);
     await fillIdentityForm();
