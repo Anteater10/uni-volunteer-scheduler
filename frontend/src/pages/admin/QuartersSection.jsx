@@ -74,6 +74,7 @@ export default function QuartersSection() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [confirmSave, setConfirmSave] = useState(false);
   const [deleting, setDeleting] = useState(null);
+  const [archiving, setArchiving] = useState(null);
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["adminQuarters"] });
@@ -108,6 +109,25 @@ export default function QuartersSection() {
       setDeleting(null);
     },
     onError: (e) => toast.error(e?.message || "Couldn't delete the quarter"),
+  });
+  // Issue #33 — archive past quarters (declutters navigation; events stay
+  // browsable via the archived-quarters list on the public page).
+  const archiveMut = useMutation({
+    mutationFn: (id) => api.admin.quarters.archive(id),
+    onSuccess: (row) => {
+      invalidate();
+      toast.success(`${row.display_name} archived`);
+      setArchiving(null);
+    },
+    onError: (e) => toast.error(e?.message || "Couldn't archive the quarter"),
+  });
+  const restoreMut = useMutation({
+    mutationFn: (id) => api.admin.quarters.restore(id),
+    onSuccess: (row) => {
+      invalidate();
+      toast.success(`${row.display_name} restored`);
+    },
+    onError: (e) => toast.error(e?.message || "Couldn't restore the quarter"),
   });
 
   function openCreate() {
@@ -168,6 +188,7 @@ export default function QuartersSection() {
     () => [...rows].sort((a, b) => (a.start_date < b.start_date ? -1 : 1)),
     [rows],
   );
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   return (
     <div className="space-y-6">
@@ -227,7 +248,14 @@ export default function QuartersSection() {
             <tbody>
               {sortedRows.map((row) => (
                 <tr key={row.id} className="border-t border-[var(--color-border)]">
-                  <td className="py-3 pr-4 font-medium">{row.display_name}</td>
+                  <td className="py-3 pr-4 font-medium">
+                    {row.display_name}
+                    {row.archived_at && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                        Archived
+                      </span>
+                    )}
+                  </td>
                   <td className="py-3 pr-4">{formatDate(row.start_date)}</td>
                   <td className="py-3 pr-4">{formatDate(row.end_date)}</td>
                   <td className="py-3 pr-4">{row.weeks_in_quarter}</td>
@@ -239,6 +267,28 @@ export default function QuartersSection() {
                     >
                       Edit
                     </Button>
+                    {row.archived_at ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => restoreMut.mutate(row.id)}
+                        disabled={restoreMut.isPending}
+                        data-testid={`restore-${row.id}`}
+                      >
+                        Restore
+                      </Button>
+                    ) : (
+                      // Only ended quarters can be archived — the live
+                      // schedule stays navigable.
+                      row.end_date < todayIso && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => setArchiving(row)}
+                          data-testid={`archive-${row.id}`}
+                        >
+                          Archive
+                        </Button>
+                      )
+                    )}
                     <Button
                       variant="secondary"
                       onClick={() => setDeleting(row)}
@@ -364,6 +414,30 @@ export default function QuartersSection() {
             data-testid="confirm-save"
           >
             Save and recategorize
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!archiving}
+        onClose={() => setArchiving(null)}
+        title={archiving ? `Archive ${archiving.display_name}?` : ""}
+      >
+        <p className="text-sm">
+          Archiving tidies the week navigation — the quarter moves under
+          "Archived quarters" on the public page, where its events stay
+          viewable. You can restore it any time.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setArchiving(null)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => archiveMut.mutate(archiving.id)}
+            disabled={archiveMut.isPending}
+            data-testid="confirm-archive"
+          >
+            Archive
           </Button>
         </div>
       </Modal>

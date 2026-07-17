@@ -194,6 +194,61 @@ describe("EventsBrowsePage", () => {
     expect(banner).toHaveTextContent(/starts June 22/);
   });
 
+  // ---- issue #33: archived quarters ----
+
+  const ARCHIVED_WINTER = {
+    id: "winter-26",
+    season: "winter",
+    year: 2026,
+    label: "",
+    start_date: "2026-01-05",
+    end_date: "2026-03-20",
+    weeks_in_quarter: 11,
+    display_name: "Winter 2026",
+    archived_at: "2026-07-01T00:00:00Z",
+  };
+
+  it("lists archived quarters and navigates into week 1 on click", async () => {
+    api.public.getQuarters.mockResolvedValue([ARCHIVED_WINTER, ...QUARTERS]);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByText(/archived quarters/i));
+    fireEvent.click(await screen.findByRole("button", { name: /winter 2026/i }));
+
+    await waitFor(() => {
+      expect(api.public.listEvents).toHaveBeenCalledWith({
+        quarter_id: "winter-26",
+        week_number: 1,
+      });
+    });
+  });
+
+  it("hides the archived list when nothing is archived", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Nothing scheduled this week")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/archived quarters/i)).toBeNull();
+  });
+
+  it("deep link into an archived quarter shows the banner and clamps nav", async () => {
+    api.public.getQuarters.mockResolvedValue([ARCHIVED_WINTER, ...QUARTERS]);
+
+    renderPage({ initialEntries: ["/events?quarter_id=winter-26&week=1"] });
+
+    expect(await screen.findByText("Winter 2026 — Week 1")).toBeInTheDocument();
+    const banner = await screen.findByRole("status");
+    expect(banner).toHaveTextContent(/archived/i);
+    expect(banner).toHaveTextContent(/Winter 2026/);
+
+    // Week 1 of 11: prev clamps (archived nav never leaves the quarter),
+    // next moves within it.
+    expect(screen.getByRole("button", { name: "Previous week" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next week" })).not.toBeDisabled();
+  });
+
   it("renders the coming-soon state when no quarters are configured", async () => {
     api.public.getCurrentWeek.mockResolvedValue({
       configured: false,

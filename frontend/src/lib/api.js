@@ -752,6 +752,9 @@ export const api = {
       create: (payload) => request("/admin/quarters", { method: "POST", body: payload }),
       update: (id, payload) => request(`/admin/quarters/${id}`, { method: "PATCH", body: payload }),
       remove: (id) => request(`/admin/quarters/${id}`, { method: "DELETE" }),
+      // Issue #33 — explicit archiving of past quarters.
+      archive: (id) => request(`/admin/quarters/${id}/archive`, { method: "POST" }),
+      restore: (id) => request(`/admin/quarters/${id}/restore`, { method: "POST" }),
     },
     templates: {
       list: (params) => request("/admin/module-templates", { params }),

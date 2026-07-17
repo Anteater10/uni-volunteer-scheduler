@@ -11,6 +11,8 @@ const listMock = vi.fn();
 const createMock = vi.fn();
 const updateMock = vi.fn();
 const removeMock = vi.fn();
+const archiveMock = vi.fn();
+const restoreMock = vi.fn();
 
 vi.mock("../../../lib/api", () => ({
   default: {
@@ -20,6 +22,8 @@ vi.mock("../../../lib/api", () => ({
         create: (...a) => createMock(...a),
         update: (...a) => updateMock(...a),
         remove: (...a) => removeMock(...a),
+        archive: (...a) => archiveMock(...a),
+        restore: (...a) => restoreMock(...a),
       },
     },
   },
@@ -40,8 +44,31 @@ const SPRING = {
   end_date: "2026-06-14",
   weeks_in_quarter: 11,
   display_name: "Spring 2026",
+  archived_at: null,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
+};
+
+// Dates relative to the real clock — "Archive" is offered only for rows
+// that have already ended.
+const iso = (d) => d.toISOString().slice(0, 10);
+const NOW = new Date();
+const CURRENT = {
+  ...SPRING,
+  id: "current-q",
+  season: "fall",
+  display_name: "Current quarter",
+  start_date: iso(new Date(NOW.getTime() - 30 * 86400000)),
+  end_date: iso(new Date(NOW.getTime() + 40 * 86400000)),
+};
+const ARCHIVED = {
+  ...SPRING,
+  id: "winter-26",
+  season: "winter",
+  display_name: "Winter 2026",
+  start_date: "2026-01-05",
+  end_date: "2026-03-20",
+  archived_at: "2026-07-01T00:00:00Z",
 };
 
 function renderPage(initialEntries = ["/admin/quarters"]) {
@@ -137,5 +164,36 @@ describe("QuartersSection", () => {
     fireEvent.click(await screen.findByTestId("delete-spring-26"));
     fireEvent.click(screen.getByTestId("confirm-delete"));
     await waitFor(() => expect(removeMock).toHaveBeenCalledWith("spring-26"));
+  });
+
+  // ---- issue #33: archive / restore ----
+
+  it("offers Archive only for quarters that have already ended", async () => {
+    listMock.mockResolvedValue([SPRING, CURRENT]);
+    renderPage();
+    expect(await screen.findByTestId("archive-spring-26")).toBeInTheDocument();
+    expect(screen.queryByTestId("archive-current-q")).toBeNull();
+  });
+
+  it("archives a past quarter after confirmation", async () => {
+    archiveMock.mockResolvedValue({ ...SPRING, archived_at: "2026-07-16T00:00:00Z" });
+    renderPage();
+    fireEvent.click(await screen.findByTestId("archive-spring-26"));
+
+    expect(archiveMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("confirm-archive"));
+    await waitFor(() => expect(archiveMock).toHaveBeenCalledWith("spring-26"));
+  });
+
+  it("shows an Archived chip and a Restore action for archived rows", async () => {
+    listMock.mockResolvedValue([ARCHIVED]);
+    restoreMock.mockResolvedValue({ ...ARCHIVED, archived_at: null });
+    renderPage();
+
+    expect(await screen.findByText("Archived")).toBeInTheDocument();
+    expect(screen.queryByTestId("archive-winter-26")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("restore-winter-26"));
+    await waitFor(() => expect(restoreMock).toHaveBeenCalledWith("winter-26"));
   });
 });

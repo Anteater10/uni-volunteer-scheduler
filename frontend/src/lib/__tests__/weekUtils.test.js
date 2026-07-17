@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import {
   activeQuarters,
+  archivedQuarters,
   findQuarterById,
   getNextWeek,
   getPrevWeek,
@@ -121,6 +122,35 @@ describe("archived rows are skipped in navigation", () => {
 
   it("prev from Session A week 1 has nowhere to go once spring is archived", () => {
     expect(getPrevWeek(withArchived, "summer-26-a", 1)).toBeNull();
+  });
+
+  it("archivedQuarters lists only archived rows, ordered by start", () => {
+    expect(archivedQuarters(withArchived).map((q) => q.id)).toEqual(["spring-26"]);
+    expect(archivedQuarters(QUARTERS)).toEqual([]);
+  });
+});
+
+describe("navigation inside an archived quarter is clamped to it (issue #33)", () => {
+  const withArchived = [
+    { ...SPRING, archived_at: "2026-07-01T00:00:00Z" },
+    SESSION_A,
+    SESSION_B,
+  ];
+
+  it("moves week-by-week within the archived row", () => {
+    expect(getNextWeek(withArchived, "spring-26", 5)).toEqual({
+      quarter_id: "spring-26",
+      week_number: 6,
+    });
+    expect(getPrevWeek(withArchived, "spring-26", 5)).toEqual({
+      quarter_id: "spring-26",
+      week_number: 4,
+    });
+  });
+
+  it("never rolls out of the archived row at either end", () => {
+    expect(getNextWeek(withArchived, "spring-26", 11)).toBeNull();
+    expect(getPrevWeek(withArchived, "spring-26", 1)).toBeNull();
   });
 });
 

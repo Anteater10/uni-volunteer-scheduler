@@ -14,6 +14,7 @@ import { ChevronLeft, ChevronRight, Calendar, Users, MapPin } from "lucide-react
 import api from "../../lib/api";
 import { useQuarters } from "../../lib/useQuarters";
 import {
+  archivedQuarters,
   findQuarterById,
   formatWeekLabel,
   getNextWeek,
@@ -304,6 +305,11 @@ export default function EventsBrowsePage() {
       ? formatWeekLabel(quarterRow, weekNumber)
       : "Loading…";
 
+  // Issue #33: archived quarters stay reachable through the collapsed list
+  // below; inside one, a banner marks it and week nav clamps to the row.
+  const archivedRows = archivedQuarters(quarters || []);
+  const viewingArchived = !!quarterRow?.archived_at;
+
   // Gap messaging: the resolved current week can point ahead at the next
   // quarter (starts_on set) or trail the last entered one (starts_on null).
   const gapRow = defaultWeek?.is_gap
@@ -411,8 +417,26 @@ export default function EventsBrowsePage() {
         </div>
       </section>
 
+      {/* ---- Archived-quarter banner (issue #33) ---- */}
+      {viewingArchived && (
+        <div
+          role="status"
+          className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-700"
+        >
+          Archived — <strong>{quarterRow.display_name}</strong>. You're
+          browsing a past quarter's schedule.{" "}
+          <button
+            type="button"
+            onClick={handleThisWeek}
+            className="font-semibold underline underline-offset-2 hover:text-slate-900"
+          >
+            Back to this week
+          </button>
+        </div>
+      )}
+
       {/* ---- Between-quarters banner (issue #24) ---- */}
-      {defaultWeek?.is_gap && (
+      {!viewingArchived && defaultWeek?.is_gap && (
         <div
           role="status"
           className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900"
@@ -490,6 +514,30 @@ export default function EventsBrowsePage() {
           </div>
         )}
       </section>
+
+      {/* ---- Archived quarters (issue #33) ---- */}
+      {archivedRows.length > 0 && (
+        <details className="mt-10 rounded-2xl border border-[var(--color-border)] bg-white px-5 py-4">
+          <summary className="cursor-pointer text-sm font-semibold text-[var(--color-fg-muted)] select-none">
+            Archived quarters
+          </summary>
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {archivedRows.map((row) => (
+              <li key={row.id}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyWeek({ quarter_id: row.id, week_number: 1 })
+                  }
+                  className="rounded-full border border-[var(--color-border)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)] hover:border-[var(--color-brand)] hover:text-[var(--color-brand)] transition-colors"
+                >
+                  {row.display_name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }

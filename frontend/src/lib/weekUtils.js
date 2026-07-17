@@ -21,37 +21,47 @@ export function activeQuarters(quarters) {
   return sortedByStart(quarters).filter((q) => !q.archived_at);
 }
 
+/** Archived rows, ordered by start date (issue #33 archived browsing). */
+export function archivedQuarters(quarters) {
+  return sortedByStart(quarters).filter((q) => q.archived_at);
+}
+
 export function findQuarterById(quarters, quarterId) {
   return (quarters || []).find((q) => q.id === quarterId) || null;
 }
 
 /**
  * The week after {quarterId, weekNumber}, rolling into the next entered
- * (non-archived) row. Null past the last entered week.
+ * (non-archived) row. Null past the last entered week. Inside an archived
+ * row (deep link, issue #33) navigation clamps to that row — it never
+ * rolls out into the live schedule.
  */
 export function getNextWeek(quarters, quarterId, weekNumber) {
-  const list = activeQuarters(quarters);
-  const idx = list.findIndex((q) => q.id === quarterId);
-  if (idx === -1) return null;
-  if (weekNumber < list[idx].weeks_in_quarter) {
+  const row = findQuarterById(quarters, quarterId);
+  if (!row) return null;
+  if (weekNumber < row.weeks_in_quarter) {
     return { quarter_id: quarterId, week_number: weekNumber + 1 };
   }
-  const next = list[idx + 1];
+  if (row.archived_at) return null;
+  const list = activeQuarters(quarters);
+  const next = list[list.findIndex((q) => q.id === quarterId) + 1];
   return next ? { quarter_id: next.id, week_number: 1 } : null;
 }
 
 /**
  * The week before {quarterId, weekNumber}, rolling back into the previous
- * entered (non-archived) row's final week. Null before the first entered week.
+ * entered (non-archived) row's final week. Null before the first entered
+ * week. Clamped inside archived rows, mirroring getNextWeek.
  */
 export function getPrevWeek(quarters, quarterId, weekNumber) {
-  const list = activeQuarters(quarters);
-  const idx = list.findIndex((q) => q.id === quarterId);
-  if (idx === -1) return null;
+  const row = findQuarterById(quarters, quarterId);
+  if (!row) return null;
   if (weekNumber > 1) {
     return { quarter_id: quarterId, week_number: weekNumber - 1 };
   }
-  const prev = list[idx - 1];
+  if (row.archived_at) return null;
+  const list = activeQuarters(quarters);
+  const prev = list[list.findIndex((q) => q.id === quarterId) - 1];
   return prev ? { quarter_id: prev.id, week_number: prev.weeks_in_quarter } : null;
 }
 
