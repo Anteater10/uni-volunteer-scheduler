@@ -19,13 +19,8 @@ from ..deps import require_role, log_action, ensure_event_owner_or_admin
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
-from ..services import template_service, import_service
+from ..services import template_service, import_service, quarter_service
 from ..services.audit_log_humanize import humanize as humanize_audit_log
-from ..services.quarter import (
-    current_quarter_bounds,
-    previous_quarter_bounds,
-    quarter_progress,
-)
 from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate, CsvImportRead, SentNotificationRead
 from ..tasks.import_csv import process_csv_import
 
@@ -129,7 +124,14 @@ def admin_summary(
     week_over_week.signups instead.
     """
     now = datetime.now(timezone.utc)
-    q_start, q_end = current_quarter_bounds(now)
+    # Issue #24: "this quarter" = the admin-entered quarter covering today,
+    # else the most recently ended one (gaps). With no quarters entered the
+    # window is zero-width so quarter aggregates read 0.
+    active_q = quarter_service.active_or_recent_quarter(db, now.date())
+    if active_q is not None:
+        q_start, q_end = quarter_service.quarter_bounds_utc(active_q)
+    else:
+        q_start = q_end = now
     week_ago = now - timedelta(days=7)
     two_weeks_ago = now - timedelta(days=14)
     week_forward = now + timedelta(days=7)
@@ -354,7 +356,7 @@ def admin_summary(
             "events": events_this_week - events_last_week,
             "signups": signups_this_week - signups_last_week,
         },
-        "quarter_progress": quarter_progress(now),
+        "quarter_progress": quarter_service.quarter_progress(db, now),
         "fill_rate_attention": attention,
         "last_updated": now.isoformat(),
     }
