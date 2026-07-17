@@ -2071,6 +2071,7 @@ def duplicate_event(
     target_weeks = body.get("target_weeks") or []
     target_year = body.get("target_year")
     target_quarter = body.get("target_quarter")
+    target_quarter_id = body.get("target_quarter_id")
     skip_conflicts = bool(body.get("skip_conflicts", True))
     if not isinstance(target_weeks, list):
         raise HTTPException(status_code=422, detail="target_weeks must be a list")
@@ -2078,12 +2079,18 @@ def duplicate_event(
         raise HTTPException(status_code=422, detail="target_year must be an int")
     if target_quarter is not None and not isinstance(target_quarter, str):
         raise HTTPException(status_code=422, detail="target_quarter must be a string")
+    if target_quarter_id is not None:
+        try:
+            target_quarter_id = uuid_mod.UUID(str(target_quarter_id))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="target_quarter_id must be a UUID")
     return event_duplication_service.duplicate_event(
         db,
         source_event_id=event_id,
         target_weeks=[int(w) for w in target_weeks],
         target_year=target_year,
         target_quarter=target_quarter,
+        target_quarter_id=target_quarter_id,
         skip_conflicts=skip_conflicts,
         actor=admin_user,
     )

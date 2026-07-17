@@ -13,41 +13,10 @@ from sqlalchemy.orm import Session
 from ... import models, schemas
 from ...database import get_db
 from ...deps import rate_limit
+from ...services import quarter_service
 from ...services.settings_service import get_app_settings
 
 router = APIRouter(prefix="/public", tags=["public"])
-
-# UCSB quarter start dates for supported years.
-# week_number = ((today - start_date).days // 7) + 1, clamped to 1-11.
-QUARTER_START_DATES: dict[tuple[int, str], date] = {
-    (2026, "winter"): date(2026, 1, 5),
-    (2026, "spring"): date(2026, 3, 30),
-    (2026, "summer"): date(2026, 6, 22),
-    (2026, "fall"):   date(2026, 9, 21),
-    (2027, "winter"): date(2027, 1, 4),
-}
-
-
-def derive_quarter_week(for_date: date) -> tuple[str, int, int]:
-    """Derive (quarter, year, week_number) from a date using QUARTER_START_DATES.
-
-    Mirrors the current_week() selection logic. Used by the events create
-    route to populate these fields when the caller doesn't supply them, so
-    admin-created events remain visible through the quarter/week filter.
-    """
-    best: tuple[int, str] | None = None
-    best_start: date | None = None
-    for (year, quarter), start in QUARTER_START_DATES.items():
-        if start <= for_date:
-            if best_start is None or start > best_start:
-                best = (year, quarter)
-                best_start = start
-    if best is None:
-        first_key = min(QUARTER_START_DATES.keys(), key=lambda k: QUARTER_START_DATES[k])
-        return first_key[1], first_key[0], 1
-    year, quarter = best
-    week_number = ((for_date - best_start).days // 7) + 1
-    return quarter, year, max(1, min(11, week_number))
 
 
 @router.get(
@@ -55,36 +24,27 @@ def derive_quarter_week(for_date: date) -> tuple[str, int, int]:
     response_model=schemas.CurrentWeekRead,
     dependencies=[Depends(rate_limit(max_requests=60, window_seconds=60))],
 )
-def current_week() -> schemas.CurrentWeekRead:
-    """Return the current UCSB quarter, year, and week_number based on today's date.
+def current_week(db: Session = Depends(get_db)) -> schemas.CurrentWeekRead:
+    """Resolve today against the admin-entered quarters (issue #24).
 
-    Uses hardcoded QUARTER_START_DATES for 2026-2027. Week numbers are clamped
-    to 1-11 (UCSB quarters are exactly 11 teaching weeks).
+    Always 200: configured=False means no quarters are entered yet; is_gap
+    with starts_on means "between quarters — that quarter starts then";
+    is_gap without starts_on means past the last entered quarter.
     """
-    today = date.today()
-    # Find the latest quarter start that is <= today
-    best: tuple[int, str] | None = None
-    best_start: date | None = None
-    for (year, quarter), start in QUARTER_START_DATES.items():
-        if start <= today:
-            if best_start is None or start > best_start:
-                best = (year, quarter)
-                best_start = start
-
-    if best is None:
-        # today is before all known quarters — return the earliest known quarter week 1
-        first_key = min(QUARTER_START_DATES.keys(), key=lambda k: QUARTER_START_DATES[k])
-        first_start = QUARTER_START_DATES[first_key]
-        return schemas.CurrentWeekRead(
-            quarter=first_key[1],
-            year=first_key[0],
-            week_number=1,
-        )
-
-    year, quarter = best
-    week_number = ((today - best_start).days // 7) + 1
-    week_number = max(1, min(11, week_number))
-    return schemas.CurrentWeekRead(quarter=quarter, year=year, week_number=week_number)
+    info = quarter_service.resolve_current_week(db, date.today())
+    if info is None:
+        return schemas.CurrentWeekRead(configured=False)
+    return schemas.CurrentWeekRead(
+        configured=True,
+        quarter=info.quarter,
+        year=info.year,
+        week_number=info.week_number,
+        quarter_id=info.quarter_id,
+        label=info.label,
+        weeks_in_quarter=info.weeks_in_quarter,
+        is_gap=info.is_gap,
+        starts_on=info.starts_on,
+    )
 
 
 def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEventRead:
@@ -161,18 +121,32 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
     dependencies=[Depends(rate_limit(max_requests=60, window_seconds=60))],
 )
 def list_events(
-    quarter: models.Quarter = Query(...),
-    year: int = Query(..., ge=2020, le=2100),
-    week_number: int = Query(..., ge=1, le=11),
+    quarter: models.Quarter | None = Query(default=None),
+    year: int | None = Query(default=None, ge=2020, le=2100),
+    week_number: int = Query(..., ge=1, le=26),
     school: str | None = Query(default=None),
+    quarter_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """List events matching the given quarter/year/week_number; optionally filter by school."""
-    q = db.query(models.Event).filter(
-        models.Event.quarter == quarter,
-        models.Event.year == year,
-        models.Event.week_number == week_number,
-    )
+    """List events for a week; optionally filter by school.
+
+    Preferred filter: quarter_id + week_number — unambiguous when summer
+    Sessions A/B both have a week N. Legacy quarter+year+week_number still
+    works; for summer it returns every session's week N (documented union).
+    """
+    if quarter_id is None and (quarter is None or year is None):
+        raise HTTPException(
+            status_code=422,
+            detail="Provide quarter_id, or both quarter and year.",
+        )
+    q = db.query(models.Event).filter(models.Event.week_number == week_number)
+    if quarter_id is not None:
+        q = q.filter(models.Event.quarter_id == quarter_id)
+    else:
+        q = q.filter(
+            models.Event.quarter == quarter,
+            models.Event.year == year,
+        )
     if school:
         q = q.filter(models.Event.school == school)
     events = q.order_by(models.Event.school, models.Event.start_date).all()

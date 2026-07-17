@@ -5,7 +5,10 @@ a (module family, school, week) must collapse into ONE Event with slots of
 the correct slot_type — not two separate Events.
 """
 import uuid
+from datetime import date
+
 import pytest
+from fastapi import HTTPException
 
 from app import models
 from app.models import (
@@ -18,6 +21,7 @@ from app.models import (
     SlotType,
 )
 from app.services.import_service import commit_import
+from tests.fixtures.factories import AcademicQuarterFactory
 from tests.fixtures.helpers import make_user
 
 
@@ -26,6 +30,20 @@ def admin(db_session):
     user = make_user(db_session, email="admin-merge@example.com", role=models.UserRole.admin)
     db_session.commit()
     return user
+
+
+@pytest.fixture(autouse=True)
+def spring_2026(db_session):
+    """Issue #24: commit_import requires an entered quarter covering row dates."""
+    AcademicQuarterFactory._meta.sqlalchemy_session = db_session
+    q = AcademicQuarterFactory(
+        season=models.Quarter.SPRING,
+        year=2026,
+        start_date=date(2026, 3, 30),
+        end_date=date(2026, 6, 14),
+    )
+    db_session.flush()
+    return q
 
 
 def _make_import(db_session, admin_id, rows):
@@ -175,3 +193,64 @@ def test_different_schools_do_not_merge(db_session, admin):
     events = db_session.query(Event).filter(Event.module_slug == family).all()
     assert len(events) == 2
     assert {e.school for e in events} == {"San Marcos High School", "Dos Pueblos High School"}
+
+
+def test_rows_outside_entered_quarters_rejected(db_session, admin):
+    """Issue #24 decision 6: CSV rows dated in no entered quarter fail the
+    commit with an actionable per-date error (atomic — nothing imported)."""
+    db_session.add(ModuleTemplate(slug="m9", name="M9", type=ModuleType.module, family_key="m9"))
+    db_session.commit()
+
+    imp = _make_import(db_session, admin.id, [
+        # 2026-06-17 falls after spring 2026 (ends Jun 14) — uncovered.
+        _row("2026-06-17T08:00:00", "2026-06-17T10:00:00", module_slug="m9"),
+    ])
+    with pytest.raises(HTTPException) as exc:
+        commit_import(db_session, imp.id, module_template_slug="m9")
+    assert exc.value.status_code == 400
+    assert "No quarter covers" in str(exc.value.detail)
+    assert "2026-06-17" in str(exc.value.detail)
+
+
+def test_committed_events_link_to_quarter_row(db_session, admin, spring_2026):
+    family = "kelp-forests"
+    db_session.add(ModuleTemplate(slug=family, name="Kelp", type=ModuleType.module, family_key=family))
+    db_session.commit()
+
+    imp = _make_import(db_session, admin.id, [
+        _row("2026-05-27T08:00:00", "2026-05-27T10:20:00", module_slug=family),
+    ])
+    commit_import(db_session, imp.id, module_template_slug=family)
+
+    ev = db_session.query(Event).filter(Event.module_slug == family).one()
+    assert ev.quarter_id == spring_2026.id
+    assert ev.week_number == 9  # May 27 is week 9 of spring 2026 (starts Mar 30)
+
+
+def test_summer_sessions_do_not_merge(db_session, admin):
+    """Rows landing in Session A vs Session B must produce separate events,
+    even though both cache (summer, 2026)."""
+    AcademicQuarterFactory._meta.sqlalchemy_session = db_session
+    session_a = AcademicQuarterFactory(
+        season=models.Quarter.SUMMER, year=2026, label="Session A",
+        start_date=date(2026, 6, 22), end_date=date(2026, 7, 31),
+    )
+    session_b = AcademicQuarterFactory(
+        season=models.Quarter.SUMMER, year=2026, label="Session B",
+        start_date=date(2026, 8, 3), end_date=date(2026, 9, 11),
+    )
+    db_session.flush()
+
+    family = "solar-cells"
+    db_session.add(ModuleTemplate(slug=family, name="Solar", type=ModuleType.module, family_key=family))
+    db_session.commit()
+
+    imp = _make_import(db_session, admin.id, [
+        _row("2026-07-01T08:00:00", "2026-07-01T10:00:00", module_slug=family),
+        _row("2026-08-05T08:00:00", "2026-08-05T10:00:00", module_slug=family),
+    ])
+    commit_import(db_session, imp.id, module_template_slug=family)
+
+    events = db_session.query(Event).filter(Event.module_slug == family).all()
+    assert len(events) == 2
+    assert {e.quarter_id for e in events} == {session_a.id, session_b.id}

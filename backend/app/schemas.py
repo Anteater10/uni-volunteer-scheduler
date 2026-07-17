@@ -669,9 +669,23 @@ class PublicEventRead(BaseModel):
 
 
 class CurrentWeekRead(BaseModel):
-    quarter: str
-    year: int
-    week_number: int
+    """Current week resolved from admin-entered quarters (issue #24).
+
+    configured=False → no quarters entered yet (quarter fields are null).
+    is_gap=True with starts_on set → between quarters; the named quarter
+    starts on starts_on. is_gap=True with starts_on null → past the last
+    entered quarter (admin should enter the next one).
+    """
+
+    configured: bool = True
+    quarter: Optional[str] = None
+    year: Optional[int] = None
+    week_number: Optional[int] = None
+    quarter_id: Optional[UUID] = None
+    label: str = ""
+    weeks_in_quarter: Optional[int] = None
+    is_gap: bool = False
+    starts_on: Optional[DateType] = None
 
 
 class OrientationStatusRead(BaseModel):
