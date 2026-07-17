@@ -148,6 +148,30 @@ class TestListPublicEvents:
         assert str(e_a.id) in ids
         assert str(e_b.id) not in ids
 
+    def test_deep_link_by_quarter_id_reaches_archived_quarter_events(
+        self, client, db_session
+    ):
+        # Issue #33: archiving declutters navigation, it doesn't hide data —
+        # events are public either way, and the archived-quarters browse
+        # deep-links by quarter_id.
+        archived = _make_quarter(
+            db_session, season=Quarter.WINTER, year=2025,
+            start_date=date_type(2025, 1, 6), end_date=date_type(2025, 3, 21),
+            archived_at=datetime(2025, 4, 1, tzinfo=timezone.utc),
+        )
+        event = _make_event(
+            db_session, quarter=Quarter.WINTER, year=2025, week_number=2,
+            quarter_id=archived.id, title="Archived winter wk2",
+        )
+        db_session.commit()
+
+        resp = client.get("/api/v1/public/events", params={
+            "quarter_id": str(archived.id),
+            "week_number": 2,
+        })
+        assert resp.status_code == 200, resp.text
+        assert str(event.id) in [e["id"] for e in resp.json()]
+
     def test_week_number_beyond_11_is_valid(self, client, db_session):
         # Summer spans ~12 weeks across sessions; the old 1..11 cap is gone.
         event = _make_event(db_session, quarter=Quarter.SUMMER, year=2026, week_number=12)

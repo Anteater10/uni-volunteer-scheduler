@@ -2082,6 +2082,28 @@ def delete_quarter(
     return Response(status_code=204)
 
 
+# Issue #33 — explicit archiving of past quarters. Archived rows stay
+# listed and deep-linkable; current-week resolution skips them.
+
+
+@router.post("/quarters/{quarter_id}/archive", response_model=schemas.QuarterRead)
+def archive_quarter(
+    quarter_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return quarter_service.archive_quarter(db, quarter_id, actor=admin_user)
+
+
+@router.post("/quarters/{quarter_id}/restore", response_model=schemas.QuarterRead)
+def restore_quarter(
+    quarter_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return quarter_service.restore_quarter(db, quarter_id, actor=admin_user)
+
+
 # Phase 23 — recurring event duplication
 @router.post("/events/{event_id}/duplicate")
 def duplicate_event(

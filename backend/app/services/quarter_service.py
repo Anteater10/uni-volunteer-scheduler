@@ -77,35 +77,36 @@ def _as_utc_date(value: datetime) -> date:
 # ---------- date → quarter resolution ----------
 
 
-def get_quarter_for_date(db: Session, d: date) -> models.AcademicQuarter | None:
+def get_quarter_for_date(
+    db: Session, d: date, *, include_archived: bool = True
+) -> models.AcademicQuarter | None:
     # one_or_none is safe: the DB-level exclusion constraint guarantees a
     # date is covered by at most one quarter row.
-    return (
-        db.query(models.AcademicQuarter)
-        .filter(
-            models.AcademicQuarter.start_date <= d,
-            models.AcademicQuarter.end_date >= d,
-        )
-        .one_or_none()
+    query = db.query(models.AcademicQuarter).filter(
+        models.AcademicQuarter.start_date <= d,
+        models.AcademicQuarter.end_date >= d,
     )
+    if not include_archived:
+        query = query.filter(models.AcademicQuarter.archived_at.is_(None))
+    return query.one_or_none()
 
 
-def get_next_quarter_after(db: Session, d: date) -> models.AcademicQuarter | None:
-    return (
-        db.query(models.AcademicQuarter)
-        .filter(models.AcademicQuarter.start_date > d)
-        .order_by(models.AcademicQuarter.start_date)
-        .first()
-    )
+def get_next_quarter_after(
+    db: Session, d: date, *, include_archived: bool = True
+) -> models.AcademicQuarter | None:
+    query = db.query(models.AcademicQuarter).filter(models.AcademicQuarter.start_date > d)
+    if not include_archived:
+        query = query.filter(models.AcademicQuarter.archived_at.is_(None))
+    return query.order_by(models.AcademicQuarter.start_date).first()
 
 
-def _last_quarter_before(db: Session, d: date) -> models.AcademicQuarter | None:
-    return (
-        db.query(models.AcademicQuarter)
-        .filter(models.AcademicQuarter.end_date < d)
-        .order_by(models.AcademicQuarter.end_date.desc())
-        .first()
-    )
+def _last_quarter_before(
+    db: Session, d: date, *, include_archived: bool = True
+) -> models.AcademicQuarter | None:
+    query = db.query(models.AcademicQuarter).filter(models.AcademicQuarter.end_date < d)
+    if not include_archived:
+        query = query.filter(models.AcademicQuarter.archived_at.is_(None))
+    return query.order_by(models.AcademicQuarter.end_date.desc()).first()
 
 
 def derive_quarter_week(db: Session, d: date) -> tuple[str, int, int, UUID] | None:
@@ -118,8 +119,12 @@ def derive_quarter_week(db: Session, d: date) -> tuple[str, int, int, UUID] | No
 
 
 def resolve_current_week(db: Session, today: date) -> CurrentWeekInfo | None:
-    """Resolve today into a CurrentWeekInfo; None only when no quarters exist."""
-    q = get_quarter_for_date(db, today)
+    """Resolve today into a CurrentWeekInfo; None only when no quarters exist.
+
+    Archived quarters (issue #33) never resolve here — navigation treats
+    them as absent; only deep links by quarter_id reach them.
+    """
+    q = get_quarter_for_date(db, today, include_archived=False)
     if q is not None:
         return CurrentWeekInfo(
             quarter=q.season.value,
@@ -130,7 +135,7 @@ def resolve_current_week(db: Session, today: date) -> CurrentWeekInfo | None:
             label=q.label,
         )
 
-    upcoming = get_next_quarter_after(db, today)
+    upcoming = get_next_quarter_after(db, today, include_archived=False)
     if upcoming is not None:
         return CurrentWeekInfo(
             quarter=upcoming.season.value,
@@ -143,7 +148,7 @@ def resolve_current_week(db: Session, today: date) -> CurrentWeekInfo | None:
             starts_on=upcoming.start_date,
         )
 
-    last = _last_quarter_before(db, today)
+    last = _last_quarter_before(db, today, include_archived=False)
     if last is not None:
         return CurrentWeekInfo(
             quarter=last.season.value,
@@ -164,11 +169,12 @@ def active_or_recent_quarter(db: Session, today: date) -> models.AcademicQuarter
 
     Used by the admin dashboard so 'this quarter' aggregates stay meaningful
     during gaps. Returns None before any entered quarter (or none at all).
+    Archived quarters are skipped like resolve_current_week does.
     """
-    q = get_quarter_for_date(db, today)
+    q = get_quarter_for_date(db, today, include_archived=False)
     if q is not None:
         return q
-    return _last_quarter_before(db, today)
+    return _last_quarter_before(db, today, include_archived=False)
 
 
 def quarter_progress(db: Session, now: datetime) -> dict | None:
@@ -333,6 +339,40 @@ def update_quarter(db: Session, quarter_id, payload: dict, actor: models.User) -
     db.commit()
     db.refresh(row)
     return row, summary
+
+
+def archive_quarter(db: Session, quarter_id, actor: models.User) -> models.AcademicQuarter:
+    """Archive a past quarter (issue #33). Only quarters that have already
+    ended can be archived — the current/upcoming schedule stays navigable."""
+    row = _get_or_404(db, quarter_id)
+    if row.end_date >= date.today():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{row.display_name} has not ended yet — only ended quarters "
+                "can be archived."
+            ),
+        )
+    row.archived_at = datetime.now(timezone.utc)
+    log_action(
+        db, actor, "quarter_archive", "AcademicQuarter", str(row.id),
+        extra={"display_name": row.display_name},
+    )
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def restore_quarter(db: Session, quarter_id, actor: models.User) -> models.AcademicQuarter:
+    row = _get_or_404(db, quarter_id)
+    row.archived_at = None
+    log_action(
+        db, actor, "quarter_restore", "AcademicQuarter", str(row.id),
+        extra={"display_name": row.display_name},
+    )
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def delete_quarter(db: Session, quarter_id, actor: models.User) -> None:

@@ -195,6 +195,10 @@ class AcademicQuarter(Base):
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)  # inclusive: the quarter's last day
 
+    # Issue #33: explicit admin archiving of past quarters (soft flag —
+    # archived rows stay browsable by deep link, current-week skips them).
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

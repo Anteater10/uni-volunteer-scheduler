@@ -723,6 +723,7 @@ class QuarterRead(ORMBase):
     end_date: DateType
     weeks_in_quarter: int
     display_name: str
+    archived_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -736,6 +737,7 @@ class PublicQuarterRead(ORMBase):
     end_date: DateType
     weeks_in_quarter: int
     display_name: str
+    archived_at: Optional[datetime] = None
 
 
 class RelinkSummary(BaseModel):
