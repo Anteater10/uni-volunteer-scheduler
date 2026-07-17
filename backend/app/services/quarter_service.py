@@ -13,9 +13,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..deps import log_action
 
 
 @dataclass(frozen=True)
@@ -42,7 +44,7 @@ class CurrentWeekInfo:
 
 
 def weeks_in(q: models.AcademicQuarter) -> int:
-    return (q.end_date - q.start_date).days // 7 + 1
+    return q.weeks_in_quarter
 
 
 def week_number_for(q: models.AcademicQuarter, d: date) -> int:
@@ -55,8 +57,7 @@ def week_start(q: models.AcademicQuarter, week: int) -> date:
 
 
 def display_name(q: models.AcademicQuarter) -> str:
-    name = f"{q.season.value.capitalize()} {q.year}"
-    return f"{name} · {q.label}" if q.label else name
+    return q.display_name
 
 
 def quarter_bounds_utc(q: models.AcademicQuarter) -> tuple[datetime, datetime]:
@@ -220,3 +221,138 @@ def relink_events_for_quarter(db: Session, q: models.AcademicQuarter) -> dict:
         event.week_number = None
 
     return {"linked": len(matched), "weeks_changed": weeks_changed, "unlinked": len(stale)}
+
+
+# ---------- admin CRUD (issue #24 Phase 5) ----------
+
+
+def list_quarters(db: Session) -> list[models.AcademicQuarter]:
+    return (
+        db.query(models.AcademicQuarter)
+        .order_by(models.AcademicQuarter.start_date)
+        .all()
+    )
+
+
+def _get_or_404(db: Session, quarter_id) -> models.AcademicQuarter:
+    row = db.get(models.AcademicQuarter, quarter_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Quarter not found")
+    return row
+
+
+def _validate_quarter_fields(
+    db: Session,
+    *,
+    season: models.Quarter,
+    year: int,
+    label: str,
+    start_date: date,
+    end_date: date,
+    exclude_id=None,
+) -> None:
+    if start_date >= end_date:
+        raise HTTPException(status_code=422, detail="start_date must be before end_date")
+
+    dup = db.query(models.AcademicQuarter).filter(
+        models.AcademicQuarter.season == season,
+        models.AcademicQuarter.year == year,
+        models.AcademicQuarter.label == label,
+    )
+    if exclude_id is not None:
+        dup = dup.filter(models.AcademicQuarter.id != exclude_id)
+    if db.query(dup.exists()).scalar():
+        suffix = f" · {label}" if label else ""
+        raise HTTPException(
+            status_code=409,
+            detail=f"{season.value.capitalize()} {year}{suffix} is already entered",
+        )
+
+    # Friendly overlap message; the DB gist exclusion constraint is the
+    # concurrent-write backstop.
+    overlap = db.query(models.AcademicQuarter).filter(
+        models.AcademicQuarter.start_date <= end_date,
+        models.AcademicQuarter.end_date >= start_date,
+    )
+    if exclude_id is not None:
+        overlap = overlap.filter(models.AcademicQuarter.id != exclude_id)
+    clash = overlap.first()
+    if clash is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Dates overlap {clash.display_name} "
+                f"({clash.start_date} – {clash.end_date})"
+            ),
+        )
+
+
+def create_quarter(db: Session, payload: dict, actor: models.User) -> tuple[models.AcademicQuarter, dict]:
+    fields = {
+        "season": payload["season"],
+        "year": payload["year"],
+        "label": payload.get("label") or "",
+        "start_date": payload["start_date"],
+        "end_date": payload["end_date"],
+    }
+    _validate_quarter_fields(db, **fields)
+
+    row = models.AcademicQuarter(**fields)
+    db.add(row)
+    db.flush()
+    summary = relink_events_for_quarter(db, row)
+    log_action(
+        db, actor, "quarter_create", "AcademicQuarter", str(row.id),
+        extra={"display_name": row.display_name, "relink_summary": summary},
+    )
+    db.commit()
+    db.refresh(row)
+    return row, summary
+
+
+def update_quarter(db: Session, quarter_id, payload: dict, actor: models.User) -> tuple[models.AcademicQuarter, dict]:
+    row = _get_or_404(db, quarter_id)
+    merged = {
+        "season": row.season,
+        "year": row.year,
+        "label": row.label,
+        "start_date": row.start_date,
+        "end_date": row.end_date,
+    }
+    merged.update({k: v for k, v in payload.items() if v is not None})
+    _validate_quarter_fields(db, **merged, exclude_id=row.id)
+
+    for field, value in merged.items():
+        setattr(row, field, value)
+    db.flush()
+    summary = relink_events_for_quarter(db, row)
+    log_action(
+        db, actor, "quarter_update", "AcademicQuarter", str(row.id),
+        extra={"display_name": row.display_name, "relink_summary": summary},
+    )
+    db.commit()
+    db.refresh(row)
+    return row, summary
+
+
+def delete_quarter(db: Session, quarter_id, actor: models.User) -> None:
+    row = _get_or_404(db, quarter_id)
+    referenced = db.query(
+        db.query(models.Event).filter(models.Event.quarter_id == row.id).exists()
+    ).scalar()
+    if referenced:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Quarter has linked events — move or delete them first, "
+                "or archive the quarter instead."
+            ),
+        )
+    display = row.display_name
+    row_id = str(row.id)
+    db.delete(row)
+    log_action(
+        db, actor, "quarter_delete", "AcademicQuarter", row_id,
+        extra={"display_name": display},
+    )
+    db.commit()

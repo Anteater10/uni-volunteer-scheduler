@@ -47,6 +47,17 @@ def current_week(db: Session = Depends(get_db)) -> schemas.CurrentWeekRead:
     )
 
 
+@router.get(
+    "/quarters",
+    response_model=list[schemas.PublicQuarterRead],
+    dependencies=[Depends(rate_limit(max_requests=60, window_seconds=60))],
+)
+def list_quarters(db: Session = Depends(get_db)) -> list[schemas.PublicQuarterRead]:
+    """Ordered list of admin-entered quarters — powers week navigation,
+    date presets, and the archived-quarters view."""
+    return quarter_service.list_quarters(db)
+
+
 def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEventRead:
     """Build a PublicEventRead dict for the given event, with slots hydrated."""
     slots = db.query(models.Slot).filter(models.Slot.event_id == event.id).all()

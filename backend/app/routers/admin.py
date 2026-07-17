@@ -2036,6 +2036,52 @@ def set_template_default_form_schema(
     return {"slug": slug, "schema": result}
 
 
+# Issue #24 — admin-entered quarters (season, year, label, dates).
+# Weeks self-populate from the range; create/update relink matching events
+# and surface the relink summary so recategorization is visible.
+
+
+@router.get("/quarters", response_model=List[schemas.QuarterRead])
+def list_quarters(
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return quarter_service.list_quarters(db)
+
+
+@router.post("/quarters", response_model=schemas.QuarterWriteResult, status_code=201)
+def create_quarter(
+    payload: schemas.QuarterCreate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    row, summary = quarter_service.create_quarter(db, payload.model_dump(), actor=admin_user)
+    return {"quarter": row, "relink_summary": summary}
+
+
+@router.patch("/quarters/{quarter_id}", response_model=schemas.QuarterWriteResult)
+def update_quarter(
+    quarter_id: uuid_mod.UUID,
+    payload: schemas.QuarterUpdate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    row, summary = quarter_service.update_quarter(
+        db, quarter_id, payload.model_dump(exclude_unset=True), actor=admin_user
+    )
+    return {"quarter": row, "relink_summary": summary}
+
+
+@router.delete("/quarters/{quarter_id}", status_code=204)
+def delete_quarter(
+    quarter_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    quarter_service.delete_quarter(db, quarter_id, actor=admin_user)
+    return Response(status_code=204)
+
+
 # Phase 23 — recurring event duplication
 @router.post("/events/{event_id}/duplicate")
 def duplicate_event(

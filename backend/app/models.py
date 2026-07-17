@@ -213,6 +213,15 @@ class AcademicQuarter(Base):
         ),
     )
 
+    @property
+    def weeks_in_quarter(self) -> int:
+        return (self.end_date - self.start_date).days // 7 + 1
+
+    @property
+    def display_name(self) -> str:
+        name = f"{self.season.value.capitalize()} {self.year}"
+        return f"{name} · {self.label}" if self.label else name
+
 
 # -------------------------
 # Event table
