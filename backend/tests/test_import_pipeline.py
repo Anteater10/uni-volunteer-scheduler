@@ -1,10 +1,13 @@
 """Integration tests for the CSV import pipeline."""
 import io
 import uuid
+from datetime import date
+
 import pytest
 
 from app import models
 from app.models import CsvImport, CsvImportStatus
+from tests.fixtures.factories import AcademicQuarterFactory
 from tests.fixtures.helpers import make_user, auth_headers
 
 
@@ -15,6 +18,21 @@ def admin_user_and_headers(client, db_session):
     db_session.commit()
     hdrs = auth_headers(client, admin)
     return admin, hdrs
+
+
+@pytest.fixture(autouse=True)
+def fall_2026(db_session):
+    """Issue #24: commit_import requires an entered quarter covering row dates
+    (this file's fixtures use 2026-09-15)."""
+    AcademicQuarterFactory._meta.sqlalchemy_session = db_session
+    q = AcademicQuarterFactory(
+        season=models.Quarter.FALL,
+        year=2026,
+        start_date=date(2026, 9, 14),
+        end_date=date(2026, 11, 29),
+    )
+    db_session.flush()
+    return q
 
 
 def test_upload_csv_creates_import(client, db_session, admin_user_and_headers):

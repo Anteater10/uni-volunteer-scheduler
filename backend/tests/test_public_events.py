@@ -10,16 +10,18 @@ Assertions:
   - 404 on unknown event_id
   - Rate limiting not tested (Redis mock would be needed; tested at unit level)
 """
+import unittest.mock as mock
 import uuid
 from datetime import datetime, timezone, timedelta, date as date_type
 
 import pytest
 
 from app.models import Event, Quarter, Slot, SlotType
+from tests.fixtures.factories import AcademicQuarterFactory
 from tests.fixtures.helpers import make_user
 
 
-def _make_event(db_session, *, quarter=Quarter.FALL, year=2024, week_number=1, school="Lincoln", title="SciTrek Event"):  # noqa: E501
+def _make_event(db_session, *, quarter=Quarter.FALL, year=2024, week_number=1, school="Lincoln", title="SciTrek Event", quarter_id=None):  # noqa: E501
     owner = make_user(db_session)
     now = datetime.now(timezone.utc) + timedelta(days=1)
     event = Event(
@@ -32,10 +34,18 @@ def _make_event(db_session, *, quarter=Quarter.FALL, year=2024, week_number=1, s
         year=year,
         week_number=week_number,
         school=school,
+        quarter_id=quarter_id,
     )
     db_session.add(event)
     db_session.flush()
     return event
+
+
+def _make_quarter(db_session, **kwargs):
+    AcademicQuarterFactory._meta.sqlalchemy_session = db_session
+    q = AcademicQuarterFactory(**kwargs)
+    db_session.flush()
+    return q
 
 
 def _make_slot(db_session, event, *, capacity=10, current_count=2, slot_type=SlotType.PERIOD):
@@ -110,6 +120,71 @@ class TestListPublicEvents:
         })
         assert resp.status_code == 422
 
+    def test_filter_by_quarter_id_separates_summer_sessions(self, client, db_session):
+        session_a = _make_quarter(
+            db_session, season=Quarter.SUMMER, year=2026, label="Session A",
+            start_date=date_type(2026, 6, 22), end_date=date_type(2026, 7, 31),
+        )
+        session_b = _make_quarter(
+            db_session, season=Quarter.SUMMER, year=2026, label="Session B",
+            start_date=date_type(2026, 8, 3), end_date=date_type(2026, 9, 11),
+        )
+        e_a = _make_event(
+            db_session, quarter=Quarter.SUMMER, year=2026, week_number=2,
+            quarter_id=session_a.id, title="Session A wk2",
+        )
+        e_b = _make_event(
+            db_session, quarter=Quarter.SUMMER, year=2026, week_number=2,
+            quarter_id=session_b.id, title="Session B wk2",
+        )
+        db_session.commit()
+
+        resp = client.get("/api/v1/public/events", params={
+            "quarter_id": str(session_a.id),
+            "week_number": 2,
+        })
+        assert resp.status_code == 200, resp.text
+        ids = [e["id"] for e in resp.json()]
+        assert str(e_a.id) in ids
+        assert str(e_b.id) not in ids
+
+    def test_deep_link_by_quarter_id_reaches_archived_quarter_events(
+        self, client, db_session
+    ):
+        # Issue #33: archiving declutters navigation, it doesn't hide data —
+        # events are public either way, and the archived-quarters browse
+        # deep-links by quarter_id.
+        archived = _make_quarter(
+            db_session, season=Quarter.WINTER, year=2025,
+            start_date=date_type(2025, 1, 6), end_date=date_type(2025, 3, 21),
+            archived_at=datetime(2025, 4, 1, tzinfo=timezone.utc),
+        )
+        event = _make_event(
+            db_session, quarter=Quarter.WINTER, year=2025, week_number=2,
+            quarter_id=archived.id, title="Archived winter wk2",
+        )
+        db_session.commit()
+
+        resp = client.get("/api/v1/public/events", params={
+            "quarter_id": str(archived.id),
+            "week_number": 2,
+        })
+        assert resp.status_code == 200, resp.text
+        assert str(event.id) in [e["id"] for e in resp.json()]
+
+    def test_week_number_beyond_11_is_valid(self, client, db_session):
+        # Summer spans ~12 weeks across sessions; the old 1..11 cap is gone.
+        event = _make_event(db_session, quarter=Quarter.SUMMER, year=2026, week_number=12)
+        db_session.commit()
+
+        resp = client.get("/api/v1/public/events", params={
+            "quarter": "summer",
+            "year": 2026,
+            "week_number": 12,
+        })
+        assert resp.status_code == 200, resp.text
+        assert str(event.id) in [e["id"] for e in resp.json()]
+
     def test_event_schema_shape(self, client, db_session):
         event = _make_event(db_session)
         db_session.commit()
@@ -158,50 +233,71 @@ class TestGetPublicEvent:
 
 
 class TestCurrentWeek:
-    """Tests for GET /api/v1/public/current-week."""
+    """GET /api/v1/public/current-week — resolved from admin-entered quarters.
 
-    VALID_QUARTERS = {"winter", "spring", "summer", "fall"}
+    Always 200: configured=False means no quarters entered yet; is_gap=True
+    with starts_on set means "between quarters"; is_gap=True with starts_on
+    null means past the last entered quarter.
+    """
 
-    def test_returns_200_with_required_keys(self, client, db_session):
+    def _get_on(self, client, on):
+        with mock.patch("app.routers.public.events.date") as mock_date:
+            mock_date.today.return_value = on
+            mock_date.side_effect = lambda *a, **kw: date_type(*a, **kw)
+            return client.get("/api/v1/public/current-week")
+
+    def test_no_quarters_returns_unconfigured(self, client, db_session):
         resp = client.get("/api/v1/public/current-week")
         assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert "quarter" in data
-        assert "year" in data
-        assert "week_number" in data
+        assert data["configured"] is False
+        assert data["quarter"] is None
+        assert data["week_number"] is None
 
-    def test_quarter_is_valid_enum_value(self, client, db_session):
-        resp = client.get("/api/v1/public/current-week")
-        assert resp.status_code == 200
+    def test_active_quarter_resolves_week(self, client, db_session):
+        spring = _make_quarter(
+            db_session, season=Quarter.SPRING, year=2026,
+            start_date=date_type(2026, 3, 30), end_date=date_type(2026, 6, 14),
+        )
+        resp = self._get_on(client, date_type(2026, 4, 15))
+        assert resp.status_code == 200, resp.text
         data = resp.json()
-        assert data["quarter"] in self.VALID_QUARTERS
-
-    def test_week_number_in_range(self, client, db_session):
-        resp = client.get("/api/v1/public/current-week")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert 1 <= data["week_number"] <= 11
-
-    def test_year_matches_current_calendar_year(self, client, db_session):
-        from datetime import date
-        resp = client.get("/api/v1/public/current-week")
-        assert resp.status_code == 200
-        data = resp.json()
-        # year in response should be recent (within ±1 of real calendar year)
-        current_year = date.today().year
-        assert abs(data["year"] - current_year) <= 1
-
-    def test_spring_2026_date_returns_correct_quarter(self, client, db_session):
-        """A date known to fall in spring 2026 must return quarter=spring, year=2026."""
-        import unittest.mock as mock
-        from datetime import date
-        # 2026-04-15 is safely within spring 2026 (started 2026-03-30)
-        with mock.patch("app.routers.public.events.date") as mock_date:
-            mock_date.today.return_value = date(2026, 4, 15)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            resp = client.get("/api/v1/public/current-week")
-        assert resp.status_code == 200
-        data = resp.json()
+        assert data["configured"] is True
         assert data["quarter"] == "spring"
         assert data["year"] == 2026
-        assert 1 <= data["week_number"] <= 11
+        assert data["week_number"] == 3
+        assert data["weeks_in_quarter"] == 11
+        assert data["quarter_id"] == str(spring.id)
+        assert data["is_gap"] is False
+
+    def test_session_gap_points_to_next_session(self, client, db_session):
+        _make_quarter(
+            db_session, season=Quarter.SUMMER, year=2026, label="Session A",
+            start_date=date_type(2026, 6, 22), end_date=date_type(2026, 7, 31),
+        )
+        session_b = _make_quarter(
+            db_session, season=Quarter.SUMMER, year=2026, label="Session B",
+            start_date=date_type(2026, 8, 3), end_date=date_type(2026, 9, 11),
+        )
+        # Aug 1 = the weekend between Session A and Session B
+        resp = self._get_on(client, date_type(2026, 8, 1))
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["is_gap"] is True
+        assert data["label"] == "Session B"
+        assert data["week_number"] == 1
+        assert data["starts_on"] == "2026-08-03"
+        assert data["quarter_id"] == str(session_b.id)
+
+    def test_past_last_quarter_falls_back_to_final_week(self, client, db_session):
+        _make_quarter(
+            db_session, season=Quarter.SPRING, year=2026,
+            start_date=date_type(2026, 3, 30), end_date=date_type(2026, 6, 14),
+        )
+        resp = self._get_on(client, date_type(2026, 7, 10))
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["is_gap"] is True
+        assert data["quarter"] == "spring"
+        assert data["week_number"] == 11
+        assert data["starts_on"] is None

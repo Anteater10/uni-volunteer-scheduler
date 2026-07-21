@@ -197,6 +197,7 @@ class EventRead(ORMBase, EventBase):
     quarter: Optional[Quarter] = None
     year: Optional[int] = None
     week_number: Optional[int] = None
+    quarter_id: Optional[UUID] = None
     created_at: Optional[datetime] = None
     slots: List[SlotRead] = []
 
@@ -656,6 +657,7 @@ class PublicEventRead(BaseModel):
     quarter: Optional[Quarter] = None
     year: Optional[int] = None
     week_number: Optional[int] = None
+    quarter_id: Optional[UUID] = None
     school: Optional[str] = None
     module_slug: Optional[str] = None
     start_date: datetime  # Event.start_date is DateTime not Date in model
@@ -669,9 +671,87 @@ class PublicEventRead(BaseModel):
 
 
 class CurrentWeekRead(BaseModel):
-    quarter: str
+    """Current week resolved from admin-entered quarters (issue #24).
+
+    configured=False → no quarters entered yet (quarter fields are null).
+    is_gap=True with starts_on set → between quarters; the named quarter
+    starts on starts_on. is_gap=True with starts_on null → past the last
+    entered quarter (admin should enter the next one).
+    """
+
+    configured: bool = True
+    quarter: Optional[str] = None
+    year: Optional[int] = None
+    week_number: Optional[int] = None
+    quarter_id: Optional[UUID] = None
+    label: str = ""
+    weeks_in_quarter: Optional[int] = None
+    is_gap: bool = False
+    starts_on: Optional[DateType] = None
+
+
+class QuarterBase(BaseModel):
+    """Admin-entered quarter (issue #24): the only inputs are the naming
+    triple and the two dates from the UCSB academic calendar — weeks
+    self-populate from the range."""
+
+    season: Quarter
+    year: int = Field(ge=2020, le=2100)
+    label: str = Field(default="", max_length=64)
+    start_date: DateType
+    end_date: DateType
+
+
+class QuarterCreate(QuarterBase):
+    pass
+
+
+class QuarterUpdate(BaseModel):
+    season: Optional[Quarter] = None
+    year: Optional[int] = Field(default=None, ge=2020, le=2100)
+    label: Optional[str] = Field(default=None, max_length=64)
+    start_date: Optional[DateType] = None
+    end_date: Optional[DateType] = None
+
+
+class QuarterRead(ORMBase):
+    id: UUID
+    season: Quarter
     year: int
-    week_number: int
+    label: str
+    start_date: DateType
+    end_date: DateType
+    weeks_in_quarter: int
+    display_name: str
+    archived_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PublicQuarterRead(ORMBase):
+    id: UUID
+    season: Quarter
+    year: int
+    label: str
+    start_date: DateType
+    end_date: DateType
+    weeks_in_quarter: int
+    display_name: str
+    archived_at: Optional[datetime] = None
+
+
+class RelinkSummary(BaseModel):
+    """How a quarter create/update recategorized events — surfaced in the
+    UI so cache rewrites are visible, never silent."""
+
+    linked: int
+    weeks_changed: int
+    unlinked: int
+
+
+class QuarterWriteResult(BaseModel):
+    quarter: QuarterRead
+    relink_summary: RelinkSummary
 
 
 class OrientationStatusRead(BaseModel):

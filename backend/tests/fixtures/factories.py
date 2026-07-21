@@ -5,18 +5,20 @@ Usage:
     user = UserFactory()
 """
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
 
 from app.models import (
+    AcademicQuarter,
     AuditLog,
     Event,
     Notification,
     NotificationType,
     Portal,
     PortalEvent,
+    Quarter,
     Signup,
     SignupStatus,
     Slot,
@@ -104,6 +106,26 @@ class VolunteerFactory(SQLAlchemyModelFactory):
     first_name = factory.Sequence(lambda n: f"First{n}")
     last_name = factory.Sequence(lambda n: f"Last{n}")
     phone_e164 = None
+
+
+class AcademicQuarterFactory(SQLAlchemyModelFactory):
+    """feat/24-quarters: admin-entered quarter rows (season, year, label, dates).
+
+    Defaults are Spring 2026 per the UCSB academic calendar. Tests creating
+    multiple rows must pass non-overlapping ranges — overlap is rejected at
+    the DB level.
+    """
+
+    class Meta:
+        model = AcademicQuarter
+        sqlalchemy_session_persistence = "flush"
+
+    id = factory.LazyFunction(uuid.uuid4)
+    season = Quarter.SPRING
+    year = 2026
+    label = ""
+    start_date = date(2026, 3, 30)
+    end_date = date(2026, 6, 15)
 
 
 class SignupFactory(SQLAlchemyModelFactory):

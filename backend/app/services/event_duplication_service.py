@@ -33,28 +33,99 @@ from typing import Iterable, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .. import models
 from ..deps import log_action
-
-# Quarter week-1 Monday anchors. Mirrors routers/public/events.py and
-# services/quarter.py. Used to compute date shift for cross-quarter duplicates.
-_QUARTER_START_DATES: dict[tuple[int, str], date] = {
-    (2026, "winter"): date(2026, 1, 5),
-    (2026, "spring"): date(2026, 3, 30),
-    (2026, "summer"): date(2026, 6, 22),
-    (2026, "fall"):   date(2026, 9, 21),
-    (2027, "winter"): date(2027, 1, 4),
-}
+from . import quarter_service
 
 
-def _quarter_week_start(year: int, quarter: str, week: int) -> Optional[date]:
-    key = (int(year), str(quarter))
-    anchor = _QUARTER_START_DATES.get(key)
-    if anchor is None:
-        return None
-    return anchor + timedelta(weeks=week - 1)
+def _rows_for(db: Session, season: models.Quarter, year: int) -> list[models.AcademicQuarter]:
+    return (
+        db.query(models.AcademicQuarter)
+        .filter(
+            models.AcademicQuarter.season == season,
+            models.AcademicQuarter.year == int(year),
+        )
+        .order_by(models.AcademicQuarter.start_date)
+        .all()
+    )
+
+
+def _resolve_source_row(db: Session, source: models.Event) -> models.AcademicQuarter:
+    """The quarter row the source event belongs to (issue #24)."""
+    if source.quarter_id is not None:
+        row = db.get(models.AcademicQuarter, source.quarter_id)
+        if row is not None:
+            return row
+    if source.quarter is not None and source.year is not None:
+        candidates = _rows_for(db, source.quarter, int(source.year))
+        if len(candidates) == 1:
+            return candidates[0]
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Source event is not linked to an entered quarter — enter its "
+            "quarter in Admin → Quarters first."
+        ),
+    )
+
+
+def _resolve_target_row(
+    db: Session,
+    *,
+    source_row: models.AcademicQuarter,
+    target_quarter_id,
+    target_quarter: Optional[str],
+    target_year: int,
+) -> models.AcademicQuarter:
+    """Resolve the duplication target to a single quarter row.
+
+    Preferred: explicit target_quarter_id (unambiguous for summer sessions).
+    Legacy (season, year) still resolves when exactly one row matches.
+    """
+    if target_quarter_id is not None:
+        row = db.get(models.AcademicQuarter, target_quarter_id)
+        if row is None:
+            raise HTTPException(
+                status_code=400,
+                detail="target_quarter_id does not match an entered quarter",
+            )
+        return row
+
+    if target_quarter is not None:
+        valid_quarters = {q.value for q in models.Quarter}
+        if target_quarter not in valid_quarters:
+            raise HTTPException(
+                status_code=400,
+                detail=f"target_quarter must be one of {sorted(valid_quarters)}",
+            )
+        season = models.Quarter(target_quarter)
+    else:
+        season = source_row.season
+
+    if target_quarter is None and int(target_year) == int(source_row.year):
+        return source_row
+
+    candidates = _rows_for(db, season, target_year)
+    if not candidates:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No quarter entered for {season.value} {target_year} — "
+                "add it in Admin → Quarters first."
+            ),
+        )
+    if len(candidates) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{season.value} {target_year} has multiple sessions — "
+                "pass target_quarter_id to pick one."
+            ),
+        )
+    return candidates[0]
 
 
 # ---------------------------------------------------------------------------
@@ -87,26 +158,28 @@ def _serialise_result(
 def _existing_conflicts(
     db: Session,
     *,
-    quarter: Optional[models.Quarter],
-    year: int,
+    target_row: models.AcademicQuarter,
     week_numbers: Iterable[int],
     module_slug: Optional[str],
 ) -> dict[int, str]:
-    """Return {week_number: existing_event_id} for conflicts."""
+    """Return {week_number: existing_event_id} for conflicts in the target row.
+
+    Events linked to the target row conflict directly. Legacy rows with a
+    NULL quarter_id but matching (season, year) cache can't be attributed to
+    a specific summer session, so they conservatively count as conflicts too.
+    """
     weeks = list(week_numbers)
     if not weeks:
         return {}
     q = db.query(models.Event).filter(
-        models.Event.year == year,
+        models.Event.year == int(target_row.year),
+        models.Event.quarter == target_row.season,
         models.Event.week_number.in_(weeks),
+        or_(
+            models.Event.quarter_id == target_row.id,
+            models.Event.quarter_id.is_(None),
+        ),
     )
-    # If either side is None, we only want to match on the non-null fields we
-    # have. Quarter + module_slug are the strict keys; missing values mean
-    # "unscoped" and we fall back to matching the present fields only. This
-    # keeps edge cases (pre-Phase-08 rows with NULL quarter) from surprising
-    # admins with silent conflicts.
-    if quarter is not None:
-        q = q.filter(models.Event.quarter == quarter)
     if module_slug is not None:
         q = q.filter(models.Event.module_slug == module_slug)
     out: dict[int, str] = {}
@@ -130,17 +203,22 @@ def duplicate_event(
     skip_conflicts: bool,
     actor: models.User,
     target_quarter: Optional[str] = None,
+    target_quarter_id: Optional[UUID | str] = None,
 ) -> dict:
-    """Duplicate ``source_event_id`` into each of ``target_weeks`` for
-    ``target_year``. Atomic — all or nothing.
+    """Duplicate ``source_event_id`` into each of ``target_weeks`` of the
+    target quarter row. Atomic — all or nothing.
 
-    If ``target_quarter`` is provided and differs from the source's quarter,
-    date shifts are computed against the target quarter's week-1 anchor so
-    copies land in the right calendar weeks.
+    Target resolution (issue #24): ``target_quarter_id`` picks the exact
+    quarter row (required to disambiguate summer Sessions A/B); legacy
+    ``(target_quarter, target_year)`` resolves when exactly one row matches;
+    with neither, the source's own quarter row is the target. Weeks are
+    validated against the row's real length — no hardcoded 11.
 
     Raises:
         HTTPException(404): source event not found.
-        HTTPException(400): no target weeks / week out of range 1..11 / bad quarter.
+        HTTPException(400): no/invalid target weeks, week beyond the target
+            row's length, unresolvable source/target quarter, or ambiguous
+            summer target.
         HTTPException(409): skip_conflicts=False and at least one target
             week already has an event for the source's module + quarter.
     """
@@ -151,10 +229,10 @@ def duplicate_event(
     deduped: list[int] = []
     seen: set[int] = set()
     for w in target_weeks:
-        if not isinstance(w, int) or w < 1 or w > 11:
+        if not isinstance(w, int) or w < 1:
             raise HTTPException(
                 status_code=400,
-                detail=f"target_weeks entries must be ints 1..11 (got {w!r})",
+                detail=f"target_weeks entries must be ints >= 1 (got {w!r})",
             )
         if w not in seen:
             deduped.append(w)
@@ -178,46 +256,43 @@ def duplicate_event(
             detail="Source event has no week_number — cannot compute shifts.",
         )
 
-    # ---- resolve target quarter ----
-    source_quarter_value = (
-        source.quarter.value
-        if source.quarter is not None and hasattr(source.quarter, "value")
-        else source.quarter
+    # ---- resolve source + target quarter rows (issue #24) ----
+    source_row = _resolve_source_row(db, source)
+    target_row = _resolve_target_row(
+        db,
+        source_row=source_row,
+        target_quarter_id=target_quarter_id,
+        target_quarter=target_quarter,
+        target_year=target_year,
     )
-    resolved_target_quarter = target_quarter or source_quarter_value
-    if resolved_target_quarter is not None:
-        valid_quarters = {q.value for q in models.Quarter}
-        if resolved_target_quarter not in valid_quarters:
-            raise HTTPException(
-                status_code=400,
-                detail=f"target_quarter must be one of {sorted(valid_quarters)}",
-            )
-    cross_quarter = (
-        target_quarter is not None
-        and resolved_target_quarter != source_quarter_value
-    )
+    if int(target_year) != int(target_row.year):
+        raise HTTPException(
+            status_code=400,
+            detail="target_year does not match the selected quarter row",
+        )
+    max_week = quarter_service.weeks_in(target_row)
+    too_big = [w for w in target_weeks if w > max_week]
+    if too_big:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{quarter_service.display_name(target_row)} has {max_week} "
+                f"weeks — invalid target weeks: {too_big}"
+            ),
+        )
+    same_row = target_row.id == source_row.id
 
     # ---- conflict probe ----
-    conflict_quarter = (
-        models.Quarter(resolved_target_quarter)
-        if resolved_target_quarter
-        else source.quarter
-    )
     conflicts = _existing_conflicts(
         db,
-        quarter=conflict_quarter,
-        year=target_year,
+        target_row=target_row,
         week_numbers=target_weeks,
         module_slug=source.module_slug,
     )
     # Don't let admin accidentally duplicate into the source's own week-slot,
     # but only surface it as a conflict if that week was actually requested
-    # and the target quarter matches the source.
-    if (
-        not cross_quarter
-        and source.year == target_year
-        and int(source.week_number) in target_weeks
-    ):
+    # and the target row matches the source's.
+    if same_row and int(source.week_number) in target_weeks:
         conflicts.setdefault(int(source.week_number), str(source.id))
 
     skipped_list: list[dict] = []
@@ -248,38 +323,20 @@ def duplicate_event(
         list(source.form_schema) if source.form_schema is not None else None
     )
 
-    # For cross-quarter copies, compute the base shift from the source's
-    # week-1 anchor to the target quarter's week-1 anchor. Per-target-week
-    # shifts add (target_week - 1) * 7 days on top.
-    base_shift: Optional[timedelta] = None
-    if cross_quarter:
-        source_anchor = _quarter_week_start(
-            int(source.year), source_quarter_value, int(source.week_number)
-        )
-        target_anchor = _quarter_week_start(
-            int(target_year), resolved_target_quarter, 1
-        )
-        if source_anchor is None or target_anchor is None:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Cannot duplicate across quarters: missing anchor for "
-                    f"source={source_quarter_value} {source.year} or "
-                    f"target={resolved_target_quarter} {target_year}."
-                ),
-            )
-        base_shift = target_anchor - source_anchor
+    # Shift computation: same-row targets keep simple week deltas; cross-row
+    # targets align the source's week-start to the target row's week-start,
+    # both real calendar dates from the entered ranges.
+    source_anchor = quarter_service.week_start(source_row, int(source.week_number))
 
     created_events: list[models.Event] = []
     try:
         for week in target_weeks:
             if week in conflicts:
                 continue
-            if cross_quarter and base_shift is not None:
-                shift = base_shift + timedelta(weeks=week - 1)
+            if same_row:
+                shift = timedelta(weeks=week - int(source.week_number))
             else:
-                week_delta = week - int(source.week_number)
-                shift = timedelta(weeks=week_delta)
+                shift = quarter_service.week_start(target_row, week) - source_anchor
 
             new_event = models.Event(
                 owner_id=actor.id,
@@ -304,13 +361,10 @@ def duplicate_event(
                 venue_code=source.venue_code,
                 module_slug=source.module_slug,
                 reminder_1h_enabled=source.reminder_1h_enabled,
-                quarter=(
-                    models.Quarter(resolved_target_quarter)
-                    if resolved_target_quarter
-                    else source.quarter
-                ),
-                year=target_year,
+                quarter=target_row.season,
+                year=int(target_row.year),
                 week_number=week,
+                quarter_id=target_row.id,
                 school=source.school,
                 form_schema=source_form_schema,
             )
@@ -345,7 +399,8 @@ def duplicate_event(
                 "target_event_ids": [str(e.id) for e in created_events],
                 "target_weeks": target_weeks,
                 "target_year": target_year,
-                "target_quarter": resolved_target_quarter,
+                "target_quarter": target_row.season.value,
+                "target_quarter_id": str(target_row.id),
                 "skip_conflicts": skip_conflicts,
                 "skipped_weeks": [s["week"] for s in skipped_list],
             },

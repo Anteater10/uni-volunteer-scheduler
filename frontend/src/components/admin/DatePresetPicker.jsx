@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { currentQuarter } from "../../lib/quarter";
+import { activeOrRecentQuarter } from "../../lib/weekUtils";
 
 const LABELS = {
   "24h": "Last 24h",
@@ -16,14 +16,22 @@ function isoDaysAgo(days, now = new Date()) {
 /**
  * Compute {from, to} ISO strings for a given preset.
  * Exported for tests and reuse.
+ *
+ * Issue #24: the "quarter" preset derives from the admin-entered quarter
+ * rows (pass them as the third argument) — the row covering `now`, else the
+ * most recently ended one. Empty range when no quarters are entered.
  */
-export function rangeForPreset(preset, now = new Date()) {
+export function rangeForPreset(preset, now = new Date(), quarters = []) {
   if (preset === "24h") return { from: isoDaysAgo(1, now), to: now.toISOString() };
   if (preset === "7d") return { from: isoDaysAgo(7, now), to: now.toISOString() };
   if (preset === "30d") return { from: isoDaysAgo(30, now), to: now.toISOString() };
   if (preset === "quarter") {
-    const { start, end } = currentQuarter(now);
-    return { from: start.toISOString(), to: end.toISOString() };
+    const row = activeOrRecentQuarter(quarters, now);
+    if (!row) return { from: null, to: null };
+    const from = new Date(`${row.start_date}T00:00:00Z`);
+    // end_date is inclusive; the exclusive filter bound is the next midnight.
+    const to = new Date(new Date(`${row.end_date}T00:00:00Z`).getTime() + 24 * 3600 * 1000);
+    return { from: from.toISOString(), to: to.toISOString() };
   }
   return { from: null, to: null };
 }
@@ -34,13 +42,19 @@ export function rangeForPreset(preset, now = new Date()) {
  *  - value: { preset, from?, to? }
  *  - onChange: ({ preset, from, to }) => void
  *  - presets: Array<"24h"|"7d"|"30d"|"quarter"|"custom">
+ *  - quarters: admin-entered quarter rows (from useQuarters). The "quarter"
+ *      preset is hidden when none are available.
  */
 export default function DatePresetPicker({
   value = { preset: "7d" },
   onChange,
   presets = ["24h", "7d", "30d", "quarter", "custom"],
+  quarters = null,
 }) {
-  const current = value?.preset || presets[0];
+  const visiblePresets = presets.filter(
+    (p) => p !== "quarter" || (Array.isArray(quarters) && quarters.length > 0),
+  );
+  const current = value?.preset || visiblePresets[0];
 
   function selectPreset(p) {
     if (!onChange) return;
@@ -48,7 +62,7 @@ export default function DatePresetPicker({
       onChange({ preset: "custom", from: value?.from || "", to: value?.to || "" });
       return;
     }
-    const { from, to } = rangeForPreset(p);
+    const { from, to } = rangeForPreset(p, new Date(), quarters || []);
     onChange({ preset: p, from, to });
   }
 
@@ -79,7 +93,7 @@ export default function DatePresetPicker({
         aria-label="Date range presets"
         className="inline-flex rounded-lg border border-gray-200 bg-white p-1"
       >
-        {presets.map((p) => {
+        {visiblePresets.map((p) => {
           const active = current === p;
           return (
             <button

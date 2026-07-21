@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Signup, Slot, Volunteer, SignupStatus
+from ..models import CustomAnswer, SentNotification, Signup, Slot, Volunteer, SignupStatus
 
 router = APIRouter(prefix="/api/v1/test", tags=["test-helpers"])
 
@@ -37,10 +37,26 @@ def seed_cleanup(
     if not volunteer_ids:
         return
 
-    db.query(Signup).filter(
-        Signup.volunteer_id.in_(volunteer_ids),
-        Signup.status == SignupStatus.cancelled,
+    cancelled_ids = [
+        row.id
+        for row in db.query(Signup.id).filter(
+            Signup.volunteer_id.in_(volunteer_ids),
+            Signup.status == SignupStatus.cancelled,
+        )
+    ]
+    if not cancelled_ids:
+        return
+
+    # Dependent rows first — sent_notifications (reminder/magic-link sends
+    # recorded by celery) and custom_answers both FK onto signups, and a
+    # bare delete 500s once either exists.
+    db.query(SentNotification).filter(
+        SentNotification.signup_id.in_(cancelled_ids)
     ).delete(synchronize_session=False)
+    db.query(CustomAnswer).filter(
+        CustomAnswer.signup_id.in_(cancelled_ids)
+    ).delete(synchronize_session=False)
+    db.query(Signup).filter(Signup.id.in_(cancelled_ids)).delete(synchronize_session=False)
     db.commit()
 
 

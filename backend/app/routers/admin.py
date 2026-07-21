@@ -19,13 +19,8 @@ from ..deps import require_role, log_action, ensure_event_owner_or_admin
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
-from ..services import template_service, import_service
+from ..services import template_service, import_service, quarter_service
 from ..services.audit_log_humanize import humanize as humanize_audit_log
-from ..services.quarter import (
-    current_quarter_bounds,
-    previous_quarter_bounds,
-    quarter_progress,
-)
 from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate, CsvImportRead, SentNotificationRead
 from ..tasks.import_csv import process_csv_import
 
@@ -129,7 +124,14 @@ def admin_summary(
     week_over_week.signups instead.
     """
     now = datetime.now(timezone.utc)
-    q_start, q_end = current_quarter_bounds(now)
+    # Issue #24: "this quarter" = the admin-entered quarter covering today,
+    # else the most recently ended one (gaps). With no quarters entered the
+    # window is zero-width so quarter aggregates read 0.
+    active_q = quarter_service.active_or_recent_quarter(db, now.date())
+    if active_q is not None:
+        q_start, q_end = quarter_service.quarter_bounds_utc(active_q)
+    else:
+        q_start = q_end = now
     week_ago = now - timedelta(days=7)
     two_weeks_ago = now - timedelta(days=14)
     week_forward = now + timedelta(days=7)
@@ -354,7 +356,7 @@ def admin_summary(
             "events": events_this_week - events_last_week,
             "signups": signups_this_week - signups_last_week,
         },
-        "quarter_progress": quarter_progress(now),
+        "quarter_progress": quarter_service.quarter_progress(db, now),
         "fill_rate_attention": attention,
         "last_updated": now.isoformat(),
     }
@@ -2034,6 +2036,74 @@ def set_template_default_form_schema(
     return {"slug": slug, "schema": result}
 
 
+# Issue #24 — admin-entered quarters (season, year, label, dates).
+# Weeks self-populate from the range; create/update relink matching events
+# and surface the relink summary so recategorization is visible.
+
+
+@router.get("/quarters", response_model=List[schemas.QuarterRead])
+def list_quarters(
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return quarter_service.list_quarters(db)
+
+
+@router.post("/quarters", response_model=schemas.QuarterWriteResult, status_code=201)
+def create_quarter(
+    payload: schemas.QuarterCreate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    row, summary = quarter_service.create_quarter(db, payload.model_dump(), actor=admin_user)
+    return {"quarter": row, "relink_summary": summary}
+
+
+@router.patch("/quarters/{quarter_id}", response_model=schemas.QuarterWriteResult)
+def update_quarter(
+    quarter_id: uuid_mod.UUID,
+    payload: schemas.QuarterUpdate,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    row, summary = quarter_service.update_quarter(
+        db, quarter_id, payload.model_dump(exclude_unset=True), actor=admin_user
+    )
+    return {"quarter": row, "relink_summary": summary}
+
+
+@router.delete("/quarters/{quarter_id}", status_code=204)
+def delete_quarter(
+    quarter_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    quarter_service.delete_quarter(db, quarter_id, actor=admin_user)
+    return Response(status_code=204)
+
+
+# Issue #33 — explicit archiving of past quarters. Archived rows stay
+# listed and deep-linkable; current-week resolution skips them.
+
+
+@router.post("/quarters/{quarter_id}/archive", response_model=schemas.QuarterRead)
+def archive_quarter(
+    quarter_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return quarter_service.archive_quarter(db, quarter_id, actor=admin_user)
+
+
+@router.post("/quarters/{quarter_id}/restore", response_model=schemas.QuarterRead)
+def restore_quarter(
+    quarter_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return quarter_service.restore_quarter(db, quarter_id, actor=admin_user)
+
+
 # Phase 23 — recurring event duplication
 @router.post("/events/{event_id}/duplicate")
 def duplicate_event(
@@ -2071,6 +2141,7 @@ def duplicate_event(
     target_weeks = body.get("target_weeks") or []
     target_year = body.get("target_year")
     target_quarter = body.get("target_quarter")
+    target_quarter_id = body.get("target_quarter_id")
     skip_conflicts = bool(body.get("skip_conflicts", True))
     if not isinstance(target_weeks, list):
         raise HTTPException(status_code=422, detail="target_weeks must be a list")
@@ -2078,12 +2149,18 @@ def duplicate_event(
         raise HTTPException(status_code=422, detail="target_year must be an int")
     if target_quarter is not None and not isinstance(target_quarter, str):
         raise HTTPException(status_code=422, detail="target_quarter must be a string")
+    if target_quarter_id is not None:
+        try:
+            target_quarter_id = uuid_mod.UUID(str(target_quarter_id))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="target_quarter_id must be a UUID")
     return event_duplication_service.duplicate_event(
         db,
         source_event_id=event_id,
         target_weeks=[int(w) for w in target_weeks],
         target_year=target_year,
         target_quarter=target_quarter,
+        target_quarter_id=target_quarter_id,
         skip_conflicts=skip_conflicts,
         actor=admin_user,
     )

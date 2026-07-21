@@ -9,39 +9,40 @@
 // Props:
 //  - open (bool)
 //  - onClose ()
-//  - sourceEvent — { id, title, quarter, year, week_number, module_slug }
-//  - existingEvents — optional array of { id, week_number, year } used to
-//      highlight conflict weeks without a round-trip. Parent passes the
-//      events visible for the same quarter/module. Safe to omit; backend
+//  - sourceEvent — { id, title, quarter, year, week_number, quarter_id, module_slug }
+//  - existingEvents — optional array of { id, week_number, year, quarter_id }
+//      used to highlight conflict weeks without a round-trip. Parent passes
+//      the events visible for the same quarter/module. Safe to omit; backend
 //      does the authoritative check.
+//  - quarters — admin-entered quarter rows (from useQuarters). Issue #24:
+//      duplication targets a quarter ROW; weeks come from its real length.
 //  - onSubmit (payload) → Promise<result>
 //  - submitting (bool)
 
 import React, { useMemo, useState } from "react";
 import SideDrawer from "./SideDrawer";
 import { Button, Chip, Label } from "../ui";
+import { activeQuarters, findQuarterById } from "../../lib/weekUtils";
 
-const WEEKS_PER_QUARTER = 11;
-const QUARTERS = ["winter", "spring", "summer", "fall"];
-
-function isConflictWeek(
-  week,
-  targetYear,
-  targetQuarter,
-  existingEvents,
-  sourceEvent,
-) {
-  if (!Array.isArray(existingEvents)) return false;
-  return existingEvents.some(
-    (e) =>
-      e &&
-      e.id !== sourceEvent?.id &&
-      Number(e.week_number) === week &&
-      Number(e.year) === Number(targetYear) &&
-      (targetQuarter == null || e.quarter == null || e.quarter === targetQuarter) &&
-      (sourceEvent?.module_slug == null ||
-        e.module_slug === sourceEvent.module_slug),
-  );
+function isConflictWeek(week, targetRow, existingEvents, sourceEvent) {
+  if (!Array.isArray(existingEvents) || !targetRow) return false;
+  return existingEvents.some((e) => {
+    if (!e || e.id === sourceEvent?.id) return false;
+    if (
+      sourceEvent?.module_slug != null &&
+      e.module_slug != null &&
+      e.module_slug !== sourceEvent.module_slug
+    ) {
+      return false;
+    }
+    if (Number(e.week_number) !== week) return false;
+    if (e.quarter_id != null) return e.quarter_id === targetRow.id;
+    // Legacy rows without quarter_id: fall back to the (season, year) cache.
+    return (
+      Number(e.year) === Number(targetRow.year) &&
+      (e.quarter == null || e.quarter === targetRow.season)
+    );
+  });
 }
 
 export default function DuplicateEventDrawer({
@@ -49,16 +50,17 @@ export default function DuplicateEventDrawer({
   onClose,
   sourceEvent,
   existingEvents,
+  quarters,
   onSubmit,
   submitting = false,
 }) {
-  const sourceYear = sourceEvent?.year ?? new Date().getFullYear();
   const sourceWeek = sourceEvent?.week_number ?? null;
-  const sourceQuarter = sourceEvent?.quarter ?? null;
+  const rows = activeQuarters(quarters || []);
 
   const [selectedWeeks, setSelectedWeeks] = useState([]);
-  const [targetYear, setTargetYear] = useState(sourceYear);
-  const [targetQuarter, setTargetQuarter] = useState(sourceQuarter);
+  const [targetQuarterId, setTargetQuarterId] = useState(
+    sourceEvent?.quarter_id ?? null,
+  );
   const [skipConflicts, setSkipConflicts] = useState(true);
   const [submitError, setSubmitError] = useState("");
 
@@ -66,42 +68,37 @@ export default function DuplicateEventDrawer({
   React.useEffect(() => {
     if (!open) return;
     setSelectedWeeks([]);
-    setTargetYear(sourceYear);
-    setTargetQuarter(sourceQuarter);
+    setTargetQuarterId(sourceEvent?.quarter_id ?? null);
     setSkipConflicts(true);
     setSubmitError("");
-  }, [open, sourceEvent?.id, sourceYear, sourceQuarter]);
+  }, [open, sourceEvent?.id, sourceEvent?.quarter_id]);
 
-  const crossQuarter =
-    targetQuarter != null && sourceQuarter != null && targetQuarter !== sourceQuarter;
+  const targetRow = findQuarterById(rows, targetQuarterId);
+  const weeksCount = targetRow?.weeks_in_quarter ?? 0;
+  const crossQuarter = !!(
+    targetRow &&
+    sourceEvent?.quarter_id &&
+    targetRow.id !== sourceEvent.quarter_id
+  );
+
+  function selectTargetRow(id) {
+    setTargetQuarterId(id);
+    setSelectedWeeks([]);
+  }
 
   const conflictSet = useMemo(() => {
     const set = new Set();
-    for (let w = 1; w <= WEEKS_PER_QUARTER; w += 1) {
-      if (
-        isConflictWeek(w, targetYear, targetQuarter, existingEvents, sourceEvent)
-      ) {
+    for (let w = 1; w <= weeksCount; w += 1) {
+      if (isConflictWeek(w, targetRow, existingEvents, sourceEvent)) {
         set.add(w);
       }
     }
-    // Source's own week is effectively a conflict when year + quarter match.
-    if (
-      !crossQuarter &&
-      Number(targetYear) === Number(sourceYear) &&
-      sourceWeek
-    ) {
+    // Source's own week is effectively a conflict within its own row.
+    if (!crossQuarter && sourceWeek && targetRow) {
       set.add(sourceWeek);
     }
     return set;
-  }, [
-    targetYear,
-    targetQuarter,
-    existingEvents,
-    sourceEvent,
-    sourceYear,
-    sourceWeek,
-    crossQuarter,
-  ]);
+  }, [weeksCount, targetRow, existingEvents, sourceEvent, sourceWeek, crossQuarter]);
 
   function toggleWeek(w) {
     setSelectedWeeks((prev) =>
@@ -115,17 +112,18 @@ export default function DuplicateEventDrawer({
 
   const submitDisabled =
     submitting ||
+    !targetRow ||
     selectedWeeks.length === 0 ||
     (conflictingSelected.length > 0 && !skipConflicts && creatingCount === 0);
 
   async function handleSubmit() {
     setSubmitError("");
-    if (!sourceEvent) return;
+    if (!sourceEvent || !targetRow) return;
     try {
       await onSubmit({
         target_weeks: selectedWeeks,
-        target_year: Number(targetYear),
-        target_quarter: targetQuarter || undefined,
+        target_year: Number(targetRow.year),
+        target_quarter_id: targetRow.id,
         skip_conflicts: skipConflicts,
       });
     } catch (err) {
@@ -145,7 +143,7 @@ export default function DuplicateEventDrawer({
             <p className="text-sm">
               Duplicating <strong>{sourceEvent.title}</strong> (
               {sourceEvent.module_slug || "no module"}, quarter{" "}
-              {sourceEvent.quarter || "?"}, year {sourceYear}, week{" "}
+              {sourceEvent.quarter || "?"}, year {sourceEvent.year ?? "?"}, week{" "}
               {sourceWeek ?? "?"}).
             </p>
           </div>
@@ -153,17 +151,22 @@ export default function DuplicateEventDrawer({
           <div>
             <Label>Target quarter</Label>
             <div className="flex flex-wrap gap-2 mt-1">
-              {QUARTERS.map((q) => (
+              {rows.map((row) => (
                 <Chip
-                  key={q}
-                  active={targetQuarter === q}
-                  onClick={() => setTargetQuarter(q)}
-                  data-testid={`quarter-chip-${q}`}
+                  key={row.id}
+                  active={targetQuarterId === row.id}
+                  onClick={() => selectTargetRow(row.id)}
+                  data-testid={`quarter-chip-${row.id}`}
                 >
-                  {q.charAt(0).toUpperCase() + q.slice(1)}
+                  {row.display_name}
                 </Chip>
               ))}
             </div>
+            {rows.length === 0 && (
+              <p className="text-xs text-amber-700 mt-2">
+                No quarters entered yet — add them in Admin → Quarters first.
+              </p>
+            )}
             {crossQuarter && (
               <p className="text-xs text-amber-700 mt-2">
                 Cross-quarter copy: week dates will be shifted to the target
@@ -171,22 +174,6 @@ export default function DuplicateEventDrawer({
                 quarter; the server re-checks before committing.
               </p>
             )}
-          </div>
-
-          <div>
-            <Label>Target year</Label>
-            <div className="flex gap-2 mt-1">
-              {[sourceYear, sourceYear + 1].map((y) => (
-                <Chip
-                  key={y}
-                  active={Number(targetYear) === y}
-                  onClick={() => setTargetYear(y)}
-                  data-testid={`year-chip-${y}`}
-                >
-                  {y}
-                </Chip>
-              ))}
-            </div>
           </div>
 
           <div>
@@ -200,7 +187,7 @@ export default function DuplicateEventDrawer({
               role="group"
               aria-label="target weeks"
             >
-              {Array.from({ length: WEEKS_PER_QUARTER }, (_, i) => i + 1).map(
+              {Array.from({ length: weeksCount }, (_, i) => i + 1).map(
                 (week) => {
                   const conflict = conflictSet.has(week);
                   const selected = selectedWeeks.includes(week);

@@ -24,6 +24,7 @@ import SideDrawer from "../components/admin/SideDrawer";
 import DatePresetPicker from "../components/admin/DatePresetPicker";
 import Pagination from "../components/admin/Pagination";
 import RoleBadge from "../components/admin/RoleBadge";
+import { useQuarters } from "../lib/useQuarters";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,8 @@ function useDebounced(value, delay = 300) {
 // ---------------------------------------------------------------------------
 
 export default function AuditLogsPage() {
+  // Issue #24: the "This quarter" preset needs the entered quarter rows.
+  const quartersQ = useQuarters();
   useAdminPageTitle("Audit Logs");
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -265,6 +268,7 @@ export default function AuditLogsPage() {
             value={{ preset, from: fromDate, to: toDate }}
             onChange={onPresetChange}
             presets={["24h", "7d", "30d", "quarter", "custom"]}
+            quarters={quartersQ.data}
           />
         </div>
 

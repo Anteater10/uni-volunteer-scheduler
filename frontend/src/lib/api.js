@@ -380,6 +380,10 @@ async function adminResendSignup(signupId) {
 async function publicGetCurrentWeek() {
   return request("/public/current-week", { method: "GET", auth: false });
 }
+async function publicGetQuarters() {
+  // Issue #24: ordered admin-entered quarter rows — powers week navigation.
+  return request("/public/quarters", { method: "GET", auth: false });
+}
 async function publicListEvents(params) {
   return request("/public/events", { method: "GET", auth: false, params });
 }
@@ -578,6 +582,7 @@ export const api = {
   // public (unauthenticated) — phase 10
   public: {
     getCurrentWeek: () => publicGetCurrentWeek(),
+    getQuarters: () => publicGetQuarters(),
     listEvents: (params) => publicListEvents(params),
     getEvent: (id) => publicGetEvent(id),
     createSignup: (body) => publicCreateSignup(body),
@@ -739,6 +744,17 @@ export const api = {
         request("/admin/analytics/module-popularity", { method: "GET", params }),
       modulePopularityCsv: (params = {}) =>
         downloadBlob("/admin/analytics/module-popularity.csv", "module-popularity.csv", { params }),
+    },
+    // Issue #24 — admin-entered quarters. create/update responses are
+    // { quarter, relink_summary } so callers can surface recategorization.
+    quarters: {
+      list: () => request("/admin/quarters"),
+      create: (payload) => request("/admin/quarters", { method: "POST", body: payload }),
+      update: (id, payload) => request(`/admin/quarters/${id}`, { method: "PATCH", body: payload }),
+      remove: (id) => request(`/admin/quarters/${id}`, { method: "DELETE" }),
+      // Issue #33 — explicit archiving of past quarters.
+      archive: (id) => request(`/admin/quarters/${id}/archive`, { method: "POST" }),
+      restore: (id) => request(`/admin/quarters/${id}/restore`, { method: "POST" }),
     },
     templates: {
       list: (params) => request("/admin/module-templates", { params }),

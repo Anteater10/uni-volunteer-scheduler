@@ -24,6 +24,22 @@ const noShowRatesCsv = vi.fn(async () => {});
 
 vi.mock("../../../lib/api", () => ({
   default: {
+    public: {
+      // Issue #24: "this quarter" bounds come from the entered quarter rows.
+      getQuarters: vi.fn(async () => [
+        {
+          id: "spring-26",
+          season: "spring",
+          year: 2026,
+          label: "",
+          start_date: "2026-03-30",
+          end_date: "2026-06-14",
+          weeks_in_quarter: 11,
+          display_name: "Spring 2026",
+          archived_at: null,
+        },
+      ]),
+    },
     admin: {
       analytics: {
         volunteerHours: (p) => volunteerHours(p),

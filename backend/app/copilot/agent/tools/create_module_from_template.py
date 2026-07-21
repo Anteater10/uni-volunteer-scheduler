@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools.base import Tool
-from app.models import Event, ModuleTemplate, User, UserRole
+from app.models import Event, ModuleTemplate, Quarter, User, UserRole
+from app.services import quarter_service
 
 _PII_SCHEMA = ["new_module_id", "name", "week"]
 
@@ -51,12 +52,23 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     if template is None:
         return dict(_TEMPLATE_NOT_FOUND)
 
-    year_part, week_part = week.split("-W")
-    year = int(year_part)
-    week_number = int(week_part)
     monday = _iso_week_monday(week)
     start_dt = datetime.combine(monday, time(0, 0), tzinfo=timezone.utc)
     end_dt = start_dt + timedelta(minutes=template.duration_minutes)
+
+    # Issue #24: the quarter/year/week_number cache derives from the
+    # admin-entered quarter ranges — same rule as every other write path.
+    # The tool keeps speaking ISO weeks on the wire; only persistence is
+    # quarter-relative.
+    derived = quarter_service.derive_quarter_week(db, monday)
+    if derived is None:
+        return {
+            "error": (
+                f"No quarter covers {monday.isoformat()} — ask an admin to "
+                "add it in Admin → Quarters first"
+            )
+        }
+    season_value, year, week_number, quarter_id = derived
 
     owner_id = scope.caller_id
     if owner_id is None:
@@ -75,8 +87,10 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         module_slug=template.slug,
         start_date=start_dt,
         end_date=end_dt,
+        quarter=Quarter(season_value),
         year=year,
         week_number=week_number,
+        quarter_id=quarter_id,
     )
     db.add(event)
     db.flush()

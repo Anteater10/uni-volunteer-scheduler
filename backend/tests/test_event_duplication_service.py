@@ -22,6 +22,35 @@ from app.models import (
     UserRole,
 )
 from app.services import event_duplication_service
+from tests.fixtures.factories import AcademicQuarterFactory
+
+
+@pytest.fixture(autouse=True)
+def spring_2026(db_session):
+    """Issue #24: duplication resolves source/target against entered quarters."""
+    AcademicQuarterFactory._meta.sqlalchemy_session = db_session
+    q = AcademicQuarterFactory(
+        season=Quarter.SPRING,
+        year=2026,
+        start_date=date_type(2026, 3, 30),
+        end_date=date_type(2026, 6, 14),
+    )
+    db_session.flush()
+    return q
+
+
+def _make_session_quarters(db_session):
+    AcademicQuarterFactory._meta.sqlalchemy_session = db_session
+    session_a = AcademicQuarterFactory(
+        season=Quarter.SUMMER, year=2026, label="Session A",
+        start_date=date_type(2026, 6, 22), end_date=date_type(2026, 7, 31),
+    )
+    session_b = AcademicQuarterFactory(
+        season=Quarter.SUMMER, year=2026, label="Session B",
+        start_date=date_type(2026, 8, 3), end_date=date_type(2026, 9, 11),
+    )
+    db_session.flush()
+    return session_a, session_b
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +338,140 @@ def test_duplicate_preserves_null_form_schema(db_session):
     ids = [c["id"] for c in result["created"]]
     new_ev = db_session.query(Event).filter(Event.id == ids[0]).first()
     assert new_ev.form_schema is None
+
+
+# ---------------------------------------------------------------------------
+# Issue #24 — session-aware duplication on entered quarter rows
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_links_created_events_to_quarter_row(db_session, spring_2026):
+    admin = _make_admin(db_session)
+    source = _make_source_event(db_session, owner=admin)
+
+    result = event_duplication_service.duplicate_event(
+        db_session,
+        source_event_id=source.id,
+        target_weeks=[5],
+        target_year=2026,
+        skip_conflicts=True,
+        actor=admin,
+    )
+    ev = db_session.query(Event).filter(Event.id == result["created"][0]["id"]).one()
+    assert ev.quarter_id == spring_2026.id
+
+
+def test_duplicate_validates_weeks_against_session_length(db_session):
+    admin = _make_admin(db_session)
+    source = _make_source_event(db_session, owner=admin)
+    session_a, _ = _make_session_quarters(db_session)
+
+    with pytest.raises(HTTPException) as exc:
+        event_duplication_service.duplicate_event(
+            db_session,
+            source_event_id=source.id,
+            target_weeks=[7],  # Session A only has 6 weeks
+            target_year=2026,
+            skip_conflicts=True,
+            actor=admin,
+            target_quarter_id=session_a.id,
+        )
+    assert exc.value.status_code == 400
+    assert "6" in str(exc.value.detail)
+
+
+def test_duplicate_cross_quarter_into_session(db_session, spring_2026):
+    admin = _make_admin(db_session)
+    source = _make_source_event(db_session, owner=admin)  # spring week 4 (Apr 20)
+    session_a, _ = _make_session_quarters(db_session)
+
+    result = event_duplication_service.duplicate_event(
+        db_session,
+        source_event_id=source.id,
+        target_weeks=[1],
+        target_year=2026,
+        skip_conflicts=True,
+        actor=admin,
+        target_quarter_id=session_a.id,
+    )
+    assert len(result["created"]) == 1
+    ev = db_session.query(Event).filter(Event.id == result["created"][0]["id"]).one()
+    assert ev.quarter == Quarter.SUMMER
+    assert ev.quarter_id == session_a.id
+    assert ev.week_number == 1
+    # Source sat on the Monday of spring week 4 (Apr 20); Session A week 1
+    # starts Jun 22 — the copy lands exactly there.
+    assert ev.start_date.date().isoformat() == "2026-06-22"
+
+
+def test_duplicate_legacy_summer_target_is_ambiguous(db_session):
+    admin = _make_admin(db_session)
+    source = _make_source_event(db_session, owner=admin)
+    _make_session_quarters(db_session)
+
+    with pytest.raises(HTTPException) as exc:
+        event_duplication_service.duplicate_event(
+            db_session,
+            source_event_id=source.id,
+            target_weeks=[1],
+            target_year=2026,
+            skip_conflicts=True,
+            actor=admin,
+            target_quarter="summer",
+        )
+    assert exc.value.status_code == 400
+    assert "target_quarter_id" in str(exc.value.detail)
+
+
+def test_duplicate_legacy_target_without_entered_quarter_rejected(db_session):
+    admin = _make_admin(db_session)
+    source = _make_source_event(db_session, owner=admin)
+
+    with pytest.raises(HTTPException) as exc:
+        event_duplication_service.duplicate_event(
+            db_session,
+            source_event_id=source.id,
+            target_weeks=[1],
+            target_year=2026,
+            skip_conflicts=True,
+            actor=admin,
+            target_quarter="fall",  # never entered
+        )
+    assert exc.value.status_code == 400
+    assert "Admin → Quarters" in str(exc.value.detail)
+
+
+def test_duplicate_endpoint_accepts_target_quarter_id(client, db_session):
+    """Router-level: target_quarter_id round-trips through the admin endpoint."""
+    from tests.fixtures.helpers import auth_headers
+
+    admin = _make_admin(db_session)
+    db_session.commit()
+    headers = auth_headers(client, admin)
+    source = _make_source_event(db_session, owner=admin)
+    session_a, _ = _make_session_quarters(db_session)
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/events/{source.id}/duplicate",
+        json={
+            "target_weeks": [1],
+            "target_year": 2026,
+            "target_quarter_id": str(session_a.id),
+            "skip_conflicts": True,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    created = resp.json()["created"]
+    assert len(created) == 1
+
+    ev = db_session.query(Event).filter(Event.id == created[0]["id"]).one()
+    assert ev.quarter_id == session_a.id
+
+    resp = client.post(
+        f"/api/v1/admin/events/{source.id}/duplicate",
+        json={"target_weeks": [2], "target_year": 2026, "target_quarter_id": "not-a-uuid"},
+        headers=headers,
+    )
+    assert resp.status_code == 422

@@ -42,6 +42,10 @@ def engine():
     # we just have to register it on test_uvs.
     with eng.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # feat/24-quarters: the quarters table declares a gist EXCLUDE
+        # constraint over daterange(start_date, end_date), which needs
+        # btree_gist registered before metadata.create_all() emits the DDL.
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS btree_gist"))
     Base.metadata.create_all(eng)
     yield eng
     Base.metadata.drop_all(eng)

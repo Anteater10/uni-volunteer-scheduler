@@ -96,12 +96,13 @@ export default function OverviewSection() {
 
   const s = summaryQ.data || {};
   const wow = s.week_over_week || {};
-  const qp = s.quarter_progress || { week: 0, of: 11, pct: 0 };
+  // Issue #24: quarter_progress is null between quarters / with none entered.
+  const qp = s.quarter_progress || null;
   const attention = Array.isArray(s.fill_rate_attention)
     ? s.fill_rate_attention.slice(0, 20)
     : [];
   const attendancePct = Math.round((s.attendance_rate_quarter || 0) * 100);
-  const quarterPct = Math.round((qp.pct || 0) * 100);
+  const quarterPct = qp ? Math.round((qp.pct || 0) * 100) : 0;
   const activityRows = Array.isArray(activityQ.data)
     ? activityQ.data
     : activityQ.data?.items || [];
@@ -146,22 +147,34 @@ export default function OverviewSection() {
       </div>
 
       {/* ---------------- Quarter progress bar ---------------- */}
-      <Card>
-        <div className="flex items-center justify-between text-sm">
-          <span className="font-medium">
-            Week {qp.week} of {qp.of}
-          </span>
-          <span className="text-gray-600">
-            {quarterPct}% through the quarter
-          </span>
-        </div>
-        <div className="mt-2 h-2 w-full rounded bg-gray-200">
-          <div
-            className="h-2 rounded bg-blue-500"
-            style={{ width: `${quarterPct}%` }}
-          />
-        </div>
-      </Card>
+      {qp ? (
+        <Card>
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-medium">
+              Week {qp.week} of {qp.of}
+            </span>
+            <span className="text-gray-600">
+              {quarterPct}% through the quarter
+            </span>
+          </div>
+          <div className="mt-2 h-2 w-full rounded bg-gray-200">
+            <div
+              className="h-2 rounded bg-blue-500"
+              style={{ width: `${quarterPct}%` }}
+            />
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <div className="text-sm">
+            <span className="font-medium">Between quarters</span>
+            <span className="ml-2 text-gray-600">
+              Progress resumes when the next quarter starts — quarter stats
+              below cover the most recent quarter.
+            </span>
+          </div>
+        </Card>
+      )}
 
       {/* ---------------- Hours + attendance headlines ---------------- */}
       <div className="grid gap-4 md:grid-cols-2">

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_owner_or_admin
-from .public.events import derive_quarter_week
+from ..services import quarter_service
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -91,16 +91,20 @@ def create_event(
     signup_open_at = _normalize_dt(event_in.signup_open_at) if event_in.signup_open_at else None
     signup_close_at = _normalize_dt(event_in.signup_close_at) if event_in.signup_close_at else None
 
-    # Derive quarter/year/week_number from start_date when the caller omits them,
-    # so admin-created events remain visible through the public week filter.
-    quarter = event_in.quarter
-    year = event_in.year
-    week_number = event_in.week_number
-    if quarter is None or year is None or week_number is None:
-        d_quarter, d_year, d_week = derive_quarter_week(start_date.date())
-        quarter = quarter or d_quarter
-        year = year or d_year
-        week_number = week_number or d_week
+    # Issue #24 decision 6: every event belongs to an admin-entered quarter.
+    # quarter/year/week_number are a derived cache — always computed from the
+    # entered range; explicit values in the payload are overridden.
+    derived = quarter_service.derive_quarter_week(db, start_date.date())
+    if derived is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No quarter covers {start_date.date().isoformat()} — "
+                "add it in Admin → Quarters first"
+            ),
+        )
+    season_value, year, week_number, quarter_id = derived
+    quarter = models.Quarter(season_value)
 
     event = models.Event(
         owner_id=current_user.id,
@@ -117,6 +121,7 @@ def create_event(
         quarter=quarter,
         year=year,
         week_number=week_number,
+        quarter_id=quarter_id,
         school=event_in.school,
         module_slug=event_in.module_slug,
     )
@@ -200,6 +205,24 @@ def update_event(
     # the module or backfill a legacy NULL-module event.
     if "module_slug" in data:
         _validate_module_slug(db, data["module_slug"])
+
+    # Issue #24: quarter/year/week_number are a derived cache — never
+    # writable directly. Moving the event re-derives them, and a date no
+    # entered quarter covers is rejected (decision 6).
+    for cache_field in ("quarter", "year", "week_number"):
+        data.pop(cache_field, None)
+    if data.get("start_date") is not None:
+        derived = quarter_service.derive_quarter_week(db, data["start_date"].date())
+        if derived is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"No quarter covers {data['start_date'].date().isoformat()} — "
+                    "add it in Admin → Quarters first"
+                ),
+            )
+        season_value, data["year"], data["week_number"], data["quarter_id"] = derived
+        data["quarter"] = models.Quarter(season_value)
 
     for field, value in data.items():
         setattr(event, field, value)

@@ -5,12 +5,14 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { Link, Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../state/useAuth";
 import DesktopOnlyBanner, {
   useIsDesktop,
 } from "../../components/admin/DesktopOnlyBanner";
 import AdminTopBar from "../../components/admin/AdminTopBar";
+import { useQuarters } from "../../lib/useQuarters";
+import { activeQuarters } from "../../lib/weekUtils";
 
 // ---------------------------------------------------------------------------
 // AdminPageTitleContext
@@ -39,6 +41,8 @@ export function useAdminPageTitle(title) {
 const allNavItems = [
   { to: "/admin", label: "Overview", end: true, roles: ["admin"] },
   { to: "/admin/events", label: "Events", roles: ["admin", "organizer"] },
+  // Issue #24 — admin-entered quarters (season/year/session + dates)
+  { to: "/admin/quarters", label: "Quarters", roles: ["admin"] },
   { to: "/admin/preview", label: "Preview", roles: ["admin", "organizer"] },
   { to: "/admin/users", label: "Users", roles: ["admin"] },
   { to: "/admin/audit-logs", label: "Audit Logs", roles: ["admin"] },
@@ -88,9 +92,33 @@ function NavItem({ to, label, end }) {
 export default function AdminLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const role = user?.role || "participant";
   const isDesktop = useIsDesktop();
   const [pageTitle, setPageTitle] = useState("");
+
+  // Issue #24 — quarter setup guard. With zero quarters entered, every
+  // quarter-dependent feature is blocked, so send admins straight to the
+  // setup page. Separately, warn when today is uncovered with nothing
+  // upcoming — time to transcribe the next quarter's dates.
+  const quartersQ = useQuarters();
+  const quarters = quartersQ.data;
+  const onQuartersPage = location.pathname.startsWith("/admin/quarters");
+  useEffect(() => {
+    if (role !== "admin" || onQuartersPage) return;
+    if (Array.isArray(quarters) && quarters.length === 0) {
+      navigate("/admin/quarters?setup=1", { replace: true });
+    }
+  }, [role, onQuartersPage, quarters, navigate]);
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const liveQuarters = activeQuarters(quarters || []);
+  const showRunwayBanner =
+    role === "admin" &&
+    Array.isArray(quarters) &&
+    quarters.length > 0 &&
+    !liveQuarters.some((q) => q.start_date <= todayIso && q.end_date >= todayIso) &&
+    !liveQuarters.some((q) => q.start_date > todayIso);
 
   // Evaluated per render (not module scope) so tests can stub the env var.
   const copilotEnabled =
@@ -143,6 +171,19 @@ export default function AdminLayout() {
             onSignOut={handleSignOut}
           />
           <div className="p-6 flex-1 min-w-0">
+            {showRunwayBanner && (
+              <div
+                role="status"
+                className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+              >
+                No upcoming quarter is entered — scheduling is paused until
+                you add the next quarter's dates.{" "}
+                <Link to="/admin/quarters" className="font-semibold underline">
+                  Enter it in Quarters
+                </Link>
+                .
+              </div>
+            )}
             {isDesktop ? <Outlet /> : <DesktopOnlyBanner />}
           </div>
         </main>

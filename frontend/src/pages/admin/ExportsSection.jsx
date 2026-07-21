@@ -1,10 +1,10 @@
 // src/pages/admin/ExportsSection.jsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import api from "../../lib/api";
 import { Card, Button, Skeleton, EmptyState } from "../../components/ui";
-import DatePresetPicker from "../../components/admin/DatePresetPicker";
-import { currentQuarter } from "../../lib/quarter";
+import DatePresetPicker, { rangeForPreset } from "../../components/admin/DatePresetPicker";
+import { useQuarters } from "../../lib/useQuarters";
 import { useAdminPageTitle } from "./AdminLayout";
 
 function toParams(dateState) {
@@ -23,12 +23,16 @@ function AnalyticsPanel({
   columns,
   renderRow,
 }) {
-  const { start: qStart, end: qEnd } = currentQuarter();
-  const [dateState, setDateState] = useState({
-    preset: "quarter",
-    from: qStart.toISOString(),
-    to: qEnd.toISOString(),
-  });
+  // Issue #24: "this quarter" bounds come from the admin-entered quarter
+  // rows; the range fills in once they load (unfiltered until then).
+  const quartersQ = useQuarters();
+  const quarters = quartersQ.data;
+  const [dateState, setDateState] = useState({ preset: "quarter", from: null, to: null });
+  useEffect(() => {
+    if (!quarters || dateState.preset !== "quarter" || dateState.from) return;
+    const range = rangeForPreset("quarter", new Date(), quarters);
+    if (range.from) setDateState({ preset: "quarter", ...range });
+  }, [quarters, dateState]);
   const params = toParams(dateState);
   const q = useQuery({
     queryKey: [queryKey, params],
@@ -46,6 +50,7 @@ function AnalyticsPanel({
           value={dateState}
           onChange={setDateState}
           presets={["quarter", "last-quarter", "last-12-months", "custom"]}
+          quarters={quarters}
         />
       </div>
       <div className="mt-3 flex justify-end">

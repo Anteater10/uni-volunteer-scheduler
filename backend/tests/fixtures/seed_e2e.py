@@ -104,11 +104,79 @@ def _admin_upsert_user(admin_token: str, email: str, password: str, name: str, r
     raise RuntimeError(f"admin create {email} ({role}) failed: {s} {body}")
 
 
+def _season_for(d: date) -> str:
+    """Rough month→season mapping. Only used to build a stable (season, year)
+    key for the idempotent e2e quarter row — test data, not real UCSB dates."""
+    if d.month <= 3:
+        return "winter"
+    if d.month <= 6:
+        return "spring"
+    if d.month <= 9:
+        return "summer"
+    return "fall"
+
+
+def _ensure_quarters(admin_token: str) -> None:
+    """Ensure an admin-entered quarter covers today through day-after-tomorrow.
+
+    Issue #24: quarter-dependent features (current-week, event create) are
+    blocked until a covering quarter exists, so the seed must enter one first.
+    Idempotent: reuses a covering row; widens the same-(season, year, label)
+    row if it exists but no longer covers; creates otherwise.
+    """
+    today = date.today()
+    need_start = today.isoformat()
+    need_end = (today + timedelta(days=2)).isoformat()
+
+    s, rows = _req("GET", "/admin/quarters", token=admin_token)
+    if s != 200 or not isinstance(rows, list):
+        raise RuntimeError(f"quarter list failed: {s} {rows}")
+
+    for row in rows:
+        if row["start_date"] <= need_start and row["end_date"] >= need_end:
+            print(f"[seed] reusing quarter {row.get('display_name', row['id'])}", file=sys.stderr)
+            return
+
+    season = _season_for(today)
+    desired = {
+        "season": season,
+        "year": today.year,
+        "label": "",
+        "start_date": (today - timedelta(days=21)).isoformat(),
+        "end_date": (today + timedelta(days=42)).isoformat(),
+    }
+    s, body = _req("POST", "/admin/quarters", token=admin_token, json_body=desired)
+    if s in (200, 201):
+        print(f"[seed] created quarter {season} {today.year} ({desired['start_date']} → {desired['end_date']})", file=sys.stderr)
+        return
+
+    if s == 409:
+        # Same-key row exists with stale dates (or the new range overlaps it):
+        # widen that row so it covers the needed window.
+        for row in rows:
+            if row["season"] == season and row["year"] == today.year and row.get("label", "") == "":
+                patch = {
+                    "start_date": min(row["start_date"], desired["start_date"]),
+                    "end_date": max(row["end_date"], desired["end_date"]),
+                }
+                ps, pb = _req("PATCH", f"/admin/quarters/{row['id']}", token=admin_token, json_body=patch)
+                if ps == 200:
+                    print(f"[seed] widened quarter {season} {today.year} to {patch['start_date']} → {patch['end_date']}", file=sys.stderr)
+                    return
+                raise RuntimeError(f"quarter widen failed: {ps} {pb}")
+
+    raise RuntimeError(f"quarter create failed: {s} {body}")
+
+
 def _get_current_week() -> dict:
     """Return {quarter, year, week_number} from the backend."""
     s, body = _req("GET", "/public/current-week")
     if s != 200 or not isinstance(body, dict):
         raise RuntimeError(f"current-week failed: {s} {body}")
+    if not body.get("configured"):
+        raise RuntimeError(
+            "current-week is unconfigured — _ensure_quarters should have entered one"
+        )
     return body
 
 
@@ -467,7 +535,9 @@ def main() -> int:
     )
     organizer_token = _login(ORGANIZER["email"], ORGANIZER["password"])
 
-    # 3. Get current week (so event is in the browseable range)
+    # 3. Ensure a quarter covers the seed window (issue #24 gating), then
+    #    get the current week (so event is in the browseable range)
+    _ensure_quarters(admin_token)
     week = _get_current_week()
     quarter = week["quarter"]
     year = week["year"]

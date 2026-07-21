@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 import re
 
 from app.models import CsvImport, CsvImportStatus, Event, Slot, ModuleTemplate, ModuleType, Quarter, SlotType
+from app.services import quarter_service
 
 
 _KNOWN_PARTNER_SCHOOL_STEMS = (
@@ -60,32 +61,17 @@ def _find_school_in_header(raw_csv: str) -> str | None:
     return None
 
 
-# UCSB quarter start dates — keep in sync with backend/app/routers/public/events.py
-_QUARTER_START_DATES: dict[tuple[int, str], date_cls] = {
-    (2026, "winter"): date_cls(2026, 1, 5),
-    (2026, "spring"): date_cls(2026, 3, 30),
-    (2026, "summer"): date_cls(2026, 6, 22),
-    (2026, "fall"):   date_cls(2026, 9, 21),
-    (2027, "winter"): date_cls(2027, 1, 4),
-}
+def _compute_quarter_week(db: Session, d: date_cls):
+    """Resolve a date against the admin-entered quarters (issue #24).
 
-
-def _compute_quarter_week(d: date_cls) -> tuple[Quarter | None, int | None, int | None]:
-    """Map a calendar date → (quarter, year, week_number 1..11). Returns (None, None, None)
-    when the date does not fall inside a known UCSB quarter window."""
-    best: tuple[int, str] | None = None
-    best_start: date_cls | None = None
-    for (year, quarter), start in _QUARTER_START_DATES.items():
-        if start <= d and (best_start is None or start > best_start):
-            best = (year, quarter)
-            best_start = start
-    if best is None or best_start is None:
-        return (None, None, None)
-    week = ((d - best_start).days // 7) + 1
-    if week < 1 or week > 11:
-        return (None, None, None)
-    quarter_enum = Quarter(best[1])
-    return (quarter_enum, best[0], week)
+    Returns (Quarter, year, week_number, quarter_id), all None when no
+    entered quarter covers the date — the commit rejects such rows.
+    """
+    derived = quarter_service.derive_quarter_week(db, d)
+    if derived is None:
+        return (None, None, None, None)
+    season_value, year, week, quarter_id = derived
+    return (Quarter(season_value), year, week, quarter_id)
 
 
 def create_import(db: Session, user_id: uuid.UUID, filename: str, raw_bytes: bytes) -> CsvImport:
@@ -311,7 +297,7 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
             location = ""
         school = _normalize_school(school)
         capacity = n.get("capacity") or template.default_capacity
-        quarter, year, week = _compute_quarter_week(start_at.date())
+        quarter, year, week, quarter_id = _compute_quarter_week(db, start_at.date())
         normalised_rows.append({
             "start_at": start_at,
             "end_at": end_at,
@@ -321,6 +307,7 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
             "quarter": quarter,
             "year": year,
             "week": week,
+            "quarter_id": quarter_id,
         })
 
     missing_school = [i for i, r in enumerate(normalised_rows) if not r["school"]]
@@ -333,20 +320,41 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
             ),
         )
 
-    # Merge key: (family, school, quarter, year). Orientation sessions may
+    # Issue #24 decision 6: every event belongs to an entered quarter. Rows
+    # dated outside all entered quarters fail the whole commit (atomic) with
+    # the offending dates listed so the admin knows what to enter.
+    uncovered = sorted({
+        r["start_at"].date().isoformat()
+        for r in normalised_rows
+        if r["quarter_id"] is None
+    })
+    if uncovered:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No quarter covers these CSV dates: " + ", ".join(uncovered)
+                + ". Add the quarter in Admin → Quarters, then retry."
+            ),
+        )
+
+    # Merge key: (family, school, quarter row). Orientation sessions may
     # happen the week before the module runs, so keying on week_number would
     # create a separate event — widen to the full quarter so both collapse.
-    groups: dict[tuple[str, Quarter | None, int | None], list[dict]] = {}
+    # Keying on the quarter row (not the season enum) keeps summer Session A
+    # and Session B events separate.
+    groups: dict[tuple[str, object], list[dict]] = {}
     for r in normalised_rows:
-        key = (r["school"], r["quarter"], r["year"])
+        key = (r["school"], r["quarter_id"])
         groups.setdefault(key, []).append(r)
 
     created_events: list[dict] = []
     merged_events: list[dict] = []
     try:
-        for (school, quarter, year), group in groups.items():
+        for (school, quarter_id), group in groups.items():
             group.sort(key=lambda r: r["start_at"])
             first = group[0]
+            quarter = first["quarter"]
+            year = first["year"]
             last_end = max(r["end_at"] for r in group)
             module_week = min(
                 (r["week"] for r in group if r["week"] is not None),
@@ -358,8 +366,7 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
                 .filter(
                     Event.module_slug == family_slug,
                     Event.school == school,
-                    Event.quarter == quarter,
-                    Event.year == year,
+                    Event.quarter_id == quarter_id,
                 )
                 .first()
             )
@@ -378,6 +385,7 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
                     quarter=quarter,
                     year=year,
                     week_number=module_week,
+                    quarter_id=quarter_id,
                     school=school or None,
                 )
                 db.add(event)

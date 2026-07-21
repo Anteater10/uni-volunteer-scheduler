@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import AdminLayout from "../AdminLayout";
 
 // Mock useAuth so the layout renders without a real AuthProvider.
@@ -11,20 +12,49 @@ vi.mock("../../../state/useAuth", () => ({
   }),
 }));
 
+// Issue #24: the layout queries the entered quarters for the setup guard.
+// A quarter covering "today" keeps the guard quiet in these layout tests.
+vi.mock("../../../lib/api", () => ({
+  default: {
+    public: {
+      getQuarters: vi.fn(async () => {
+        const today = new Date();
+        const iso = (d) => d.toISOString().slice(0, 10);
+        return [
+          {
+            id: "q-now",
+            season: "fall",
+            year: today.getFullYear(),
+            label: "",
+            start_date: iso(new Date(today.getTime() - 30 * 86400000)),
+            end_date: iso(new Date(today.getTime() + 40 * 86400000)),
+            weeks_in_quarter: 11,
+            display_name: "Current quarter",
+            archived_at: null,
+          },
+        ];
+      }),
+    },
+  },
+}));
+
 function renderAtDesktop(width = 1200) {
   Object.defineProperty(window, "innerWidth", {
     writable: true,
     configurable: true,
     value: width,
   });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={["/admin"]}>
-      <Routes>
-        <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<div data-testid="child-outlet">OUTLET CONTENT</div>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/admin"]}>
+        <Routes>
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<div data-testid="child-outlet">OUTLET CONTENT</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

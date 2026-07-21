@@ -44,6 +44,7 @@ import OrganizerDashboard from "./pages/organizer/OrganizerDashboard";
 
 import AdminLayout from "./pages/admin/AdminLayout";
 import OverviewSection from "./pages/admin/OverviewSection";
+import QuartersSection from "./pages/admin/QuartersSection";
 import { useAuth } from "./state/useAuth";
 
 function AdminIndexRoute() {
@@ -133,6 +134,7 @@ export default function App() {
             <Route path="help" element={<HelpSection />} />
             {/* Admin-only surfaces */}
             <Route element={<ProtectedRoute roles={["admin"]} />}>
+              <Route path="quarters" element={<QuartersSection />} />
               <Route path="users" element={<UsersAdminPage />} />
               <Route path="audit-logs" element={<AuditLogsPage />} />
               <Route path="exports" element={<ExportsSection />} />
