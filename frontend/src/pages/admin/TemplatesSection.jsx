@@ -154,17 +154,20 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
         </select>
       </div>
 
-      {/* Links to module (orientation only) */}
+      {/* Links to module (orientation only). Issue #30: an orientation must
+          name the module family it credits — a standalone orientation would
+          mint a credit family nothing ever checks against. */}
       {form.type === "orientation" && (
         <div>
           <Label htmlFor="tf-family">Links to module</Label>
           <select
             id="tf-family"
+            required
             value={form.family_key || ""}
             onChange={(e) => setForm((p) => ({ ...p, family_key: e.target.value }))}
             className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
           >
-            <option value="">— None (standalone orientation) —</option>
+            <option value="">Select the module this orientation credits…</option>
             {moduleTemplates.map((m) => (
               <option key={m.slug} value={m.family_key || m.slug}>
                 {m.name}
@@ -172,7 +175,9 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
             ))}
           </select>
           <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-            Pair this orientation with a module so CSV imports merge into one event (orientation slots + module slots).
+            Attending this orientation earns credit for the linked module for
+            the rest of that quarter. CSV imports also merge the pair into one
+            event (orientation slots + module slots).
           </p>
         </div>
       )}
