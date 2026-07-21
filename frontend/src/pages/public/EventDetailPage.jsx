@@ -1,17 +1,39 @@
 // src/pages/public/EventDetailPage.jsx
 //
-// SignUpGenius-style event detail page.
-// Table layout: Date | Location | Time | Slot (name + volunteers) | Sign Up
-// Orientations first, then period slots grouped by day.
+// Volunteer-facing sign-up page.
+// Two slot layouts split at the Tailwind `md` (768px) breakpoint:
+//   • Desktop (md+): one <table> for Orientation and one for Modules (period
+//     slots). Each row shows date/time/location, availability, selection, and
+//     an expandable "who's signed up" drawer.
+//   • Mobile (<md): the same slots as stacked cards (never a sideways-scrolling
+//     table) so the page stays 100% usable on a phone.
+// Both layouts live in the DOM at once, toggled by CSS visibility.
+//
+// E2E CONTRACT (e2e/fixtures.js slotLabel/clickSlotByLabel):
+//   • Desktop table: label cells are <div class="font-medium"> ("Orientation …"
+//     / "Period N") with an in-row "Sign up" button.
+//   • Mobile card: div.rounded-xl whose label is a <p class="font-medium"> with
+//     an in-card "Sign up" button.
+//   Only the layout visible at the current viewport is matched (`:visible`).
 //
 // SECURITY: No PII (name, email, phone) is logged, stored in localStorage/sessionStorage,
 // or passed to analytics. Identity state lives only in React component state and is
 // cleared on form reset or unmount.
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { XCircle } from "lucide-react";
+import {
+  XCircle,
+  CalendarDays,
+  Clock,
+  MapPin,
+  CheckCircle2,
+  AlertCircle,
+  Mail,
+  ChevronDown,
+  Users,
+} from "lucide-react";
 
 import api from "../../lib/api";
 import { downloadIcs, buildGoogleCalendarUrl } from "../../lib/calendar";
@@ -19,14 +41,12 @@ import { toast } from "../../state/toast";
 import {
   Button,
   Card,
-  Chip,
   Input,
   Label,
   FieldError,
   Skeleton,
   EmptyState,
   ErrorState,
-  PageHeader,
 } from "../../components/ui";
 import OrientationWarningModal from "../../components/OrientationWarningModal";
 import SignupSuccessCard from "../../components/SignupSuccessCard";
@@ -134,42 +154,120 @@ function VolunteerChip({ firstName, lastInitial }) {
 }
 
 // ---------------------------------------------------------------------------
-// Slot row for the table
+// Slot availability + display helpers
 // ---------------------------------------------------------------------------
 
-function SlotTypeBadge({ type }) {
-  if (type === "orientation") {
+// Availability is signaled by BOTH text and color (never color alone) so it
+// stays readable for color-blind volunteers (WCAG 1.4.1).
+function slotStatus(slot) {
+  const capacity = slot.capacity ?? 0;
+  const filled = slot.filled ?? 0;
+  if (filled >= capacity) return "full";
+  if (capacity > 0 && capacity - filled <= 3) return "few";
+  return "open";
+}
+
+function slotDisplayLabel(slot) {
+  if (!slot) return "";
+  return slot.slot_type === "orientation"
+    ? `Orientation ${slot._periodLabel || ""}`.trim()
+    : `Period ${slot._periodLabel || ""}`.trim();
+}
+
+function AvailabilityBadge({ status, selected }) {
+  if (selected) {
     return (
-      <span className="inline-flex items-center rounded-full bg-blue-100 text-blue-800 border border-blue-300 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
-        Orientation
+      <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-800">
+        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+        You selected this
+      </span>
+    );
+  }
+  if (status === "full") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+        <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+        Full
+      </span>
+    );
+  }
+  if (status === "few") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">
+        <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+        Few spots left
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
-      Module
+    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+      Available
     </span>
   );
 }
 
-function SlotRow({ slot, selected, onToggle, highlight }) {
+// ---------------------------------------------------------------------------
+// Slot card — the ONE slot rendering used at every breakpoint.
+// Must keep: div.rounded-xl container, p.font-medium label, "Sign up" button
+// (e2e slotLabel + clickSlotByLabel contract).
+// ---------------------------------------------------------------------------
+
+function SlotCard({ slot, selected, onToggle, highlight, showDate }) {
   const isFull = slot.filled >= slot.capacity;
-  const isOrientation = slot.slot_type === "orientation";
+  const status = slotStatus(slot);
+  const fillPct =
+    slot.capacity > 0 ? Math.min(100, Math.round((slot.filled / slot.capacity) * 100)) : 0;
 
   return (
-    <tr className={[
-      "border-b border-[var(--color-border)] align-top",
-      isOrientation
-        ? "bg-blue-50 border-l-4 border-l-blue-500"
-        : "bg-emerald-50/40 border-l-4 border-l-emerald-500",
-      highlight && !isFull && isOrientation ? "ring-1 ring-blue-300" : "",
-    ].join(" ")}>
-      {/* Sign Up / Join Waitlist button */}
-      <td className="py-3 px-2 text-center align-top">
+    <div
+      className={[
+        "rounded-xl border bg-white p-4 shadow-sm transition-colors",
+        selected
+          ? "border-[var(--color-brand)] ring-2 ring-sky-200 bg-sky-50/40"
+          : highlight && !isFull
+            ? "border-sky-400 ring-2 ring-sky-200"
+            : "border-[var(--color-border)] hover:border-sky-300",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-base font-medium text-[var(--color-fg)]">
+              {slot.slot_type === "orientation"
+                ? <>Orientation {slot._periodLabel}</>
+                : <>Period {slot._periodLabel}</>}
+            </p>
+            <AvailabilityBadge status={status} selected={selected} />
+          </div>
+
+          <div className="mt-1.5 flex flex-col gap-0.5 text-sm text-[var(--color-fg-muted)]">
+            {showDate && (
+              <span className="inline-flex items-center gap-1.5">
+                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                {formatShortDate(slot.date)} · {formatWeekday(slot.date)}
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+              {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
+            </span>
+            {slot.location && (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                {slot.location}
+              </span>
+            )}
+          </div>
+        </div>
+
         <button
+          type="button"
           onClick={() => onToggle(slot.id)}
           className={[
-            "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+            "shrink-0 min-h-11 min-w-[6.5rem] px-4 rounded-lg text-sm font-semibold transition-all shadow-sm",
+            "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 focus-visible:ring-offset-2",
             isFull
               ? selected
                 ? "bg-amber-500 text-white"
@@ -181,140 +279,212 @@ function SlotRow({ slot, selected, onToggle, highlight }) {
         >
           {isFull
             ? selected ? "On waitlist" : "Join waitlist"
-            : selected ? "Selected" : "Sign Up"}
+            : selected ? "Selected" : "Sign up"}
         </button>
-      </td>
-      {/* Slot name + volunteer list */}
-      <td className="py-3 px-2">
-        <div className="flex items-center gap-2">
-          <SlotTypeBadge type={slot.slot_type} />
-          <div className="font-medium text-sm text-[var(--color-fg)]">
-            {isOrientation ? "Orientation" : `Period ${slot._periodLabel || ""}`}
+      </div>
+
+      {/* Capacity: text first (never color alone), thin progress bar as reinforcement */}
+      {slot.capacity > 0 && (
+        <div className="mt-3">
+          <p className="text-xs text-[var(--color-fg-muted)]">
+            {slot.filled} of {slot.capacity} filled
+          </p>
+          <div className="mt-1 h-1.5 w-full max-w-xs rounded-full bg-slate-100" aria-hidden="true">
+            <div
+              className={[
+                "h-full rounded-full transition-all",
+                status === "full"
+                  ? "bg-slate-400"
+                  : status === "few"
+                    ? "bg-amber-500"
+                    : "bg-[var(--color-brand)]",
+              ].join(" ")}
+              style={{ width: `${fillPct}%` }}
+            />
           </div>
         </div>
-        {slot.capacity > 0 && (
-          <div className="text-xs text-[var(--color-fg-muted)] mt-0.5 mb-1">
-            {slot.filled} of {slot.capacity} filled
-          </div>
-        )}
-        {slot.signups && slot.signups.length > 0 && (
-          <div className="flex flex-wrap mt-1">
-            {slot.signups.map((s, i) => (
-              <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
-            ))}
-          </div>
-        )}
-      </td>
-    </tr>
+      )}
+
+      {slot.signups?.length > 0 && (
+        <div className="flex flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
+          {slot.signups.map((s, i) => (
+            <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Day group (date + location + time + slots)
+// Slot table — the desktop (md+) rendering. One table per group (Orientation /
+// Modules). Label cells are div.font-medium (e2e contract). Each row has an
+// in-row "Sign up" button and an optional expandable "who signed up" drawer.
 // ---------------------------------------------------------------------------
 
-function DayGroup({ dateStr, location, slots, selectedSlotIds, onToggle, highlight }) {
+function SignUpButton({ slot, selected, onToggle }) {
+  const isFull = slot.filled >= slot.capacity;
   return (
-    <tbody>
-      {slots.map((slot, idx) => (
-        <React.Fragment key={slot.id}>
-          {idx === 0 ? (
-            <tr className="border-b border-[var(--color-border)]">
-              {/* Date + Location + Time spans all rows for this day */}
-              <td
-                rowSpan={slots.length * 2}
-                className="py-3 px-3 align-top bg-[var(--color-surface)] border-r border-[var(--color-border)] w-36"
-              >
-                <div className="font-semibold text-sm">{formatShortDate(dateStr)}</div>
-                <div className="text-xs text-[var(--color-fg-muted)]">{formatWeekday(dateStr)}</div>
-                {location && (
-                  <div className="text-xs text-[var(--color-fg-muted)] mt-1">{location}</div>
+    <button
+      type="button"
+      onClick={() => onToggle(slot.id)}
+      className={[
+        "min-h-10 min-w-[6rem] rounded-lg px-4 text-sm font-semibold shadow-sm transition-all",
+        "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 focus-visible:ring-offset-2",
+        isFull
+          ? selected
+            ? "bg-amber-500 text-white"
+            : "bg-amber-600 text-white hover:bg-amber-700"
+          : selected
+            ? "bg-[var(--color-success)] text-white"
+            : "bg-[var(--color-brand)] text-white hover:brightness-110",
+      ].join(" ")}
+    >
+      {isFull
+        ? selected ? "On waitlist" : "Join waitlist"
+        : selected ? "Selected" : "Sign up"}
+    </button>
+  );
+}
+
+function CapacityCell({ slot }) {
+  const status = slotStatus(slot);
+  const fillPct =
+    slot.capacity > 0 ? Math.min(100, Math.round((slot.filled / slot.capacity) * 100)) : 0;
+  return (
+    <div className="flex flex-col gap-1">
+      <AvailabilityBadge status={status} selected={false} />
+      {slot.capacity > 0 && (
+        <>
+          <span className="text-xs text-[var(--color-fg-muted)]">
+            {slot.filled} of {slot.capacity} filled
+          </span>
+          <div className="h-1.5 w-24 rounded-full bg-slate-100" aria-hidden="true">
+            <div
+              className={[
+                "h-full rounded-full transition-all",
+                status === "full"
+                  ? "bg-slate-400"
+                  : status === "few"
+                    ? "bg-amber-500"
+                    : "bg-[var(--color-brand)]",
+              ].join(" ")}
+              style={{ width: `${fillPct}%` }}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SlotTable({
+  slots,
+  kind,
+  showDate,
+  selectedSlotIds,
+  onToggle,
+  expandedIds,
+  onToggleExpand,
+  highlight,
+}) {
+  const colCount = 2 + (showDate ? 1 : 0) + 3; // label, [date], time, loc, spots, signup
+  return (
+    <div className="hidden overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm md:block">
+      <table className="w-full border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-[var(--color-border)] bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)]">
+            <th scope="col" className="px-4 py-3">
+              {kind === "orientation" ? "Session" : "Period"}
+            </th>
+            {showDate && <th scope="col" className="px-4 py-3">Date</th>}
+            <th scope="col" className="px-4 py-3">Time</th>
+            <th scope="col" className="px-4 py-3">Location</th>
+            <th scope="col" className="px-4 py-3">Availability</th>
+            <th scope="col" className="px-4 py-3 text-right">Sign up</th>
+          </tr>
+        </thead>
+        <tbody>
+          {slots.map((slot) => {
+            const selected = selectedSlotIds.has(slot.id);
+            const isFull = slot.filled >= slot.capacity;
+            const expanded = expandedIds.has(slot.id);
+            const signupCount = slot.signups?.length || 0;
+            return (
+              <React.Fragment key={slot.id}>
+                <tr
+                  className={[
+                    "border-b border-[var(--color-border)] transition-colors last:border-b-0",
+                    selected
+                      ? "bg-sky-50/60"
+                      : highlight && !isFull
+                        ? "bg-sky-50/40"
+                        : "hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  <td className="px-4 py-3 align-top">
+                    <div className="font-medium text-[var(--color-fg)]">
+                      {kind === "orientation"
+                        ? `Orientation ${slot._periodLabel || ""}`.trim()
+                        : `Period ${slot._periodLabel || ""}`.trim()}
+                    </div>
+                    {signupCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => onToggleExpand(slot.id)}
+                        aria-expanded={expanded}
+                        className="mt-1 inline-flex items-center gap-1 text-xs text-[var(--color-brand)] hover:underline"
+                      >
+                        <Users className="h-3 w-3" aria-hidden="true" />
+                        {signupCount} signed up
+                        <ChevronDown
+                          className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`}
+                          aria-hidden="true"
+                        />
+                      </button>
+                    )}
+                  </td>
+                  {showDate && (
+                    <td className="px-4 py-3 align-top text-[var(--color-fg-muted)]">
+                      {formatShortDate(slot.date)}
+                      <span className="block text-xs">{formatWeekday(slot.date)}</span>
+                    </td>
+                  )}
+                  <td className="whitespace-nowrap px-4 py-3 align-top text-[var(--color-fg-muted)]">
+                    {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
+                  </td>
+                  <td className="px-4 py-3 align-top text-[var(--color-fg-muted)]">
+                    {slot.location || "—"}
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    <CapacityCell slot={slot} />
+                  </td>
+                  <td className="px-4 py-3 text-right align-top">
+                    <SignUpButton slot={slot} selected={selected} onToggle={onToggle} />
+                  </td>
+                </tr>
+                {expanded && signupCount > 0 && (
+                  <tr className="border-b border-[var(--color-border)] bg-slate-50/60 last:border-b-0">
+                    <td colSpan={colCount} className="px-4 py-3">
+                      <div className="flex flex-wrap">
+                        {slot.signups.map((s, i) => (
+                          <VolunteerChip
+                            key={i}
+                            firstName={s.first_name}
+                            lastInitial={s.last_initial}
+                          />
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
                 )}
-              </td>
-              <td className="py-3 px-3 align-top border-r border-[var(--color-border)] w-28 text-xs text-[var(--color-fg)]">
-                <div>{formatTime(slot.start_time)}-</div>
-                <div>{formatTime(slot.end_time)}</div>
-              </td>
-              <SlotRowInline
-                slot={slot}
-                selected={selectedSlotIds.has(slot.id)}
-                onToggle={onToggle}
-                highlight={highlight}
-              />
-            </tr>
-          ) : (
-            <tr className="border-b border-[var(--color-border)]">
-              <td className="py-3 px-3 align-top border-r border-[var(--color-border)] w-28 text-xs text-[var(--color-fg)]">
-                <div>{formatTime(slot.start_time)}-</div>
-                <div>{formatTime(slot.end_time)}</div>
-              </td>
-              <SlotRowInline
-                slot={slot}
-                selected={selectedSlotIds.has(slot.id)}
-                onToggle={onToggle}
-                highlight={highlight}
-              />
-            </tr>
-          )}
-        </React.Fragment>
-      ))}
-    </tbody>
-  );
-}
-
-function SlotRowInline({ slot, selected, onToggle, highlight }) {
-  const isFull = slot.filled >= slot.capacity;
-  return (
-    <>
-      {/* Sign Up / Join Waitlist button */}
-      <td className="py-3 px-2 text-center align-top w-20">
-        <button
-          onClick={() => onToggle(slot.id)}
-          className={[
-            "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
-            isFull
-              ? selected
-                ? "bg-amber-500 text-white"
-                : "bg-amber-600 text-white hover:bg-amber-700"
-              : selected
-                ? "bg-[var(--color-success)] text-white"
-                : "bg-[var(--color-brand)] text-white hover:brightness-110",
-          ].join(" ")}
-        >
-          {isFull
-            ? selected ? "On waitlist" : "Join waitlist"
-            : selected ? "Selected" : "Sign Up"}
-        </button>
-      </td>
-      {/* Slot name + volunteers */}
-      <td className={[
-        "py-3 px-2 align-top border-l-4",
-        slot.slot_type === "orientation"
-          ? "bg-blue-50 border-l-blue-500"
-          : "bg-emerald-50/40 border-l-emerald-500",
-      ].join(" ")}>
-        <div className="flex items-center gap-2">
-          <SlotTypeBadge type={slot.slot_type} />
-          <div className="font-medium text-sm text-[var(--color-fg)]">
-            {slot.slot_type === "orientation"
-              ? "Orientation"
-              : `Period ${slot._periodLabel || ""}`}
-          </div>
-        </div>
-        {slot.capacity > 0 && (
-          <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-            {slot.filled} of {slot.capacity} filled
-          </div>
-        )}
-        {slot.signups && slot.signups.length > 0 && (
-          <div className="flex flex-wrap mt-1">
-            {slot.signups.map((s, i) => (
-              <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
-            ))}
-          </div>
-        )}
-      </td>
-    </>
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -346,7 +516,16 @@ function EventDescription({ event, orientationSlots }) {
   const hasCustomDescription = !!(event.description && event.description.trim());
 
   return (
-    <Card className="text-sm text-[var(--color-fg)] leading-relaxed !bg-gradient-to-br !from-white !to-[var(--color-brand-soft)]/50 !border-[var(--color-brand-soft)] shadow-sm">
+    <Card className="text-sm text-[var(--color-fg)] leading-relaxed !border-sky-100 shadow-sm">
+      <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-sky-800">
+        <span
+          aria-hidden="true"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-sky-100 text-sky-700"
+        >
+          <Mail className="h-3.5 w-3.5" />
+        </span>
+        About this event
+      </h2>
       {hasCustomDescription ? (
         <p className="whitespace-pre-wrap">{event.description}</p>
       ) : (
@@ -394,7 +573,7 @@ function EventDescription({ event, orientationSlots }) {
 
           <p className="mt-3">
             Please contact the SciTrek Manager at{" "}
-            <a href="mailto:chem-scitrekmanager@ucsb.edu" className="text-[var(--color-primary)] underline">
+            <a href="mailto:chem-scitrekmanager@ucsb.edu" className="text-[var(--color-brand)] underline">
               chem-scitrekmanager@ucsb.edu
             </a>{" "}
             if you have any questions. If you sign up for a shift but cannot make it,
@@ -448,6 +627,23 @@ export default function EventDetailPage() {
   const [submitError, setSubmitError] = useState(null);
   const [successData, setSuccessData] = useState(null);
   const [highlightOrientation, setHighlightOrientation] = useState(false);
+  // Desktop table: which slots have their "who's signed up" drawer open.
+  const [expandedIds, setExpandedIds] = useState(new Set());
+
+  function toggleExpand(id) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Anchor for the mobile "Continue" bar → scrolls to the identity form.
+  const formRef = useRef(null);
+  function scrollToForm() {
+    formRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }
 
   // Data fetching
   const eventQ = useQuery({
@@ -466,7 +662,7 @@ export default function EventDetailPage() {
   const [responses, setResponses] = useState({}); // { field_id: value }
 
   // Build slot lookup and group slots by date
-  const { slotMap, orientationSlots, periodSlotsByDate } = useMemo(() => {
+  const { slotMap, labeledSlotMap, orientationSlots, periodSlotsByDate } = useMemo(() => {
     const slots = eventQ.data?.slots || [];
     const map = Object.fromEntries(slots.map((s) => [s.id, s]));
 
@@ -495,7 +691,19 @@ export default function EventDetailPage() {
       _periodLabel: orientations.length > 1 ? `#${i + 1}` : "",
     }));
 
-    return { slotMap: map, orientationSlots: labeledOrientations, periodSlotsByDate: byDate };
+    // Labeled lookup for the selection summary (raw map lacks _periodLabel).
+    const labeledMap = { ...map };
+    for (const s of labeledOrientations) labeledMap[s.id] = s;
+    for (const daySlots of Object.values(byDate)) {
+      for (const s of daySlots) labeledMap[s.id] = s;
+    }
+
+    return {
+      slotMap: map,
+      labeledSlotMap: labeledMap,
+      orientationSlots: labeledOrientations,
+      periodSlotsByDate: byDate,
+    };
   }, [eventQ.data]);
 
   // Slot toggle
@@ -876,41 +1084,63 @@ export default function EventDetailPage() {
       : null;
 
   const dateKeys = Object.keys(periodSlotsByDate).sort();
+  // Flattened, date-sorted period list for the single desktop Modules table.
+  const allPeriodSlots = dateKeys.flatMap((k) => periodSlotsByDate[k]);
+  const selectedSlots = [...selectedSlotIds]
+    .map((id) => labeledSlotMap[id])
+    .filter(Boolean);
 
   return (
-    <div className="flex flex-col gap-5 py-4 max-w-5xl mx-auto w-full animate-fade-up">
+    <div
+      className="flex flex-col gap-5 pt-4 pb-8 max-w-5xl mx-auto w-full animate-fade-up"
+    >
+      {/* Selection announcer for screen readers */}
+      <p aria-live="polite" className="sr-only">
+        {selectedSlotIds.size === 1
+          ? "1 slot selected"
+          : `${selectedSlotIds.size} slots selected`}
+      </p>
+
       {/* Back link */}
       <div>
-        <Link to="/volunteer" className="inline-flex items-center gap-1 text-sm text-[var(--color-brand)] hover:underline">
+        <Link
+          to="/volunteer"
+          className="inline-flex min-h-11 items-center gap-1 text-sm text-[var(--color-brand)] hover:underline"
+        >
           &larr; Back to events
         </Link>
       </div>
 
-      {/* Event header — hero card */}
-      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-[var(--color-brand)] via-indigo-600 to-indigo-800 text-white p-6 sm:p-8 md:p-10">
+      {/* Event header — hero card (SciTrek blue field + orange accent) */}
+      <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-sky-600 via-sky-700 to-sky-900 text-white p-6 sm:p-8 md:p-10">
         <div
           aria-hidden="true"
-          className="absolute -top-16 -right-16 h-64 w-64 rounded-full bg-blue-400/25 blur-3xl"
+          className="absolute -top-16 -right-16 h-64 w-64 rounded-full bg-sky-300/25 blur-3xl"
         />
         <div
           aria-hidden="true"
-          className="absolute -bottom-20 -left-10 h-72 w-72 rounded-full bg-indigo-300/20 blur-3xl"
+          className="absolute -bottom-20 -left-10 h-72 w-72 rounded-full bg-orange-400/15 blur-3xl"
         />
         <div className="relative z-10">
+          <span aria-hidden="true" className="block h-1 w-12 rounded-full bg-orange-400" />
           {event.school && (
-            <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-blue-200">
+            <p className="mt-4 text-xs sm:text-sm font-semibold uppercase tracking-widest text-sky-200">
               {event.school}
             </p>
           )}
           <h1 className="mt-2 text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight leading-tight">
             {event.title}
           </h1>
-          <p className="mt-3 text-sm sm:text-base text-blue-100">
-            {formatDateRange(event.start_date, event.end_date)}
-          </p>
-          <p className="mt-1 text-xs text-blue-200/80">
-            Times shown in Pacific Time.
-          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-sky-100">
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays className="h-4 w-4 shrink-0 text-sky-300" aria-hidden="true" />
+              {formatDateRange(event.start_date, event.end_date)}
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-sky-200/90">
+              <Clock className="h-4 w-4 shrink-0 text-sky-300" aria-hidden="true" />
+              Times shown in Pacific Time.
+            </span>
+          </div>
         </div>
       </section>
 
@@ -938,7 +1168,7 @@ export default function EventDetailPage() {
       {/* Add to calendar (PART-13 surface A) — secondary CTA below event metadata,
           above the slot list. Only renders when there is at least one slot to add. */}
       {slots.length > 0 && (
-        <div className="mt-2 mb-2 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant="secondary"
@@ -997,7 +1227,7 @@ export default function EventDetailPage() {
         </div>
       )}
 
-      {/* Slot table */}
+      {/* Slot sections — one card layout for every screen size */}
       {slots.length === 0 ? (
         <EmptyState
           title="Every slot is full"
@@ -1009,391 +1239,262 @@ export default function EventDetailPage() {
           }
         />
       ) : (
-        <>
-          {/* ---- Mobile slot list (sm and below) ---- */}
-          <div className="md:hidden flex flex-col gap-5">
-            {orientationSlots.length > 0 && (
-              <section>
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)] mb-2">
+        <div className="flex flex-col gap-6">
+          {orientationSlots.length > 0 && (
+            <section aria-labelledby="orientation-heading">
+              <div className="mb-3 border-l-4 border-[var(--color-brand)] pl-3">
+                <h2
+                  id="orientation-heading"
+                  className="text-sm font-semibold uppercase tracking-wide text-[var(--color-fg)]"
+                >
                   Orientation
                 </h2>
-                <div className="flex flex-col gap-3">
-                  {orientationSlots.map((slot) => {
-                    const isFull = slot.filled >= slot.capacity;
-                    const isSelected = selectedSlotIds.has(slot.id);
-                    return (
-                      <div
-                        key={slot.id}
-                        className={[
-                          "rounded-xl border bg-white p-4 shadow-sm",
-                          highlightOrientation && !isFull
-                            ? "border-blue-400 ring-2 ring-blue-200"
-                            : "border-[var(--color-border)]",
-                        ].join(" ")}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium uppercase tracking-wide text-blue-700">
-                              Orientation {slot._periodLabel}
-                            </p>
-                            <p className="mt-1 text-base font-semibold text-[var(--color-fg)]">
-                              {formatShortDate(slot.date)} · {formatWeekday(slot.date)}
-                            </p>
-                            <p className="text-sm text-[var(--color-fg-muted)] mt-0.5">
-                              {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
-                            </p>
-                            {slot.location && (
-                              <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-                                {slot.location}
-                              </p>
-                            )}
-                            <p className="text-xs text-[var(--color-fg-muted)] mt-2">
-                              {slot.filled} of {slot.capacity} filled
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => toggleSlot(slot.id)}
-                            className={[
-                              "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
-                              isFull
-                                ? isSelected
-                                  ? "bg-amber-500 text-white"
-                                  : "bg-amber-600 text-white"
-                                : isSelected
-                                  ? "bg-[var(--color-success)] text-white"
-                                  : "bg-[var(--color-brand)] text-white hover:brightness-110",
-                            ].join(" ")}
-                          >
-                            {isFull
-                              ? isSelected ? "On waitlist" : "Join waitlist"
-                              : isSelected ? "Selected" : "Sign up"}
-                          </button>
-                        </div>
-                        {slot.signups?.length > 0 && (
-                          <div className="flex flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
-                            {slot.signups.map((s, i) => (
-                              <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
-                            ))}
-                          </div>
+                <p className="text-sm text-[var(--color-fg-muted)]">
+                  Attend one before mentoring in the classroom — pick a session below.
+                </p>
+              </div>
+
+              {/* Desktop: one Orientation table */}
+              <SlotTable
+                slots={orientationSlots}
+                kind="orientation"
+                showDate
+                selectedSlotIds={selectedSlotIds}
+                onToggle={toggleSlot}
+                expandedIds={expandedIds}
+                onToggleExpand={toggleExpand}
+                highlight={highlightOrientation}
+              />
+
+              {/* Mobile: stacked cards */}
+              <div className="grid gap-3 sm:grid-cols-2 md:hidden">
+                {orientationSlots.map((slot) => (
+                  <SlotCard
+                    key={slot.id}
+                    slot={slot}
+                    selected={selectedSlotIds.has(slot.id)}
+                    onToggle={toggleSlot}
+                    highlight={highlightOrientation}
+                    showDate
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {allPeriodSlots.length > 0 && (
+            <section aria-labelledby="modules-heading">
+              <div className="mb-3 border-l-4 border-[var(--color-accent)] pl-3">
+                <h2
+                  id="modules-heading"
+                  className="text-sm font-semibold uppercase tracking-wide text-[var(--color-fg)]"
+                >
+                  Modules
+                </h2>
+                <p className="text-sm text-[var(--color-fg-muted)]">
+                  Pick the classroom sessions you can mentor.
+                </p>
+              </div>
+
+              {/* Desktop: one Modules table across all days */}
+              <SlotTable
+                slots={allPeriodSlots}
+                kind="period"
+                showDate
+                selectedSlotIds={selectedSlotIds}
+                onToggle={toggleSlot}
+                expandedIds={expandedIds}
+                onToggleExpand={toggleExpand}
+              />
+
+              {/* Mobile: stacked cards grouped by day */}
+              <div className="flex flex-col gap-6 md:hidden">
+                {dateKeys.map((dateKey) => {
+                  const daySlots = periodSlotsByDate[dateKey];
+                  const firstSlot = daySlots[0];
+                  return (
+                    <div key={dateKey}>
+                      <div className="mb-3">
+                        <h3 className="text-sm font-semibold text-[var(--color-fg)]">
+                          {formatWeekday(dateKey)} · {formatShortDate(dateKey)}
+                        </h3>
+                        {firstSlot.location && (
+                          <p className="inline-flex items-center gap-1 text-sm text-[var(--color-fg-muted)]">
+                            <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                            {firstSlot.location}
+                          </p>
                         )}
                       </div>
-                    );
-                  })}
-                </div>
-              </section>
-            )}
-            {dateKeys.map((dateKey) => {
-              const daySlots = periodSlotsByDate[dateKey];
-              const firstSlot = daySlots[0];
-              return (
-                <section key={dateKey}>
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)] mb-2">
-                    {formatShortDate(dateKey)} · {formatWeekday(dateKey)}
-                    {firstSlot.location ? ` · ${firstSlot.location}` : ""}
-                  </h2>
-                  <div className="flex flex-col gap-3">
-                    {daySlots.map((slot) => {
-                      const isFull = slot.filled >= slot.capacity;
-                      const isSelected = selectedSlotIds.has(slot.id);
-                      return (
-                        <div
-                          key={slot.id}
-                          className="rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-sm"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium uppercase tracking-wide text-indigo-700">
-                                Period {slot._periodLabel}
-                              </p>
-                              <p className="mt-1 text-base font-semibold text-[var(--color-fg)]">
-                                {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
-                              </p>
-                              <p className="text-xs text-[var(--color-fg-muted)] mt-2">
-                                {slot.filled} of {slot.capacity} filled
-                              </p>
-                            </div>
-                            <button
-                              onClick={() => toggleSlot(slot.id)}
-                              className={[
-                                "shrink-0 min-h-11 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
-                                isFull
-                                  ? isSelected
-                                    ? "bg-amber-500 text-white"
-                                    : "bg-amber-600 text-white"
-                                  : isSelected
-                                    ? "bg-[var(--color-success)] text-white"
-                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
-                              ].join(" ")}
-                            >
-                              {isFull
-                                ? isSelected ? "On waitlist" : "Join waitlist"
-                                : isSelected ? "Selected" : "Sign up"}
-                            </button>
-                          </div>
-                          {slot.signups?.length > 0 && (
-                            <div className="flex flex-wrap mt-3 pt-3 border-t border-[var(--color-border)]">
-                              {slot.signups.map((s, i) => (
-                                <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
-
-          {/* ---- Desktop slot table (md and up) ---- */}
-          <div className="hidden md:block overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-sm">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gradient-to-r from-[var(--color-brand-soft)] to-[var(--color-accent-soft)] border-b border-[var(--color-border)]">
-                <th className="py-3 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Date</th>
-                <th className="py-3 px-3 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Time</th>
-                <th className="py-3 px-2 text-center font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]">Available Slot</th>
-                <th className="py-3 px-2 text-left font-semibold text-xs uppercase tracking-wide text-[var(--color-fg)]"></th>
-              </tr>
-            </thead>
-
-            {/* Orientation slots */}
-            {orientationSlots.length > 0 && (
-              <>
-                {orientationSlots.map((slot, idx) => (
-                  <tbody key={slot.id}>
-                    <tr className="border-b border-[var(--color-border)] hover:bg-[var(--color-brand-soft)]/40 transition-colors">
-                      {/* Date + location */}
-                      <td className="py-3 px-3 align-top bg-[var(--color-brand-soft)]/60 border-r border-[var(--color-border)] border-l-4 border-l-[var(--color-brand)]">
-                        <div className="font-semibold">{formatShortDate(slot.date)}</div>
-                        <div className="text-xs text-[var(--color-fg-muted)]">{formatWeekday(slot.date)}</div>
-                        {slot.location && (
-                          <div className="text-xs text-[var(--color-fg-muted)] mt-1">{slot.location}</div>
-                        )}
-                      </td>
-                      {/* Time */}
-                      <td className="py-3 px-3 align-top border-r border-[var(--color-border)]">
-                        <div>{formatTime(slot.start_time)}-</div>
-                        <div>{formatTime(slot.end_time)}</div>
-                      </td>
-                      {/* Sign Up / Join Waitlist button */}
-                      <td className="py-3 px-2 text-center align-top">
-                        {(() => {
-                          const isFull = slot.filled >= slot.capacity;
-                          const isSelected = selectedSlotIds.has(slot.id);
-                          return (
-                            <button
-                              onClick={() => toggleSlot(slot.id)}
-                              className={[
-                                "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
-                                isFull
-                                  ? isSelected
-                                    ? "bg-amber-500 text-white"
-                                    : "bg-amber-600 text-white hover:bg-amber-700"
-                                  : isSelected
-                                    ? "bg-[var(--color-success)] text-white"
-                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
-                              ].join(" ")}
-                            >
-                              {isFull
-                                ? isSelected ? "On waitlist" : "Join waitlist"
-                                : isSelected ? "Selected" : "Sign Up"}
-                            </button>
-                          );
-                        })()}
-                      </td>
-                      {/* Slot label + volunteers */}
-                      <td className={[
-                        "py-3 px-2 align-top",
-                        highlightOrientation && slot.filled < slot.capacity ? "bg-blue-50/50" : "",
-                      ].join(" ")}>
-                        <div className="font-medium">
-                          Orientation {slot._periodLabel}
-                        </div>
-                        {slot.capacity > 0 && (
-                          <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-                            {slot.filled} of {slot.capacity} filled
-                          </div>
-                        )}
-                        {slot.signups?.length > 0 && (
-                          <div className="flex flex-wrap mt-1.5">
-                            {slot.signups.map((s, i) => (
-                              <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  </tbody>
-                ))}
-              </>
-            )}
-
-            {/* Period slots grouped by date */}
-            {dateKeys.map((dateKey) => {
-              const daySlots = periodSlotsByDate[dateKey];
-              const firstSlot = daySlots[0];
-              return (
-                <tbody key={dateKey}>
-                  {daySlots.map((slot, idx) => (
-                    <tr key={slot.id} className="border-b border-[var(--color-border)] hover:bg-[var(--color-accent-soft)]/40 transition-colors">
-                      {/* Date cell — only first row in group */}
-                      {idx === 0 ? (
-                        <td
-                          rowSpan={daySlots.length}
-                          className="py-3 px-3 align-top bg-[var(--color-accent-soft)]/60 border-r border-[var(--color-border)] border-l-4 border-l-[var(--color-accent)]"
-                        >
-                          <div className="font-semibold">{formatShortDate(dateKey)}</div>
-                          <div className="text-xs text-[var(--color-fg-muted)]">{formatWeekday(dateKey)}</div>
-                          {firstSlot.location && (
-                            <div className="text-xs text-[var(--color-fg-muted)] mt-1">{firstSlot.location}</div>
-                          )}
-                        </td>
-                      ) : null}
-                      {/* Time */}
-                      <td className="py-3 px-3 align-top border-r border-[var(--color-border)]">
-                        <div>{formatTime(slot.start_time)}-</div>
-                        <div>{formatTime(slot.end_time)}</div>
-                      </td>
-                      {/* Sign Up / Join Waitlist button */}
-                      <td className="py-3 px-2 text-center align-top">
-                        {(() => {
-                          const isFull = slot.filled >= slot.capacity;
-                          const isSelected = selectedSlotIds.has(slot.id);
-                          return (
-                            <button
-                              onClick={() => toggleSlot(slot.id)}
-                              className={[
-                                "px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
-                                isFull
-                                  ? isSelected
-                                    ? "bg-amber-500 text-white"
-                                    : "bg-amber-600 text-white hover:bg-amber-700"
-                                  : isSelected
-                                    ? "bg-[var(--color-success)] text-white"
-                                    : "bg-[var(--color-brand)] text-white hover:brightness-110",
-                              ].join(" ")}
-                            >
-                              {isFull
-                                ? isSelected ? "On waitlist" : "Join waitlist"
-                                : isSelected ? "Selected" : "Sign Up"}
-                            </button>
-                          );
-                        })()}
-                      </td>
-                      {/* Slot label + volunteers */}
-                      <td className="py-3 px-2 align-top">
-                        <div className="font-medium">Period {slot._periodLabel}</div>
-                        {slot.capacity > 0 && (
-                          <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-                            {slot.filled} of {slot.capacity} filled
-                          </div>
-                        )}
-                        {slot.signups?.length > 0 && (
-                          <div className="flex flex-wrap mt-1.5">
-                            {slot.signups.map((s, i) => (
-                              <VolunteerChip key={i} firstName={s.first_name} lastInitial={s.last_initial} />
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              );
-            })}
-          </table>
-          </div>
-        </>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {daySlots.map((slot) => (
+                          <SlotCard
+                            key={slot.id}
+                            slot={slot}
+                            selected={selectedSlotIds.has(slot.id)}
+                            onToggle={toggleSlot}
+                            showDate
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </div>
       )}
 
       {/* Identity form — shown when at least one slot is selected */}
       {showForm && (
-        <Card className="mt-2">
-          <h2 className="text-base font-semibold mb-3">Your information</h2>
-          {submitError && (
-            <p className="text-sm text-[var(--color-danger,#dc2626)] mb-3" role="alert">
-              {submitError}
-            </p>
-          )}
-          <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
-            <div>
-              <Label htmlFor="first_name">First name</Label>
-              <Input
-                id="first_name"
-                type="text"
-                value={identity.first_name}
-                onChange={(e) => handleIdentityChange("first_name", e.target.value)}
-                autoComplete="given-name"
-                required
-              />
-              <FieldError>{formErrors.first_name}</FieldError>
-            </div>
-            <div>
-              <Label htmlFor="last_name">Last name</Label>
-              <Input
-                id="last_name"
-                type="text"
-                value={identity.last_name}
-                onChange={(e) => handleIdentityChange("last_name", e.target.value)}
-                autoComplete="family-name"
-                required
-              />
-              <FieldError>{formErrors.last_name}</FieldError>
-            </div>
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={identity.email}
-                onChange={(e) => handleIdentityChange("email", e.target.value)}
-                autoComplete="email"
-                required
-              />
-              <FieldError>{formErrors.email}</FieldError>
-            </div>
-            <div>
-              <Label htmlFor="phone">Phone</Label>
-              <Input
-                id="phone"
-                type="tel"
-                value={identity.phone}
-                onChange={(e) => handleIdentityChange("phone", e.target.value)}
-                placeholder="(555) 123-4567"
-                autoComplete="tel"
-                required
-              />
-              <FieldError>{formErrors.phone}</FieldError>
-            </div>
-            {/* Phase 22 — dynamic custom form fields */}
-            {formSchema.length > 0 && (
-              <div className="pt-2 border-t border-[var(--color-border)] flex flex-col gap-4">
-                <h3 className="text-sm font-semibold">
-                  A few more questions
-                </h3>
-                {formSchema.map((f) => renderFormField(f))}
+        <div ref={formRef} className="scroll-mt-6">
+          <Card className="mt-2 !border-sky-100 shadow-sm">
+            {/* Selection summary — review before entering details */}
+            {selectedSlots.length > 0 && (
+              <div className="mb-5 rounded-lg border border-sky-100 bg-sky-50/60 p-3 sm:p-4">
+                <p className="text-sm font-semibold text-sky-900">
+                  Your selections ({selectedSlots.length})
+                </p>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {selectedSlots.map((slot) => (
+                    <li
+                      key={slot.id}
+                      className="flex items-center justify-between gap-2 text-sm text-[var(--color-fg)]"
+                    >
+                      <span className="min-w-0">
+                        <span className="font-semibold">{slotDisplayLabel(slot)}</span>
+                        <span className="text-[var(--color-fg-muted)]">
+                          {" "}· {formatDate(slot.date)} · {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleSlot(slot.id)}
+                        aria-label={`Remove ${slotDisplayLabel(slot)}`}
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600"
+                      >
+                        <XCircle className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
-            <Button
-              type="submit"
-              variant="primary"
-              className="w-full min-h-11"
-              disabled={isSubmitting || outsideWindow}
-              title={outsideWindow ? windowBannerText : undefined}
-              data-testid="signup-submit"
-            >
-              {isSubmitting
-                ? "Submitting..."
-                : outsideWindow
-                  ? beforeWindow
-                    ? "Signup not open yet"
-                    : "Signup closed"
-                  : "Sign up"}
+
+            <h2 className="text-lg font-semibold">Your information</h2>
+            <p className="mt-1 mb-4 text-sm text-[var(--color-fg-muted)]">
+              We'll email your confirmation and signup-management link here.
+            </p>
+            {submitError && (
+              <p className="text-sm text-[var(--color-danger,#dc2626)] mb-3" role="alert">
+                {submitError}
+              </p>
+            )}
+            <form onSubmit={handleSubmit} noValidate className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="first_name">First name</Label>
+                <Input
+                  id="first_name"
+                  type="text"
+                  value={identity.first_name}
+                  onChange={(e) => handleIdentityChange("first_name", e.target.value)}
+                  autoComplete="given-name"
+                  required
+                />
+                <FieldError>{formErrors.first_name}</FieldError>
+              </div>
+              <div>
+                <Label htmlFor="last_name">Last name</Label>
+                <Input
+                  id="last_name"
+                  type="text"
+                  value={identity.last_name}
+                  onChange={(e) => handleIdentityChange("last_name", e.target.value)}
+                  autoComplete="family-name"
+                  required
+                />
+                <FieldError>{formErrors.last_name}</FieldError>
+              </div>
+              <div className="sm:col-span-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={identity.email}
+                  onChange={(e) => handleIdentityChange("email", e.target.value)}
+                  autoComplete="email"
+                  required
+                />
+                <FieldError>{formErrors.email}</FieldError>
+              </div>
+              <div className="sm:col-span-2">
+                <Label htmlFor="phone">Phone</Label>
+                <Input
+                  id="phone"
+                  type="tel"
+                  value={identity.phone}
+                  onChange={(e) => handleIdentityChange("phone", e.target.value)}
+                  placeholder="(555) 123-4567"
+                  autoComplete="tel"
+                  required
+                />
+                <FieldError>{formErrors.phone}</FieldError>
+              </div>
+              {/* Phase 22 — dynamic custom form fields */}
+              {formSchema.length > 0 && (
+                <div className="sm:col-span-2 pt-2 border-t border-[var(--color-border)] flex flex-col gap-4">
+                  <h3 className="text-sm font-semibold">
+                    A few more questions
+                  </h3>
+                  {formSchema.map((f) => renderFormField(f))}
+                </div>
+              )}
+              <div className="sm:col-span-2">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  className="w-full min-h-11"
+                  disabled={isSubmitting || outsideWindow}
+                  title={outsideWindow ? windowBannerText : undefined}
+                  data-testid="signup-submit"
+                >
+                  {isSubmitting
+                    ? "Submitting..."
+                    : outsideWindow
+                      ? beforeWindow
+                        ? "Signup not open yet"
+                        : "Signup closed"
+                      : "Sign up"}
+                </Button>
+                <p className="mt-2 text-center text-xs text-[var(--color-fg-muted)]">
+                  You'll get a confirmation email with a link to manage or cancel your signups.
+                </p>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Sticky mobile selection bar — pins to the viewport bottom while the
+          volunteer scrolls the slot list (sticky, not fixed: the page root's
+          entrance animation leaves a transform that would re-anchor fixed
+          elements). Desktop shows the summary in the form card instead. */}
+      {showForm && (
+        <div
+          className="sticky z-30 rounded-xl border border-sky-100 bg-white/95 px-4 py-3 shadow-[0_-4px_16px_rgba(15,23,42,0.12)] backdrop-blur md:hidden"
+          style={{ bottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-semibold text-[var(--color-fg)]">
+              {selectedSlotIds.size === 1
+                ? "1 slot selected"
+                : `${selectedSlotIds.size} slots selected`}
+            </span>
+            <Button type="button" variant="primary" className="min-h-11 px-6" onClick={scrollToForm}>
+              Continue
             </Button>
-          </form>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* Orientation warning modal */}
