@@ -16,7 +16,7 @@ from ... import schemas
 from ...database import get_db
 from ...deps import rate_limit
 from ...services.orientation_service import (
-    family_for_event,
+    credit_scope_for_event,
     has_attended_orientation,
     has_orientation_credit,
 )
@@ -54,11 +54,17 @@ def orientation_check(
     ),
     db: Session = Depends(get_db),
 ):
-    """Phase 21: credit check keyed by (email, module_family) where family is
-    resolved from ``event_id`` via ``event.module_slug → module_templates.slug
-    → family_key or slug``.
+    """Credit check keyed by (email, module_family, quarter). Family resolves
+    from ``event_id`` via ``event.module_slug → module_templates.slug →
+    family_key or slug``; quarter comes from ``event.quarter_id`` (issue #30).
+    Fails closed when either is unresolvable.
 
     D-08: same shape for unknown / known emails.
     """
-    family = family_for_event(db, event_id) if event_id is not None else None
-    return has_orientation_credit(db, str(email), family_key=family)
+    if event_id is not None:
+        family, quarter_id = credit_scope_for_event(db, event_id)
+    else:
+        family, quarter_id = None, None
+    return has_orientation_credit(
+        db, str(email), family_key=family, quarter_id=quarter_id
+    )

@@ -75,11 +75,23 @@ def grant_orientation_for_signup(
                 "family. Set the module on the event first."
             ),
         )
+    # Issue #30: credit is quarter-scoped; an event outside any entered
+    # quarter has no quarter to attach the credit to.
+    if event.quarter_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Event is not linked to a quarter; orientation credit is "
+                "quarter-scoped. Add a covering quarter in Admin → Quarters "
+                "first."
+            ),
+        )
 
     credit = grant_orientation_credit(
         db,
         email=volunteer.email,
         family_key=family,
+        quarter_id=event.quarter_id,
         granted_by_user_id=current_user.id,
         notes=f"Granted from roster for event {event.title}",
     )
@@ -92,6 +104,7 @@ def grant_orientation_for_signup(
         extra={
             "volunteer_email": volunteer.email,
             "family_key": family,
+            "quarter_id": str(event.quarter_id),
             "event_id": str(event.id),
             "signup_id": str(signup.id),
             "via": "organizer_roster",
@@ -99,10 +112,13 @@ def grant_orientation_for_signup(
     )
     db.commit()
     db.refresh(credit)
+    quarter = event.academic_quarter
     return schemas.OrientationCreditRead(
         id=credit.id,
         volunteer_email=credit.volunteer_email,
         family_key=credit.family_key,
+        quarter_id=credit.quarter_id,
+        quarter_label=quarter.display_name if quarter else None,
         source=credit.source.value,
         granted_by_user_id=credit.granted_by_user_id,
         granted_by_label=current_user.name or current_user.email,

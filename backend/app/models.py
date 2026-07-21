@@ -622,7 +622,12 @@ class ModuleTemplate(Base):
 
 
 class OrientationCredit(Base):
-    """Explicit grant/revoke trail of orientation credit by (volunteer_email, family_key).
+    """Explicit grant/revoke trail of orientation credit by
+    (volunteer_email, family_key, quarter_id).
+
+    Issue #30: credit is scoped to the quarter it was earned in — attending a
+    module family's orientation covers that family for the rest of the quarter
+    and resets at the boundary.
 
     Signup-based attendance is still the primary source; this table covers cases
     where an organizer/admin vouches for a volunteer outside the normal flow
@@ -639,6 +644,9 @@ class OrientationCredit(Base):
     )
     volunteer_email = Column(String(255), nullable=False, index=True)
     family_key = Column(String, nullable=False)
+    quarter_id = Column(
+        UUID(as_uuid=True), ForeignKey("quarters.id"), nullable=False
+    )
     source = Column(
         SqlEnum(
             OrientationCreditSource,
@@ -670,13 +678,15 @@ class OrientationCredit(Base):
 
     __table_args__ = (
         Index(
-            "ix_orientation_credits_email_family",
+            "ix_orientation_credits_email_family_quarter",
             "volunteer_email",
             "family_key",
+            "quarter_id",
         ),
     )
 
     granted_by = relationship("User")
+    academic_quarter = relationship("AcademicQuarter")
 
 
 # -------------------------

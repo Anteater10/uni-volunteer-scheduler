@@ -2350,10 +2350,13 @@ def _serialize_orientation_credit(
         )
         if granter:
             label = granter.name or granter.email
+    quarter = credit.academic_quarter
     return schemas.OrientationCreditRead(
         id=credit.id,
         volunteer_email=credit.volunteer_email,
         family_key=credit.family_key,
+        quarter_id=credit.quarter_id,
+        quarter_label=quarter.display_name if quarter else None,
         source=credit.source.value,
         granted_by_user_id=credit.granted_by_user_id,
         granted_by_label=label,
@@ -2370,6 +2373,7 @@ def _serialize_orientation_credit(
 def admin_list_orientation_credits(
     email: str | None = Query(None),
     family_key: str | None = Query(None),
+    quarter_id: uuid_mod.UUID | None = Query(None),
     active_only: bool = Query(False, description="Exclude revoked rows"),
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
@@ -2386,6 +2390,8 @@ def admin_list_orientation_credits(
         )
     if family_key:
         q = q.filter(models.OrientationCredit.family_key == family_key)
+    if quarter_id:
+        q = q.filter(models.OrientationCredit.quarter_id == quarter_id)
     if active_only:
         q = q.filter(models.OrientationCredit.revoked_at.is_(None))
     q = q.order_by(models.OrientationCredit.granted_at.desc()).limit(500)
@@ -2403,13 +2409,26 @@ def admin_create_orientation_credit(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Admin manual grant — e.g. vouched-for volunteer, pre-existing records."""
+    """Admin manual grant — e.g. vouched-for volunteer, pre-existing records.
+
+    Issue #30: the grant names the quarter it applies to; the quarter must be
+    an entered row.
+    """
     from ..services.orientation_service import grant_orientation_credit
+
+    quarter = (
+        db.query(models.AcademicQuarter)
+        .filter(models.AcademicQuarter.id == payload.quarter_id)
+        .first()
+    )
+    if quarter is None:
+        raise HTTPException(status_code=404, detail="Quarter not found")
 
     credit = grant_orientation_credit(
         db,
         email=str(payload.volunteer_email),
         family_key=payload.family_key,
+        quarter_id=payload.quarter_id,
         granted_by_user_id=admin_user.id,
         notes=payload.notes,
     )
@@ -2422,6 +2441,7 @@ def admin_create_orientation_credit(
         extra={
             "volunteer_email": credit.volunteer_email,
             "family_key": credit.family_key,
+            "quarter_id": str(credit.quarter_id),
             "via": "admin_page",
         },
     )

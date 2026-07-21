@@ -1,23 +1,31 @@
 """Orientation status service.
 
-Phase 21 expansion: orientation credit is now cross-week/cross-module within the
-same module family, keyed by `(volunteer.email, family_key)`.
+Issue #30: orientation credit is keyed by
+``(volunteer.email, family_key, quarter_id)`` — attending a module family's
+orientation covers that family for the rest of the quarter it happened in,
+and resets at the quarter boundary. Quarter scoping replaces the old
+``ORIENTATION_CREDIT_EXPIRY_DAYS`` env hack (Phase 21), which is retired.
 
 Credit sources
 --------------
 1. ``attendance`` — derived: any prior Signup where the slot_type is ORIENTATION,
    the signup status is in (attended, checked_in), and the slot's event resolves
-   to the same family_key (via ``module_templates.family_key`` which defaults to
-   the ``slug`` itself — see migration 0014).
+   to the same family_key (via ``module_templates.family_key``) AND is linked to
+   the same quarter (``events.quarter_id``).
 2. ``grant`` — explicit row in the ``orientation_credits`` table, written by an
-   organizer ("vouched for") or admin.
+   organizer ("vouched for") or admin, always for a specific quarter.
+
+Fail-closed rule
+----------------
+Both dimensions are required: ``family_key=None`` OR ``quarter_id=None`` means
+``has_credit=False``. An event outside any entered quarter therefore always
+shows the orientation modal — stale credit is never honored.
 
 Back-compat
 -----------
 ``has_attended_orientation(db, email)`` keeps its signature so existing callers
-still compile, but it now fails closed: with no ``family_key`` to anchor
-against, the answer is always ``has_credit=False``. The legacy
-``/public/orientation-status`` endpoint inherits this behavior and is
+still compile, but it fails closed (no family/quarter to anchor against). The
+legacy ``/public/orientation-status`` endpoint inherits this behavior and is
 deprecated — callers should use ``/public/orientation-check?event_id=...``.
 
 Enumeration-safe (D-08): returns identical shape regardless of whether the email
@@ -25,8 +33,7 @@ exists. No 404 for missing emails.
 """
 from __future__ import annotations
 
-import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -47,33 +54,30 @@ from ..models import (
 from ..schemas import OrientationStatusRead
 
 
-def _expiry_cutoff() -> Optional[datetime]:
-    """Return the UTC cutoff timestamp for credit expiry, or None when disabled.
-
-    Controlled by ``ORIENTATION_CREDIT_EXPIRY_DAYS`` env var. Unset (default)
-    means credit is forever. Any non-integer value is treated as disabled.
-    """
-    raw = os.environ.get("ORIENTATION_CREDIT_EXPIRY_DAYS")
-    if not raw:
-        return None
-    try:
-        days = int(raw)
-    except ValueError:
-        return None
-    if days <= 0:
-        return None
-    return datetime.now(timezone.utc) - timedelta(days=days)
-
-
 def family_for_event(db: Session, event_id) -> Optional[str]:
     """Resolve the family_key for an event.
 
     event.module_slug → module_templates.slug → family_key or slug.
     Returns None if the event has no module, or the module template is missing.
     """
+    family, _ = credit_scope_for_event(db, event_id)
+    return family
+
+
+def credit_scope_for_event(
+    db: Session, event_id
+) -> tuple[Optional[str], Optional[UUID]]:
+    """Resolve the (family_key, quarter_id) credit scope for an event.
+
+    Either element is None when unresolvable: no module_slug → no family;
+    event not linked to an entered quarter → no quarter. The credit check
+    fails closed on a None in either position.
+    """
     event = db.query(Event).filter(Event.id == event_id).first()
-    if not event or not event.module_slug:
-        return None
+    if not event:
+        return (None, None)
+    if not event.module_slug:
+        return (None, event.quarter_id)
     tmpl = (
         db.query(ModuleTemplate)
         .filter(ModuleTemplate.slug == event.module_slug)
@@ -83,68 +87,57 @@ def family_for_event(db: Session, event_id) -> Optional[str]:
         # Fallback: treat the raw module_slug as the family — legacy events
         # whose module_slug doesn't map to a seeded template still group
         # consistently with themselves.
-        return event.module_slug
-    return tmpl.family_key or tmpl.slug
+        return (event.module_slug, event.quarter_id)
+    return (tmpl.family_key or tmpl.slug, event.quarter_id)
 
 
 def _latest_attendance(
-    db: Session, email: str, family_key: Optional[str], cutoff: Optional[datetime]
+    db: Session, email: str, family_key: str, quarter_id: UUID
 ) -> tuple[bool, Optional[datetime]]:
-    """Return (has_attendance, most_recent_timestamp) for (email, family_key).
+    """Return (has_attendance, most_recent_timestamp) for (email, family, quarter).
 
-    When ``family_key`` is None, any family counts (legacy behavior).
-    When ``cutoff`` is set, rows older than the cutoff are ignored.
     The returned timestamp may be None even when ``has_attendance`` is True —
     legacy signups occasionally have status=attended without ``checked_in_at``
     set. In that case the signup still counts for credit purposes.
     """
-    q = (
+    row = (
         db.query(Signup)
         .join(Slot, Slot.id == Signup.slot_id)
         .join(Volunteer, Volunteer.id == Signup.volunteer_id)
+        .join(Event, Event.id == Slot.event_id)
+        .outerjoin(ModuleTemplate, ModuleTemplate.slug == Event.module_slug)
         .filter(
             Volunteer.email == email.lower().strip(),
             Slot.slot_type == SlotType.ORIENTATION,
             Signup.status.in_([SignupStatus.attended, SignupStatus.checked_in]),
-        )
-    )
-    if family_key is not None:
-        q = q.join(Event, Event.id == Slot.event_id).outerjoin(
-            ModuleTemplate, ModuleTemplate.slug == Event.module_slug
-        )
-        q = q.filter(
+            Event.quarter_id == quarter_id,
             or_(
                 ModuleTemplate.family_key == family_key,
                 Event.module_slug == family_key,
-            )
+            ),
         )
-    row = q.order_by(Signup.checked_in_at.desc().nullslast()).first()
+        .order_by(Signup.checked_in_at.desc().nullslast())
+        .first()
+    )
     if row is None:
         return (False, None)
-    ts = row.checked_in_at
-    # Only enforce cutoff when we have a timestamp to compare against. Rows
-    # with null checked_in_at predate the Phase 3 state machine and we keep
-    # counting them as "attended" — same as the v1.2 behavior.
-    if cutoff is not None and ts is not None and ts < cutoff:
-        return (False, None)
-    return (True, ts)
+    return (True, row.checked_in_at)
 
 
 def _latest_grant_ts(
-    db: Session, email: str, family_key: Optional[str], cutoff: Optional[datetime]
+    db: Session, email: str, family_key: str, quarter_id: UUID
 ) -> Optional[datetime]:
-    q = (
+    row = (
         db.query(OrientationCredit)
         .filter(
             OrientationCredit.volunteer_email == email.lower().strip(),
+            OrientationCredit.family_key == family_key,
+            OrientationCredit.quarter_id == quarter_id,
             OrientationCredit.revoked_at.is_(None),
         )
+        .order_by(OrientationCredit.granted_at.desc())
+        .first()
     )
-    if family_key is not None:
-        q = q.filter(OrientationCredit.family_key == family_key)
-    if cutoff is not None:
-        q = q.filter(OrientationCredit.granted_at >= cutoff)
-    row = q.order_by(OrientationCredit.granted_at.desc()).first()
     return row.granted_at if row else None
 
 
@@ -152,29 +145,29 @@ def has_orientation_credit(
     db: Session,
     email: str,
     family_key: Optional[str] = None,
+    quarter_id: Optional[UUID] = None,
 ) -> OrientationStatusRead:
-    """Return whether ``email`` has orientation credit for ``family_key``.
+    """Return whether ``email`` has orientation credit for ``family_key`` in
+    ``quarter_id``.
 
-    Fail-closed for ``family_key=None``: returns ``has_credit=False``. A credit
-    only exists for a specific module family, so "no module to check against"
-    means "no credit found." This prevents the legacy blanket-match behavior
-    where any orientation credit would satisfy a check for an unknown module.
+    Fail-closed when either dimension is missing: a credit only exists for a
+    specific module family within a specific quarter, so "nothing to check
+    against" means "no credit found."
 
     Source priority: attendance wins over grant when both exist. The returned
-    ``last_attended_at`` is the more-recent of the two. ``has_credit`` is True
-    when either source yields a row, unless the expiry env var excludes it.
+    ``last_attended_at`` is the more-recent of the two.
     """
-    if family_key is None:
+    if family_key is None or quarter_id is None:
         return OrientationStatusRead(
             has_attended_orientation=False,
             last_attended_at=None,
             has_credit=False,
             source=None,
-            family_key=None,
+            family_key=family_key,
+            quarter_id=quarter_id,
         )
-    cutoff = _expiry_cutoff()
-    has_attended, attended_ts = _latest_attendance(db, email, family_key, cutoff)
-    grant_ts = _latest_grant_ts(db, email, family_key, cutoff)
+    has_attended, attended_ts = _latest_attendance(db, email, family_key, quarter_id)
+    grant_ts = _latest_grant_ts(db, email, family_key, quarter_id)
 
     source: Optional[str] = None
     last_ts: Optional[datetime] = None
@@ -205,6 +198,7 @@ def has_orientation_credit(
         has_credit=has_credit,
         source=source,
         family_key=family_key,
+        quarter_id=quarter_id,
     )
 
 
@@ -213,20 +207,21 @@ def has_attended_orientation(db: Session, email: str) -> OrientationStatusRead:
 
     Kept so the legacy ``/public/orientation-status`` endpoint still responds
     with the expected shape. New callers should use
-    ``has_orientation_credit(db, email, family_key=...)`` with a resolved
-    family_key.
+    ``has_orientation_credit(db, email, family_key=..., quarter_id=...)`` with
+    a resolved scope.
     """
-    return has_orientation_credit(db, email, family_key=None)
+    return has_orientation_credit(db, email, family_key=None, quarter_id=None)
 
 
 def grant_orientation_credit(
     db: Session,
     email: str,
     family_key: str,
+    quarter_id: UUID,
     granted_by_user_id: Optional[UUID],
     notes: Optional[str] = None,
 ) -> OrientationCredit:
-    """Create an explicit orientation_credits row.
+    """Create an explicit orientation_credits row for a specific quarter.
 
     Caller owns the transaction (no commit here). Duplicates are allowed — the
     table is an append-only audit trail; the lookup collapses them to the most
@@ -235,6 +230,7 @@ def grant_orientation_credit(
     credit = OrientationCredit(
         volunteer_email=email.lower().strip(),
         family_key=family_key,
+        quarter_id=quarter_id,
         source=OrientationCreditSource.grant,
         granted_by_user_id=granted_by_user_id,
         notes=notes,
