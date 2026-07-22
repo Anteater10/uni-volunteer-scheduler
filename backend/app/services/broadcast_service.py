@@ -387,7 +387,7 @@ def send_broadcast(
             "subject": subject,
             "recipient_count": recipient_count,
             "body_markdown": body_markdown,
-            "slot_id": str(slot_id) if slot_id else None,
+            "slot_id": str(slot_id) if slot_id is not None else None,
         },
     )
     db.add(audit)
