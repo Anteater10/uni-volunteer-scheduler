@@ -624,6 +624,10 @@ class ModuleTemplate(Base):
 class OrientationCredit(Base):
     """Explicit grant/revoke trail of orientation credit by (volunteer_email, family_key).
 
+    Credit is permanent: once oriented for a module family, oriented forever.
+    ``quarter_id`` records which quarter the credit was earned in — display and
+    admin-filter metadata only, never part of the lookup (issue #30).
+
     Signup-based attendance is still the primary source; this table covers cases
     where an organizer/admin vouches for a volunteer outside the normal flow
     (walk-ins, historical records, corrections). See
@@ -639,6 +643,9 @@ class OrientationCredit(Base):
     )
     volunteer_email = Column(String(255), nullable=False, index=True)
     family_key = Column(String, nullable=False)
+    quarter_id = Column(
+        UUID(as_uuid=True), ForeignKey("quarters.id"), nullable=True
+    )
     source = Column(
         SqlEnum(
             OrientationCreditSource,
@@ -677,6 +684,7 @@ class OrientationCredit(Base):
     )
 
     granted_by = relationship("User")
+    academic_quarter = relationship("AcademicQuarter")
 
 
 # -------------------------

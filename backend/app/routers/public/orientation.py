@@ -54,9 +54,10 @@ def orientation_check(
     ),
     db: Session = Depends(get_db),
 ):
-    """Phase 21: credit check keyed by (email, module_family) where family is
-    resolved from ``event_id`` via ``event.module_slug → module_templates.slug
-    → family_key or slug``.
+    """Credit check keyed by (email, module_family) — permanent, any quarter.
+    Family resolves from ``event_id`` via ``event.module_slug →
+    module_templates.slug → family_key or slug``. Fails closed when the
+    family is unresolvable (issue #30).
 
     D-08: same shape for unknown / known emails.
     """

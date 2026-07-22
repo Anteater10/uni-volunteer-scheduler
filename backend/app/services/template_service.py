@@ -61,6 +61,36 @@ def restore_template(db: Session, slug: str) -> ModuleTemplate:
     return tpl
 
 
+def _resolve_orientation_family(db: Session, slug: str) -> str:
+    """Resolve the module family a new orientation template credits (issue #30).
+
+    Only the `<family>-orientation` slug derivation is accepted, and only when
+    the derived family actually exists among active templates. Anything else is
+    a 422 telling the admin to pass ``family_key`` explicitly — never a silent
+    binding to a family nothing checks against.
+    """
+    active = (
+        db.query(ModuleTemplate)
+        .filter(ModuleTemplate.deleted_at.is_(None))
+        .all()
+    )
+    known_families = sorted({t.family_key or t.slug for t in active})
+    candidate = (
+        slug[: -len("-orientation")] if slug.endswith("-orientation") else None
+    )
+    if candidate and candidate in known_families:
+        return candidate
+    hint = f"(derived '{candidate}' matches no module) " if candidate else ""
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Orientation templates must name the module family they credit "
+            f"{hint}— pass family_key explicitly. Known families: "
+            f"{', '.join(known_families) or 'none yet'}."
+        ),
+    )
+
+
 def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     _validate_slug(slug)
     _validate_metadata(data.get("metadata"))
@@ -86,11 +116,14 @@ def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     # multiple modules (e.g. "crispr-intro" + "crispr-advanced" both under
     # family_key="crispr").
     if not payload.get("family_key"):
-        # For orientation templates, derive the family from the base slug so
-        # "glucose-sensing-orientation" groups under "glucose-sensing" and
-        # merges with the paired module CSV at import time.
-        if payload.get("type") == ModuleType.orientation and slug.endswith("-orientation"):
-            payload["family_key"] = slug[: -len("-orientation")]
+        if payload.get("type") == ModuleType.orientation:
+            # Issue #30: an orientation template must credit a real module
+            # family — silent name-magic minted orphan families nothing ever
+            # checked against ("biology-orientation" → "biology" ≠ "intro-bio").
+            # The `<family>-orientation` derivation survives only as a default
+            # that must land on an existing family; otherwise the admin has to
+            # pick one explicitly.
+            payload["family_key"] = _resolve_orientation_family(db, slug)
         else:
             payload["family_key"] = slug
     tpl = ModuleTemplate(slug=slug, **payload)

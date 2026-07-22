@@ -814,14 +814,15 @@ export const api = {
       getBroadcastRecipientCount(eventId),
     sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
     listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
-    // Phase 21 — orientation credit engine
+    // Phase 21 — orientation credit engine (issue #30: permanent per
+    // (email, family); quarter_id is optional "earned in" metadata)
     orientationCredits: {
       list: (params = {}) =>
         request("/admin/orientation-credits", { method: "GET", params }),
-      create: ({ volunteer_email, family_key, notes = null }) =>
+      create: ({ volunteer_email, family_key, quarter_id, notes = null }) =>
         request("/admin/orientation-credits", {
           method: "POST",
-          body: { volunteer_email, family_key, notes },
+          body: { volunteer_email, family_key, quarter_id, notes },
         }),
       revoke: (creditId) =>
         request(`/admin/orientation-credits/${creditId}`, { method: "DELETE" }),

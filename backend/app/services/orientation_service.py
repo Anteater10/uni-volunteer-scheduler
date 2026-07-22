@@ -1,23 +1,32 @@
 """Orientation status service.
 
-Phase 21 expansion: orientation credit is now cross-week/cross-module within the
-same module family, keyed by `(volunteer.email, family_key)`.
+Orientation credit is keyed by ``(volunteer.email, family_key)`` and is
+permanent: once oriented for a module family, oriented forever — any quarter,
+any year (issue #30). The old ``ORIENTATION_CREDIT_EXPIRY_DAYS`` env hack
+(Phase 21) stays retired; there is no expiry of any kind. Explicit grants may
+carry a ``quarter_id`` recording which quarter the credit was earned in, but
+that is display/filter metadata only and never affects the lookup.
 
 Credit sources
 --------------
 1. ``attendance`` — derived: any prior Signup where the slot_type is ORIENTATION,
    the signup status is in (attended, checked_in), and the slot's event resolves
-   to the same family_key (via ``module_templates.family_key`` which defaults to
-   the ``slug`` itself — see migration 0014).
+   to the same family_key (via ``module_templates.family_key``).
 2. ``grant`` — explicit row in the ``orientation_credits`` table, written by an
    organizer ("vouched for") or admin.
+
+Fail-closed rule
+----------------
+``family_key=None`` means ``has_credit=False`` — a credit only exists for a
+specific module family, so "no module to check against" means "no credit
+found." This prevents the legacy blanket-match behavior where any orientation
+credit would satisfy a check for an unknown module.
 
 Back-compat
 -----------
 ``has_attended_orientation(db, email)`` keeps its signature so existing callers
-still compile, but it now fails closed: with no ``family_key`` to anchor
-against, the answer is always ``has_credit=False``. The legacy
-``/public/orientation-status`` endpoint inherits this behavior and is
+still compile, but it fails closed (no family_key to anchor against). The
+legacy ``/public/orientation-status`` endpoint inherits this behavior and is
 deprecated — callers should use ``/public/orientation-check?event_id=...``.
 
 Enumeration-safe (D-08): returns identical shape regardless of whether the email
@@ -25,8 +34,7 @@ exists. No 404 for missing emails.
 """
 from __future__ import annotations
 
-import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -47,29 +55,11 @@ from ..models import (
 from ..schemas import OrientationStatusRead
 
 
-def _expiry_cutoff() -> Optional[datetime]:
-    """Return the UTC cutoff timestamp for credit expiry, or None when disabled.
-
-    Controlled by ``ORIENTATION_CREDIT_EXPIRY_DAYS`` env var. Unset (default)
-    means credit is forever. Any non-integer value is treated as disabled.
-    """
-    raw = os.environ.get("ORIENTATION_CREDIT_EXPIRY_DAYS")
-    if not raw:
-        return None
-    try:
-        days = int(raw)
-    except ValueError:
-        return None
-    if days <= 0:
-        return None
-    return datetime.now(timezone.utc) - timedelta(days=days)
-
-
 def family_for_event(db: Session, event_id) -> Optional[str]:
     """Resolve the family_key for an event.
 
     event.module_slug → module_templates.slug → family_key or slug.
-    Returns None if the event has no module, or the module template is missing.
+    Returns None if the event has no module.
     """
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event or not event.module_slug:
@@ -88,63 +78,50 @@ def family_for_event(db: Session, event_id) -> Optional[str]:
 
 
 def _latest_attendance(
-    db: Session, email: str, family_key: Optional[str], cutoff: Optional[datetime]
+    db: Session, email: str, family_key: str
 ) -> tuple[bool, Optional[datetime]]:
     """Return (has_attendance, most_recent_timestamp) for (email, family_key).
 
-    When ``family_key`` is None, any family counts (legacy behavior).
-    When ``cutoff`` is set, rows older than the cutoff are ignored.
     The returned timestamp may be None even when ``has_attendance`` is True —
     legacy signups occasionally have status=attended without ``checked_in_at``
     set. In that case the signup still counts for credit purposes.
     """
-    q = (
+    row = (
         db.query(Signup)
         .join(Slot, Slot.id == Signup.slot_id)
         .join(Volunteer, Volunteer.id == Signup.volunteer_id)
+        .join(Event, Event.id == Slot.event_id)
+        .outerjoin(ModuleTemplate, ModuleTemplate.slug == Event.module_slug)
         .filter(
             Volunteer.email == email.lower().strip(),
             Slot.slot_type == SlotType.ORIENTATION,
             Signup.status.in_([SignupStatus.attended, SignupStatus.checked_in]),
-        )
-    )
-    if family_key is not None:
-        q = q.join(Event, Event.id == Slot.event_id).outerjoin(
-            ModuleTemplate, ModuleTemplate.slug == Event.module_slug
-        )
-        q = q.filter(
             or_(
                 ModuleTemplate.family_key == family_key,
                 Event.module_slug == family_key,
-            )
+            ),
         )
-    row = q.order_by(Signup.checked_in_at.desc().nullslast()).first()
+        .order_by(Signup.checked_in_at.desc().nullslast())
+        .first()
+    )
     if row is None:
         return (False, None)
-    ts = row.checked_in_at
-    # Only enforce cutoff when we have a timestamp to compare against. Rows
-    # with null checked_in_at predate the Phase 3 state machine and we keep
-    # counting them as "attended" — same as the v1.2 behavior.
-    if cutoff is not None and ts is not None and ts < cutoff:
-        return (False, None)
-    return (True, ts)
+    return (True, row.checked_in_at)
 
 
 def _latest_grant_ts(
-    db: Session, email: str, family_key: Optional[str], cutoff: Optional[datetime]
+    db: Session, email: str, family_key: str
 ) -> Optional[datetime]:
-    q = (
+    row = (
         db.query(OrientationCredit)
         .filter(
             OrientationCredit.volunteer_email == email.lower().strip(),
+            OrientationCredit.family_key == family_key,
             OrientationCredit.revoked_at.is_(None),
         )
+        .order_by(OrientationCredit.granted_at.desc())
+        .first()
     )
-    if family_key is not None:
-        q = q.filter(OrientationCredit.family_key == family_key)
-    if cutoff is not None:
-        q = q.filter(OrientationCredit.granted_at >= cutoff)
-    row = q.order_by(OrientationCredit.granted_at.desc()).first()
     return row.granted_at if row else None
 
 
@@ -157,12 +134,10 @@ def has_orientation_credit(
 
     Fail-closed for ``family_key=None``: returns ``has_credit=False``. A credit
     only exists for a specific module family, so "no module to check against"
-    means "no credit found." This prevents the legacy blanket-match behavior
-    where any orientation credit would satisfy a check for an unknown module.
+    means "no credit found." Credit is permanent — quarters never gate it.
 
     Source priority: attendance wins over grant when both exist. The returned
-    ``last_attended_at`` is the more-recent of the two. ``has_credit`` is True
-    when either source yields a row, unless the expiry env var excludes it.
+    ``last_attended_at`` is the more-recent of the two.
     """
     if family_key is None:
         return OrientationStatusRead(
@@ -172,9 +147,8 @@ def has_orientation_credit(
             source=None,
             family_key=None,
         )
-    cutoff = _expiry_cutoff()
-    has_attended, attended_ts = _latest_attendance(db, email, family_key, cutoff)
-    grant_ts = _latest_grant_ts(db, email, family_key, cutoff)
+    has_attended, attended_ts = _latest_attendance(db, email, family_key)
+    grant_ts = _latest_grant_ts(db, email, family_key)
 
     source: Optional[str] = None
     last_ts: Optional[datetime] = None
@@ -223,10 +197,14 @@ def grant_orientation_credit(
     db: Session,
     email: str,
     family_key: str,
-    granted_by_user_id: Optional[UUID],
+    quarter_id: Optional[UUID] = None,
+    granted_by_user_id: Optional[UUID] = None,
     notes: Optional[str] = None,
 ) -> OrientationCredit:
     """Create an explicit orientation_credits row.
+
+    ``quarter_id`` records which quarter the credit was earned in — display
+    metadata only; the credit is honored in every quarter regardless.
 
     Caller owns the transaction (no commit here). Duplicates are allowed — the
     table is an append-only audit trail; the lookup collapses them to the most
@@ -235,6 +213,7 @@ def grant_orientation_credit(
     credit = OrientationCredit(
         volunteer_email=email.lower().strip(),
         family_key=family_key,
+        quarter_id=quarter_id,
         source=OrientationCreditSource.grant,
         granted_by_user_id=granted_by_user_id,
         notes=notes,
