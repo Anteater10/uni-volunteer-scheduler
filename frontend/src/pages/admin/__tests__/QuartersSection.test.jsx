@@ -185,6 +185,23 @@ describe("QuartersSection", () => {
     await waitFor(() => expect(archiveMock).toHaveBeenCalledWith("spring-26"));
   });
 
+  // ---- issue #38: retrospective drill-in ----
+
+  it("offers a View events link for past and archived quarters but not the current one", async () => {
+    listMock.mockResolvedValue([SPRING, CURRENT, ARCHIVED]);
+    renderPage();
+
+    expect(await screen.findByTestId("retro-spring-26")).toHaveAttribute(
+      "href",
+      "/admin/quarters/spring-26",
+    );
+    expect(screen.getByTestId("retro-winter-26")).toHaveAttribute(
+      "href",
+      "/admin/quarters/winter-26",
+    );
+    expect(screen.queryByTestId("retro-current-q")).toBeNull();
+  });
+
   it("shows an Archived chip and a Restore action for archived rows", async () => {
     listMock.mockResolvedValue([ARCHIVED]);
     restoreMock.mockResolvedValue({ ...ARCHIVED, archived_at: null });

@@ -45,6 +45,7 @@ import OrganizerDashboard from "./pages/organizer/OrganizerDashboard";
 import AdminLayout from "./pages/admin/AdminLayout";
 import OverviewSection from "./pages/admin/OverviewSection";
 import QuartersSection from "./pages/admin/QuartersSection";
+import QuarterRetrospectivePage from "./pages/admin/QuarterRetrospectivePage";
 import { useAuth } from "./state/useAuth";
 
 function AdminIndexRoute() {
@@ -135,6 +136,11 @@ export default function App() {
             {/* Admin-only surfaces */}
             <Route element={<ProtectedRoute roles={["admin"]} />}>
               <Route path="quarters" element={<QuartersSection />} />
+              {/* Issue #38 — past-quarter retrospective drill-in */}
+              <Route
+                path="quarters/:quarterId"
+                element={<QuarterRetrospectivePage />}
+              />
               <Route path="users" element={<UsersAdminPage />} />
               <Route path="audit-logs" element={<AuditLogsPage />} />
               <Route path="exports" element={<ExportsSection />} />

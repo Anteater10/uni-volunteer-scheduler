@@ -2104,6 +2104,22 @@ def restore_quarter(
     return quarter_service.restore_quarter(db, quarter_id, actor=admin_user)
 
 
+# Issue #38 — quarter retrospective: read-only aggregate powering the
+# admin "view events of a past/archived quarter" drill-down.
+
+
+@router.get(
+    "/quarters/{quarter_id}/retrospective",
+    response_model=schemas.QuarterRetrospective,
+)
+def quarter_retrospective(
+    quarter_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return quarter_service.quarter_retrospective(db, quarter_id)
+
+
 # Phase 23 — recurring event duplication
 @router.post("/events/{event_id}/duplicate")
 def duplicate_event(

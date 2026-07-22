@@ -8,7 +8,7 @@
 // visible, never silent.
 
 import React, { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import api from "../../lib/api";
@@ -260,6 +260,17 @@ export default function QuartersSection() {
                   <td className="py-3 pr-4">{formatDate(row.end_date)}</td>
                   <td className="py-3 pr-4">{row.weeks_in_quarter}</td>
                   <td className="py-3 text-right space-x-2">
+                    {/* Issue #38 — ended quarters get a retrospective view */}
+                    {(row.archived_at || row.end_date < todayIso) && (
+                      <Button
+                        variant="secondary"
+                        as={Link}
+                        to={`/admin/quarters/${row.id}`}
+                        data-testid={`retro-${row.id}`}
+                      >
+                        View events
+                      </Button>
+                    )}
                     <Button
                       variant="secondary"
                       onClick={() => openEdit(row)}

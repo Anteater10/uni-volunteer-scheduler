@@ -762,6 +762,8 @@ export const api = {
       // Issue #33 — explicit archiving of past quarters.
       archive: (id) => request(`/admin/quarters/${id}/archive`, { method: "POST" }),
       restore: (id) => request(`/admin/quarters/${id}/restore`, { method: "POST" }),
+      // Issue #38 — per-event attendance breakdown for a past quarter.
+      retrospective: (id) => request(`/admin/quarters/${id}/retrospective`),
     },
     templates: {
       list: (params) => request("/admin/module-templates", { params }),
