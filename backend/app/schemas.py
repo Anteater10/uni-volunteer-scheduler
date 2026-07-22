@@ -763,9 +763,6 @@ class OrientationStatusRead(BaseModel):
     has_credit: bool = False
     source: Optional[Literal["attendance", "grant"]] = None
     family_key: Optional[str] = None
-    # Issue #30: the quarter the check was scoped to (from the target event).
-    # None means no quarter context — the check fails closed.
-    quarter_id: Optional[UUID] = None
 
 
 # =========================
@@ -774,9 +771,9 @@ class OrientationStatusRead(BaseModel):
 class OrientationCreditCreate(BaseModel):
     volunteer_email: EmailStr
     family_key: str = Field(min_length=1, max_length=255)
-    # Issue #30: credits are quarter-scoped; admin grants must say which
-    # quarter the credit applies to.
-    quarter_id: UUID
+    # Issue #30: optionally records which quarter the credit was earned in —
+    # display metadata only; credit is permanent per (email, family).
+    quarter_id: Optional[UUID] = None
     notes: Optional[str] = None
 
 
@@ -784,7 +781,7 @@ class OrientationCreditRead(ORMBase):
     id: UUID
     volunteer_email: str
     family_key: str
-    quarter_id: UUID
+    quarter_id: Optional[UUID] = None
     quarter_label: Optional[str] = None
     source: Literal["attendance", "grant"]
     granted_by_user_id: Optional[UUID] = None

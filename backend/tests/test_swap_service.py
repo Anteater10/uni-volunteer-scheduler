@@ -231,27 +231,16 @@ def test_swap_writes_audit_row(db_session):
 
 
 def test_swap_preserves_orientation_credit_via_email(db_session):
-    """Orientation credit is keyed by (email, family_key, quarter_id) — slot
-    changes don't touch credit. We assert the OrientationCredit row is
-    untouched after the swap to lock the invariant in tests."""
-    from datetime import date as date_type
-
+    """Orientation credit is keyed by (email, family_key) — slot changes
+    don't touch credit. We assert the OrientationCredit row is untouched
+    after the swap to lock the invariant in tests."""
     _bind_factories(db_session)
     _event, slot_a, slot_b = _make_event_with_two_slots(db_session)
     vol = VolunteerFactory(email="preserved@example.com")
-    quarter = models.AcademicQuarter(
-        season=models.Quarter.WINTER,
-        year=2026,
-        start_date=date_type(2026, 1, 5),
-        end_date=date_type(2026, 3, 20),
-    )
-    db_session.add(quarter)
-    db_session.flush()
     # Pre-existing orientation credit row for this volunteer.
     credit = models.OrientationCredit(
         volunteer_email=vol.email,
         family_key="module-x",
-        quarter_id=quarter.id,
         source=models.OrientationCreditSource.grant,
         notes="pre-swap",
     )

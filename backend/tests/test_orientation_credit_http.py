@@ -2,8 +2,9 @@
 
 The explicit grant paths (organizer roster one-tap, admin manual grant) had
 never been exercised end-to-end. These tests prove a grant lands with the
-event's quarter attached and that /public/orientation-check honors the
-(email, family, quarter) scope.
+event's quarter recorded as display metadata, and that
+/public/orientation-check honors the permanent (email, family) credit —
+quarters never gate the answer.
 """
 import uuid
 from datetime import date as date_type, datetime, timedelta, timezone
@@ -104,7 +105,7 @@ def _make_signed_up_volunteer(db, slot, email="roster-vol@example.com"):
 
 
 class TestOrganizerGrantRoundTrip:
-    def test_grant_carries_event_quarter_and_counts(
+    def test_grant_records_quarter_and_counts_in_any_quarter(
         self, client, db_session, session_a, session_b
     ):
         organizer = make_user(
@@ -134,9 +135,10 @@ class TestOrganizerGrantRoundTrip:
         body = resp.json()
         assert body["family_key"] == "crispr"
         assert body["source"] == "grant"
+        # The event's quarter is recorded on the row as "earned in" metadata.
         assert body["quarter_id"] == str(session_a.id)
 
-        # Counts for another event in the SAME quarter + family…
+        # Counts for another event in the same quarter + family…
         check = client.get(
             "/api/v1/public/orientation-check",
             params={"email": vol.email, "event_id": str(same_q_event.id)},
@@ -145,17 +147,20 @@ class TestOrganizerGrantRoundTrip:
         assert check.json()["has_credit"] is True
         assert check.json()["source"] == "grant"
 
-        # …but NOT for the next quarter.
+        # …and for the next quarter too — credit is permanent.
         check_next = client.get(
             "/api/v1/public/orientation-check",
             params={"email": vol.email, "event_id": str(next_q_event.id)},
         )
         assert check_next.status_code == 200, check_next.text
-        assert check_next.json()["has_credit"] is False
+        assert check_next.json()["has_credit"] is True
+        assert check_next.json()["source"] == "grant"
 
-    def test_grant_rejected_when_event_has_no_quarter(
+    def test_grant_succeeds_when_event_has_no_quarter(
         self, client, db_session, session_a
     ):
+        """Legacy events outside any entered quarter can still grant — the
+        row just carries no "earned in" quarter."""
         organizer = make_user(
             db_session, email="org-noq@example.com", role=models.UserRole.organizer
         )
@@ -174,8 +179,18 @@ class TestOrganizerGrantRoundTrip:
             f"/api/v1/organizer/events/{event.id}/signups/{signup.id}/grant-orientation",
             headers=headers,
         )
-        assert resp.status_code == 422, resp.text
-        assert "quarter" in resp.json()["detail"].lower()
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["family_key"] == "crispr"
+        assert body["quarter_id"] is None
+        assert body["quarter_label"] is None
+
+        check = client.get(
+            "/api/v1/public/orientation-check",
+            params={"email": vol.email, "event_id": str(event.id)},
+        )
+        assert check.status_code == 200
+        assert check.json()["has_credit"] is True
 
 
 class TestAdminCreditQuarter:
@@ -187,13 +202,15 @@ class TestAdminCreditQuarter:
         db_session.commit()
         return auth_headers(client, admin)
 
-    def test_create_requires_quarter_id(self, client, db_session, admin_headers):
+    def test_create_without_quarter_succeeds(self, client, db_session, admin_headers):
         resp = client.post(
             "/api/v1/admin/orientation-credits",
             json={"volunteer_email": "someone@example.com", "family_key": "crispr"},
             headers=admin_headers,
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["quarter_id"] is None
+        assert resp.json()["quarter_label"] is None
 
     def test_create_unknown_quarter_404(self, client, db_session, admin_headers):
         resp = client.post(
@@ -241,10 +258,13 @@ class TestAdminCreditQuarter:
         assert empty.json() == []
 
 
-class TestPublicCheckQuarterDerivation:
-    def test_event_without_quarter_fails_closed(self, client, db_session, session_a):
-        """An event outside any entered quarter has no credit scope — the
-        check reports no credit (modal shows) rather than matching any-quarter."""
+class TestPublicCheckNoQuarterEvent:
+    def test_event_without_quarter_still_honors_credit(
+        self, client, db_session, session_a
+    ):
+        """Credit is permanent per (email, family): attendance earned at a
+        quarter-covered event also satisfies a check for an event outside any
+        entered quarter. The quarter never gates the answer."""
         owner = make_user(db_session, email="own-noq@example.com")
         _make_template(db_session, slug="crispr")
         covered = _make_event(
@@ -275,7 +295,7 @@ class TestPublicCheckQuarterDerivation:
         )
         db_session.commit()
 
-        # Sanity: the covered event does grant credit.
+        # The covered event grants credit…
         ok = client.get(
             "/api/v1/public/orientation-check",
             params={"email": vol.email, "event_id": str(covered.id)},
@@ -283,9 +303,10 @@ class TestPublicCheckQuarterDerivation:
         assert ok.status_code == 200
         assert ok.json()["has_credit"] is True
 
+        # …and so does the quarter-less one — same family, same credit.
         resp = client.get(
             "/api/v1/public/orientation-check",
             params={"email": vol.email, "event_id": str(uncovered.id)},
         )
         assert resp.status_code == 200
-        assert resp.json()["has_credit"] is False
+        assert resp.json()["has_credit"] is True

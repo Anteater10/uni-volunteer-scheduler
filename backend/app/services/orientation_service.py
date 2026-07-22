@@ -1,30 +1,31 @@
 """Orientation status service.
 
-Issue #30: orientation credit is keyed by
-``(volunteer.email, family_key, quarter_id)`` — attending a module family's
-orientation covers that family for the rest of the quarter it happened in,
-and resets at the quarter boundary. Quarter scoping replaces the old
-``ORIENTATION_CREDIT_EXPIRY_DAYS`` env hack (Phase 21), which is retired.
+Orientation credit is keyed by ``(volunteer.email, family_key)`` and is
+permanent: once oriented for a module family, oriented forever — any quarter,
+any year (issue #30). The old ``ORIENTATION_CREDIT_EXPIRY_DAYS`` env hack
+(Phase 21) stays retired; there is no expiry of any kind. Explicit grants may
+carry a ``quarter_id`` recording which quarter the credit was earned in, but
+that is display/filter metadata only and never affects the lookup.
 
 Credit sources
 --------------
 1. ``attendance`` — derived: any prior Signup where the slot_type is ORIENTATION,
    the signup status is in (attended, checked_in), and the slot's event resolves
-   to the same family_key (via ``module_templates.family_key``) AND is linked to
-   the same quarter (``events.quarter_id``).
+   to the same family_key (via ``module_templates.family_key``).
 2. ``grant`` — explicit row in the ``orientation_credits`` table, written by an
-   organizer ("vouched for") or admin, always for a specific quarter.
+   organizer ("vouched for") or admin.
 
 Fail-closed rule
 ----------------
-Both dimensions are required: ``family_key=None`` OR ``quarter_id=None`` means
-``has_credit=False``. An event outside any entered quarter therefore always
-shows the orientation modal — stale credit is never honored.
+``family_key=None`` means ``has_credit=False`` — a credit only exists for a
+specific module family, so "no module to check against" means "no credit
+found." This prevents the legacy blanket-match behavior where any orientation
+credit would satisfy a check for an unknown module.
 
 Back-compat
 -----------
 ``has_attended_orientation(db, email)`` keeps its signature so existing callers
-still compile, but it fails closed (no family/quarter to anchor against). The
+still compile, but it fails closed (no family_key to anchor against). The
 legacy ``/public/orientation-status`` endpoint inherits this behavior and is
 deprecated — callers should use ``/public/orientation-check?event_id=...``.
 
@@ -58,26 +59,11 @@ def family_for_event(db: Session, event_id) -> Optional[str]:
     """Resolve the family_key for an event.
 
     event.module_slug → module_templates.slug → family_key or slug.
-    Returns None if the event has no module, or the module template is missing.
-    """
-    family, _ = credit_scope_for_event(db, event_id)
-    return family
-
-
-def credit_scope_for_event(
-    db: Session, event_id
-) -> tuple[Optional[str], Optional[UUID]]:
-    """Resolve the (family_key, quarter_id) credit scope for an event.
-
-    Either element is None when unresolvable: no module_slug → no family;
-    event not linked to an entered quarter → no quarter. The credit check
-    fails closed on a None in either position.
+    Returns None if the event has no module.
     """
     event = db.query(Event).filter(Event.id == event_id).first()
-    if not event:
-        return (None, None)
-    if not event.module_slug:
-        return (None, event.quarter_id)
+    if not event or not event.module_slug:
+        return None
     tmpl = (
         db.query(ModuleTemplate)
         .filter(ModuleTemplate.slug == event.module_slug)
@@ -87,14 +73,14 @@ def credit_scope_for_event(
         # Fallback: treat the raw module_slug as the family — legacy events
         # whose module_slug doesn't map to a seeded template still group
         # consistently with themselves.
-        return (event.module_slug, event.quarter_id)
-    return (tmpl.family_key or tmpl.slug, event.quarter_id)
+        return event.module_slug
+    return tmpl.family_key or tmpl.slug
 
 
 def _latest_attendance(
-    db: Session, email: str, family_key: str, quarter_id: UUID
+    db: Session, email: str, family_key: str
 ) -> tuple[bool, Optional[datetime]]:
-    """Return (has_attendance, most_recent_timestamp) for (email, family, quarter).
+    """Return (has_attendance, most_recent_timestamp) for (email, family_key).
 
     The returned timestamp may be None even when ``has_attendance`` is True —
     legacy signups occasionally have status=attended without ``checked_in_at``
@@ -110,7 +96,6 @@ def _latest_attendance(
             Volunteer.email == email.lower().strip(),
             Slot.slot_type == SlotType.ORIENTATION,
             Signup.status.in_([SignupStatus.attended, SignupStatus.checked_in]),
-            Event.quarter_id == quarter_id,
             or_(
                 ModuleTemplate.family_key == family_key,
                 Event.module_slug == family_key,
@@ -125,14 +110,13 @@ def _latest_attendance(
 
 
 def _latest_grant_ts(
-    db: Session, email: str, family_key: str, quarter_id: UUID
+    db: Session, email: str, family_key: str
 ) -> Optional[datetime]:
     row = (
         db.query(OrientationCredit)
         .filter(
             OrientationCredit.volunteer_email == email.lower().strip(),
             OrientationCredit.family_key == family_key,
-            OrientationCredit.quarter_id == quarter_id,
             OrientationCredit.revoked_at.is_(None),
         )
         .order_by(OrientationCredit.granted_at.desc())
@@ -145,29 +129,26 @@ def has_orientation_credit(
     db: Session,
     email: str,
     family_key: Optional[str] = None,
-    quarter_id: Optional[UUID] = None,
 ) -> OrientationStatusRead:
-    """Return whether ``email`` has orientation credit for ``family_key`` in
-    ``quarter_id``.
+    """Return whether ``email`` has orientation credit for ``family_key``.
 
-    Fail-closed when either dimension is missing: a credit only exists for a
-    specific module family within a specific quarter, so "nothing to check
-    against" means "no credit found."
+    Fail-closed for ``family_key=None``: returns ``has_credit=False``. A credit
+    only exists for a specific module family, so "no module to check against"
+    means "no credit found." Credit is permanent — quarters never gate it.
 
     Source priority: attendance wins over grant when both exist. The returned
     ``last_attended_at`` is the more-recent of the two.
     """
-    if family_key is None or quarter_id is None:
+    if family_key is None:
         return OrientationStatusRead(
             has_attended_orientation=False,
             last_attended_at=None,
             has_credit=False,
             source=None,
-            family_key=family_key,
-            quarter_id=quarter_id,
+            family_key=None,
         )
-    has_attended, attended_ts = _latest_attendance(db, email, family_key, quarter_id)
-    grant_ts = _latest_grant_ts(db, email, family_key, quarter_id)
+    has_attended, attended_ts = _latest_attendance(db, email, family_key)
+    grant_ts = _latest_grant_ts(db, email, family_key)
 
     source: Optional[str] = None
     last_ts: Optional[datetime] = None
@@ -198,7 +179,6 @@ def has_orientation_credit(
         has_credit=has_credit,
         source=source,
         family_key=family_key,
-        quarter_id=quarter_id,
     )
 
 
@@ -207,21 +187,24 @@ def has_attended_orientation(db: Session, email: str) -> OrientationStatusRead:
 
     Kept so the legacy ``/public/orientation-status`` endpoint still responds
     with the expected shape. New callers should use
-    ``has_orientation_credit(db, email, family_key=..., quarter_id=...)`` with
-    a resolved scope.
+    ``has_orientation_credit(db, email, family_key=...)`` with a resolved
+    family_key.
     """
-    return has_orientation_credit(db, email, family_key=None, quarter_id=None)
+    return has_orientation_credit(db, email, family_key=None)
 
 
 def grant_orientation_credit(
     db: Session,
     email: str,
     family_key: str,
-    quarter_id: UUID,
-    granted_by_user_id: Optional[UUID],
+    quarter_id: Optional[UUID] = None,
+    granted_by_user_id: Optional[UUID] = None,
     notes: Optional[str] = None,
 ) -> OrientationCredit:
-    """Create an explicit orientation_credits row for a specific quarter.
+    """Create an explicit orientation_credits row.
+
+    ``quarter_id`` records which quarter the credit was earned in — display
+    metadata only; the credit is honored in every quarter regardless.
 
     Caller owns the transaction (no commit here). Duplicates are allowed — the
     table is an append-only audit trail; the lookup collapses them to the most

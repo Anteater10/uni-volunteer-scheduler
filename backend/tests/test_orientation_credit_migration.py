@@ -1,9 +1,10 @@
-"""Issue #30: migration 0026 round-trip (orientation credit quarter scope).
+"""Issue #30: migration 0026 round-trip (orientation credit quarter metadata).
 
 Asserts:
-1. ``alembic upgrade head`` adds ``orientation_credits.quarter_id`` (NOT NULL,
-   FK → quarters) and swaps the (email, family) index for
-   (email, family, quarter).
+1. ``alembic upgrade head`` adds ``orientation_credits.quarter_id`` as a
+   NULLABLE FK → quarters (display-only "earned in" metadata — credit itself
+   is permanent per (email, family)). The (email, family) index is untouched
+   and no composite quarter index exists.
 2. downgrade → upgrade round-trips cleanly.
 """
 from sqlalchemy import text
@@ -27,10 +28,11 @@ def _index_exists(conn, name: str) -> bool:
     )
 
 
-def test_upgrade_adds_quarter_scope(alembic_engine):
+def test_upgrade_adds_quarter_metadata(alembic_engine):
     with alembic_engine.connect() as conn:
-        assert _column_nullable(conn, "orientation_credits", "quarter_id") == "NO", (
-            "orientation_credits.quarter_id must exist and be NOT NULL"
+        assert _column_nullable(conn, "orientation_credits", "quarter_id") == "YES", (
+            "orientation_credits.quarter_id must exist and be NULLABLE — it is "
+            "display metadata, not part of the credit key"
         )
         assert conn.execute(
             text(
@@ -38,8 +40,8 @@ def test_upgrade_adds_quarter_scope(alembic_engine):
                 "WHERE conname='fk_orientation_credits_quarter_id'"
             )
         ).scalar(), "missing FK to quarters"
-        assert _index_exists(conn, "ix_orientation_credits_email_family_quarter")
-        assert not _index_exists(conn, "ix_orientation_credits_email_family")
+        assert _index_exists(conn, "ix_orientation_credits_email_family")
+        assert not _index_exists(conn, "ix_orientation_credits_email_family_quarter")
 
 
 def test_round_trip_clean(alembic_engine, alembic_command):
@@ -49,9 +51,8 @@ def test_round_trip_clean(alembic_engine, alembic_command):
             "downgrade must drop quarter_id"
         )
         assert _index_exists(conn, "ix_orientation_credits_email_family")
-        assert not _index_exists(conn, "ix_orientation_credits_email_family_quarter")
 
     alembic_command.upgrade("head")
     with alembic_engine.connect() as conn:
-        assert _column_nullable(conn, "orientation_credits", "quarter_id") == "NO"
-        assert _index_exists(conn, "ix_orientation_credits_email_family_quarter")
+        assert _column_nullable(conn, "orientation_credits", "quarter_id") == "YES"
+        assert _index_exists(conn, "ix_orientation_credits_email_family")

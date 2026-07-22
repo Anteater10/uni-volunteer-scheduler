@@ -1,19 +1,22 @@
-"""Issue #30 — orientation credit service tests, quarter-scoped.
+"""Issue #30 — orientation credit service tests, permanent per family.
 
-Credit is keyed by ``(volunteer_email, family_key, quarter_id)``: attending an
-orientation covers the module family for the rest of that quarter, and resets
-at the quarter boundary. Replaces the Phase 21 ORIENTATION_CREDIT_EXPIRY_DAYS
-env hack.
+Credit is keyed by ``(volunteer_email, family_key)``: attending a module
+family's orientation covers that family permanently — any quarter, any year.
+``quarter_id`` on explicit grants is display-only metadata ("earned in") and
+must have zero effect on whether credit is honored. Replaces the Phase 21
+ORIENTATION_CREDIT_EXPIRY_DAYS env hack (still retired — no expiry of any
+kind).
 
 Cases:
-  (a) same-week same-module same-quarter (credit via signup)
-  (b) cross-week same-module same-quarter (credit suppresses modal)
+  (a) same-week same-module (credit via signup)
+  (b) cross-week same-module (credit suppresses modal)
   (c) cross-module (no credit)
-  (d) grant scoped to a quarter → credit in that quarter only
+  (d) grant records quarter as metadata; honored in every quarter, and with
+      no quarter at all
   (e) revoke → credit absent
-  (g) cross-quarter attendance does NOT carry over
-  (h) fail-closed when quarter context is missing
-  (i) null checked_in_at attendance still counts within its quarter
+  (g) cross-quarter attendance carries over (permanent credit)
+  (h) attendance on an event outside any quarter still earns credit
+  (i) null checked_in_at attendance still counts
 """
 from __future__ import annotations
 
@@ -171,12 +174,11 @@ class TestOrientationCreditService:
         db_session.commit()
 
         result = has_orientation_credit(
-            db_session, "a@example.com", family_key="crispr", quarter_id=winter_q.id
+            db_session, "a@example.com", family_key="crispr"
         )
         assert result.has_credit is True
         assert result.source == "attendance"
         assert result.last_attended_at is not None
-        assert result.quarter_id == winter_q.id
 
     def test_b_cross_week_same_module_has_credit(self, db_session, winter_q):
         """The load-bearing SciTrek case: week-4 attend, week-6 sign up → no modal."""
@@ -203,7 +205,7 @@ class TestOrientationCreditService:
         db_session.commit()
 
         result = has_orientation_credit(
-            db_session, "cross@example.com", family_key="crispr", quarter_id=winter_q.id
+            db_session, "cross@example.com", family_key="crispr"
         )
         assert result.has_credit is True
         assert result.source == "attendance"
@@ -226,14 +228,14 @@ class TestOrientationCreditService:
         db_session.commit()
 
         result = has_orientation_credit(
-            db_session, "xmod@example.com", family_key="microscopy", quarter_id=winter_q.id
+            db_session, "xmod@example.com", family_key="microscopy"
         )
         assert result.has_credit is False
         assert result.source is None
 
-    def test_g_cross_quarter_no_credit(self, db_session, winter_q, spring_q):
-        """Issue #30: credit is scoped to the quarter it was earned in. Winter
-        attendance must not satisfy a spring check for the same family."""
+    def test_g_cross_quarter_credit_persists(self, db_session, winter_q, spring_q):
+        """Credit is permanent: winter attendance satisfies a check made while
+        spring (or any later quarter) is underway. Quarters never reset it."""
         owner = make_user(db_session)
         _make_template(db_session, slug="crispr")
         winter_event = _make_event(
@@ -247,21 +249,20 @@ class TestOrientationCreditService:
             slot,
             checked_in_at=datetime.now(timezone.utc) - timedelta(days=90),
         )
+        # A spring event for the same family exists; the volunteer signs up for
+        # it next quarter and must NOT see the modal again.
+        _make_event(
+            db_session, owner_id=owner.id, module_slug="crispr", quarter=spring_q
+        )
         db_session.commit()
 
-        # Same quarter: credit holds
-        assert has_orientation_credit(
-            db_session, "lastq@example.com", family_key="crispr", quarter_id=winter_q.id
-        ).has_credit is True
-
-        # Next quarter: credit resets
         result = has_orientation_credit(
-            db_session, "lastq@example.com", family_key="crispr", quarter_id=spring_q.id
+            db_session, "lastq@example.com", family_key="crispr"
         )
-        assert result.has_credit is False
-        assert result.source is None
+        assert result.has_credit is True
+        assert result.source == "attendance"
 
-    def test_d_grant_scoped_to_quarter(self, db_session, winter_q, spring_q):
+    def test_d_grant_quarter_is_metadata_only(self, db_session, winter_q, spring_q):
         admin = make_user(db_session)
         credit = grant_orientation_credit(
             db_session,
@@ -274,19 +275,34 @@ class TestOrientationCreditService:
         db_session.commit()
         assert credit.id is not None
         assert credit.source.value == "grant"
+        # The quarter is recorded on the row ("earned in") …
         assert credit.quarter_id == winter_q.id
 
+        # … but the lookup is quarter-blind: one check, honored always.
         result = has_orientation_credit(
-            db_session, "granted@example.com", family_key="crispr", quarter_id=winter_q.id
+            db_session, "granted@example.com", family_key="crispr"
         )
         assert result.has_credit is True
         assert result.source == "grant"
 
-        # The grant does not leak into another quarter.
-        other = has_orientation_credit(
-            db_session, "granted@example.com", family_key="crispr", quarter_id=spring_q.id
+    def test_d2_grant_without_quarter(self, db_session):
+        """Grants need no quarter at all — e.g. vouching for a volunteer whose
+        orientation predates the quarters feature."""
+        admin = make_user(db_session)
+        credit = grant_orientation_credit(
+            db_session,
+            email="noquarter@example.com",
+            family_key="crispr",
+            granted_by_user_id=admin.id,
         )
-        assert other.has_credit is False
+        db_session.commit()
+        assert credit.quarter_id is None
+
+        result = has_orientation_credit(
+            db_session, "noquarter@example.com", family_key="crispr"
+        )
+        assert result.has_credit is True
+        assert result.source == "grant"
 
     def test_e_revoke_removes_credit(self, db_session, winter_q):
         admin = make_user(db_session)
@@ -301,7 +317,7 @@ class TestOrientationCreditService:
 
         # Still valid right after grant
         assert has_orientation_credit(
-            db_session, "revoked@example.com", family_key="crispr", quarter_id=winter_q.id
+            db_session, "revoked@example.com", family_key="crispr"
         ).has_credit
 
         revoked = revoke_orientation_credit(db_session, credit.id)
@@ -310,19 +326,17 @@ class TestOrientationCreditService:
         assert revoked.revoked_at is not None
 
         result = has_orientation_credit(
-            db_session, "revoked@example.com", family_key="crispr", quarter_id=winter_q.id
+            db_session, "revoked@example.com", family_key="crispr"
         )
         assert result.has_credit is False
 
-    def test_h_missing_quarter_fails_closed(self, db_session, winter_q):
-        """No quarter context ⇒ no credit, mirroring the family_key=None rule.
-        An event outside any entered quarter always shows the orientation
-        modal rather than honoring stale credit."""
+    def test_h_event_without_quarter_still_credits(self, db_session):
+        """An event outside any entered quarter still earns credit — the check
+        only cares about the family. (The quarter-scoped design failed closed
+        here; permanent credit has no quarter to be missing.)"""
         owner = make_user(db_session)
         _make_template(db_session, slug="crispr")
-        event = _make_event(
-            db_session, owner_id=owner.id, module_slug="crispr", quarter=winter_q
-        )
+        event = _make_event(db_session, owner_id=owner.id, module_slug="crispr")
         slot = _make_orientation_slot(db_session, event_id=event.id)
         vol = _make_volunteer(db_session, "noq@example.com")
         _attended_signup(
@@ -331,15 +345,14 @@ class TestOrientationCreditService:
         db_session.commit()
 
         result = has_orientation_credit(
-            db_session, "noq@example.com", family_key="crispr", quarter_id=None
+            db_session, "noq@example.com", family_key="crispr"
         )
-        assert result.has_credit is False
-        assert result.source is None
+        assert result.has_credit is True
+        assert result.source == "attendance"
 
     def test_i_null_checked_in_at_still_counts(self, db_session, winter_q):
         """Legacy signups with status=attended but no checked_in_at timestamp
-        still earn credit inside their event's quarter (the old expiry-cutoff
-        code could shadow these rows; quarter scoping must not)."""
+        still earn credit (the old expiry-cutoff code could shadow these rows)."""
         owner = make_user(db_session)
         _make_template(db_session, slug="crispr")
         event = _make_event(
@@ -351,7 +364,7 @@ class TestOrientationCreditService:
         db_session.commit()
 
         result = has_orientation_credit(
-            db_session, "nots@example.com", family_key="crispr", quarter_id=winter_q.id
+            db_session, "nots@example.com", family_key="crispr"
         )
         assert result.has_credit is True
         assert result.source == "attendance"

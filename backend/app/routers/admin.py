@@ -2411,18 +2411,20 @@ def admin_create_orientation_credit(
 ):
     """Admin manual grant — e.g. vouched-for volunteer, pre-existing records.
 
-    Issue #30: the grant names the quarter it applies to; the quarter must be
-    an entered row.
+    Issue #30: ``quarter_id`` optionally records which quarter the credit was
+    earned in (display metadata only — credit is permanent). When provided it
+    must be an entered row.
     """
     from ..services.orientation_service import grant_orientation_credit
 
-    quarter = (
-        db.query(models.AcademicQuarter)
-        .filter(models.AcademicQuarter.id == payload.quarter_id)
-        .first()
-    )
-    if quarter is None:
-        raise HTTPException(status_code=404, detail="Quarter not found")
+    if payload.quarter_id is not None:
+        quarter = (
+            db.query(models.AcademicQuarter)
+            .filter(models.AcademicQuarter.id == payload.quarter_id)
+            .first()
+        )
+        if quarter is None:
+            raise HTTPException(status_code=404, detail="Quarter not found")
 
     credit = grant_orientation_credit(
         db,
@@ -2441,7 +2443,7 @@ def admin_create_orientation_credit(
         extra={
             "volunteer_email": credit.volunteer_email,
             "family_key": credit.family_key,
-            "quarter_id": str(credit.quarter_id),
+            "quarter_id": str(credit.quarter_id) if credit.quarter_id else None,
             "via": "admin_page",
         },
     )
