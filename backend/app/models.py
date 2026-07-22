@@ -644,7 +644,9 @@ class OrientationCredit(Base):
     volunteer_email = Column(String(255), nullable=False, index=True)
     family_key = Column(String, nullable=False)
     quarter_id = Column(
-        UUID(as_uuid=True), ForeignKey("quarters.id"), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey("quarters.id", ondelete="SET NULL"),
+        nullable=True,
     )
     source = Column(
         SqlEnum(

@@ -81,15 +81,31 @@ def test_create_template_slug_validation(client, db_session, admin_headers):
 
 
 def test_update_template_type(client, db_session, admin_headers):
-    """PATCH changes type from module to orientation."""
+    """PATCH changes type from module to orientation.
+
+    Issue #30 follow-up: the flip alone is rejected — this template's family
+    defaulted to its own slug, and turning the only module in that family into
+    an orientation would orphan the credit family. Naming a real family in the
+    same PATCH makes the flip legal.
+    """
     _create_template(client, admin_headers, slug="update-type-test", name="Update Type")
+    _create_template(client, admin_headers, slug="target-module", name="Target Module")
+
     resp = client.patch(
         "/api/v1/admin/module-templates/update-type-test",
         json={"type": "orientation"},
         headers=admin_headers,
     )
+    assert resp.status_code == 422, resp.text
+
+    resp = client.patch(
+        "/api/v1/admin/module-templates/update-type-test",
+        json={"type": "orientation", "family_key": "target-module"},
+        headers=admin_headers,
+    )
     assert resp.status_code == 200
     assert resp.json()["type"] == "orientation"
+    assert resp.json()["family_key"] == "target-module"
 
 
 def test_delete_template_soft(client, db_session, admin_headers):

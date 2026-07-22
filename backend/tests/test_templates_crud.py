@@ -233,3 +233,103 @@ def test_module_template_family_still_defaults_to_slug(
     )
     assert resp.status_code == 201, resp.text
     assert resp.json()["family_key"] == "marine-bio"
+
+
+# =========================
+# Issue #30 follow-up (PR #43 review): the family rule holds on UPDATE too.
+# Create-time explicit family_key stays admin-trusted (tested above), but a
+# family_key *change* on an orientation template must land on a real active
+# family — the update path was the remaining way to mint an orphan.
+# =========================
+
+
+def _create_orientation(client, admin_headers, slug="intro-bio-orientation"):
+    resp = client.post(
+        "/api/v1/admin/module-templates",
+        json={"slug": slug, "name": "Orientation", "type": "orientation"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_orientation_family_update_to_unknown_family_422(
+    client, db_session, admin_headers
+):
+    _create_orientation(client, admin_headers)
+    resp = client.patch(
+        "/api/v1/admin/module-templates/intro-bio-orientation",
+        json={"family_key": "biology"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "family" in resp.json()["detail"].lower()
+
+
+def test_orientation_family_update_to_known_family_ok(
+    client, db_session, admin_headers
+):
+    _create_orientation(client, admin_headers)
+    resp = client.patch(
+        "/api/v1/admin/module-templates/intro-bio-orientation",
+        json={"family_key": "intro-chem"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["family_key"] == "intro-chem"
+
+
+def test_orientation_family_update_empty_string_422(
+    client, db_session, admin_headers
+):
+    """Clearing the binding via empty string is the same orphan path."""
+    _create_orientation(client, admin_headers)
+    resp = client.patch(
+        "/api/v1/admin/module-templates/intro-bio-orientation",
+        json={"family_key": ""},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+
+def test_type_change_to_orientation_requires_real_family(
+    client, db_session, admin_headers
+):
+    """A module flipped to orientation keeps family=own slug — but the flip
+    removes the only module in that family, so it must be rejected until the
+    admin names a real family."""
+    resp = client.post(
+        "/api/v1/admin/module-templates",
+        json={"slug": "field-trip", "name": "Field Trip"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    resp = client.patch(
+        "/api/v1/admin/module-templates/field-trip",
+        json={"type": "orientation"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422, resp.text
+
+    resp = client.patch(
+        "/api/v1/admin/module-templates/field-trip",
+        json={"type": "orientation", "family_key": "intro-bio"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["family_key"] == "intro-bio"
+
+
+def test_module_family_update_stays_admin_trusted(
+    client, db_session, admin_headers
+):
+    """Non-orientation templates keep the existing behavior: family_key is
+    the admin's call, no existence check."""
+    resp = client.patch(
+        "/api/v1/admin/module-templates/intro-bio",
+        json={"family_key": "brand-new-family"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["family_key"] == "brand-new-family"

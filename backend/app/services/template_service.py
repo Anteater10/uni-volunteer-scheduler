@@ -61,6 +61,18 @@ def restore_template(db: Session, slug: str) -> ModuleTemplate:
     return tpl
 
 
+def _known_family_keys(db: Session, exclude_slug: str | None = None) -> list[str]:
+    """Distinct family keys among active templates, ``family_key or slug``.
+
+    ``exclude_slug`` drops one template's contribution — used on update so a
+    template can't validate its own family binding against itself.
+    """
+    q = db.query(ModuleTemplate).filter(ModuleTemplate.deleted_at.is_(None))
+    if exclude_slug is not None:
+        q = q.filter(ModuleTemplate.slug != exclude_slug)
+    return sorted({t.family_key or t.slug for t in q.all()})
+
+
 def _resolve_orientation_family(db: Session, slug: str) -> str:
     """Resolve the module family a new orientation template credits (issue #30).
 
@@ -69,12 +81,7 @@ def _resolve_orientation_family(db: Session, slug: str) -> str:
     a 422 telling the admin to pass ``family_key`` explicitly — never a silent
     binding to a family nothing checks against.
     """
-    active = (
-        db.query(ModuleTemplate)
-        .filter(ModuleTemplate.deleted_at.is_(None))
-        .all()
-    )
-    known_families = sorted({t.family_key or t.slug for t in active})
+    known_families = _known_family_keys(db)
     candidate = (
         slug[: -len("-orientation")] if slug.endswith("-orientation") else None
     )
@@ -87,6 +94,39 @@ def _resolve_orientation_family(db: Session, slug: str) -> str:
             "Orientation templates must name the module family they credit "
             f"{hint}— pass family_key explicitly. Known families: "
             f"{', '.join(known_families) or 'none yet'}."
+        ),
+    )
+
+
+def _validate_orientation_family_update(
+    db: Session, tpl: ModuleTemplate, data: dict
+) -> None:
+    """Issue #30 holds on update too: an orientation template's family binding
+    must land on a real active family.
+
+    Fires when the payload changes ``family_key`` on an orientation template,
+    or flips ``type`` to orientation (which orphans a family_key that defaulted
+    to the template's own slug). Explicit family_key at *create* stays
+    admin-trusted; this only guards changes to an existing binding.
+    """
+    new_type = data.get("type") or tpl.type
+    if new_type != ModuleType.orientation:
+        return
+    if "family_key" in data and data["family_key"] is not None:
+        candidate = data["family_key"]
+    elif data.get("type") == ModuleType.orientation and tpl.type != ModuleType.orientation:
+        candidate = tpl.family_key or tpl.slug
+    else:
+        return
+    known_families = _known_family_keys(db, exclude_slug=tpl.slug)
+    if candidate in known_families:
+        return
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Orientation templates must name the module family they credit "
+            f"('{candidate}' matches no module) — pick an existing family. "
+            f"Known families: {', '.join(known_families) or 'none yet'}."
         ),
     )
 
@@ -143,6 +183,7 @@ def update_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     _validate_metadata(data.get("metadata"))
     _validate_session_count(data.get("session_count"))
     tpl = get_template(db, slug)
+    _validate_orientation_family_update(db, tpl, data)
     for k, v in data.items():
         if v is not None:
             if k == "metadata":

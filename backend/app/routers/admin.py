@@ -10,7 +10,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Response, HTTPException, Query, UploadFile, File
 
 logger = logging.getLogger(__name__)
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, cast, String, Integer
 
 from .. import models, schemas
@@ -2355,17 +2355,10 @@ def recent_notifications(
 
 
 def _serialize_orientation_credit(
-    db: Session, credit: models.OrientationCredit
+    credit: models.OrientationCredit,
 ) -> schemas.OrientationCreditRead:
-    label = None
-    if credit.granted_by_user_id:
-        granter = (
-            db.query(models.User)
-            .filter(models.User.id == credit.granted_by_user_id)
-            .first()
-        )
-        if granter:
-            label = granter.name or granter.email
+    granter = credit.granted_by
+    label = (granter.name or granter.email) if granter else None
     quarter = credit.academic_quarter
     return schemas.OrientationCreditRead(
         id=credit.id,
@@ -2399,7 +2392,12 @@ def admin_list_orientation_credits(
     Does NOT synthesize attendance-based credits — those stay derived. The admin
     surface is for the explicit grants/revokes only.
     """
-    q = db.query(models.OrientationCredit)
+    # Eager-load both label sources — serializing 500 rows must not lazy-load
+    # a User and a quarter per credit.
+    q = db.query(models.OrientationCredit).options(
+        joinedload(models.OrientationCredit.granted_by),
+        joinedload(models.OrientationCredit.academic_quarter),
+    )
     if email:
         q = q.filter(
             models.OrientationCredit.volunteer_email == email.lower().strip()
@@ -2412,7 +2410,7 @@ def admin_list_orientation_credits(
         q = q.filter(models.OrientationCredit.revoked_at.is_(None))
     q = q.order_by(models.OrientationCredit.granted_at.desc()).limit(500)
     rows = q.all()
-    return [_serialize_orientation_credit(db, r) for r in rows]
+    return [_serialize_orientation_credit(r) for r in rows]
 
 
 @router.post(
@@ -2465,7 +2463,7 @@ def admin_create_orientation_credit(
     )
     db.commit()
     db.refresh(credit)
-    return _serialize_orientation_credit(db, credit)
+    return _serialize_orientation_credit(credit)
 
 
 @router.delete(
@@ -2496,7 +2494,7 @@ def admin_revoke_orientation_credit(
     )
     db.commit()
     db.refresh(credit)
-    return _serialize_orientation_credit(db, credit)
+    return _serialize_orientation_credit(credit)
 
 
 # =========================

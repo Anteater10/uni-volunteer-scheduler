@@ -30,13 +30,15 @@ function formatQuarterDate(iso) {
   });
 }
 
+// Local time on purpose — the events list and overview format event start
+// dates in local time, and pinning UTC here shifted evening events to the
+// next day relative to those pages.
 function formatEventDate(iso) {
   if (!iso) return "";
   return new Date(iso).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
-    timeZone: "UTC",
   });
 }
 
