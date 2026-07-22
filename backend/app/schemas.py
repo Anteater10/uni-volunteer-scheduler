@@ -915,6 +915,8 @@ class ReminderSendNowResponse(BaseModel):
 class BroadcastCreate(BaseModel):
     subject: str = Field(..., min_length=1, max_length=200)
     body_markdown: str = Field(..., min_length=1, max_length=20000)
+    # None => every slot on the event (pre-slot-scoping behavior).
+    slot_id: Optional[UUID] = None
 
 
 class BroadcastResult(BaseModel):
@@ -929,6 +931,7 @@ class BroadcastSummary(BaseModel):
     recipient_count: int
     actor_label: Optional[str] = None
     sent_at: datetime
+    slot_id: Optional[str] = None
 
 
 class BroadcastRecipientCount(BaseModel):
