@@ -175,9 +175,9 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
             ))}
           </select>
           <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-            Attending this orientation earns credit for the linked module for
-            the rest of that quarter. CSV imports also merge the pair into one
-            event (orientation slots + module slots).
+            Attending this orientation earns permanent credit for the linked
+            module — once oriented, always oriented. CSV imports also merge
+            the pair into one event (orientation slots + module slots).
           </p>
         </div>
       )}
