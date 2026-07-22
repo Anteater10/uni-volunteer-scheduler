@@ -240,31 +240,39 @@ def render_plaintext(html_body: str) -> str:
 # ------------------------------------------------------------------
 
 
-def list_recipients(db: Session, event_id) -> list[models.Signup]:
-    """Return every signup that currently holds or has completed a spot on the event."""
-    return (
+def list_recipients(db: Session, event_id, slot_id=None) -> list[models.Signup]:
+    """Return every signup that currently holds or has completed a spot on the event.
+
+    ``slot_id`` narrows the roster to a single slot; ``None`` keeps the
+    whole-event behavior. The event filter stays in place either way, so
+    a slot id from another event can never widen the audience.
+    """
+    q = (
         db.query(models.Signup)
         .join(models.Slot, models.Slot.id == models.Signup.slot_id)
         .filter(
             models.Slot.event_id == event_id,
             models.Signup.status.in_(list(RECIPIENT_STATUSES)),
         )
-        .options(joinedload(models.Signup.volunteer))
-        .all()
     )
+    if slot_id is not None:
+        q = q.filter(models.Signup.slot_id == slot_id)
+    return q.options(joinedload(models.Signup.volunteer)).all()
 
 
-def count_recipients(db: Session, event_id) -> int:
+def count_recipients(db: Session, event_id, slot_id=None) -> int:
     """Fast-path count for the modal preview."""
-    return (
+    q = (
         db.query(models.Signup.id)
         .join(models.Slot, models.Slot.id == models.Signup.slot_id)
         .filter(
             models.Slot.event_id == event_id,
             models.Signup.status.in_(list(RECIPIENT_STATUSES)),
         )
-        .count()
     )
+    if slot_id is not None:
+        q = q.filter(models.Signup.slot_id == slot_id)
+    return q.count()
 
 
 # ------------------------------------------------------------------
@@ -304,6 +312,7 @@ def send_broadcast(
     redis_client,
     now: Optional[datetime] = None,
     broadcast_id: Optional[str] = None,
+    slot_id=None,
 ) -> BroadcastResult:
     """Rate-limit, render, dedup-insert, dispatch, and audit a broadcast.
 
@@ -332,8 +341,8 @@ def send_broadcast(
     kind = f"broadcast_{bid}"
     assert len(kind) <= 32, "broadcast dedup kind would exceed SentNotification.kind width"
 
-    # 3. Recipients.
-    signups = list_recipients(db, event_id)
+    # 3. Recipients — the whole event, or one slot's roster when scoped.
+    signups = list_recipients(db, event_id, slot_id=slot_id)
 
     # 4. Render bodies once — same copy goes to every recipient.
     manage_url = None
@@ -378,6 +387,7 @@ def send_broadcast(
             "subject": subject,
             "recipient_count": recipient_count,
             "body_markdown": body_markdown,
+            "slot_id": str(slot_id) if slot_id is not None else None,
         },
     )
     db.add(audit)
@@ -436,6 +446,8 @@ def list_recent_broadcasts(
                 "recipient_count": int(extra.get("recipient_count") or 0),
                 "actor_label": actor_label,
                 "sent_at": r.timestamp,
+                # Legacy rows predate slot scoping — .get() yields None.
+                "slot_id": extra.get("slot_id"),
             }
         )
     return out
