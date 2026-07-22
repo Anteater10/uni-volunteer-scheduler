@@ -1,7 +1,8 @@
-// Issue #30 — OrientationCreditsSection: credits are quarter-scoped. The
-// grant form picks a quarter (defaulting to the one covering today), the
-// table shows which quarter each credit belongs to, and the list can be
-// filtered by quarter.
+// Issue #30 — OrientationCreditsSection: credit is permanent per
+// (email, family); the quarter is "earned in" metadata only. The grant form
+// still offers a quarter picker (defaulting to the one covering today, with
+// an explicit "No quarter" choice), the table shows the earned-in quarter,
+// and the list can be filtered by quarter.
 
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -98,8 +99,8 @@ beforeEach(() => {
   creditsListMock.mockResolvedValue([CREDIT]);
 });
 
-describe("OrientationCreditsSection quarter scope", () => {
-  it("shows which quarter each credit belongs to", async () => {
+describe("OrientationCreditsSection quarter metadata", () => {
+  it("shows which quarter each credit was earned in", async () => {
     renderPage();
     expect(await screen.findByText("vol@example.com")).toBeInTheDocument();
     expect(screen.getByText("Quarter")).toBeInTheDocument();
@@ -130,6 +131,64 @@ describe("OrientationCreditsSection quarter scope", () => {
       volunteer_email: "new@example.com",
       family_key: "intro-bio",
       quarter_id: "q-current",
+    });
+  });
+
+  it("grants with quarter_id null when 'No quarter' is chosen", async () => {
+    creditsCreateMock.mockResolvedValue({
+      ...CREDIT,
+      id: "credit-3",
+      quarter_id: null,
+      quarter_label: null,
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /grant credit/i }));
+
+    const quarterSelect = await screen.findByLabelText("Quarter");
+    await waitFor(() => expect(quarterSelect.value).toBe("q-current"));
+    fireEvent.change(quarterSelect, { target: { value: "none" } });
+
+    fireEvent.change(screen.getByLabelText(/volunteer email/i), {
+      target: { value: "old-timer@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/module family/i), {
+      target: { value: "intro-bio" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^grant$/i }));
+
+    await waitFor(() => expect(creditsCreateMock).toHaveBeenCalled());
+    expect(creditsCreateMock.mock.calls[0][0]).toMatchObject({
+      volunteer_email: "old-timer@example.com",
+      family_key: "intro-bio",
+      quarter_id: null,
+    });
+  });
+
+  it("grants with quarter_id null when no quarter covers today", async () => {
+    quartersMock.mockResolvedValue([PAST_Q]);
+    creditsCreateMock.mockResolvedValue({
+      ...CREDIT,
+      id: "credit-4",
+      quarter_id: null,
+      quarter_label: null,
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /grant credit/i }));
+
+    fireEvent.change(screen.getByLabelText(/volunteer email/i), {
+      target: { value: "new@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/module family/i), {
+      target: { value: "intro-bio" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^grant$/i }));
+
+    // No "quarter is required" validation error — quarter is optional metadata.
+    await waitFor(() => expect(creditsCreateMock).toHaveBeenCalled());
+    expect(creditsCreateMock.mock.calls[0][0]).toMatchObject({
+      volunteer_email: "new@example.com",
+      family_key: "intro-bio",
+      quarter_id: null,
     });
   });
 

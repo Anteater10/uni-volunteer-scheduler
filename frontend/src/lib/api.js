@@ -814,7 +814,8 @@ export const api = {
       getBroadcastRecipientCount(eventId),
     sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
     listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
-    // Phase 21 — orientation credit engine (issue #30: quarter-scoped)
+    // Phase 21 — orientation credit engine (issue #30: permanent per
+    // (email, family); quarter_id is optional "earned in" metadata)
     orientationCredits: {
       list: (params = {}) =>
         request("/admin/orientation-credits", { method: "GET", params }),

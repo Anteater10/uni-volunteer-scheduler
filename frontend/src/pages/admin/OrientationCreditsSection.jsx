@@ -1,8 +1,9 @@
 // src/pages/admin/OrientationCreditsSection.jsx
 //
-// Phase 21 — admin Orientation Credits page. Issue #30: credits are scoped
-// to the quarter they were earned in — grants pick a quarter (defaulting to
-// the one covering today) and the list shows/filters by quarter.
+// Phase 21 — admin Orientation Credits page. Issue #30: credit is permanent
+// per (email, family); the quarter is optional "earned in" metadata — grants
+// may record one (defaulting to the quarter covering today) and the list
+// shows/filters by it, but it never affects whether credit is honored.
 //
 // Lists explicit orientation_credits rows (signup-based attendance stays
 // derived and isn't shown here — admins read attendance on the event roster).
@@ -168,21 +169,22 @@ export default function OrientationCreditsSection() {
   const credits = creditsQ.data || [];
 
   // The select falls back to the current quarter until the admin picks one
-  // explicitly, so the common case (crediting for the quarter in progress)
-  // is one field fewer.
-  const grantQuarterId = grantForm.quarter_id || currentQuarterId;
+  // explicitly, so the common case (recording the quarter in progress) is one
+  // field fewer. "none" is the explicit no-quarter choice — the quarter is
+  // optional metadata, not part of the credit.
+  const grantQuarterId = grantForm.quarter_id || currentQuarterId || "none";
 
   function submitGrant(e) {
     e.preventDefault();
     setGrantError("");
-    if (!grantForm.volunteer_email || !grantForm.family_key || !grantQuarterId) {
-      setGrantError("Email, family, and quarter are required.");
+    if (!grantForm.volunteer_email || !grantForm.family_key) {
+      setGrantError("Email and family are required.");
       return;
     }
     grantMut.mutate({
       volunteer_email: grantForm.volunteer_email.trim().toLowerCase(),
       family_key: grantForm.family_key,
-      quarter_id: grantQuarterId,
+      quarter_id: grantQuarterId === "none" ? null : grantQuarterId,
       notes: grantForm.notes || null,
     });
   }
@@ -364,14 +366,13 @@ export default function OrientationCreditsSection() {
             <Label htmlFor="grant-quarter">Quarter</Label>
             <select
               id="grant-quarter"
-              required
               value={grantQuarterId}
               onChange={(e) =>
                 setGrantForm((f) => ({ ...f, quarter_id: e.target.value }))
               }
               className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
             >
-              <option value="">Select a quarter…</option>
+              <option value="none">No quarter</option>
               {quarterOptions.map((q) => (
                 <option key={q.id} value={q.id}>
                   {q.display_name}
@@ -379,8 +380,8 @@ export default function OrientationCreditsSection() {
               ))}
             </select>
             <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
-              Credit covers this family for the rest of the selected quarter
-              only.
+              Records which quarter the credit was earned in — for reference
+              only. Credit never expires.
             </p>
           </div>
           <div>
