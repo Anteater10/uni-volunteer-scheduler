@@ -754,6 +754,36 @@ class QuarterWriteResult(BaseModel):
     relink_summary: RelinkSummary
 
 
+class QuarterRetroEventRow(BaseModel):
+    """Issue #38: one event of a quarter retrospective with attendance buckets."""
+
+    event_id: UUID
+    title: str
+    start_date: datetime
+    week_number: Optional[int] = None
+    slot_count: int
+    capacity: int
+    signups: int
+    attended: int
+    no_shows: int
+
+
+class QuarterRetroTotals(BaseModel):
+    events: int
+    slots: int
+    capacity: int
+    signups: int
+    attended: int
+    no_shows: int
+    attendance_rate: float
+
+
+class QuarterRetrospective(BaseModel):
+    quarter: QuarterRead
+    totals: QuarterRetroTotals
+    events: List[QuarterRetroEventRow] = []
+
+
 class OrientationStatusRead(BaseModel):
     has_attended_orientation: bool
     last_attended_at: Optional[datetime] = None
