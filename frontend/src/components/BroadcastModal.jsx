@@ -63,6 +63,36 @@ function previewMarkdown(md) {
   return html;
 }
 
+/**
+ * Slots have no name field — label them by type + date + time + location,
+ * mirroring SignupSuccessCard's formatSlotLine (backend timestamps may be
+ * naive UTC, so append "Z" before parsing).
+ */
+function formatSlotOption(slot) {
+  const type = slot.slot_type
+    ? slot.slot_type.charAt(0).toUpperCase() + slot.slot_type.slice(1)
+    : "Slot";
+  const date = slot.date
+    ? new Date(
+        slot.date.includes("T") ? slot.date : `${slot.date}T00:00:00`,
+      ).toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      })
+    : "";
+  const toTime = (ts) =>
+    ts
+      ? new Date(
+          ts.includes("Z") || ts.includes("+") ? ts : `${ts}Z`,
+        ).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+      : "";
+  const start = toTime(slot.start_time);
+  const end = toTime(slot.end_time);
+  const timeRange = start && end ? `${start}–${end}` : start;
+  return [type, date, timeRange, slot.location].filter(Boolean).join(" · ");
+}
+
 export default function BroadcastModal({
   open,
   onClose,
@@ -76,6 +106,8 @@ export default function BroadcastModal({
   const [error, setError] = useState("");
   const [recipientCount, setRecipientCount] = useState(null);
   const [recipientErr, setRecipientErr] = useState("");
+  const [slots, setSlots] = useState(null);
+  const [slotId, setSlotId] = useState(""); // "" = all slots
 
   const countFetcher = scope === "organizer"
     ? api.organizer.broadcastRecipientCount
@@ -91,7 +123,9 @@ export default function BroadcastModal({
     setRecipientCount(null);
     (async () => {
       try {
-        const r = await countFetcher(eventId);
+        const r = slotId
+          ? await countFetcher(eventId, { slot_id: slotId })
+          : await countFetcher(eventId);
         if (!cancelled) setRecipientCount(r?.recipient_count ?? 0);
       } catch (e) {
         if (!cancelled) setRecipientErr(e?.message || "Could not load recipient count");
@@ -101,7 +135,24 @@ export default function BroadcastModal({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, eventId, scope]);
+  }, [open, eventId, scope, slotId]);
+
+  useEffect(() => {
+    if (!open || !eventId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.listSlots({ event_id: eventId });
+        if (!cancelled) setSlots(Array.isArray(r) ? r : []);
+      } catch {
+        // Degrade gracefully: no picker, whole-event send still works.
+        if (!cancelled) setSlots([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, eventId]);
 
   useEffect(() => {
     if (!open) {
@@ -113,6 +164,8 @@ export default function BroadcastModal({
       setError("");
       setRecipientCount(null);
       setRecipientErr("");
+      setSlots(null);
+      setSlotId("");
     }
   }, [open]);
 
@@ -134,6 +187,7 @@ export default function BroadcastModal({
       const result = await sender(eventId, {
         subject: subject.trim(),
         body_markdown: body,
+        ...(slotId ? { slot_id: slotId } : {}),
       });
       const n = result?.recipient_count ?? 0;
       toast.success(`Broadcast sent to ${n} volunteer${n === 1 ? "" : "s"}.`);
@@ -162,10 +216,31 @@ export default function BroadcastModal({
       className="max-w-xl"
     >
       <p className="text-sm text-[var(--color-fg-muted)] mb-3">
-        Send a one-time email to everyone currently signed up for this event
-        (confirmed, checked in, or attended). Rate-limited to 5 broadcasts per
-        hour per event.
+        Send a one-time email to volunteers signed up for this event
+        (confirmed, checked in, or attended) — everyone, or just one slot's
+        roster. Rate-limited to 5 broadcasts per hour per event.
       </p>
+
+      {slots && slots.length >= 2 ? (
+        <div className="mb-3">
+          <Label htmlFor="broadcast-slot">Send to</Label>
+          <select
+            id="broadcast-slot"
+            data-testid="broadcast-slot-select"
+            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+            value={slotId}
+            onChange={(e) => setSlotId(e.target.value)}
+            disabled={sending}
+          >
+            <option value="">All slots — everyone signed up</option>
+            {slots.map((s) => (
+              <option key={s.id} value={s.id}>
+                {formatSlotOption(s)}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
 
       <div className="mb-3">
         {recipientErr ? (
@@ -182,7 +257,8 @@ export default function BroadcastModal({
             data-testid="broadcast-recipient-count"
           >
             Will send to {recipientCount} volunteer
-            {recipientCount === 1 ? "" : "s"}.
+            {recipientCount === 1 ? "" : "s"}
+            {slotId ? " in the selected slot" : ""}.
           </p>
         )}
       </div>
