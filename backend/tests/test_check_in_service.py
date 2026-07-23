@@ -171,13 +171,17 @@ class TestSelfCheckIn:
         assert logs[0].extra["via"] == "self"
 
     def test_before_window_raises(self, db_session):
-        """Self check-in 20 min before slot -> CheckInWindowError."""
+        """Self check-in 40 min before slot -> CheckInWindowError.
+
+        Issue #31 UX rework widened the window to 30 min before start, so the
+        too-early boundary moved from 15 to 30 minutes.
+        """
         slot_start = datetime.now(timezone.utc) + timedelta(hours=1)
         volunteer, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
 
-        too_early = slot_start - timedelta(minutes=20)
+        too_early = slot_start - timedelta(minutes=40)
         with pytest.raises(CheckInWindowError):
             self_check_in(
                 db_session, event.id, signup.id, "1234", owner.id, now=too_early

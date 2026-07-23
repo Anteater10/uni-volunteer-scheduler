@@ -8,6 +8,9 @@ from ..database import get_db
 from ..deps import require_role
 from ..models import Event, UserRole
 from ..schemas import (
+    CheckInLookupResponse,
+    CheckInSelectedRequest,
+    CheckInShift,
     EventCheckInByEmailRequest,
     EventCheckInByEmailResponse,
     EventCheckInByEmailSignup,
@@ -21,8 +24,10 @@ from ..services.check_in_service import (
     InvalidTransitionError,
     NoSignupForEmailError,
     VenueCodeError,
+    check_in_selected,
     check_in_signup,
     event_check_in_by_email,
+    lookup_check_in_options,
     resolve_event,
     self_check_in,
     undo_check_in,
@@ -152,6 +157,120 @@ def resolve_event_endpoint(
     except LookupError as e:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post(
+    "/events/{event_id}/check-in-lookup",
+    response_model=CheckInLookupResponse,
+)
+def check_in_lookup_endpoint(
+    event_id: UUID,
+    body: EventCheckInByEmailRequest,
+    db: Session = Depends(get_db),
+):
+    """Issue #31 UX rework, step 1: the volunteer identifies with their email
+    and gets back their shifts on this event with per-shift window verdicts.
+    Read-only — nothing is checked in until they pick a shift.
+    """
+    try:
+        volunteer, rows = lookup_check_in_options(db, event_id, body.email)
+    except NoSignupForEmailError:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "NO_SIGNUP_FOR_EMAIL",
+                "message": "No signup found for that email on this event",
+            },
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    event = db.get(Event, event_id)
+    return CheckInLookupResponse(
+        event_id=event_id,
+        event_title=event.title if event else "",
+        volunteer_name=f"{volunteer.first_name} {volunteer.last_name}".strip()
+        or volunteer.email,
+        shifts=[
+            CheckInShift(
+                signup_id=signup.id,
+                slot_id=slot.id,
+                slot_type=slot.slot_type.value,
+                slot_location=slot.location,
+                slot_start=slot.start_time,
+                slot_end=slot.end_time,
+                status=signup.status.value,
+                window_state=state,
+                window_opens_at=opens_at,
+            )
+            for signup, slot, state, opens_at in rows
+        ],
+    )
+
+
+@router.post(
+    "/events/{event_id}/check-in-selected",
+    response_model=EventCheckInByEmailResponse,
+)
+def check_in_selected_endpoint(
+    event_id: UUID,
+    body: CheckInSelectedRequest,
+    db: Session = Depends(get_db),
+):
+    """Issue #31 UX rework, step 2: check in exactly the shifts the volunteer
+    tapped. Window-gated per slot; selected signups must belong to the email.
+    """
+    try:
+        volunteer, signups = check_in_selected(
+            db, event_id, body.email, body.signup_ids
+        )
+    except NoSignupForEmailError:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "NO_SIGNUP_FOR_EMAIL",
+                "message": "No signup found for that email on this event",
+            },
+        )
+    except CheckInWindowError:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "OUTSIDE_WINDOW",
+                "message": "That shift is not open for check-in right now",
+            },
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Signup or event not found")
+
+    event = db.get(Event, event_id)
+    from ..models import Slot
+
+    rows: list[EventCheckInByEmailSignup] = []
+    for s in signups:
+        slot = db.get(Slot, s.slot_id)
+        rows.append(
+            EventCheckInByEmailSignup(
+                signup_id=s.id,
+                slot_id=s.slot_id,
+                slot_start=slot.start_time if slot else None,
+                slot_end=slot.end_time if slot else None,
+                slot_type=slot.slot_type.value if slot else None,
+                slot_location=slot.location if slot else None,
+                status=s.status.value,
+                newly_checked_in=True,
+            )
+        )
+    db.commit()
+    return EventCheckInByEmailResponse(
+        event_id=event_id,
+        event_title=event.title if event else "",
+        volunteer_name=f"{volunteer.first_name} {volunteer.last_name}".strip()
+        or volunteer.email,
+        count_checked_in=len(rows),
+        count_already_checked_in=0,
+        signups=rows,
+    )
 
 
 @router.post(

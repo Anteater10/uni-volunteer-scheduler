@@ -620,6 +620,21 @@ export const api = {
         auth: false,
         body: { email },
       }),
+    // Issue #31 UX rework — pick-your-shift check-in: lookup lists the
+    // volunteer's shifts with window verdicts; selected checks in the tapped
+    // shift(s) only.
+    checkInLookup: (eventId, email) =>
+      request(`/events/${eventId}/check-in-lookup`, {
+        method: "POST",
+        auth: false,
+        body: { email },
+      }),
+    checkInSelected: (eventId, email, signupIds) =>
+      request(`/events/${eventId}/check-in-selected`, {
+        method: "POST",
+        auth: false,
+        body: { email, signup_ids: signupIds },
+      }),
   },
 
   // --- Module Templates (Phase 5) ---

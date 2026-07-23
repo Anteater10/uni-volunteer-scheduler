@@ -484,6 +484,31 @@ class EventCheckInByEmailRequest(BaseModel):
     email: str
 
 
+# Issue #31 UX rework — pick-your-shift check-in.
+class CheckInShift(BaseModel):
+    signup_id: UUID
+    slot_id: UUID
+    slot_type: Optional[str] = None
+    slot_location: Optional[str] = None
+    slot_start: Optional[datetime] = None
+    slot_end: Optional[datetime] = None
+    status: str
+    window_state: Literal["open", "upcoming", "closed"]
+    window_opens_at: Optional[datetime] = None
+
+
+class CheckInLookupResponse(BaseModel):
+    event_id: UUID
+    event_title: str
+    volunteer_name: str
+    shifts: List[CheckInShift] = []
+
+
+class CheckInSelectedRequest(BaseModel):
+    email: str
+    signup_ids: List[UUID] = Field(min_length=1)
+
+
 class EventCheckInByEmailSignup(BaseModel):
     signup_id: UUID
     slot_id: UUID

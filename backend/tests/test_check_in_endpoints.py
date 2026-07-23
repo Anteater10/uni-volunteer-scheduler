@@ -396,3 +396,149 @@ class TestUndoCheckIn:
         headers = auth_headers(client, participant)
         resp = client.post(f"/api/v1/signups/{signup.id}/undo-check-in", headers=headers)
         assert resp.status_code == 403
+
+
+def _event_with_two_slots(db_session, *, orient_offset_min, period_offset_min):
+    """Event with an orientation slot and a period slot, offset from now."""
+    from tests.fixtures.helpers import make_user
+    owner = make_user(db_session, role=UserRole.organizer)
+    now = datetime.now(timezone.utc)
+    event = Event(
+        id=uuid.uuid4(),
+        owner_id=owner.id,
+        title="Two-Shift Event",
+        start_date=now,
+        end_date=now + timedelta(days=1),
+    )
+    db_session.add(event)
+    db_session.flush()
+    orient = Slot(
+        id=uuid.uuid4(), event_id=event.id,
+        start_time=now + timedelta(minutes=orient_offset_min),
+        end_time=now + timedelta(minutes=orient_offset_min + 60),
+        capacity=10, slot_type=SlotType.ORIENTATION, location="Library",
+    )
+    period = Slot(
+        id=uuid.uuid4(), event_id=event.id,
+        start_time=now + timedelta(minutes=period_offset_min),
+        end_time=now + timedelta(minutes=period_offset_min + 120),
+        capacity=10, slot_type=SlotType.PERIOD, location="Room 4",
+    )
+    db_session.add_all([orient, period])
+    db_session.flush()
+    return event, orient, period
+
+
+class TestCheckInLookupAndSelected:
+    """Issue #31 UX rework: the volunteer picks WHICH shift to check in for.
+
+    Flow: POST check-in-lookup (email -> their shifts + window states, no
+    mutation), then POST check-in-selected with the chosen signup ids.
+    """
+
+    def _signed_up(self, db_session, slot, email):
+        vol = _make_volunteer(db_session, email=email)
+        s = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        db_session.add(s)
+        db_session.flush()
+        return vol, s
+
+    def test_lookup_lists_shifts_with_window_states_without_checking_in(
+        self, client, db_session
+    ):
+        # Orientation starts in 5 min (open); period in 3 hours (upcoming).
+        event, orient, period = _event_with_two_slots(
+            db_session, orient_offset_min=5, period_offset_min=180
+        )
+        vol, s1 = self._signed_up(db_session, orient, "pick@example.com")
+        s2 = Signup(volunteer_id=vol.id, slot_id=period.id, status=SignupStatus.confirmed)
+        db_session.add(s2)
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-lookup",
+            json={"email": "pick@example.com"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        shifts = {s["slot_type"]: s for s in body["shifts"]}
+        assert shifts["orientation"]["window_state"] == "open"
+        assert shifts["period"]["window_state"] == "upcoming"
+        assert shifts["orientation"]["slot_location"] == "Library"
+        assert shifts["period"]["window_opens_at"] is not None
+        # Lookup must not transition anything.
+        db_session.expire_all()
+        assert db_session.get(Signup, uuid.UUID(shifts["orientation"]["signup_id"])).status == SignupStatus.confirmed
+
+    def test_lookup_unknown_email_404(self, client, db_session):
+        event, *_ = _event_with_two_slots(db_session, orient_offset_min=5, period_offset_min=180)
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-lookup",
+            json={"email": "ghost@example.com"},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "NO_SIGNUP_FOR_EMAIL"
+
+    def test_selected_checks_in_only_the_chosen_shift(self, client, db_session):
+        # BOTH slots open (orientation in 5 min, period in 10) — selecting the
+        # orientation must leave the period signup untouched.
+        event, orient, period = _event_with_two_slots(
+            db_session, orient_offset_min=5, period_offset_min=10
+        )
+        vol, s_orient = self._signed_up(db_session, orient, "choosy@example.com")
+        s_period = Signup(volunteer_id=vol.id, slot_id=period.id, status=SignupStatus.confirmed)
+        db_session.add(s_period)
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={"email": "choosy@example.com", "signup_ids": [str(s_orient.id)]},
+        )
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        assert db_session.get(Signup, s_orient.id).status == SignupStatus.checked_in
+        assert db_session.get(Signup, s_period.id).status == SignupStatus.confirmed
+
+    def test_selected_outside_window_403(self, client, db_session):
+        event, orient, period = _event_with_two_slots(
+            db_session, orient_offset_min=5, period_offset_min=300
+        )
+        vol, s_orient = self._signed_up(db_session, orient, "early@example.com")
+        s_period = Signup(volunteer_id=vol.id, slot_id=period.id, status=SignupStatus.confirmed)
+        db_session.add(s_period)
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={"email": "early@example.com", "signup_ids": [str(s_period.id)]},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "OUTSIDE_WINDOW"
+
+    def test_selected_rejects_other_volunteers_signup(self, client, db_session):
+        event, orient, period = _event_with_two_slots(
+            db_session, orient_offset_min=5, period_offset_min=10
+        )
+        vol_a, s_a = self._signed_up(db_session, orient, "owner@example.com")
+        vol_b, s_b = self._signed_up(db_session, period, "other@example.com")
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={"email": "owner@example.com", "signup_ids": [str(s_b.id)]},
+        )
+        assert resp.status_code == 404
+
+    def test_window_opens_30_minutes_before_start(self, client, db_session):
+        """Window widened per product decision: 30 min before start (was 15)."""
+        event, orient, _ = _event_with_two_slots(
+            db_session, orient_offset_min=25, period_offset_min=300
+        )
+        vol, s_orient = self._signed_up(db_session, orient, "thirty@example.com")
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={"email": "thirty@example.com", "signup_ids": [str(s_orient.id)]},
+        )
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        assert db_session.get(Signup, s_orient.id).status == SignupStatus.checked_in

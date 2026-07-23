@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 
 from app.models import AuditLog, Event, Signup, SignupStatus, Slot, Volunteer
 
-CHECK_IN_WINDOW_BEFORE = timedelta(minutes=15)
+# Window widened 15 -> 30 minutes before start (product decision, issue #31
+# UX rework): volunteers arrive early and shouldn't stare at a locked page.
+CHECK_IN_WINDOW_BEFORE = timedelta(minutes=30)
 CHECK_IN_WINDOW_AFTER = timedelta(minutes=30)
 
 ALLOWED_TRANSITIONS: dict[SignupStatus, set[SignupStatus]] = {
@@ -249,6 +251,110 @@ def event_check_in_by_email(
         raise CheckInWindowError("No slots are open for check-in right now")
 
     return volunteer, eligible
+
+
+def _volunteer_signups_for_event(
+    db: Session, event_id: UUID, email: str, *, for_update: bool = False
+) -> tuple[Volunteer, list[Signup]]:
+    """Resolve (volunteer, their signups on this event) or raise."""
+    if db.get(Event, event_id) is None:
+        raise LookupError(f"Event {event_id} not found")
+
+    volunteer = (
+        db.execute(select(Volunteer).where(Volunteer.email == email.strip().lower()))
+        .scalar_one_or_none()
+    )
+    if volunteer is None:
+        raise NoSignupForEmailError("No signup found for that email on this event")
+
+    q = (
+        select(Signup)
+        .join(Slot, Slot.id == Signup.slot_id)
+        .where(Slot.event_id == event_id)
+        .where(Signup.volunteer_id == volunteer.id)
+    )
+    if for_update:
+        q = q.with_for_update()
+    signups = db.execute(q).scalars().all()
+    if not signups:
+        raise NoSignupForEmailError("No signup found for that email on this event")
+    return volunteer, signups
+
+
+def window_state(slot: Slot, now: datetime) -> tuple[str, datetime]:
+    """Return ('open'|'upcoming'|'closed', window_opens_at) for a slot."""
+    opens_at = slot.start_time - CHECK_IN_WINDOW_BEFORE
+    closes_at = slot.start_time + CHECK_IN_WINDOW_AFTER
+    if now < opens_at:
+        return ("upcoming", opens_at)
+    if now > closes_at:
+        return ("closed", opens_at)
+    return ("open", opens_at)
+
+
+def lookup_check_in_options(
+    db: Session,
+    event_id: UUID,
+    email: str,
+    now: datetime | None = None,
+) -> tuple[Volunteer, list[tuple[Signup, Slot, str, datetime]]]:
+    """Issue #31 UX rework, step 1: list the volunteer's shifts on this event
+    with each shift's window verdict. Read-only — nothing transitions here;
+    the volunteer picks which shift to check in for.
+    """
+    now = now or datetime.now(timezone.utc)
+    volunteer, signups = _volunteer_signups_for_event(db, event_id, email)
+    rows = []
+    for signup in signups:
+        slot = db.get(Slot, signup.slot_id)
+        if slot is None:
+            continue
+        state, opens_at = window_state(slot, now)
+        rows.append((signup, slot, state, opens_at))
+    rows.sort(key=lambda r: r[1].start_time)
+    return volunteer, rows
+
+
+def check_in_selected(
+    db: Session,
+    event_id: UUID,
+    email: str,
+    signup_ids: list[UUID],
+    now: datetime | None = None,
+) -> tuple[Volunteer, list[Signup]]:
+    """Issue #31 UX rework, step 2: check in exactly the signups the volunteer
+    tapped. Every selected signup must belong to the email on this event
+    (LookupError otherwise) and be inside its slot's window
+    (CheckInWindowError otherwise). Idempotent per signup.
+    """
+    now = now or datetime.now(timezone.utc)
+    volunteer, signups = _volunteer_signups_for_event(
+        db, event_id, email, for_update=True
+    )
+    by_id = {s.id: s for s in signups}
+    selected = []
+    for sid in signup_ids:
+        signup = by_id.get(sid)
+        if signup is None:
+            raise LookupError(f"Signup {sid} not found for this volunteer/event")
+        selected.append(signup)
+
+    results: list[Signup] = []
+    for signup in selected:
+        slot = db.get(Slot, signup.slot_id)
+        state, _ = window_state(slot, now)
+        if state != "open":
+            raise CheckInWindowError("That shift is not open for check-in right now")
+        if signup.status in (SignupStatus.checked_in, SignupStatus.attended):
+            results.append(signup)
+            continue
+        # Same pending auto-confirm rationale as event_check_in_by_email.
+        if signup.status == SignupStatus.pending:
+            _transition(db, signup, SignupStatus.confirmed, None, "self_qr_autoconfirm")
+        if signup.status == SignupStatus.confirmed:
+            _transition(db, signup, SignupStatus.checked_in, None, "self_qr_selected")
+        results.append(signup)
+    return volunteer, results
 
 
 def resolve_event(

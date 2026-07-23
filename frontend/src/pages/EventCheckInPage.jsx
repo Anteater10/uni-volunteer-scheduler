@@ -4,10 +4,10 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Card, Button, Input, Label, FieldError } from "../components/ui";
 
-// Mirror of the backend check-in window (check_in_service.py):
-// a slot opens 15 minutes before its start and closes 30 minutes after.
-// The server stays authoritative — this only drives the informational copy.
-const WINDOW_BEFORE_MS = 15 * 60 * 1000;
+// Mirror of the backend check-in window (check_in_service.py): a slot opens
+// 30 minutes before its start and closes 30 minutes after. Only drives the
+// pre-email schedule banner — per-shift verdicts come from the server.
+const WINDOW_BEFORE_MS = 30 * 60 * 1000;
 const WINDOW_AFTER_MS = 30 * 60 * 1000;
 
 function fmtTime(iso) {
@@ -26,30 +26,82 @@ function slotTypeLabel(slotType) {
   return slotType === "orientation" ? "Orientation" : "Module";
 }
 
-function SlotChip({ slot }) {
+function TypeBadge({ slotType }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-white px-3 py-1 text-sm">
-      <span
-        className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
-          slot.slot_type === "orientation"
-            ? "bg-purple-100 text-purple-700"
-            : "bg-blue-100 text-blue-700"
-        }`}
-      >
-        {slotTypeLabel(slot.slot_type)}
-      </span>
-      {fmtTime(slot.start_time)} – {fmtTime(slot.end_time)}
-      {slot.location ? (
-        <span className="text-[var(--color-fg-muted)]">· {slot.location}</span>
-      ) : null}
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
+        slotType === "orientation"
+          ? "bg-purple-100 text-purple-700"
+          : "bg-blue-100 text-blue-700"
+      }`}
+    >
+      {slotTypeLabel(slotType)}
     </span>
+  );
+}
+
+// Issue #31 UX rework — one tappable card per shift the volunteer holds.
+function ShiftCard({ shift, onCheckIn, busy }) {
+  const done = shift.status === "checked_in" || shift.status === "attended";
+  const open = shift.window_state === "open";
+  const tappable = open && !done && !busy;
+
+  const stateLine = done
+    ? "Checked in ✓"
+    : open
+      ? "Tap to check in"
+      : shift.window_state === "upcoming"
+        ? `Check-in opens at ${fmtTime(shift.window_opens_at)}`
+        : "Check-in closed";
+
+  return (
+    <li>
+      <button
+        type="button"
+        data-testid={`shift-${shift.signup_id}`}
+        className={`w-full rounded-xl border-2 px-4 py-3 text-left transition-all ${
+          done
+            ? "border-green-300 bg-green-50"
+            : tappable
+              ? "cursor-pointer border-blue-300 bg-white shadow-sm hover:border-blue-500 hover:shadow-md"
+              : "cursor-not-allowed border-gray-200 bg-gray-50 opacity-70"
+        }`}
+        disabled={!tappable}
+        onClick={() => tappable && onCheckIn(shift)}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex flex-wrap items-center gap-2 text-sm">
+            <TypeBadge slotType={shift.slot_type} />
+            <span className="font-medium">
+              {fmtTime(shift.slot_start)} – {fmtTime(shift.slot_end)}
+            </span>
+            {shift.slot_location ? (
+              <span className="text-[var(--color-fg-muted)]">
+                · {shift.slot_location}
+              </span>
+            ) : null}
+          </span>
+        </div>
+        <p
+          className={`mt-1 text-sm font-medium ${
+            done
+              ? "text-green-700"
+              : open
+                ? "text-blue-700"
+                : "text-[var(--color-fg-muted)]"
+          }`}
+        >
+          {stateLine}
+        </p>
+      </button>
+    </li>
   );
 }
 
 export default function EventCheckInPage() {
   const { eventId } = useParams();
   const [email, setEmail] = useState("");
-  const [result, setResult] = useState(null);
+  const [lookup, setLookup] = useState(null);
   const [error, setError] = useState(null);
 
   const eventQ = useQuery({
@@ -58,8 +110,8 @@ export default function EventCheckInPage() {
     retry: false,
   });
 
-  // Issue #31 — check-in is per-slot: name exactly which shift is open right
-  // now instead of the old blanket "next half hour" copy.
+  // Pre-email schedule banner: every shift on the event with its verdict, so
+  // nobody wonders where a passed shift went.
   const slotsQ = useQuery({
     queryKey: ["publicEventSlots", eventId],
     queryFn: () => api.listSlots({ event_id: eventId }),
@@ -67,22 +119,45 @@ export default function EventCheckInPage() {
     refetchInterval: 60 * 1000,
   });
 
-  const mut = useMutation({
-    mutationFn: () => api.public.checkInByEmail(eventId, email.trim()),
+  const lookupMut = useMutation({
+    mutationFn: () => api.public.checkInLookup(eventId, email.trim()),
     onSuccess: (data) => {
-      setResult(data);
+      setLookup(data);
       setError(null);
     },
     onError: (err) => {
       setError(err);
-      setResult(null);
+      setLookup(null);
     },
+  });
+
+  const checkInMut = useMutation({
+    mutationFn: (signupId) =>
+      api.public.checkInSelected(eventId, email.trim(), [signupId]),
+    onSuccess: (data) => {
+      // Flip the tapped shift(s) to their new status in place.
+      const updated = new Map(data.signups.map((s) => [s.signup_id, s.status]));
+      setLookup((prev) =>
+        prev
+          ? {
+              ...prev,
+              shifts: prev.shifts.map((sh) =>
+                updated.has(sh.signup_id)
+                  ? { ...sh, status: updated.get(sh.signup_id) }
+                  : sh,
+              ),
+            }
+          : prev,
+      );
+      setError(null);
+    },
+    onError: (err) => setError(err),
   });
 
   const onSubmit = (e) => {
     e.preventDefault();
     if (!email.trim()) return;
-    mut.mutate();
+    lookupMut.mutate();
   };
 
   const eventTitle = eventQ.data?.title || "Event check-in";
@@ -93,8 +168,6 @@ export default function EventCheckInPage() {
         (a, b) => new Date(a.start_time) - new Date(b.start_time),
       )
     : [];
-  // Every shift gets a window verdict — shifts whose windows already passed
-  // stay visible as "closed" so nobody wonders where the orientation went.
   const slotStates = slots.map((s) => {
     const start = new Date(s.start_time).getTime();
     const opensAt = start - WINDOW_BEFORE_MS;
@@ -104,18 +177,23 @@ export default function EventCheckInPage() {
   });
   const anyOpen = slotStates.some((e) => e.state === "open");
 
+  const checkedCount = (lookup?.shifts || []).filter(
+    (s) => s.status === "checked_in" || s.status === "attended",
+  ).length;
+
   return (
     <div className="mx-auto max-w-md px-4 py-6">
       <Card className="space-y-4">
         <div>
           <h1 className="text-xl font-semibold">{eventTitle}</h1>
           <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
-            Enter the email you used when you signed up. We'll check you in
-            for the shift that's open right now.
+            {lookup
+              ? "Tap the shift you're here for."
+              : "Enter the email you used when you signed up, then pick the shift you're here for."}
           </p>
         </div>
 
-        {slotStates.length > 0 ? (
+        {!lookup && slotStates.length > 0 ? (
           <div
             className={`rounded-lg p-3 text-sm ${
               anyOpen ? "bg-blue-50 text-blue-900" : "bg-amber-50 text-amber-900"
@@ -135,7 +213,15 @@ export default function EventCheckInPage() {
                     state === "closed" ? "opacity-60" : ""
                   }`}
                 >
-                  <SlotChip slot={slot} />
+                  <span className="flex items-center gap-1.5">
+                    <TypeBadge slotType={slot.slot_type} />
+                    {fmtTime(slot.start_time)} – {fmtTime(slot.end_time)}
+                    {slot.location ? (
+                      <span className="text-[var(--color-fg-muted)]">
+                        · {slot.location}
+                      </span>
+                    ) : null}
+                  </span>
                   <span
                     className={`text-xs font-medium ${
                       state === "open" ? "text-green-700" : ""
@@ -153,7 +239,7 @@ export default function EventCheckInPage() {
           </div>
         ) : null}
 
-        {!result ? (
+        {!lookup ? (
           <form onSubmit={onSubmit} className="space-y-3">
             <div>
               <Label htmlFor="email">Email</Label>
@@ -171,57 +257,44 @@ export default function EventCheckInPage() {
               <FieldError>
                 {error?.code === "NO_SIGNUP_FOR_EMAIL"
                   ? "We couldn't find a signup for that email on this event. Double-check the spelling."
-                  : error?.code === "OUTSIDE_WINDOW"
-                  ? "None of your shifts are open for check-in right now. Check-in opens 15 minutes before each shift starts."
-                  : error?.message || "Check-in failed. Please try again."}
+                  : error?.message || "Something went wrong. Please try again."}
               </FieldError>
             ) : null}
-            <Button type="submit" disabled={mut.isPending}>
-              {mut.isPending ? "Checking in…" : "Check in"}
+            <Button type="submit" disabled={lookupMut.isPending}>
+              {lookupMut.isPending ? "Looking up…" : "Find my shifts"}
             </Button>
           </form>
         ) : (
           <div className="space-y-3">
-            <div className="rounded-lg bg-green-50 p-3 text-green-900">
-              <p className="font-semibold">
-                Checked in, {result.volunteer_name}!
-              </p>
-              <p className="text-sm">
-                {result.count_checked_in > 0
-                  ? `Just checked you in for ${result.count_checked_in} shift${result.count_checked_in === 1 ? "" : "s"}.`
-                  : "You were already checked in."}
-                {result.count_already_checked_in > 0 && result.count_checked_in > 0
-                  ? ` (${result.count_already_checked_in} already done.)`
-                  : ""}
-              </p>
-            </div>
-            <ul className="divide-y divide-[var(--color-border)] rounded-md border border-[var(--color-border)]">
-              {(result.signups || []).map((s) => (
-                <li
-                  key={s.signup_id}
-                  className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
-                >
-                  <span className="flex items-center gap-2">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
-                        s.slot_type === "orientation"
-                          ? "bg-purple-100 text-purple-700"
-                          : "bg-blue-100 text-blue-700"
-                      }`}
-                    >
-                      {slotTypeLabel(s.slot_type)}
-                    </span>
-                    {fmtTime(s.slot_start)} – {fmtTime(s.slot_end)}
-                  </span>
-                  <span className="text-[var(--color-fg-muted)]">{s.status}</span>
-                </li>
+            <p className="text-sm">
+              Hi <strong>{lookup.volunteer_name}</strong>
+              {checkedCount > 0
+                ? ` — checked in for ${checkedCount} shift${checkedCount === 1 ? "" : "s"}.`
+                : " — here are your shifts:"}
+            </p>
+            <ul className="space-y-2">
+              {lookup.shifts.map((shift) => (
+                <ShiftCard
+                  key={shift.signup_id}
+                  shift={shift}
+                  busy={checkInMut.isPending}
+                  onCheckIn={(sh) => checkInMut.mutate(sh.signup_id)}
+                />
               ))}
             </ul>
+            {error ? (
+              <FieldError>
+                {error?.code === "OUTSIDE_WINDOW"
+                  ? "That shift isn't open for check-in right now — check-in opens 30 minutes before start."
+                  : error?.message || "Check-in failed. Please try again."}
+              </FieldError>
+            ) : null}
             <Button
               variant="secondary"
               onClick={() => {
-                setResult(null);
+                setLookup(null);
                 setEmail("");
+                setError(null);
               }}
             >
               Check in someone else
