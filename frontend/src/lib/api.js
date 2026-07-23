@@ -135,16 +135,9 @@ async function request(path, { method = "GET", params, body, auth = true, header
     const err = new Error(extractErrorMessage(json, fallback));
     err.status = res.status;
     err.response = { status: res.status, data: json };
-    // Structured backend error codes drive UI branches (NO_SIGNUP_FOR_EMAIL,
-    // WRONG_VENUE_CODE, ORIENTATION_REQUIRED, ...). The AUDIT-03 global
-    // handler normalizes HTTPExceptions to {error, code, detail}, so the
-    // top-level code is the real shape; the nested form is kept as a
-    // defensive fallback for any non-normalized path.
-    // NOTE: AUDIT-03 always sets code (default "http_<status>"), so err.code
-    // is populated on virtually every API error — branch on exact values,
-    // never on err.code truthiness.
-    if (json?.code) err.code = json.code;
-    else if (json?.detail?.code) err.code = json.detail.code;
+    // Structured backend errors ({detail: {code: ...}}) drive UI branches
+    // (e.g. NO_SIGNUP_FOR_EMAIL, WRONG_VENUE_CODE).
+    if (json?.detail?.code) err.code = json.detail.code;
     throw err;
   }
 

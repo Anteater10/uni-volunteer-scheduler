@@ -484,7 +484,6 @@ def _ensure_attended_volunteer(
 
 
 def _create_seeded_pending(
-    admin_token: str,
     organizer_token: str,
     event_id: str,
     period_slot_id: str,
@@ -494,23 +493,7 @@ def _create_seeded_pending(
     Returns the raw confirm_token if EXPOSE_TOKENS_FOR_TESTING is set, else None.
     Idempotent: cancels any existing active signup, cleans up cancelled rows, and
     recreates fresh so Playwright always gets a usable token.
-
-    The signup is period-only, so the server-enforced orientation requirement
-    would 422 it — grant orientation credit for the seed family first.
     """
-    gs, gb = _req(
-        "POST",
-        "/admin/orientation-credits",
-        token=admin_token,
-        json_body={
-            "volunteer_email": SEEDED_VOL["email"],
-            "family_key": "e2e-test",
-            "notes": "e2e seed grant (period-only pending signup)",
-        },
-    )
-    if gs not in (200, 201):
-        print(f"[seed] warn: orientation credit grant returned {gs} {gb}", file=sys.stderr)
-
     row = _find_signup_in_roster(organizer_token, event_id, "Seeded Pending")
     if row is not None:
         status = row.get("status")
@@ -593,9 +576,7 @@ def main() -> int:
     _ensure_attended_volunteer(admin_token, organizer_token, event_id, orientation_slot_id)
 
     # 7. Create "seeded pending" volunteer with a fresh confirm_token
-    confirm_token = _create_seeded_pending(
-        admin_token, organizer_token, event_id, period_slot_id
-    )
+    confirm_token = _create_seeded_pending(organizer_token, event_id, period_slot_id)
 
     out = {
         "event_id": event_id,

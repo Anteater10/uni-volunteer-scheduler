@@ -14,7 +14,7 @@
 //   - POST /signups/{signup_id}/check-in on click
 
 import { test, expect } from '@playwright/test';
-import { getSeed, ORGANIZER, ephemeralEmail, grantOrientationCredit } from './fixtures.js';
+import { getSeed, ORGANIZER, ephemeralEmail } from './fixtures.js';
 
 test('organizer can view roster and check in a signup', async ({ page }) => {
   const seed = getSeed();
@@ -23,10 +23,8 @@ test('organizer can view roster and check in a signup', async ({ page }) => {
 
   const apiBase = process.env.E2E_BACKEND_URL || 'http://localhost:8000';
 
-  // Step 1: Create a fresh signup via the API (not UI — avoids serial dependency).
-  // Period-only signup: grant orientation credit first (server-enforced rule).
+  // Step 1: Create a fresh signup via the API (not UI — avoids serial dependency)
   const email = ephemeralEmail('checkin');
-  await grantOrientationCredit(email);
   const signupResp = await fetch(`${apiBase}/api/v1/public/signups`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

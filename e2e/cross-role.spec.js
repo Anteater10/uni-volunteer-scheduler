@@ -44,7 +44,6 @@ import {
   ephemeralEmail,
   getSeed,
   clickSlotByLabel,
-  grantOrientationCredit,
 } from './fixtures.js';
 
 // PART-02-style console-error capture. Cross-role specs MUST NOT ship with
@@ -310,9 +309,6 @@ test.describe.serial('cross-role Scenario 1: canonical admin -> participant -> o
 async function apiSignupAndConfirm(tag, slotIds, lastName) {
   const apiBase = process.env.E2E_BACKEND_URL || 'http://localhost:8000';
   const email = ephemeralEmail(tag);
-  // Callers pass period-only slot lists; the server-enforced orientation
-  // requirement would 422 a fresh email, so grant credit first.
-  await grantOrientationCredit(email);
   const resp = await fetch(`${apiBase}/api/v1/public/signups`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

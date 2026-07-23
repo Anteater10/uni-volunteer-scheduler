@@ -55,36 +55,3 @@ export async function clickSlotByLabel(page, label) {
   );
   await container.getByRole('button', { name: /^sign up$/i }).click();
 }
-
-// Server-enforced orientation requirement: period-only signups from fresh
-// emails 422 with ORIENTATION_REQUIRED unless the email holds orientation
-// credit for the event's module family. Specs that need a bare period-only
-// signup (roster/check-in/swap flows) grant credit first via the admin API.
-// 'e2e-test' matches the seed module template (family_key defaults to slug).
-export async function grantOrientationCredit(email, familyKey = 'e2e-test') {
-  const apiBase = process.env.E2E_BACKEND_URL || 'http://localhost:8000';
-  const loginResp = await fetch(`${apiBase}/api/v1/auth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ username: ADMIN.email, password: ADMIN.password }),
-  });
-  if (!loginResp.ok) {
-    throw new Error(`admin login for credit grant failed: ${loginResp.status}`);
-  }
-  const { access_token: token } = await loginResp.json();
-  const grantResp = await fetch(`${apiBase}/api/v1/admin/orientation-credits`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      volunteer_email: email,
-      family_key: familyKey,
-      notes: 'e2e fixture grant (period-only signup helper)',
-    }),
-  });
-  if (!grantResp.ok) {
-    throw new Error(`orientation credit grant failed: ${grantResp.status}`);
-  }
-}
