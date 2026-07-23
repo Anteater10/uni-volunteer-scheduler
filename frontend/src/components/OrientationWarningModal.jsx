@@ -1,9 +1,15 @@
 // src/components/OrientationWarningModal.jsx
 //
-// Orientation soft-warning modal. Fires when a volunteer selects a period slot
-// but no orientation slot, and the backend reports they haven't attended orientation.
+// Orientation modal, two variants:
 //
-// NOT a hard block — primary CTA proceeds with signup regardless.
+// required (default when the event offers orientation sessions):
+//   The server enforces that un-oriented volunteers include an orientation
+//   session in their signup (422 ORIENTATION_REQUIRED). No bypass — the
+//   only CTA steers back to the schedule to add an orientation session.
+//
+// advisory (event has NO orientation slots — requirement unfulfillable here,
+// server exempts it; organizers can vouch at the door):
+//   Soft warning; primary CTA proceeds with signup regardless.
 //
 // Modal primitive (./ui/Modal.jsx) provides:
 //   - role="dialog" + aria-modal="true"
@@ -16,11 +22,48 @@ import { Modal, Button } from "./ui";
 
 /**
  * Props:
- *   open     {boolean}    — controls modal visibility
- *   onYes    {function}   — called when user asserts they have done orientation; signup proceeds
- *   onNo     {function}   — called when user wants to see orientation events instead
+ *   open              {boolean}  — controls modal visibility
+ *   required          {boolean}  — hard-requirement variant (no bypass)
+ *   onPickOrientation {function} — required variant: back to schedule to add
+ *                                  an orientation session
+ *   onYes             {function} — advisory variant: proceed with signup
+ *   onNo              {function} — advisory variant / close: see orientation
+ *                                  events instead
  */
-export default function OrientationWarningModal({ open, onYes, onNo }) {
+export default function OrientationWarningModal({
+  open,
+  required = false,
+  onPickOrientation,
+  onYes,
+  onNo,
+}) {
+  if (required) {
+    return (
+      <Modal
+        open={open}
+        onClose={onNo}
+        title="Orientation is part of your first signup"
+      >
+        <p className="text-sm text-[var(--color-fg)]">
+          Looks like you haven't completed a Sci Trek orientation for this
+          module yet. Your signup needs to include an orientation session —
+          pick one from the schedule and it'll be added alongside the shifts
+          you already selected.
+        </p>
+        <div className="flex flex-col gap-2 mt-4">
+          <Button
+            type="button"
+            variant="primary"
+            className="w-full min-h-11"
+            onClick={onPickOrientation}
+          >
+            Pick an orientation session
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       open={open}
