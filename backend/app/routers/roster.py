@@ -56,6 +56,10 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
                 status=s.status,
                 slot_time=slot.start_time if slot else s.timestamp,
                 checked_in_at=s.checked_in_at,
+                slot_id=slot.id if slot else None,
+                slot_type=slot.slot_type.value if slot else None,
+                slot_end=slot.end_time if slot else None,
+                slot_location=slot.location if slot else None,
             )
         )
 

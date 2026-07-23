@@ -493,6 +493,8 @@ def event_roster(
                     "slot_id": str(slot.id),
                     "slot_start": slot.start_time.isoformat(),
                     "slot_end": slot.end_time.isoformat(),
+                    "slot_type": slot.slot_type.value,
+                    "slot_location": slot.location,
                     "slot_capacity": slot.capacity,
                     "slot_current_count": slot.current_count,
                     "signup_id": str(signup.id),

@@ -24,6 +24,34 @@ import { findQuarterById } from "../lib/weekUtils";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 import { useAuth } from "../state/useAuth";
 
+// Issue #31 — slot headers lead with the weekday ("Tuesday, Sep 29, 2026").
+function fmtSlotDay(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function fmtTimeRange(startIso, endIso) {
+  const fmt = (iso) =>
+    iso
+      ? new Date(iso).toLocaleTimeString(undefined, {
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : "";
+  const start = fmt(startIso);
+  const end = fmt(endIso);
+  return end ? `${start} – ${end}` : start || "—";
+}
+
 function fmtDateTime(iso) {
   if (!iso) return "—";
   try {
@@ -233,7 +261,18 @@ export default function AdminEventPage() {
     const map = new Map();
     for (const r of roster) {
       const key = r.slot_id;
-      if (!map.has(key)) map.set(key, { slot: { id: key, start: r.slot_start, end: r.slot_end }, rows: [] });
+      if (!map.has(key))
+        map.set(key, {
+          slot: {
+            id: key,
+            start: r.slot_start,
+            end: r.slot_end,
+            // Issue #31 — headers name the slot kind and location.
+            type: r.slot_type,
+            location: r.slot_location,
+          },
+          rows: [],
+        });
       map.get(key).rows.push(r);
     }
     return Array.from(map.values());
@@ -446,7 +485,23 @@ export default function AdminEventPage() {
               <Card key={slot.id}>
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-medium">
-                    Slot: {fmtDateTime(slot.start)} → {fmtDateTime(slot.end)}
+                    {/* Issue #31 — say what kind of shift this is and which
+                        day, so orientation vs module rosters read at a glance. */}
+                    <span
+                      className={`mr-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${
+                        slot.type === "orientation"
+                          ? "bg-purple-100 text-purple-700"
+                          : "bg-blue-100 text-blue-700"
+                      }`}
+                    >
+                      {slot.type === "orientation" ? "Orientation" : "Module"}
+                    </span>
+                    {fmtSlotDay(slot.start)} · {fmtTimeRange(slot.start, slot.end)}
+                    {slot.location ? (
+                      <span className="font-normal text-[var(--color-fg-muted)]">
+                        {" "}· {slot.location}
+                      </span>
+                    ) : null}
                   </p>
                   {/* Phase 25 — admin-only reorder waitlist button per slot. */}
                   {isAdmin && waitlistedRows.length >= 2 && (

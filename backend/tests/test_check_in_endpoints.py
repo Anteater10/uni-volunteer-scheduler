@@ -313,3 +313,21 @@ class TestEventCheckInByEmailEndpoint:
         body = resp.json()
         assert len(body["signups"]) == 1
         assert body["signups"][0]["status"] == "checked_in"
+
+
+class TestCheckInByEmailSlotMetadata:
+    """Issue #31: the QR result must say WHICH shift was checked in
+    (orientation vs module period), not just a time range."""
+
+    def test_response_rows_carry_slot_type_and_location(self, client, db_session):
+        event, slot, vol, signup = _make_in_window_event_with_signup(
+            db_session, email="scan-typed@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "scan-typed@example.com"},
+        )
+        assert resp.status_code == 200, resp.text
+        row = resp.json()["signups"][0]
+        assert row["slot_type"] == "period"
+        assert "slot_location" in row

@@ -131,3 +131,48 @@ class TestRosterTotal:
             f"got {data['total']}"
         )
         assert data["checked_in_count"] == 1
+
+
+class TestRosterSlotMetadata:
+    """Issue #31: check-in surfaces must be structured by slot — the live
+    roster groups volunteers under their slot, so every row needs the slot's
+    identity (id, type, times, location), not just a bare start time."""
+
+    def test_rows_carry_slot_identity(self, client, db_session):
+        organizer = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=organizer, capacity=5)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        db_session.add(signup)
+        db_session.flush()
+
+        headers = auth_headers(client, organizer)
+        resp = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
+
+        assert resp.status_code == 200
+        row = resp.json()["rows"][0]
+        assert row["slot_id"] == str(slot.id)
+        assert row["slot_type"] == slot.slot_type.value
+        assert row["slot_end"] is not None
+        assert "slot_location" in row
+
+
+class TestAdminRosterSlotMetadata:
+    """Issue #31 companion: the admin event page groups signed-up volunteers
+    by slot — headers need the slot's type and location too."""
+
+    def test_admin_roster_rows_carry_slot_type(self, client, db_session):
+        admin = make_user(db_session, role=UserRole.admin)
+        event, slot = make_event_with_slot(db_session, owner=admin, capacity=5)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        db_session.add(signup)
+        db_session.flush()
+
+        headers = auth_headers(client, admin)
+        resp = client.get(f"/api/v1/admin/events/{event.id}/roster", headers=headers)
+
+        assert resp.status_code == 200
+        row = resp.json()[0]
+        assert row["slot_type"] == slot.slot_type.value
+        assert "slot_location" in row

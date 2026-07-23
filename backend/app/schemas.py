@@ -451,6 +451,12 @@ class RosterRow(BaseModel):
     status: SignupStatus
     slot_time: datetime
     checked_in_at: datetime | None = None
+    # Issue #31: check-in surfaces group by slot — rows carry the slot's
+    # identity so the UI can render per-slot sections (orientation vs period).
+    slot_id: UUID | None = None
+    slot_type: str | None = None
+    slot_end: datetime | None = None
+    slot_location: str | None = None
 
 
 class RosterResponse(BaseModel):
@@ -481,6 +487,10 @@ class EventCheckInByEmailSignup(BaseModel):
     slot_id: UUID
     slot_start: datetime | None = None
     slot_end: datetime | None = None
+    # Issue #31: the QR result names the shift (orientation vs period), not
+    # just a time range.
+    slot_type: str | None = None
+    slot_location: str | None = None
     status: str
     newly_checked_in: bool
 

@@ -185,6 +185,8 @@ def event_check_in_by_email_endpoint(
                 slot_id=s.slot_id,
                 slot_start=slot.start_time if slot else None,
                 slot_end=slot.end_time if slot else None,
+                slot_type=slot.slot_type.value if slot else None,
+                slot_location=slot.location if slot else None,
                 status=s.status.value,
                 newly_checked_in=was_new,
             )
