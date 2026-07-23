@@ -197,6 +197,7 @@ def grant_orientation_credit(
     db: Session,
     email: str,
     family_key: str,
+    *,
     quarter_id: Optional[UUID] = None,
     granted_by_user_id: Optional[UUID] = None,
     notes: Optional[str] = None,

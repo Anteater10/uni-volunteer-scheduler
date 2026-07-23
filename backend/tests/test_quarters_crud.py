@@ -183,6 +183,33 @@ def test_delete_referenced_quarter_rejected(client, db_session, admin_headers):
     assert resp.status_code == 409, resp.text
 
 
+def test_delete_quarter_with_orientation_credits_clears_metadata(
+    client, db_session, admin_headers
+):
+    """Issue #30 follow-up: a credit's quarter_id is display metadata only, so
+    deleting the quarter must succeed and null it out — never FK-error into a
+    500 or block the delete. The credit itself stays honored."""
+    created = client.post("/api/v1/admin/quarters", json=SPRING, headers=admin_headers).json()
+    quarter_id = created["quarter"]["id"]
+    credit = models.OrientationCredit(
+        volunteer_email="permanent@example.com",
+        family_key="intro-bio",
+        quarter_id=uuid.UUID(quarter_id),
+        source=models.OrientationCreditSource.grant,
+    )
+    db_session.add(credit)
+    db_session.commit()
+    credit_id = credit.id
+
+    resp = client.delete(f"/api/v1/admin/quarters/{quarter_id}", headers=admin_headers)
+    assert resp.status_code == 204, resp.text
+
+    db_session.expire_all()
+    survivor = db_session.query(models.OrientationCredit).filter_by(id=credit_id).one()
+    assert survivor.quarter_id is None
+    assert survivor.revoked_at is None
+
+
 def test_list_ordered_by_start_date(client, db_session, admin_headers):
     for payload in (SESSION_B, SPRING, SESSION_A):
         assert client.post("/api/v1/admin/quarters", json=payload, headers=admin_headers).status_code == 201

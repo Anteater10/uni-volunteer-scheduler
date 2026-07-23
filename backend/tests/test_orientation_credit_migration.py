@@ -56,3 +56,19 @@ def test_round_trip_clean(alembic_engine, alembic_command):
     with alembic_engine.connect() as conn:
         assert _column_nullable(conn, "orientation_credits", "quarter_id") == "YES"
         assert _index_exists(conn, "ix_orientation_credits_email_family")
+
+
+def test_quarter_fk_is_on_delete_set_null(alembic_engine):
+    """Migration 0027: the quarter FK must be ON DELETE SET NULL — the quarter
+    is display metadata only, so deleting one clears the label instead of
+    blocking (or 500ing) the delete."""
+    with alembic_engine.connect() as conn:
+        confdeltype = conn.execute(
+            text(
+                "SELECT confdeltype FROM pg_constraint "
+                "WHERE conname='fk_orientation_credits_quarter_id'"
+            )
+        ).scalar()
+    assert confdeltype == "n", (
+        f"expected ON DELETE SET NULL ('n'), got {confdeltype!r}"
+    )
