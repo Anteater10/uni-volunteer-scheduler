@@ -686,34 +686,15 @@ class TestOrientationRequirement:
         resp = client.post("/api/v1/public/signups", json=self._payload([orient.id]))
         assert resp.status_code == 201, resp.text
 
-    def test_same_family_orientation_on_other_event_passes(
-        self, client, db_session, monkeypatch
-    ):
+    def test_batch_spanning_events_rejected(self, client, db_session, monkeypatch):
+        """One signup covers one event. Multi-event batches were never used by
+        the frontend and turned this endpoint into an amplified credit oracle
+        (20 events probed per request vs 1 per orientation-check call)."""
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
-        self._template(db_session, "bio-advanced", family_key="bio")
         event_a = _make_event(db_session, module_slug="bio-intro")
         period_a = _make_slot(db_session, event_a.id)
-        _make_slot(db_session, event_a.id, slot_type=SlotType.ORIENTATION)
-        event_b = _make_event(db_session, module_slug="bio-advanced")
-        orient_b = _make_slot(db_session, event_b.id, slot_type=SlotType.ORIENTATION)
-        db_session.commit()
-
-        resp = client.post(
-            "/api/v1/public/signups", json=self._payload([period_a.id, orient_b.id])
-        )
-        assert resp.status_code == 201, resp.text
-
-    def test_different_family_orientation_does_not_satisfy(
-        self, client, db_session, monkeypatch
-    ):
-        self._mute_email(monkeypatch)
-        self._template(db_session, "bio-intro", family_key="bio")
-        self._template(db_session, "chem-intro", family_key="chem")
-        event_a = _make_event(db_session, module_slug="bio-intro")
-        period_a = _make_slot(db_session, event_a.id)
-        _make_slot(db_session, event_a.id, slot_type=SlotType.ORIENTATION)
-        event_b = _make_event(db_session, module_slug="chem-intro")
+        event_b = _make_event(db_session, module_slug="bio-intro")
         orient_b = _make_slot(db_session, event_b.id, slot_type=SlotType.ORIENTATION)
         db_session.commit()
 
@@ -721,7 +702,9 @@ class TestOrientationRequirement:
             "/api/v1/public/signups", json=self._payload([period_a.id, orient_b.id])
         )
         assert resp.status_code == 422, resp.text
-        assert resp.json()["code"] == "ORIENTATION_REQUIRED"
+        assert resp.json()["code"] == "MULTIPLE_EVENTS"
+        db_session.expire_all()
+        assert db_session.query(Signup).count() == 0
 
     def test_full_orientation_slot_still_satisfies_via_waitlist(
         self, client, db_session, monkeypatch

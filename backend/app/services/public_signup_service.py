@@ -70,21 +70,26 @@ def _ensure_signup_window(db: Session, event_id, bypass: bool = False) -> None:
 
 
 def _ensure_orientation_requirement(db: Session, email: str, slot_ids) -> None:
-    """Un-oriented volunteers must include an orientation session.
+    """Batch constraints: one event per signup + orientation requirement.
 
-    For every event in the batch with a PERIOD slot selected, the email must
-    either hold orientation credit for the event's family (attendance-derived
-    or granted — permanent per issue #30), or the batch must include an
-    ORIENTATION slot on the same event or on an event resolving to the same
-    family. Events that offer no orientation slots at all are exempt: the
-    requirement would be unfulfillable there, and organizers can vouch at the
-    door (grant-orientation on the roster).
+    Single-event: nothing in the product ever signs up across events in one
+    request (the event page submits its own slots), and multi-event batches
+    turned this unauthenticated endpoint into an amplified orientation-credit
+    oracle (up to 20 (email, family) probes per request vs 1 per call on the
+    rate-limited /public/orientation-check).
+
+    Orientation: when the batch selects a PERIOD slot, the email must either
+    hold orientation credit for the event's family (attendance-derived or
+    granted — permanent per issue #30), or the batch must include one of the
+    event's ORIENTATION slots. Events that offer no orientation slots at all
+    are exempt: the requirement would be unfulfillable there, and organizers
+    can vouch at the door (grant-orientation on the roster).
 
     Runs BEFORE any row is written; unknown slot ids are ignored here so the
     per-slot loop keeps producing its existing 404.
     Raises HTTPException 422; the global handler (AUDIT-03) surfaces it as
-    {code: "ORIENTATION_REQUIRED", detail: <message>} — the event page steers
-    from its own slot data, so no per-event payload is needed.
+    {code, detail} — the event page steers from its own slot data, so no
+    per-event payload is needed.
     """
     from .orientation_service import family_for_event, has_orientation_credit
 
@@ -93,54 +98,50 @@ def _ensure_orientation_requirement(db: Session, email: str, slot_ids) -> None:
         .scalars()
         .all()
     )
+    if not slots:
+        return  # all ids unknown — the per-slot loop 404s
 
-    by_event: dict = {}
-    for slot in slots:
-        by_event.setdefault(slot.event_id, []).append(slot)
-
-    # Orientation slots included in this batch, and the families they resolve
-    # to. A family=None orientation only satisfies its own event.
-    orientation_event_ids = {
-        s.event_id for s in slots if s.slot_type == SlotType.ORIENTATION
-    }
-    orientation_families = {
-        family
-        for family in (
-            family_for_event(db, event_id) for event_id in orientation_event_ids
-        )
-        if family is not None
-    }
-
-    for event_id, event_slots in by_event.items():
-        if not any(s.slot_type == SlotType.PERIOD for s in event_slots):
-            continue
-        if event_id in orientation_event_ids:
-            continue  # doing orientation as part of this signup
-        family = family_for_event(db, event_id)
-        if family is not None and family in orientation_families:
-            continue  # orientation for the same family elsewhere in the batch
-        if has_orientation_credit(db, email, family).has_credit:
-            continue
-        offered = db.execute(
-            select(Slot.id)
-            .where(
-                Slot.event_id == event_id,
-                Slot.slot_type == SlotType.ORIENTATION,
-            )
-            .limit(1)
-        ).first()
-        if offered is None:
-            continue  # nothing to require on this event — advisory only
+    event_ids = {s.event_id for s in slots}
+    if len(event_ids) > 1:
         raise HTTPException(
             status_code=422,
             detail={
-                "code": "ORIENTATION_REQUIRED",
-                "message": (
-                    "New volunteers must include an orientation session in "
-                    "their signup."
-                ),
+                "code": "MULTIPLE_EVENTS",
+                "message": "A signup covers one event at a time.",
             },
         )
+    event_id = next(iter(event_ids))
+
+    if not any(s.slot_type == SlotType.PERIOD for s in slots):
+        return  # orientation-only selections always pass
+    if any(s.slot_type == SlotType.ORIENTATION for s in slots):
+        return  # doing orientation as part of this signup
+
+    family = family_for_event(db, event_id)
+    if has_orientation_credit(db, email, family).has_credit:
+        return
+
+    offered = db.execute(
+        select(Slot.id)
+        .where(
+            Slot.event_id == event_id,
+            Slot.slot_type == SlotType.ORIENTATION,
+        )
+        .limit(1)
+    ).first()
+    if offered is None:
+        return  # nothing to require on this event — advisory only
+
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": "ORIENTATION_REQUIRED",
+            "message": (
+                "New volunteers must include an orientation session in "
+                "their signup."
+            ),
+        },
+    )
 
 
 def create_public_signup(
