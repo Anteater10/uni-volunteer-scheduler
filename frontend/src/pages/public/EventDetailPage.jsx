@@ -942,7 +942,11 @@ export default function EventDetailPage() {
       setSuccessData({ ...response, slots: selectedSlots });
       setStep("success");
     } catch (err) {
-      if (err.status === 429) {
+      if (err.code === "ORIENTATION_REQUIRED") {
+        // Server-enforced backstop: the volunteer needs an orientation
+        // session in this signup. Same modal as the pre-submit check.
+        setStep("orientation-warning");
+      } else if (err.status === 429) {
         toast.error("Too many submissions. Please wait a moment and try again.");
         setStep("form");
       } else if (err.status === 422) {
@@ -1016,7 +1020,9 @@ export default function EventDetailPage() {
           return;
         }
       } catch {
-        // On API error, proceed
+        // On API error, proceed and let the server decide — signup create
+        // enforces the orientation requirement (422 ORIENTATION_REQUIRED)
+        // and submitSignup maps that back to the modal.
       }
     }
 
@@ -1497,9 +1503,13 @@ export default function EventDetailPage() {
         </div>
       )}
 
-      {/* Orientation warning modal */}
+      {/* Orientation modal — hard requirement when this event offers
+          orientation sessions (server enforces it); advisory click-through
+          only when it offers none (server exempts that case). */}
       <OrientationWarningModal
         open={step === "orientation-warning"}
+        required={slots.some((s) => s.slot_type === "orientation")}
+        onPickOrientation={handleOrientationNo}
         onYes={handleOrientationYes}
         onNo={handleOrientationNo}
       />

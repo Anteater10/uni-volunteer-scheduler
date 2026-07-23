@@ -1,13 +1,15 @@
 // e2e/orientation-modal.spec.js
 //
-// Tests orientation warning modal behavior:
-//   Test A: Modal fires when volunteer picks period-only slot + no orientation history
+// Tests orientation requirement behavior (server-enforced at signup create):
+//   Test A: Un-oriented volunteer picking period-only is steered to add an
+//           orientation session (required modal — no bypass), adds one, and
+//           the signup succeeds with both slots.
 //   Test B: Modal skipped when volunteer has prior attended orientation
 //
-// From OrientationWarningModal.jsx:
-//   title: "Have you done a Sci Trek orientation?"
-//   Primary button: "I've done orientation — continue"
-//   Secondary button: "I haven't — show me orientation events"
+// From OrientationWarningModal.jsx (required variant — the seed event
+// offers an orientation slot, so the advisory click-through never applies):
+//   title: "Orientation is part of your first signup"
+//   Primary button: "Pick an orientation session"
 
 import { test, expect } from '@playwright/test';
 import {
@@ -30,7 +32,7 @@ async function submitForm(page) {
 }
 
 test.describe('orientation modal', () => {
-  test('Test A: modal fires when period-only + no orientation history', async ({ page }) => {
+  test('Test A: period-only without history is steered to add an orientation session', async ({ page }) => {
     const seed = getSeed();
     expect(seed.event_id, 'E2E seed required').toBeTruthy();
 
@@ -49,18 +51,26 @@ test.describe('orientation modal', () => {
     // Submit form
     await submitForm(page);
 
-    // The orientation modal MUST fire because:
+    // The required modal MUST fire (no bypass offered) because:
     // - Only period slot selected (no orientation slot)
     // - Email has no prior orientation history
+    // - The seed event offers an orientation slot
     await expect(
-      page.getByText('Have you done a Sci Trek orientation?')
+      page.getByText('Orientation is part of your first signup')
     ).toBeVisible({ timeout: 8000 });
+    await expect(
+      page.getByRole('button', { name: /i've done orientation/i })
+    ).not.toBeVisible();
 
-    // Click "I've done orientation — continue"
-    await page.getByRole('button', { name: /i've done orientation/i }).click();
+    // Steer back to the schedule and add the orientation session. The period
+    // selection and identity fields persist.
+    await page.getByRole('button', { name: /pick an orientation session/i }).click();
+    await clickSlotByLabel(page, /^orientation/i);
 
-    // Signup should proceed — success response (API call happens after modal confirm)
-    // Wait for the POST /public/signups to complete
+    await expect(page.getByText('Your information')).toBeVisible();
+    await submitForm(page);
+
+    // With the orientation slot included, the signup succeeds.
     await expect(page.getByText(/check your email|success|sign.?up.*received/i)).toBeVisible({
       timeout: 10000,
     });
