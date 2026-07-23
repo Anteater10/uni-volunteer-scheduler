@@ -93,13 +93,16 @@ export default function EventCheckInPage() {
         (a, b) => new Date(a.start_time) - new Date(b.start_time),
       )
     : [];
-  const openSlots = slots.filter((s) => {
+  // Every shift gets a window verdict — shifts whose windows already passed
+  // stay visible as "closed" so nobody wonders where the orientation went.
+  const slotStates = slots.map((s) => {
     const start = new Date(s.start_time).getTime();
-    return now >= start - WINDOW_BEFORE_MS && now <= start + WINDOW_AFTER_MS;
+    const opensAt = start - WINDOW_BEFORE_MS;
+    const closesAt = start + WINDOW_AFTER_MS;
+    const state = now < opensAt ? "upcoming" : now > closesAt ? "closed" : "open";
+    return { slot: s, state, opensAt };
   });
-  const nextSlot = slots.find(
-    (s) => new Date(s.start_time).getTime() - WINDOW_BEFORE_MS > now,
-  );
+  const anyOpen = slotStates.some((e) => e.state === "open");
 
   return (
     <div className="mx-auto max-w-md px-4 py-6">
@@ -112,43 +115,41 @@ export default function EventCheckInPage() {
           </p>
         </div>
 
-        {slots.length > 0 ? (
+        {slotStates.length > 0 ? (
           <div
             className={`rounded-lg p-3 text-sm ${
-              openSlots.length > 0
-                ? "bg-blue-50 text-blue-900"
-                : "bg-amber-50 text-amber-900"
+              anyOpen ? "bg-blue-50 text-blue-900" : "bg-amber-50 text-amber-900"
             }`}
             data-testid="checkin-window-status"
           >
-            {openSlots.length > 0 ? (
-              <div className="space-y-1.5">
-                <p className="font-semibold">Checking in now:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {openSlots.map((s) => (
-                    <SlotChip key={s.id} slot={s} />
-                  ))}
-                </div>
-              </div>
-            ) : nextSlot ? (
-              <p>
-                No shifts are open for check-in yet. The{" "}
-                <strong>{slotTypeLabel(nextSlot.slot_type).toLowerCase()}</strong>{" "}
-                shift ({fmtTime(nextSlot.start_time)} –{" "}
-                {fmtTime(nextSlot.end_time)}) opens for check-in at{" "}
-                <strong>
-                  {fmtTime(
-                    new Date(
-                      new Date(nextSlot.start_time).getTime() -
-                        WINDOW_BEFORE_MS,
-                    ).toISOString(),
-                  )}
-                </strong>
-                .
-              </p>
-            ) : (
-              <p>Check-in has closed for all of today's shifts.</p>
-            )}
+            <p className="mb-1.5 font-semibold">
+              {anyOpen
+                ? "Checking in now:"
+                : "No shifts are open for check-in right now."}
+            </p>
+            <ul className="space-y-1.5">
+              {slotStates.map(({ slot, state, opensAt }) => (
+                <li
+                  key={slot.id}
+                  className={`flex flex-wrap items-center justify-between gap-1.5 ${
+                    state === "closed" ? "opacity-60" : ""
+                  }`}
+                >
+                  <SlotChip slot={slot} />
+                  <span
+                    className={`text-xs font-medium ${
+                      state === "open" ? "text-green-700" : ""
+                    }`}
+                  >
+                    {state === "open"
+                      ? "Open now"
+                      : state === "upcoming"
+                        ? `Opens at ${fmtTime(new Date(opensAt).toISOString())}`
+                        : "Check-in closed"}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : null}
 

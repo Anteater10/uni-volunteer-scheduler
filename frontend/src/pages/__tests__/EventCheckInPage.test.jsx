@@ -60,7 +60,7 @@ describe("EventCheckInPage", () => {
     api.public.getEvent.mockResolvedValue({ id: "evt-1", title: "Bio @ Lincoln" });
   });
 
-  it("names the open shift when a slot's check-in window is live", async () => {
+  it("shows the whole schedule with the live shift marked open", async () => {
     // Orientation starts in 5 min (window open: -15/+30); module in 2 hours.
     api.listSlots.mockResolvedValue([
       slotAt(5 * MIN, { id: "s-orient", type: "orientation", location: "Library" }),
@@ -72,21 +72,27 @@ describe("EventCheckInPage", () => {
     const box = await screen.findByTestId("checkin-window-status");
     expect(box.textContent).toMatch(/checking in now/i);
     expect(box.textContent).toMatch(/orientation/i);
-    expect(box.textContent).toMatch(/library/i);
-    // The far-off module period is NOT advertised as open.
-    expect(box.textContent).not.toMatch(/room 4/i);
+    expect(box.textContent).toMatch(/open now/i);
+    // The far-off module period is listed too — as upcoming, not open.
+    expect(box.textContent).toMatch(/room 4/i);
+    expect(box.textContent).toMatch(/opens at/i);
   });
 
-  it("says when the next shift opens if nothing is live yet", async () => {
+  it("keeps shifts with passed windows visible as closed", async () => {
+    // Orientation ended hours ago; module opens later. The orientation must
+    // still appear (marked closed) so nobody wonders where it went.
     api.listSlots.mockResolvedValue([
+      slotAt(-180 * MIN, { id: "s-orient", type: "orientation", location: "Library" }),
       slotAt(120 * MIN, { id: "s-period", type: "period", location: "Room 4" }),
     ]);
 
     renderPage();
 
     const box = await screen.findByTestId("checkin-window-status");
-    expect(box.textContent).toMatch(/opens for check-in at/i);
-    expect(box.textContent).toMatch(/module/i);
+    expect(box.textContent).toMatch(/no shifts are open/i);
+    expect(box.textContent).toMatch(/orientation/i);
+    expect(box.textContent).toMatch(/check-in closed/i);
+    expect(box.textContent).toMatch(/opens at/i);
   });
 
   it("labels each checked-in shift by kind in the result list", async () => {
@@ -125,8 +131,8 @@ describe("EventCheckInPage", () => {
       ),
     );
     expect(await screen.findByText(/checked in, thanh khuu/i)).toBeInTheDocument();
-    const rows = screen.getAllByRole("listitem");
-    expect(rows[0].textContent).toMatch(/orientation/i);
-    expect(rows[0].textContent).toMatch(/checked_in/i);
+    // Scope to the result row (the schedule banner has list items too).
+    const resultRow = screen.getByText("checked_in").closest("li");
+    expect(resultRow.textContent).toMatch(/orientation/i);
   });
 });

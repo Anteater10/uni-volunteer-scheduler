@@ -25,6 +25,7 @@ from ..services.check_in_service import (
     event_check_in_by_email,
     resolve_event,
     self_check_in,
+    undo_check_in,
 )
 from .roster import _build_roster
 
@@ -40,6 +41,35 @@ def organizer_check_in(
     """Organizer one-tap check-in. Idempotent."""
     try:
         signup = check_in_signup(db, signup_id, current_user.id, via="organizer")
+        db.commit()
+        db.refresh(signup)
+        return signup
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Signup not found")
+    except InvalidTransitionError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INVALID_TRANSITION",
+                "from": e.from_status.value,
+                "to": e.to_status.value,
+            },
+        )
+
+
+@router.post("/signups/{signup_id}/undo-check-in", response_model=SignupRead)
+def organizer_undo_check_in(
+    signup_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+):
+    """Issue #31: revert a mis-tapped check-in (checked_in → confirmed).
+
+    Idempotent; resolved states (attended/no_show) 409 — undo covers the
+    tap-slip, not resolution.
+    """
+    try:
+        signup = undo_check_in(db, signup_id, current_user.id)
         db.commit()
         db.refresh(signup)
         return signup

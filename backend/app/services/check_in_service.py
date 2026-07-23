@@ -20,7 +20,9 @@ CHECK_IN_WINDOW_AFTER = timedelta(minutes=30)
 ALLOWED_TRANSITIONS: dict[SignupStatus, set[SignupStatus]] = {
     SignupStatus.pending: {SignupStatus.confirmed, SignupStatus.cancelled},
     SignupStatus.confirmed: {SignupStatus.checked_in, SignupStatus.no_show, SignupStatus.cancelled},
-    SignupStatus.checked_in: {SignupStatus.attended, SignupStatus.no_show, SignupStatus.cancelled},
+    # checked_in -> confirmed is the organizer's mis-tap undo (issue #31);
+    # resolved states (attended/no_show) stay final.
+    SignupStatus.checked_in: {SignupStatus.confirmed, SignupStatus.attended, SignupStatus.no_show, SignupStatus.cancelled},
     SignupStatus.attended: set(),
     SignupStatus.no_show: set(),
     SignupStatus.waitlisted: {SignupStatus.pending, SignupStatus.cancelled},
@@ -59,6 +61,10 @@ def _transition(
 
     if new_status == SignupStatus.checked_in:
         signup.checked_in_at = datetime.now(timezone.utc)
+    elif old == SignupStatus.checked_in and new_status == SignupStatus.confirmed:
+        # Undo path: the check-in never happened as far as credit derivation
+        # is concerned, so the timestamp must not linger.
+        signup.checked_in_at = None
 
     log = AuditLog(
         actor_id=actor_id,
@@ -90,6 +96,32 @@ def check_in_signup(
         return signup
 
     _transition(db, signup, SignupStatus.checked_in, actor_id, via)
+    return signup
+
+
+def undo_check_in(
+    db: Session,
+    signup_id: UUID,
+    actor_id: UUID | None,
+    via: str = "organizer_undo",
+) -> Signup:
+    """Revert a mis-tapped check-in back to confirmed (issue #31).
+
+    Only checked_in reverts; resolved states (attended/no_show) raise
+    InvalidTransitionError — undo covers the tap-slip, not resolution.
+    Idempotent: an already-confirmed signup returns as-is with no audit row.
+    """
+    signup = db.execute(
+        select(Signup).where(Signup.id == signup_id).with_for_update()
+    ).scalar_one_or_none()
+
+    if signup is None:
+        raise LookupError(f"Signup {signup_id} not found")
+
+    if signup.status == SignupStatus.confirmed:
+        return signup
+
+    _transition(db, signup, SignupStatus.confirmed, actor_id, via)
     return signup
 
 

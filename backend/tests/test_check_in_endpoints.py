@@ -331,3 +331,68 @@ class TestCheckInByEmailSlotMetadata:
         row = resp.json()["signups"][0]
         assert row["slot_type"] == "period"
         assert "slot_location" in row
+
+
+class TestUndoCheckIn:
+    """Issue #31 follow-up: a mis-tap on the live roster must be reversible —
+    tapping a checked-in volunteer again reverts them to confirmed."""
+
+    def _checked_in_signup(self, db_session, organizer):
+        event, slot = make_event_with_slot(db_session, owner=organizer)
+        vol = _make_volunteer(db_session)
+        signup = Signup(
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=SignupStatus.checked_in,
+            checked_in_at=datetime.now(timezone.utc),
+        )
+        db_session.add(signup)
+        db_session.flush()
+        return signup
+
+    def test_undo_reverts_to_confirmed_and_clears_timestamp(self, client, db_session):
+        organizer = make_user(db_session, role=UserRole.organizer)
+        signup = self._checked_in_signup(db_session, organizer)
+
+        headers = auth_headers(client, organizer)
+        resp = client.post(f"/api/v1/signups/{signup.id}/undo-check-in", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "confirmed"
+        assert body["checked_in_at"] is None
+
+    def test_undo_is_idempotent_on_confirmed(self, client, db_session):
+        organizer = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=organizer)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        db_session.add(signup)
+        db_session.flush()
+
+        headers = auth_headers(client, organizer)
+        resp = client.post(f"/api/v1/signups/{signup.id}/undo-check-in", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "confirmed"
+
+    def test_undo_rejected_for_attended(self, client, db_session):
+        """Resolved states are final — undo only covers the mis-tap window."""
+        organizer = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=organizer)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.attended)
+        db_session.add(signup)
+        db_session.flush()
+
+        headers = auth_headers(client, organizer)
+        resp = client.post(f"/api/v1/signups/{signup.id}/undo-check-in", headers=headers)
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "INVALID_TRANSITION"
+
+    def test_undo_requires_staff_role(self, client, db_session):
+        organizer = make_user(db_session, role=UserRole.organizer)
+        signup = self._checked_in_signup(db_session, organizer)
+        participant = make_user(db_session, role=UserRole.participant)
+
+        headers = auth_headers(client, participant)
+        resp = client.post(f"/api/v1/signups/{signup.id}/undo-check-in", headers=headers)
+        assert resp.status_code == 403

@@ -287,6 +287,8 @@ class SignupRead(ORMBase):
     slot_id: UUID
     status: SignupStatus
     timestamp: datetime
+    # Issue #31: check-in surfaces read this back after check-in/undo.
+    checked_in_at: Optional[datetime] = None
     answers: List[SignupAnswerRead] = []
     event_title: Optional[str] = None
     event_location: Optional[str] = None

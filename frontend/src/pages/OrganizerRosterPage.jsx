@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../state/useAuth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchRoster, checkInSignup } from "../api/roster";
+import { fetchRoster, checkInSignup, undoCheckInSignup } from "../api/roster";
 import api from "../lib/api";
 import { PageHeader, Button, Skeleton, Modal, Input, Label } from "../components/ui";
 import { toast } from "../state/toast";
@@ -208,6 +208,38 @@ export default function OrganizerRosterPage() {
     },
   });
 
+  // Issue #31 — mis-tap recovery: tapping a checked-in card reverts it.
+  const undoMut = useMutation({
+    mutationFn: (signupId) => undoCheckInSignup(signupId),
+    onMutate: async (signupId) => {
+      await qc.cancelQueries({ queryKey: ["roster", eventId] });
+      const prev = qc.getQueryData(["roster", eventId]);
+      qc.setQueryData(["roster", eventId], (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          checked_in_count: Math.max(0, old.checked_in_count - 1),
+          rows: old.rows.map((r) =>
+            r.signup_id === signupId ? { ...r, status: "confirmed" } : r,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _signupId, context) => {
+      if (context?.prev) {
+        qc.setQueryData(["roster", eventId], context.prev);
+      }
+      toast.error("Undo failed. Please retry.");
+    },
+    onSuccess: () => {
+      toast.info("Check-in undone.");
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["roster", eventId] });
+    },
+  });
+
   if (rosterQ.isPending) {
     return (
       <div>
@@ -378,22 +410,28 @@ export default function OrganizerRosterPage() {
           <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {group.rows.map((row) => {
               const active = canCheckIn(row.status);
+              // Issue #31 — a checked-in card stays tappable so a mis-tap can
+              // be undone in place; resolved states (attended) stay locked.
+              const canUndo = row.status === "checked_in";
               const done = row.status === "checked_in" || row.status === "attended";
+              const busy = checkInMut.isPending || undoMut.isPending;
               return (
                 <li key={row.signup_id}>
                   <button
                     type="button"
                     className={`w-full min-h-[84px] flex items-center justify-between px-5 py-4 rounded-xl border-2 text-left transition-all shadow-sm ${
                       done
-                        ? "bg-green-50 border-green-300 hover:bg-green-100"
+                        ? `bg-green-50 border-green-300 ${canUndo ? "hover:bg-green-100 cursor-pointer" : "cursor-not-allowed"}`
                         : active
                           ? "bg-white border-gray-200 hover:border-blue-400 hover:shadow-md cursor-pointer"
                           : "bg-gray-50 border-gray-200 opacity-70 cursor-not-allowed"
                     }`}
-                    disabled={!active || checkInMut.isPending}
+                    disabled={(!active && !canUndo) || busy}
                     onClick={() => {
                       if (active) {
                         checkInMut.mutate(row.signup_id);
+                      } else if (canUndo) {
+                        undoMut.mutate(row.signup_id);
                       }
                     }}
                   >
@@ -406,6 +444,11 @@ export default function OrganizerRosterPage() {
                           hour: "2-digit",
                           minute: "2-digit",
                         })}
+                        {canUndo ? (
+                          <span className="ml-2 text-xs text-green-700">
+                            · tap again to undo
+                          </span>
+                        ) : null}
                       </span>
                     </div>
                     <span
