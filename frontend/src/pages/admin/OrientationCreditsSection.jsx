@@ -1,15 +1,20 @@
 // src/pages/admin/OrientationCreditsSection.jsx
 //
-// Phase 21 — admin Orientation Credits page.
+// Phase 21 — admin Orientation Credits page. Issue #30: credit is permanent
+// per (email, family); the quarter is optional "earned in" metadata — grants
+// may record one (defaulting to the quarter covering today) and the list
+// shows/filters by it, but it never affects whether credit is honored.
 //
 // Lists explicit orientation_credits rows (signup-based attendance stays
 // derived and isn't shown here — admins read attendance on the event roster).
-// Supports: grant a credit, revoke a credit, filter by email / family / active.
+// Supports: grant a credit, revoke a credit, filter by email / family /
+// quarter / active.
 
 import React, { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import api from "../../lib/api";
+import { useQuarters } from "../../lib/useQuarters";
 import { useAdminPageTitle } from "./AdminLayout";
 import {
   Button,
@@ -68,11 +73,13 @@ export default function OrientationCreditsSection() {
 
   const [filterEmail, setFilterEmail] = useState("");
   const [filterFamily, setFilterFamily] = useState("");
+  const [filterQuarter, setFilterQuarter] = useState("");
   const [activeOnly, setActiveOnly] = useState(false);
   const [showGrant, setShowGrant] = useState(false);
   const [grantForm, setGrantForm] = useState({
     volunteer_email: "",
     family_key: "",
+    quarter_id: "",
     notes: "",
   });
   const [grantError, setGrantError] = useState("");
@@ -84,6 +91,21 @@ export default function OrientationCreditsSection() {
     // Templates are small; fine to load once.
     staleTime: 5 * 60 * 1000,
   });
+
+  const quartersQ = useQuarters();
+  // Newest first for the pickers; the quarter covering today is the grant
+  // form's default.
+  const quarterOptions = useMemo(() => {
+    const rows = quartersQ.data || [];
+    return [...rows].sort((a, b) => (a.start_date < b.start_date ? 1 : -1));
+  }, [quartersQ.data]);
+  const currentQuarterId = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const covering = quarterOptions.find(
+      (q) => q.start_date <= today && today <= q.end_date
+    );
+    return covering ? covering.id : "";
+  }, [quarterOptions]);
 
   // Derive the set of distinct family_key values from active templates.
   const familyOptions = useMemo(() => {
@@ -102,12 +124,13 @@ export default function OrientationCreditsSection() {
     queryKey: [
       "admin",
       "orientationCredits",
-      { filterEmail, filterFamily, activeOnly },
+      { filterEmail, filterFamily, filterQuarter, activeOnly },
     ],
     queryFn: () =>
       api.admin.orientationCredits.list({
         email: filterEmail || undefined,
         family_key: filterFamily || undefined,
+        quarter_id: filterQuarter || undefined,
         active_only: activeOnly || undefined,
       }),
   });
@@ -117,7 +140,12 @@ export default function OrientationCreditsSection() {
     onSuccess: () => {
       toast.success("Orientation credit granted.");
       setShowGrant(false);
-      setGrantForm({ volunteer_email: "", family_key: "", notes: "" });
+      setGrantForm({
+        volunteer_email: "",
+        family_key: "",
+        quarter_id: "",
+        notes: "",
+      });
       setGrantError("");
       qc.invalidateQueries({ queryKey: ["admin", "orientationCredits"] });
     },
@@ -140,6 +168,12 @@ export default function OrientationCreditsSection() {
 
   const credits = creditsQ.data || [];
 
+  // The select falls back to the current quarter until the admin picks one
+  // explicitly, so the common case (recording the quarter in progress) is one
+  // field fewer. "none" is the explicit no-quarter choice — the quarter is
+  // optional metadata, not part of the credit.
+  const grantQuarterId = grantForm.quarter_id || currentQuarterId || "none";
+
   function submitGrant(e) {
     e.preventDefault();
     setGrantError("");
@@ -150,6 +184,7 @@ export default function OrientationCreditsSection() {
     grantMut.mutate({
       volunteer_email: grantForm.volunteer_email.trim().toLowerCase(),
       family_key: grantForm.family_key,
+      quarter_id: grantQuarterId === "none" ? null : grantQuarterId,
       notes: grantForm.notes || null,
     });
   }
@@ -162,7 +197,7 @@ export default function OrientationCreditsSection() {
       </div>
 
       <Card>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <Label htmlFor="filter-email">Filter by email</Label>
             <Input
@@ -185,6 +220,22 @@ export default function OrientationCreditsSection() {
               {familyOptions.map((f) => (
                 <option key={f} value={f}>
                   {f}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="filter-quarter">Filter by quarter</Label>
+            <select
+              id="filter-quarter"
+              value={filterQuarter}
+              onChange={(e) => setFilterQuarter(e.target.value)}
+              className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+            >
+              <option value="">All quarters</option>
+              {quarterOptions.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {q.display_name}
                 </option>
               ))}
             </select>
@@ -229,6 +280,7 @@ export default function OrientationCreditsSection() {
                 <tr className="text-left text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
                   <th className="py-2 pr-3">Email</th>
                   <th className="py-2 pr-3">Family</th>
+                  <th className="py-2 pr-3">Quarter</th>
                   <th className="py-2 pr-3">Source</th>
                   <th className="py-2 pr-3">Granted by</th>
                   <th className="py-2 pr-3">Granted</th>
@@ -244,6 +296,7 @@ export default function OrientationCreditsSection() {
                   >
                     <td className="py-2 pr-3 break-all">{c.volunteer_email}</td>
                     <td className="py-2 pr-3">{c.family_key}</td>
+                    <td className="py-2 pr-3">{c.quarter_label || "—"}</td>
                     <td className="py-2 pr-3">
                       <SourceBadge source={c.source} />
                     </td>
@@ -310,6 +363,28 @@ export default function OrientationCreditsSection() {
             </select>
           </div>
           <div>
+            <Label htmlFor="grant-quarter">Quarter</Label>
+            <select
+              id="grant-quarter"
+              value={grantQuarterId}
+              onChange={(e) =>
+                setGrantForm((f) => ({ ...f, quarter_id: e.target.value }))
+              }
+              className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+            >
+              <option value="none">No quarter</option>
+              {quarterOptions.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {q.display_name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
+              Records which quarter the credit was earned in — for reference
+              only. Credit never expires.
+            </p>
+          </div>
+          <div>
             <Label htmlFor="grant-notes">Notes (optional)</Label>
             <Input
               id="grant-notes"
@@ -347,8 +422,11 @@ export default function OrientationCreditsSection() {
             <p className="text-sm">
               This will mark the credit as revoked for{" "}
               <strong>{revokeTarget.volunteer_email}</strong> in the{" "}
-              <strong>{revokeTarget.family_key}</strong> family. The volunteer
-              will see the warning again on next signup.
+              <strong>{revokeTarget.family_key}</strong> family
+              {revokeTarget.quarter_label
+                ? ` (${revokeTarget.quarter_label})`
+                : ""}
+              . The volunteer will see the warning again on next signup.
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setRevokeTarget(null)}>

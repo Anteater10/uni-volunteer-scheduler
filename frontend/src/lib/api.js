@@ -455,14 +455,17 @@ async function adminSendReminderNow(signupId, kind) {
 }
 
 // Phase 26 — broadcast messages (organizer + admin).
-// Returns the recipient-count preview for the modal.
-async function getBroadcastRecipientCount(eventId) {
+// Returns the recipient-count preview for the modal. Optional params
+// may carry { slot_id } to preview a single slot's roster.
+async function getBroadcastRecipientCount(eventId, params) {
   return request(`/events/${eventId}/broadcast-recipients`, {
     method: "GET",
+    params,
   });
 }
 // Sends a broadcast. On 429 the Error carries .status and .retryAfter.
-async function sendBroadcast(eventId, { subject, body_markdown }) {
+// slot_id (optional) targets one slot's roster; omitted = all slots.
+async function sendBroadcast(eventId, { subject, body_markdown, slot_id }) {
   const url = `${API_BASE}/events/${eventId}/broadcast`;
   const token = authStorage.getToken();
   const res = await fetch(url, {
@@ -471,7 +474,11 @@ async function sendBroadcast(eventId, { subject, body_markdown }) {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ subject, body_markdown }),
+    body: JSON.stringify({
+      subject,
+      body_markdown,
+      ...(slot_id ? { slot_id } : {}),
+    }),
   });
   const json = await safeReadJson(res);
   if (!res.ok) {
@@ -663,8 +670,8 @@ export const api = {
         { method: "POST" },
       ),
     // Phase 26 — broadcast messages (organizer reuse of same endpoints)
-    broadcastRecipientCount: (eventId) =>
-      getBroadcastRecipientCount(eventId),
+    broadcastRecipientCount: (eventId, params) =>
+      getBroadcastRecipientCount(eventId, params),
     sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
     listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
   },
@@ -755,6 +762,8 @@ export const api = {
       // Issue #33 — explicit archiving of past quarters.
       archive: (id) => request(`/admin/quarters/${id}/archive`, { method: "POST" }),
       restore: (id) => request(`/admin/quarters/${id}/restore`, { method: "POST" }),
+      // Issue #38 — per-event attendance breakdown for a past quarter.
+      retrospective: (id) => request(`/admin/quarters/${id}/retrospective`),
     },
     templates: {
       list: (params) => request("/admin/module-templates", { params }),
@@ -810,18 +819,19 @@ export const api = {
       sendNow: (signupId, kind) => adminSendReminderNow(signupId, kind),
     },
     // Phase 26 — broadcast messages
-    broadcastRecipientCount: (eventId) =>
-      getBroadcastRecipientCount(eventId),
+    broadcastRecipientCount: (eventId, params) =>
+      getBroadcastRecipientCount(eventId, params),
     sendBroadcast: (eventId, payload) => sendBroadcast(eventId, payload),
     listBroadcasts: (eventId, days = 30) => listBroadcasts(eventId, days),
-    // Phase 21 — orientation credit engine
+    // Phase 21 — orientation credit engine (issue #30: permanent per
+    // (email, family); quarter_id is optional "earned in" metadata)
     orientationCredits: {
       list: (params = {}) =>
         request("/admin/orientation-credits", { method: "GET", params }),
-      create: ({ volunteer_email, family_key, notes = null }) =>
+      create: ({ volunteer_email, family_key, quarter_id, notes = null }) =>
         request("/admin/orientation-credits", {
           method: "POST",
-          body: { volunteer_email, family_key, notes },
+          body: { volunteer_email, family_key, quarter_id, notes },
         }),
       revoke: (creditId) =>
         request(`/admin/orientation-credits/${creditId}`, { method: "DELETE" }),

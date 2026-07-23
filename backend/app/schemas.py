@@ -754,6 +754,36 @@ class QuarterWriteResult(BaseModel):
     relink_summary: RelinkSummary
 
 
+class QuarterRetroEventRow(BaseModel):
+    """Issue #38: one event of a quarter retrospective with attendance buckets."""
+
+    event_id: UUID
+    title: str
+    start_date: datetime
+    week_number: Optional[int] = None
+    slot_count: int
+    capacity: int
+    signups: int
+    attended: int
+    no_shows: int
+
+
+class QuarterRetroTotals(BaseModel):
+    events: int
+    slots: int
+    capacity: int
+    signups: int
+    attended: int
+    no_shows: int
+    attendance_rate: float
+
+
+class QuarterRetrospective(BaseModel):
+    quarter: QuarterRead
+    totals: QuarterRetroTotals
+    events: List[QuarterRetroEventRow] = []
+
+
 class OrientationStatusRead(BaseModel):
     has_attended_orientation: bool
     last_attended_at: Optional[datetime] = None
@@ -771,6 +801,9 @@ class OrientationStatusRead(BaseModel):
 class OrientationCreditCreate(BaseModel):
     volunteer_email: EmailStr
     family_key: str = Field(min_length=1, max_length=255)
+    # Issue #30: optionally records which quarter the credit was earned in —
+    # display metadata only; credit is permanent per (email, family).
+    quarter_id: Optional[UUID] = None
     notes: Optional[str] = None
 
 
@@ -778,6 +811,8 @@ class OrientationCreditRead(ORMBase):
     id: UUID
     volunteer_email: str
     family_key: str
+    quarter_id: Optional[UUID] = None
+    quarter_label: Optional[str] = None
     source: Literal["attendance", "grant"]
     granted_by_user_id: Optional[UUID] = None
     granted_by_label: Optional[str] = None
@@ -915,6 +950,8 @@ class ReminderSendNowResponse(BaseModel):
 class BroadcastCreate(BaseModel):
     subject: str = Field(..., min_length=1, max_length=200)
     body_markdown: str = Field(..., min_length=1, max_length=20000)
+    # None => every slot on the event (pre-slot-scoping behavior).
+    slot_id: Optional[UUID] = None
 
 
 class BroadcastResult(BaseModel):
@@ -929,6 +966,7 @@ class BroadcastSummary(BaseModel):
     recipient_count: int
     actor_label: Optional[str] = None
     sent_at: datetime
+    slot_id: Optional[str] = None
 
 
 class BroadcastRecipientCount(BaseModel):

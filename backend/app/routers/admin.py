@@ -10,7 +10,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Response, HTTPException, Query, UploadFile, File
 
 logger = logging.getLogger(__name__)
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, cast, String, Integer
 
 from .. import models, schemas
@@ -2104,6 +2104,22 @@ def restore_quarter(
     return quarter_service.restore_quarter(db, quarter_id, actor=admin_user)
 
 
+# Issue #38 — quarter retrospective: read-only aggregate powering the
+# admin "view events of a past/archived quarter" drill-down.
+
+
+@router.get(
+    "/quarters/{quarter_id}/retrospective",
+    response_model=schemas.QuarterRetrospective,
+)
+def quarter_retrospective(
+    quarter_id: uuid_mod.UUID,
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    return quarter_service.quarter_retrospective(db, quarter_id)
+
+
 # Phase 23 — recurring event duplication
 @router.post("/events/{event_id}/duplicate")
 def duplicate_event(
@@ -2339,21 +2355,17 @@ def recent_notifications(
 
 
 def _serialize_orientation_credit(
-    db: Session, credit: models.OrientationCredit
+    credit: models.OrientationCredit,
 ) -> schemas.OrientationCreditRead:
-    label = None
-    if credit.granted_by_user_id:
-        granter = (
-            db.query(models.User)
-            .filter(models.User.id == credit.granted_by_user_id)
-            .first()
-        )
-        if granter:
-            label = granter.name or granter.email
+    granter = credit.granted_by
+    label = (granter.name or granter.email) if granter else None
+    quarter = credit.academic_quarter
     return schemas.OrientationCreditRead(
         id=credit.id,
         volunteer_email=credit.volunteer_email,
         family_key=credit.family_key,
+        quarter_id=credit.quarter_id,
+        quarter_label=quarter.display_name if quarter else None,
         source=credit.source.value,
         granted_by_user_id=credit.granted_by_user_id,
         granted_by_label=label,
@@ -2370,6 +2382,7 @@ def _serialize_orientation_credit(
 def admin_list_orientation_credits(
     email: str | None = Query(None),
     family_key: str | None = Query(None),
+    quarter_id: uuid_mod.UUID | None = Query(None),
     active_only: bool = Query(False, description="Exclude revoked rows"),
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
@@ -2379,18 +2392,25 @@ def admin_list_orientation_credits(
     Does NOT synthesize attendance-based credits — those stay derived. The admin
     surface is for the explicit grants/revokes only.
     """
-    q = db.query(models.OrientationCredit)
+    # Eager-load both label sources — serializing 500 rows must not lazy-load
+    # a User and a quarter per credit.
+    q = db.query(models.OrientationCredit).options(
+        joinedload(models.OrientationCredit.granted_by),
+        joinedload(models.OrientationCredit.academic_quarter),
+    )
     if email:
         q = q.filter(
             models.OrientationCredit.volunteer_email == email.lower().strip()
         )
     if family_key:
         q = q.filter(models.OrientationCredit.family_key == family_key)
+    if quarter_id:
+        q = q.filter(models.OrientationCredit.quarter_id == quarter_id)
     if active_only:
         q = q.filter(models.OrientationCredit.revoked_at.is_(None))
     q = q.order_by(models.OrientationCredit.granted_at.desc()).limit(500)
     rows = q.all()
-    return [_serialize_orientation_credit(db, r) for r in rows]
+    return [_serialize_orientation_credit(r) for r in rows]
 
 
 @router.post(
@@ -2403,13 +2423,28 @@ def admin_create_orientation_credit(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
-    """Admin manual grant — e.g. vouched-for volunteer, pre-existing records."""
+    """Admin manual grant — e.g. vouched-for volunteer, pre-existing records.
+
+    Issue #30: ``quarter_id`` optionally records which quarter the credit was
+    earned in (display metadata only — credit is permanent). When provided it
+    must be an entered row.
+    """
     from ..services.orientation_service import grant_orientation_credit
+
+    if payload.quarter_id is not None:
+        quarter = (
+            db.query(models.AcademicQuarter)
+            .filter(models.AcademicQuarter.id == payload.quarter_id)
+            .first()
+        )
+        if quarter is None:
+            raise HTTPException(status_code=404, detail="Quarter not found")
 
     credit = grant_orientation_credit(
         db,
         email=str(payload.volunteer_email),
         family_key=payload.family_key,
+        quarter_id=payload.quarter_id,
         granted_by_user_id=admin_user.id,
         notes=payload.notes,
     )
@@ -2422,12 +2457,13 @@ def admin_create_orientation_credit(
         extra={
             "volunteer_email": credit.volunteer_email,
             "family_key": credit.family_key,
+            "quarter_id": str(credit.quarter_id) if credit.quarter_id else None,
             "via": "admin_page",
         },
     )
     db.commit()
     db.refresh(credit)
-    return _serialize_orientation_credit(db, credit)
+    return _serialize_orientation_credit(credit)
 
 
 @router.delete(
@@ -2458,7 +2494,7 @@ def admin_revoke_orientation_credit(
     )
     db.commit()
     db.refresh(credit)
-    return _serialize_orientation_credit(db, credit)
+    return _serialize_orientation_credit(credit)
 
 
 # =========================

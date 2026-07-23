@@ -14,6 +14,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -373,6 +374,102 @@ def restore_quarter(db: Session, quarter_id, actor: models.User) -> models.Acade
     db.commit()
     db.refresh(row)
     return row
+
+
+# ---------- retrospective (issue #38) ----------
+
+# Statuses that held a seat — mirrors roster._ATTENDEE_STATUSES: waitlisted
+# and cancelled never counted toward the roster and must not count here.
+RETRO_ATTENDEE_STATUSES = (
+    models.SignupStatus.pending,
+    models.SignupStatus.confirmed,
+    models.SignupStatus.checked_in,
+    models.SignupStatus.attended,
+    models.SignupStatus.no_show,
+)
+# checked_in counts as present (roster checked_in_count semantics): finished
+# quarters keep signups never promoted past checked_in. The analytics
+# endpoints count attended only — that difference is deliberate.
+RETRO_ATTENDED_STATUSES = (
+    models.SignupStatus.checked_in,
+    models.SignupStatus.attended,
+)
+
+
+def quarter_retrospective(db: Session, quarter_id) -> dict:
+    """Per-event attendance breakdown for one quarter, plus totals.
+
+    Membership is the quarter_id FK — the app's canonical linkage (relink
+    keeps it current; delete_quarter uses it too). Two grouped queries kept
+    separate on purpose: summing Slot.capacity across an Event→Slot→Signup
+    triple join would multiply capacity by the signups per slot.
+    """
+    row = _get_or_404(db, quarter_id)
+
+    slot_rows = (
+        db.query(
+            models.Event.id,
+            models.Event.title,
+            models.Event.start_date,
+            models.Event.week_number,
+            func.count(models.Slot.id),
+            func.coalesce(func.sum(models.Slot.capacity), 0),
+        )
+        .outerjoin(models.Slot, models.Slot.event_id == models.Event.id)
+        .filter(models.Event.quarter_id == row.id)
+        .group_by(
+            models.Event.id,
+            models.Event.title,
+            models.Event.start_date,
+            models.Event.week_number,
+        )
+        .order_by(models.Event.start_date)
+        .all()
+    )
+
+    status_rows = (
+        db.query(models.Event.id, models.Signup.status, func.count(models.Signup.id))
+        .join(models.Slot, models.Slot.event_id == models.Event.id)
+        .join(models.Signup, models.Signup.slot_id == models.Slot.id)
+        .filter(models.Event.quarter_id == row.id)
+        .group_by(models.Event.id, models.Signup.status)
+        .all()
+    )
+    buckets_by_event: dict = {}
+    for event_id, status, count in status_rows:
+        buckets_by_event.setdefault(event_id, {})[status] = count
+
+    events = []
+    for event_id, title, start_date, week_number, slot_count, capacity in slot_rows:
+        buckets = buckets_by_event.get(event_id, {})
+        events.append(
+            {
+                "event_id": event_id,
+                "title": title,
+                "start_date": start_date,
+                "week_number": week_number,
+                "slot_count": slot_count,
+                "capacity": capacity,
+                "signups": sum(buckets.get(s, 0) for s in RETRO_ATTENDEE_STATUSES),
+                "attended": sum(buckets.get(s, 0) for s in RETRO_ATTENDED_STATUSES),
+                "no_shows": buckets.get(models.SignupStatus.no_show, 0),
+            }
+        )
+
+    signups_total = sum(e["signups"] for e in events)
+    attended_total = sum(e["attended"] for e in events)
+    totals = {
+        "events": len(events),
+        "slots": sum(e["slot_count"] for e in events),
+        "capacity": sum(e["capacity"] for e in events),
+        "signups": signups_total,
+        "attended": attended_total,
+        "no_shows": sum(e["no_shows"] for e in events),
+        # Denominator keeps stale pending/confirmed leftovers — on a finished
+        # quarter those are unresolved expected attendees, same as no-shows.
+        "attendance_rate": round(attended_total / signups_total, 4) if signups_total else 0.0,
+    }
+    return {"quarter": row, "totals": totals, "events": events}
 
 
 def delete_quarter(db: Session, quarter_id, actor: models.User) -> None:

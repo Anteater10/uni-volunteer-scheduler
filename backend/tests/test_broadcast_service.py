@@ -372,6 +372,307 @@ def test_list_recent_broadcasts_returns_audit_rows(db_session, dispatched):
     assert rows[0]["recipient_count"] == 1
 
 
+def _add_slot(db_session, event, *, capacity=5):
+    """Second slot on the same event — for slot-scoped broadcast tests."""
+    slot = models.Slot(
+        id=uuid.uuid4(),
+        event_id=event.id,
+        start_time=datetime.now(timezone.utc) + timedelta(days=1, hours=3),
+        end_time=datetime.now(timezone.utc) + timedelta(days=1, hours=5),
+        capacity=capacity,
+        current_count=0,
+        slot_type=models.SlotType.PERIOD,
+        date=date_type.today(),
+    )
+    db_session.add(slot)
+    db_session.flush()
+    return slot
+
+
+# ------------------------------------------------------------------
+# Slot-scoped recipients — organizer targets a single slot's roster;
+# omitting slot_id preserves the whole-event behavior.
+# ------------------------------------------------------------------
+
+
+def test_list_and_count_recipients_slot_scoped(db_session):
+    _, event, slot_a = _make_event_with_capacity(db_session, capacity=5)
+    slot_b = _add_slot(db_session, event)
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.confirmed, email="a1@example.com",
+    )
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.attended, email="a2@example.com",
+    )
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.waitlisted, email="aw@example.com",
+    )
+    _seed_signup(
+        db_session, slot_b,
+        status=models.SignupStatus.confirmed, email="b1@example.com",
+    )
+    db_session.commit()
+
+    scoped = list_recipients(db_session, event.id, slot_id=slot_a.id)
+    assert {r.volunteer.email for r in scoped} == {
+        "a1@example.com",
+        "a2@example.com",
+    }
+    assert count_recipients(db_session, event.id, slot_id=slot_a.id) == 2
+
+    # No slot_id → whole event, exactly the old behavior.
+    assert count_recipients(db_session, event.id) == 3
+    assert {r.volunteer.email for r in list_recipients(db_session, event.id)} == {
+        "a1@example.com",
+        "a2@example.com",
+        "b1@example.com",
+    }
+
+
+def test_send_broadcast_slot_scoped_targets_only_slot_roster(
+    db_session, dispatched
+):
+    owner, event, slot_a = _make_event_with_capacity(db_session, capacity=5)
+    slot_b = _add_slot(db_session, event)
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.confirmed, email="a1@example.com",
+    )
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.checked_in, email="a2@example.com",
+    )
+    _seed_signup(
+        db_session, slot_b,
+        status=models.SignupStatus.confirmed, email="b1@example.com",
+    )
+    db_session.commit()
+
+    result = send_broadcast(
+        db_session,
+        event_id=event.id,
+        subject="Slot A only",
+        body_markdown="Room change for your period.",
+        actor_user_id=owner.id,
+        redis_client=_FakeRedis(),
+        slot_id=slot_a.id,
+    )
+
+    assert result.recipient_count == 2
+    assert {kwargs["to_email"] for _, kwargs in dispatched} == {
+        "a1@example.com",
+        "a2@example.com",
+    }
+
+    audit = (
+        db_session.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action == "broadcast_sent",
+            models.AuditLog.entity_id == str(event.id),
+        )
+        .one()
+    )
+    assert audit.extra["slot_id"] == str(slot_a.id)
+
+
+def test_send_broadcast_without_slot_records_null_slot_in_audit(
+    db_session, dispatched
+):
+    owner, event, slot_a = _make_event_with_capacity(db_session, capacity=5)
+    slot_b = _add_slot(db_session, event)
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.confirmed, email="a1@example.com",
+    )
+    _seed_signup(
+        db_session, slot_b,
+        status=models.SignupStatus.confirmed, email="b1@example.com",
+    )
+    db_session.commit()
+
+    result = send_broadcast(
+        db_session,
+        event_id=event.id,
+        subject="Everyone",
+        body_markdown="All slots message.",
+        actor_user_id=owner.id,
+        redis_client=_FakeRedis(),
+    )
+
+    assert result.recipient_count == 2
+    assert {kwargs["to_email"] for _, kwargs in dispatched} == {
+        "a1@example.com",
+        "b1@example.com",
+    }
+
+    audit = (
+        db_session.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action == "broadcast_sent",
+            models.AuditLog.entity_id == str(event.id),
+        )
+        .one()
+    )
+    assert audit.extra["slot_id"] is None
+
+
+def test_list_recent_broadcasts_includes_slot_id(db_session, dispatched):
+    owner, event, slot_a = _make_event_with_capacity(db_session, capacity=5)
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.confirmed, email="h@example.com",
+    )
+    db_session.commit()
+
+    redis_fake = _FakeRedis()
+    send_broadcast(
+        db_session,
+        event_id=event.id,
+        subject="scoped",
+        body_markdown="body",
+        actor_user_id=owner.id,
+        redis_client=redis_fake,
+        slot_id=slot_a.id,
+    )
+    send_broadcast(
+        db_session,
+        event_id=event.id,
+        subject="everyone",
+        body_markdown="body",
+        actor_user_id=owner.id,
+        redis_client=redis_fake,
+    )
+
+    rows = {r["subject"]: r for r in list_recent_broadcasts(db_session, event.id, days=7)}
+    assert rows["scoped"]["slot_id"] == str(slot_a.id)
+    assert rows["everyone"]["slot_id"] is None
+
+
+def test_router_slot_scoped_preview_and_send(client, db_session, dispatched):
+    from tests.fixtures.helpers import auth_headers
+
+    owner, event, slot_a = _make_event_with_capacity(db_session, capacity=5)
+    slot_b = _add_slot(db_session, event)
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.confirmed, email="ra@example.com",
+    )
+    _seed_signup(
+        db_session, slot_b,
+        status=models.SignupStatus.confirmed, email="rb@example.com",
+    )
+    db_session.commit()
+    headers = auth_headers(client, owner)
+
+    from app.deps import redis_client as real_redis
+    real_redis.flushdb()
+
+    r = client.get(
+        f"/api/v1/events/{event.id}/broadcast-recipients",
+        params={"slot_id": str(slot_a.id)},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["recipient_count"] == 1
+
+    r = client.get(
+        f"/api/v1/events/{event.id}/broadcast-recipients",
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["recipient_count"] == 2
+
+    r = client.post(
+        f"/api/v1/events/{event.id}/broadcast",
+        json={
+            "subject": "slot A",
+            "body_markdown": "body",
+            "slot_id": str(slot_a.id),
+        },
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["recipient_count"] == 1
+    assert {kwargs["to_email"] for _, kwargs in dispatched} == {"ra@example.com"}
+
+
+def test_router_rejects_slot_from_other_event(client, db_session, dispatched):
+    from tests.fixtures.helpers import auth_headers
+
+    owner, event, slot_a = _make_event_with_capacity(db_session, capacity=5)
+    _, _, foreign_slot = _make_event_with_capacity(db_session, capacity=5)
+    _seed_signup(
+        db_session, slot_a,
+        status=models.SignupStatus.confirmed, email="mine@example.com",
+    )
+    db_session.commit()
+    headers = auth_headers(client, owner)
+
+    from app.deps import redis_client as real_redis
+    real_redis.flushdb()
+
+    # Foreign slot → 404 on both endpoints.
+    r = client.get(
+        f"/api/v1/events/{event.id}/broadcast-recipients",
+        params={"slot_id": str(foreign_slot.id)},
+        headers=headers,
+    )
+    assert r.status_code == 404, r.text
+    r = client.post(
+        f"/api/v1/events/{event.id}/broadcast",
+        json={
+            "subject": "nope",
+            "body_markdown": "body",
+            "slot_id": str(foreign_slot.id),
+        },
+        headers=headers,
+    )
+    assert r.status_code == 404, r.text
+
+    # Nonexistent slot id → 404 too.
+    r = client.post(
+        f"/api/v1/events/{event.id}/broadcast",
+        json={
+            "subject": "nope",
+            "body_markdown": "body",
+            "slot_id": str(uuid.uuid4()),
+        },
+        headers=headers,
+    )
+    assert r.status_code == 404, r.text
+
+    # Malformed slot id → 422 validation error.
+    r = client.get(
+        f"/api/v1/events/{event.id}/broadcast-recipients",
+        params={"slot_id": "not-a-uuid"},
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text
+    r = client.post(
+        f"/api/v1/events/{event.id}/broadcast",
+        json={
+            "subject": "nope",
+            "body_markdown": "body",
+            "slot_id": "not-a-uuid",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text
+
+    # None of the rejected calls consumed a rate-limit token — a full
+    # hour's budget of valid sends must still succeed.
+    for i in range(RATE_LIMIT_PER_HOUR):
+        r = client.post(
+            f"/api/v1/events/{event.id}/broadcast",
+            json={"subject": f"ok {i}", "body_markdown": "body"},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+
+
 # ------------------------------------------------------------------
 # Router wiring (sanity) — 429 maps correctly
 # ------------------------------------------------------------------
