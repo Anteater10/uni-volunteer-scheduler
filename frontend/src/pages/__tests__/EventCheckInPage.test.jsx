@@ -58,11 +58,11 @@ function shiftFixture({ signupId, type, state, status = "confirmed", location })
   };
 }
 
-function renderPage() {
+function renderPage({ entry = "/events/evt-1/check-in?v=4321" } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={["/events/evt-1/check-in"]}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/events/:eventId/check-in" element={<EventCheckInPage />} />
         </Routes>
@@ -164,6 +164,7 @@ describe("EventCheckInPage", () => {
         "evt-1",
         "hungkhuu@ucsb.edu",
         ["su-1"],
+        "4321",
       ),
     );
     const orient = screen.getByTestId("shift-su-1");
@@ -172,6 +173,50 @@ describe("EventCheckInPage", () => {
     const period = screen.getByTestId("shift-su-2");
     expect(period.textContent).toMatch(/tap to check in/i);
     expect(period).not.toBeDisabled();
+  });
+
+  it("passes the QR-carried venue code to the lookup call", async () => {
+    api.public.checkInLookup.mockResolvedValue({
+      event_id: "evt-1",
+      event_title: "Bio @ Lincoln",
+      volunteer_name: "Thanh Khuu",
+      shifts: [],
+    });
+
+    renderPage();
+    const user = userEvent.setup();
+    await submitEmail(user);
+
+    await waitFor(() =>
+      expect(api.public.checkInLookup).toHaveBeenCalledWith(
+        "evt-1",
+        "hungkhuu@ucsb.edu",
+        "4321",
+      ),
+    );
+  });
+
+  it("blocks the flow with an invalid-link screen when the URL has no venue code", async () => {
+    renderPage({ entry: "/events/evt-1/check-in" });
+
+    expect(
+      await screen.findByText(/link is missing its check-in code/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
+  });
+
+  it("shows a friendly error when the venue code is wrong", async () => {
+    const err = new Error("Wrong venue code");
+    err.code = "WRONG_VENUE_CODE";
+    api.public.checkInLookup.mockRejectedValue(err);
+
+    renderPage();
+    const user = userEvent.setup();
+    await submitEmail(user);
+
+    expect(
+      await screen.findByText(/ask the organizer to re-show the QR/i),
+    ).toBeInTheDocument();
   });
 
   it("shows a friendly error for unknown emails", async () => {

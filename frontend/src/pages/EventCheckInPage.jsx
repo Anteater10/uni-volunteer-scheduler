@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Card, Button, Input, Label, FieldError } from "../components/ui";
@@ -100,6 +100,10 @@ function ShiftCard({ shift, onCheckIn, busy }) {
 
 export default function EventCheckInPage() {
   const { eventId } = useParams();
+  // Issue #31 hardening: the organizer-displayed QR carries the venue code
+  // (?v=CODE); the backend rejects lookup/check-in without it.
+  const [searchParams] = useSearchParams();
+  const venueCode = searchParams.get("v") || "";
   const [email, setEmail] = useState("");
   const [lookup, setLookup] = useState(null);
   const [error, setError] = useState(null);
@@ -120,7 +124,7 @@ export default function EventCheckInPage() {
   });
 
   const lookupMut = useMutation({
-    mutationFn: () => api.public.checkInLookup(eventId, email.trim()),
+    mutationFn: () => api.public.checkInLookup(eventId, email.trim(), venueCode),
     onSuccess: (data) => {
       setLookup(data);
       setError(null);
@@ -133,7 +137,7 @@ export default function EventCheckInPage() {
 
   const checkInMut = useMutation({
     mutationFn: (signupId) =>
-      api.public.checkInSelected(eventId, email.trim(), [signupId]),
+      api.public.checkInSelected(eventId, email.trim(), [signupId], venueCode),
     onSuccess: (data) => {
       // Flip the tapped shift(s) to their new status in place.
       const updated = new Map(data.signups.map((s) => [s.signup_id, s.status]));
@@ -180,6 +184,21 @@ export default function EventCheckInPage() {
   const checkedCount = (lookup?.shifts || []).filter(
     (s) => s.status === "checked_in" || s.status === "attended",
   ).length;
+
+  if (!venueCode) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-6">
+        <Card className="space-y-2">
+          <h1 className="text-xl font-semibold">{eventTitle}</h1>
+          <p className="text-sm text-[var(--color-fg-muted)]">
+            This link is missing its check-in code. Please scan the QR code
+            shown at the check-in table — if you already did, ask the
+            organizer to re-show it from the roster screen.
+          </p>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-md px-4 py-6">
@@ -257,7 +276,9 @@ export default function EventCheckInPage() {
               <FieldError>
                 {error?.code === "NO_SIGNUP_FOR_EMAIL"
                   ? "We couldn't find a signup for that email on this event. Double-check the spelling."
-                  : error?.message || "Something went wrong. Please try again."}
+                  : error?.code === "WRONG_VENUE_CODE"
+                    ? "This check-in link is out of date — ask the organizer to re-show the QR code and scan it again."
+                    : error?.message || "Something went wrong. Please try again."}
               </FieldError>
             ) : null}
             <Button type="submit" disabled={lookupMut.isPending}>
@@ -286,7 +307,9 @@ export default function EventCheckInPage() {
               <FieldError>
                 {error?.code === "OUTSIDE_WINDOW"
                   ? "That shift isn't open for check-in right now — check-in opens 30 minutes before start."
-                  : error?.message || "Check-in failed. Please try again."}
+                  : error?.code === "WRONG_VENUE_CODE"
+                    ? "This check-in link is out of date — ask the organizer to re-show the QR code and scan it again."
+                    : error?.message || "Check-in failed. Please try again."}
               </FieldError>
             ) : null}
             <Button
