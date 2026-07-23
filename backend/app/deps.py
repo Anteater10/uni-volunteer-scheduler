@@ -55,7 +55,10 @@ def rate_limit(max_requests: int | None = None, window_seconds: int | None = Non
         # burst all observe "no key" and each reset the counter to 1,
         # blowing past the cap exactly when it matters.
         current = redis_client.incr(key)
-        if current == 1:
+        # Self-healing TTL: set on first hit, and restore it if it was ever
+        # lost (crash between INCR and EXPIRE) — a TTL-less key would
+        # otherwise rate-limit that IP+path forever.
+        if current == 1 or redis_client.ttl(key) < 0:
             redis_client.expire(key, window)
         if current > max_req:
             raise HTTPException(
