@@ -30,7 +30,7 @@ from tests.fixtures.helpers import make_user
 GOOD_PHONE = "(213) 867-5309"
 
 
-def _make_event(db_session):
+def _make_event(db_session, *, module_slug=None):
     owner = make_user(db_session)
     now = datetime.now(timezone.utc) + timedelta(days=1)
     e = Event(
@@ -39,13 +39,14 @@ def _make_event(db_session):
         title="Public Signup Test Event",
         start_date=now,
         end_date=now + timedelta(days=1),
+        module_slug=module_slug,
     )
     db_session.add(e)
     db_session.flush()
     return e
 
 
-def _make_slot(db_session, event_id, *, capacity=5, current_count=0):
+def _make_slot(db_session, event_id, *, capacity=5, current_count=0, slot_type=SlotType.PERIOD):
     slot = Slot(
         id=uuid.uuid4(),
         event_id=event_id,
@@ -53,7 +54,7 @@ def _make_slot(db_session, event_id, *, capacity=5, current_count=0):
         end_time=datetime.now(timezone.utc) + timedelta(days=1, hours=2),
         capacity=capacity,
         current_count=current_count,
-        slot_type=SlotType.PERIOD,
+        slot_type=slot_type,
         date=date_type.today(),
     )
     db_session.add(slot)
@@ -542,3 +543,223 @@ def test_public_cancel_sends_waitlist_promote_email(client, db_session, monkeypa
     assert ("waitlist_promote", str(b_id)) in pairs, (
         f"promoted volunteer got no waitlist_promote email (sent: {sent})"
     )
+
+
+class TestOrientationRequirement:
+    """Un-oriented volunteers must include an orientation session in their
+    signup. Server-enforced (the frontend modal is advisory UX only):
+    for every event in the batch with a PERIOD slot selected, the email must
+    hold orientation credit for the event's family, OR the batch must include
+    an ORIENTATION slot on the same event (or an event resolving to the same
+    family). Events offering no orientation slots at all are exempt —
+    organizers vouch at the door instead of dead-ending the volunteer."""
+
+    EMAIL = "fresh-volunteer@example.com"
+
+    def _mute_email(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+
+    def _template(self, db_session, slug, family_key=None):
+        from app.models import ModuleTemplate, ModuleType
+        tmpl = ModuleTemplate(
+            slug=slug,
+            name=slug.title(),
+            default_capacity=20,
+            duration_minutes=120,
+            type=ModuleType.orientation,
+            session_count=1,
+            family_key=family_key if family_key is not None else slug,
+        )
+        db_session.add(tmpl)
+        db_session.flush()
+        return tmpl
+
+    def _payload(self, slot_ids, *, email=None):
+        return {
+            "first_name": "Fresh",
+            "last_name": "Volunteer",
+            "email": email or self.EMAIL,
+            "phone": GOOD_PHONE,
+            "slot_ids": [str(s) for s in slot_ids],
+        }
+
+    def test_period_only_without_credit_422_and_no_rows(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        period = _make_slot(db_session, event.id)
+        orient = _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        db_session.commit()
+
+        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        assert resp.status_code == 422, resp.text
+        # Global handler (AUDIT-03) normalizes to {error, code, detail}.
+        assert resp.json()["code"] == "ORIENTATION_REQUIRED"
+        # Nothing persisted — no signup rows, no volunteer row.
+        db_session.expire_all()
+        assert db_session.query(Signup).count() == 0
+        assert (
+            db_session.query(Volunteer)
+            .filter(Volunteer.email == self.EMAIL)
+            .count()
+            == 0
+        )
+
+    def test_orientation_in_same_batch_passes(self, client, db_session, monkeypatch):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        period = _make_slot(db_session, event.id)
+        orient = _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload([period.id, orient.id])
+        )
+        assert resp.status_code == 201, resp.text
+        assert len(resp.json()["signup_ids"]) == 2
+
+    def test_granted_credit_passes_period_only(self, client, db_session, monkeypatch):
+        self._mute_email(monkeypatch)
+        from app.services.orientation_service import grant_orientation_credit
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        period = _make_slot(db_session, event.id)
+        _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        grant_orientation_credit(db_session, self.EMAIL, "bio")
+        db_session.commit()
+
+        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        assert resp.status_code == 201, resp.text
+
+    def test_attendance_credit_passes_period_only(self, client, db_session, monkeypatch):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        # Prior event in the same family where this email attended orientation.
+        prior = _make_event(db_session, module_slug="bio-intro")
+        prior_orient = _make_slot(db_session, prior.id, slot_type=SlotType.ORIENTATION)
+        vol = Volunteer(
+            id=uuid.uuid4(), email=self.EMAIL, first_name="Fresh", last_name="Volunteer"
+        )
+        db_session.add(vol)
+        db_session.flush()
+        db_session.add(
+            Signup(
+                volunteer_id=vol.id,
+                slot_id=prior_orient.id,
+                status=SignupStatus.attended,
+                checked_in_at=datetime.now(timezone.utc),
+            )
+        )
+        event = _make_event(db_session, module_slug="bio-intro")
+        period = _make_slot(db_session, event.id)
+        _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        db_session.commit()
+
+        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        assert resp.status_code == 201, resp.text
+
+    def test_event_without_orientation_slots_is_exempt(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        period = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        assert resp.status_code == 201, resp.text
+
+    def test_orientation_only_selection_passes(self, client, db_session, monkeypatch):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        orient = _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        db_session.commit()
+
+        resp = client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        assert resp.status_code == 201, resp.text
+
+    def test_same_family_orientation_on_other_event_passes(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        self._template(db_session, "bio-advanced", family_key="bio")
+        event_a = _make_event(db_session, module_slug="bio-intro")
+        period_a = _make_slot(db_session, event_a.id)
+        _make_slot(db_session, event_a.id, slot_type=SlotType.ORIENTATION)
+        event_b = _make_event(db_session, module_slug="bio-advanced")
+        orient_b = _make_slot(db_session, event_b.id, slot_type=SlotType.ORIENTATION)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload([period_a.id, orient_b.id])
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_different_family_orientation_does_not_satisfy(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        self._template(db_session, "chem-intro", family_key="chem")
+        event_a = _make_event(db_session, module_slug="bio-intro")
+        period_a = _make_slot(db_session, event_a.id)
+        _make_slot(db_session, event_a.id, slot_type=SlotType.ORIENTATION)
+        event_b = _make_event(db_session, module_slug="chem-intro")
+        orient_b = _make_slot(db_session, event_b.id, slot_type=SlotType.ORIENTATION)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload([period_a.id, orient_b.id])
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "ORIENTATION_REQUIRED"
+
+    def test_full_orientation_slot_still_satisfies_via_waitlist(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        period = _make_slot(db_session, event.id)
+        orient = _make_slot(
+            db_session,
+            event.id,
+            slot_type=SlotType.ORIENTATION,
+            capacity=1,
+            current_count=1,
+        )
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload([period.id, orient.id])
+        )
+        assert resp.status_code == 201, resp.text
+        statuses = {s["signup_id"]: s["status"] for s in resp.json()["signups"]}
+        assert "waitlisted" in statuses.values()
+
+    def test_moduleless_event_fails_closed(self, client, db_session, monkeypatch):
+        """No module_slug → family is None → no credit can exist; the
+        same-event orientation slot is still required."""
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        period = _make_slot(db_session, event.id)
+        orient = _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        db_session.commit()
+
+        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "ORIENTATION_REQUIRED"
+
+        resp2 = client.post(
+            "/api/v1/public/signups", json=self._payload([period.id, orient.id])
+        )
+        assert resp2.status_code == 201, resp2.text
