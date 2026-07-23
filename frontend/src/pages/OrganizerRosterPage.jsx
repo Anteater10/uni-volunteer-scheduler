@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../state/useAuth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchRoster, checkInSignup } from "../api/roster";
+import { fetchRoster, checkInSignup, undoCheckInSignup } from "../api/roster";
 import api from "../lib/api";
 import { PageHeader, Button, Skeleton, Modal, Input, Label } from "../components/ui";
 import { toast } from "../state/toast";
@@ -109,6 +109,17 @@ function QuickAddFieldModal({ open, onClose, onSubmit, saving }) {
   );
 }
 
+// Issue #31 — slot section header time range, e.g. "9:00 AM – 10:00 AM".
+function fmtSlotRange(startIso, endIso) {
+  const fmt = (iso) =>
+    iso
+      ? new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : "";
+  const start = fmt(startIso);
+  const end = fmt(endIso);
+  return end ? `${start} – ${end}` : start;
+}
+
 // TODO(brand): final status chip palette
 const STATUS_CHIP = {
   confirmed: "bg-gray-200 text-gray-800",
@@ -197,6 +208,38 @@ export default function OrganizerRosterPage() {
     },
   });
 
+  // Issue #31 — mis-tap recovery: tapping a checked-in card reverts it.
+  const undoMut = useMutation({
+    mutationFn: (signupId) => undoCheckInSignup(signupId),
+    onMutate: async (signupId) => {
+      await qc.cancelQueries({ queryKey: ["roster", eventId] });
+      const prev = qc.getQueryData(["roster", eventId]);
+      qc.setQueryData(["roster", eventId], (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          checked_in_count: Math.max(0, old.checked_in_count - 1),
+          rows: old.rows.map((r) =>
+            r.signup_id === signupId ? { ...r, status: "confirmed" } : r,
+          ),
+        };
+      });
+      return { prev };
+    },
+    onError: (_err, _signupId, context) => {
+      if (context?.prev) {
+        qc.setQueryData(["roster", eventId], context.prev);
+      }
+      toast.error("Undo failed. Please retry.");
+    },
+    onSuccess: () => {
+      toast.info("Check-in undone.");
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["roster", eventId] });
+    },
+  });
+
   if (rosterQ.isPending) {
     return (
       <div>
@@ -234,6 +277,34 @@ export default function OrganizerRosterPage() {
     acc[r.status] = (acc[r.status] || 0) + 1;
     return acc;
   }, {});
+
+  // Issue #31 — group rows by slot, orientation sections first, then by time.
+  // Legacy rows without slot metadata fall into a single unlabeled group.
+  const slotGroups = (() => {
+    const map = new Map();
+    for (const r of roster.rows || []) {
+      const key = r.slot_id || "unknown";
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          slotType: r.slot_type || "period",
+          start: r.slot_time,
+          end: r.slot_end,
+          location: r.slot_location,
+          rows: [],
+          expected: 0,
+          checkedIn: 0,
+        });
+      }
+      const g = map.get(key);
+      g.rows.push(r);
+      if (!["cancelled", "waitlisted"].includes(r.status)) g.expected += 1;
+      if (["checked_in", "attended"].includes(r.status)) g.checkedIn += 1;
+    }
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(a.start) - new Date(b.start),
+    );
+  })();
 
   return (
     <div className="pb-8 pt-4">
@@ -309,49 +380,89 @@ export default function OrganizerRosterPage() {
         </div>
       </div>
 
-      <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {roster.rows.map((row) => {
-          const active = canCheckIn(row.status);
-          const done = row.status === "checked_in" || row.status === "attended";
-          return (
-            <li key={row.signup_id}>
-              <button
-                type="button"
-                className={`w-full min-h-[84px] flex items-center justify-between px-5 py-4 rounded-xl border-2 text-left transition-all shadow-sm ${
-                  done
-                    ? "bg-green-50 border-green-300 hover:bg-green-100"
-                    : active
-                      ? "bg-white border-gray-200 hover:border-blue-400 hover:shadow-md cursor-pointer"
-                      : "bg-gray-50 border-gray-200 opacity-70 cursor-not-allowed"
+      {/* Issue #31 — check-in is per-slot: group volunteers under their slot
+          (orientation vs module period) so the organizer works one section at
+          a time instead of hunting through a flat list of names. */}
+      {slotGroups.map((group) => (
+        <section key={group.key} className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[var(--color-border)] pb-2">
+            <h2 className="text-base font-semibold">
+              <span
+                className={`mr-2 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${
+                  group.slotType === "orientation"
+                    ? "bg-purple-100 text-purple-700"
+                    : "bg-blue-100 text-blue-700"
                 }`}
-                disabled={!active || checkInMut.isPending}
-                onClick={() => {
-                  if (active) {
-                    checkInMut.mutate(row.signup_id);
-                  }
-                }}
               >
-                <div className="min-w-0 flex-1">
-                  <span className="block text-base font-semibold text-gray-900 truncate">
-                    {row.student_name}
-                  </span>
-                  <span className="block text-sm text-[var(--color-fg-muted)] mt-0.5">
-                    {new Date(row.slot_time).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </div>
-                <span
-                  className={`ml-3 text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap ${STATUS_CHIP[row.status] || "bg-gray-100"}`}
-                >
-                  {row.status.replace("_", " ")}
+                {group.slotType === "orientation" ? "Orientation" : "Module"}
+              </span>
+              {fmtSlotRange(group.start, group.end)}
+              {group.location ? (
+                <span className="ml-2 font-normal text-[var(--color-fg-muted)]">
+                  · {group.location}
                 </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+              ) : null}
+            </h2>
+            <span className="text-sm text-[var(--color-fg-muted)]">
+              {group.checkedIn}/{group.expected} checked in
+            </span>
+          </div>
+          <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {group.rows.map((row) => {
+              const active = canCheckIn(row.status);
+              // Issue #31 — a checked-in card stays tappable so a mis-tap can
+              // be undone in place; resolved states (attended) stay locked.
+              const canUndo = row.status === "checked_in";
+              const done = row.status === "checked_in" || row.status === "attended";
+              const busy = checkInMut.isPending || undoMut.isPending;
+              return (
+                <li key={row.signup_id}>
+                  <button
+                    type="button"
+                    className={`w-full min-h-[84px] flex items-center justify-between px-5 py-4 rounded-xl border-2 text-left transition-all shadow-sm ${
+                      done
+                        ? `bg-green-50 border-green-300 ${canUndo ? "hover:bg-green-100 cursor-pointer" : "cursor-not-allowed"}`
+                        : active
+                          ? "bg-white border-gray-200 hover:border-blue-400 hover:shadow-md cursor-pointer"
+                          : "bg-gray-50 border-gray-200 opacity-70 cursor-not-allowed"
+                    }`}
+                    disabled={(!active && !canUndo) || busy}
+                    onClick={() => {
+                      if (active) {
+                        checkInMut.mutate(row.signup_id);
+                      } else if (canUndo) {
+                        undoMut.mutate(row.signup_id);
+                      }
+                    }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-base font-semibold text-gray-900 truncate">
+                        {row.student_name}
+                      </span>
+                      <span className="block text-sm text-[var(--color-fg-muted)] mt-0.5">
+                        {new Date(row.slot_time).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                        {canUndo ? (
+                          <span className="ml-2 text-xs text-green-700">
+                            · tap again to undo
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                    <span
+                      className={`ml-3 text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap ${STATUS_CHIP[row.status] || "bg-gray-100"}`}
+                    >
+                      {row.status.replace("_", " ")}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
 
       <ResolveEventModal
         eventId={eventId}

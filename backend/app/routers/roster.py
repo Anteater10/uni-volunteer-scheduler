@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from ..database import get_db
-from ..deps import require_role
+from ..deps import ensure_event_owner_or_admin, require_role
 from ..models import Event, Signup, SignupStatus, Slot, UserRole
 from ..schemas import RosterResponse, RosterRow
 
@@ -56,6 +56,10 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
                 status=s.status,
                 slot_time=slot.start_time if slot else s.timestamp,
                 checked_in_at=s.checked_in_at,
+                slot_id=slot.id if slot else None,
+                slot_type=slot.slot_type.value if slot else None,
+                slot_end=slot.end_time if slot else None,
+                slot_location=slot.location if slot else None,
             )
         )
 
@@ -83,6 +87,9 @@ def get_roster(
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    # Owner-scoped: the roster carries PII + the venue code; organizers may
+    # only read their own events (admin bypasses).
+    ensure_event_owner_or_admin(event, current_user)
     roster = _build_roster(db, event)
     # A lazily-generated venue code must outlive this request: the volunteer's
     # self-check-in validates it from a separate session, and get_db never

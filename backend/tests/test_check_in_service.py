@@ -171,13 +171,17 @@ class TestSelfCheckIn:
         assert logs[0].extra["via"] == "self"
 
     def test_before_window_raises(self, db_session):
-        """Self check-in 20 min before slot -> CheckInWindowError."""
+        """Self check-in 40 min before slot -> CheckInWindowError.
+
+        Issue #31 UX rework widened the window to 30 min before start, so the
+        too-early boundary moved from 15 to 30 minutes.
+        """
         slot_start = datetime.now(timezone.utc) + timedelta(hours=1)
         volunteer, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
 
-        too_early = slot_start - timedelta(minutes=20)
+        too_early = slot_start - timedelta(minutes=40)
         with pytest.raises(CheckInWindowError):
             self_check_in(
                 db_session, event.id, signup.id, "1234", owner.id, now=too_early
@@ -317,22 +321,22 @@ class TestEventCheckInByEmail:
     """Event-QR self-check-in: organizer displays QR, volunteer identifies by email."""
 
     def test_no_volunteer_for_email_raises(self, db_session):
-        _, _, event, _, _ = _make_event_slot_signup(db_session)
+        _, _, event, _, _ = _make_event_slot_signup(db_session, venue_code="1234")
         with pytest.raises(NoSignupForEmailError):
-            event_check_in_by_email(db_session, event.id, "nobody@example.com")
+            event_check_in_by_email(db_session, event.id, "nobody@example.com", "1234")
 
     def test_volunteer_exists_but_no_signup_on_event(self, db_session):
-        _, owner, event, _, _ = _make_event_slot_signup(db_session)
+        _, owner, event, _, _ = _make_event_slot_signup(db_session, venue_code="1234")
         other_vol = _make_volunteer(db_session, email="other@example.com")
         with pytest.raises(NoSignupForEmailError):
-            event_check_in_by_email(db_session, event.id, "other@example.com")
+            event_check_in_by_email(db_session, event.id, "other@example.com", "1234")
 
     def test_happy_path_confirmed_to_checked_in(self, db_session):
         slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
         vol, owner, event, slot, signup = _make_event_slot_signup(
-            db_session, slot_start=slot_start
+            db_session, venue_code="1234", slot_start=slot_start
         )
-        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email)
+        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email, "1234")
 
         assert volunteer.id == vol.id
         assert len(signups) == 1
@@ -350,10 +354,10 @@ class TestEventCheckInByEmail:
     def test_email_normalization_is_case_insensitive(self, db_session):
         slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
         vol, owner, event, slot, signup = _make_event_slot_signup(
-            db_session, slot_start=slot_start
+            db_session, venue_code="1234", slot_start=slot_start
         )
         volunteer, signups = event_check_in_by_email(
-            db_session, event.id, vol.email.upper()
+            db_session, event.id, vol.email.upper(), "1234"
         )
         assert volunteer.id == vol.id
         assert len(signups) == 1
@@ -362,17 +366,17 @@ class TestEventCheckInByEmail:
         # Slot starts 5 hours from now — well outside check-in window
         slot_start = datetime.now(timezone.utc) + timedelta(hours=5)
         vol, owner, event, slot, signup = _make_event_slot_signup(
-            db_session, slot_start=slot_start
+            db_session, venue_code="1234", slot_start=slot_start
         )
         with pytest.raises(CheckInWindowError):
-            event_check_in_by_email(db_session, event.id, vol.email)
+            event_check_in_by_email(db_session, event.id, vol.email, "1234")
 
     def test_idempotent_already_checked_in(self, db_session):
         slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
         vol, owner, event, slot, signup = _make_event_slot_signup(
-            db_session, slot_start=slot_start, status=SignupStatus.checked_in
+            db_session, venue_code="1234", slot_start=slot_start, status=SignupStatus.checked_in
         )
-        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email)
+        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         assert len(signups) == 1
         assert signups[0].status == SignupStatus.checked_in
 
@@ -393,6 +397,7 @@ class TestEventCheckInByEmail:
             title="Multi",
             start_date=now,
             end_date=now + timedelta(days=1),
+            venue_code="1234",
         )
         db_session.add(event)
         db_session.flush()
@@ -419,7 +424,7 @@ class TestEventCheckInByEmail:
             signups.append(s)
         db_session.flush()
 
-        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email)
+        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         assert len(result) == 2
         for s in result:
             assert s.status == SignupStatus.checked_in
@@ -428,9 +433,9 @@ class TestEventCheckInByEmail:
         """QR check-in on a pending signup auto-confirms + checks in."""
         slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
         vol, owner, event, slot, signup = _make_event_slot_signup(
-            db_session, slot_start=slot_start, status=SignupStatus.pending
+            db_session, venue_code="1234", slot_start=slot_start, status=SignupStatus.pending
         )
-        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email)
+        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         assert len(signups) == 1
         assert signups[0].status == SignupStatus.checked_in
 
@@ -457,6 +462,7 @@ class TestEventCheckInByEmail:
             title="Mixed",
             start_date=now,
             end_date=now + timedelta(days=1),
+            venue_code="1234",
         )
         db_session.add(event)
         db_session.flush()
@@ -495,10 +501,19 @@ class TestEventCheckInByEmail:
         db_session.add_all([s_in, s_out])
         db_session.flush()
 
-        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email)
+        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         assert len(result) == 1
         assert result[0].id == s_in.id
         assert result[0].status == SignupStatus.checked_in
         # Out-of-window signup stays confirmed
         db_session.refresh(s_out)
         assert s_out.status == SignupStatus.confirmed
+
+    def test_wrong_venue_code_raises_before_email_lookup(self, db_session):
+        """Venue gate: wrong code raises VenueCodeError even for an unknown
+        email — the code check must precede email resolution."""
+        vol, owner, event, slot, signup = _make_event_slot_signup(
+            db_session, venue_code="1234"
+        )
+        with pytest.raises(VenueCodeError):
+            event_check_in_by_email(db_session, event.id, "ghost@example.com", "9999")

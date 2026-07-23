@@ -135,6 +135,9 @@ async function request(path, { method = "GET", params, body, auth = true, header
     const err = new Error(extractErrorMessage(json, fallback));
     err.status = res.status;
     err.response = { status: res.status, data: json };
+    // Structured backend errors ({detail: {code: ...}}) drive UI branches
+    // (e.g. NO_SIGNUP_FOR_EMAIL, WRONG_VENUE_CODE).
+    if (json?.detail?.code) err.code = json.detail.code;
     throw err;
   }
 
@@ -614,11 +617,26 @@ export const api = {
       publicUpdatePreferences(manageToken, patch),
     // Event-QR check-in (post-integration) — organizer shows a QR that points
     // at /event-check-in/:eventId; volunteer enters email and hits this.
-    checkInByEmail: (eventId, email) =>
+    checkInByEmail: (eventId, email, venueCode) =>
       request(`/events/${eventId}/check-in-by-email`, {
         method: "POST",
         auth: false,
-        body: { email },
+        body: { email, venue_code: venueCode },
+      }),
+    // Issue #31 UX rework — pick-your-shift check-in: lookup lists the
+    // volunteer's shifts with window verdicts; selected checks in the tapped
+    // shift(s) only. Both are venue-code gated; the QR URL carries the code.
+    checkInLookup: (eventId, email, venueCode) =>
+      request(`/events/${eventId}/check-in-lookup`, {
+        method: "POST",
+        auth: false,
+        body: { email, venue_code: venueCode },
+      }),
+    checkInSelected: (eventId, email, signupIds, venueCode) =>
+      request(`/events/${eventId}/check-in-selected`, {
+        method: "POST",
+        auth: false,
+        body: { email, venue_code: venueCode, signup_ids: signupIds },
       }),
   },
 

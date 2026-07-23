@@ -12,6 +12,11 @@ export async function checkInSignup(signupId) {
   return _authedRequest("POST", `/signups/${signupId}/check-in`);
 }
 
+// Issue #31 — mis-tap recovery: revert checked_in back to confirmed.
+export async function undoCheckInSignup(signupId) {
+  return _authedRequest("POST", `/signups/${signupId}/undo-check-in`);
+}
+
 export async function resolveEvent(eventId, { attended, no_show }) {
   return _authedRequest("POST", `/events/${eventId}/resolve`, { attended, no_show });
 }

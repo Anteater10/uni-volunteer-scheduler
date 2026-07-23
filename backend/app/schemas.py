@@ -287,6 +287,8 @@ class SignupRead(ORMBase):
     slot_id: UUID
     status: SignupStatus
     timestamp: datetime
+    # Issue #31: check-in surfaces read this back after check-in/undo.
+    checked_in_at: Optional[datetime] = None
     answers: List[SignupAnswerRead] = []
     event_title: Optional[str] = None
     event_location: Optional[str] = None
@@ -451,6 +453,12 @@ class RosterRow(BaseModel):
     status: SignupStatus
     slot_time: datetime
     checked_in_at: datetime | None = None
+    # Issue #31: check-in surfaces group by slot — rows carry the slot's
+    # identity so the UI can render per-slot sections (orientation vs period).
+    slot_id: UUID | None = None
+    slot_type: str | None = None
+    slot_end: datetime | None = None
+    slot_location: str | None = None
 
 
 class RosterResponse(BaseModel):
@@ -474,6 +482,35 @@ class ResolveEventRequest(BaseModel):
 
 class EventCheckInByEmailRequest(BaseModel):
     email: str
+    # Issue #31 hardening: the QR URL carries the venue code; every public
+    # check-in endpoint requires it.
+    venue_code: str
+
+
+# Issue #31 UX rework — pick-your-shift check-in.
+class CheckInShift(BaseModel):
+    signup_id: UUID
+    slot_id: UUID
+    slot_type: Optional[str] = None
+    slot_location: Optional[str] = None
+    slot_start: Optional[datetime] = None
+    slot_end: Optional[datetime] = None
+    status: str
+    window_state: Literal["open", "upcoming", "closed"]
+    window_opens_at: Optional[datetime] = None
+
+
+class CheckInLookupResponse(BaseModel):
+    event_id: UUID
+    event_title: str
+    volunteer_name: str
+    shifts: List[CheckInShift] = []
+
+
+class CheckInSelectedRequest(BaseModel):
+    email: str
+    venue_code: str
+    signup_ids: List[UUID] = Field(min_length=1)
 
 
 class EventCheckInByEmailSignup(BaseModel):
@@ -481,6 +518,10 @@ class EventCheckInByEmailSignup(BaseModel):
     slot_id: UUID
     slot_start: datetime | None = None
     slot_end: datetime | None = None
+    # Issue #31: the QR result names the shift (orientation vs period), not
+    # just a time range.
+    slot_type: str | None = None
+    slot_location: str | None = None
     status: str
     newly_checked_in: bool
 
