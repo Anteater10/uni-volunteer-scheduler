@@ -176,10 +176,22 @@ class NoSignupForEmailError(Exception):
     pass
 
 
+def _require_venue_code(event: Event, venue_code: str) -> None:
+    """Venue gate for the public QR endpoints (issue #31 hardening).
+
+    Fail-closed: an event whose code was never generated rejects everything.
+    Must run BEFORE any email/volunteer resolution so a wrong code can never
+    be used to probe which emails are signed up (participation oracle).
+    """
+    if event.venue_code is None or event.venue_code != venue_code:
+        raise VenueCodeError("Wrong venue code")
+
+
 def event_check_in_by_email(
     db: Session,
     event_id: UUID,
     email: str,
+    venue_code: str,
     now: datetime | None = None,
 ) -> tuple[Volunteer, list[Signup]]:
     """Event-QR self-check-in. Finds volunteer by email, checks in every
@@ -187,7 +199,7 @@ def event_check_in_by_email(
     is inside the check-in window.
 
     Semantics:
-      - No venue code; the organizer-displayed QR is the venue attestation.
+      - Venue-code gated: the QR URL carries the code (issue #31 hardening).
       - Time window is evaluated per-slot (CHECK_IN_WINDOW_BEFORE /
         _AFTER around that slot's start_time).
       - Idempotent: already-checked-in signups are returned in the result
@@ -203,6 +215,8 @@ def event_check_in_by_email(
     event = db.get(Event, event_id)
     if event is None:
         raise LookupError(f"Event {event_id} not found")
+
+    _require_venue_code(event, venue_code)
 
     volunteer = (
         db.execute(select(Volunteer).where(Volunteer.email == email_norm))
@@ -254,11 +268,22 @@ def event_check_in_by_email(
 
 
 def _volunteer_signups_for_event(
-    db: Session, event_id: UUID, email: str, *, for_update: bool = False
+    db: Session,
+    event_id: UUID,
+    email: str,
+    venue_code: str,
+    *,
+    for_update: bool = False,
 ) -> tuple[Volunteer, list[Signup]]:
-    """Resolve (volunteer, their signups on this event) or raise."""
-    if db.get(Event, event_id) is None:
+    """Resolve (volunteer, their signups on this event) or raise.
+
+    Venue-code gated before the volunteer lookup — see _require_venue_code.
+    """
+    event = db.get(Event, event_id)
+    if event is None:
         raise LookupError(f"Event {event_id} not found")
+
+    _require_venue_code(event, venue_code)
 
     volunteer = (
         db.execute(select(Volunteer).where(Volunteer.email == email.strip().lower()))
@@ -296,6 +321,7 @@ def lookup_check_in_options(
     db: Session,
     event_id: UUID,
     email: str,
+    venue_code: str,
     now: datetime | None = None,
 ) -> tuple[Volunteer, list[tuple[Signup, Slot, str, datetime]]]:
     """Issue #31 UX rework, step 1: list the volunteer's shifts on this event
@@ -303,7 +329,7 @@ def lookup_check_in_options(
     the volunteer picks which shift to check in for.
     """
     now = now or datetime.now(timezone.utc)
-    volunteer, signups = _volunteer_signups_for_event(db, event_id, email)
+    volunteer, signups = _volunteer_signups_for_event(db, event_id, email, venue_code)
     rows = []
     for signup in signups:
         slot = db.get(Slot, signup.slot_id)
@@ -319,17 +345,21 @@ def check_in_selected(
     db: Session,
     event_id: UUID,
     email: str,
+    venue_code: str,
     signup_ids: list[UUID],
     now: datetime | None = None,
-) -> tuple[Volunteer, list[Signup]]:
+) -> tuple[Volunteer, list[tuple[Signup, bool]]]:
     """Issue #31 UX rework, step 2: check in exactly the signups the volunteer
     tapped. Every selected signup must belong to the email on this event
     (LookupError otherwise) and be inside its slot's window
     (CheckInWindowError otherwise). Idempotent per signup.
+
+    Returns (volunteer, [(signup, newly_checked_in)]) — the flag is computed
+    per row so the response can distinguish fresh check-ins from repeats.
     """
     now = now or datetime.now(timezone.utc)
     volunteer, signups = _volunteer_signups_for_event(
-        db, event_id, email, for_update=True
+        db, event_id, email, venue_code, for_update=True
     )
     by_id = {s.id: s for s in signups}
     selected = []
@@ -339,21 +369,21 @@ def check_in_selected(
             raise LookupError(f"Signup {sid} not found for this volunteer/event")
         selected.append(signup)
 
-    results: list[Signup] = []
+    results: list[tuple[Signup, bool]] = []
     for signup in selected:
         slot = db.get(Slot, signup.slot_id)
         state, _ = window_state(slot, now)
         if state != "open":
             raise CheckInWindowError("That shift is not open for check-in right now")
         if signup.status in (SignupStatus.checked_in, SignupStatus.attended):
-            results.append(signup)
+            results.append((signup, False))
             continue
         # Same pending auto-confirm rationale as event_check_in_by_email.
         if signup.status == SignupStatus.pending:
             _transition(db, signup, SignupStatus.confirmed, None, "self_qr_autoconfirm")
         if signup.status == SignupStatus.confirmed:
             _transition(db, signup, SignupStatus.checked_in, None, "self_qr_selected")
-        results.append(signup)
+        results.append((signup, True))
     return volunteer, results
 
 

@@ -176,3 +176,17 @@ class TestAdminRosterSlotMetadata:
         row = resp.json()[0]
         assert row["slot_type"] == slot.slot_type.value
         assert "slot_location" in row
+
+
+class TestRosterOwnership:
+    """Cross-organizer BAC fix: an organizer must not read another
+    organizer's roster (which includes the venue code)."""
+
+    def test_non_owner_organizer_forbidden(self, client, db_session):
+        owner = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=owner)
+        intruder = make_user(db_session, role=UserRole.organizer)
+
+        headers = auth_headers(client, intruder)
+        resp = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
+        assert resp.status_code == 403

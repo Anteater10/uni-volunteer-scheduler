@@ -482,6 +482,9 @@ class ResolveEventRequest(BaseModel):
 
 class EventCheckInByEmailRequest(BaseModel):
     email: str
+    # Issue #31 hardening: the QR URL carries the venue code; every public
+    # check-in endpoint requires it.
+    venue_code: str
 
 
 # Issue #31 UX rework — pick-your-shift check-in.
@@ -506,6 +509,7 @@ class CheckInLookupResponse(BaseModel):
 
 class CheckInSelectedRequest(BaseModel):
     email: str
+    venue_code: str
     signup_ids: List[UUID] = Field(min_length=1)
 
 

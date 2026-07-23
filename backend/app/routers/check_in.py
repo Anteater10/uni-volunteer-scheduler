@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from ..database import get_db
-from ..deps import require_role
-from ..models import Event, UserRole
+from ..deps import ensure_event_owner_or_admin, rate_limit, require_role
+from ..models import Event, Signup, Slot, UserRole
 from ..schemas import (
     CheckInLookupResponse,
     CheckInSelectedRequest,
@@ -37,13 +37,32 @@ from .roster import _build_roster
 router = APIRouter(tags=["check-in"])
 
 
-@router.post("/signups/{signup_id}/check-in", response_model=SignupRead)
+def _load_signup_event(db: Session, signup_id: UUID) -> Event:
+    """Resolve signup -> slot -> event for the ownership check, 404 on gaps."""
+    signup = db.get(Signup, signup_id)
+    if signup is None:
+        raise HTTPException(status_code=404, detail="Signup not found")
+    slot = db.get(Slot, signup.slot_id)
+    event = db.get(Event, slot.event_id) if slot else None
+    if event is None:
+        raise HTTPException(status_code=404, detail="Signup not found")
+    return event
+
+
+@router.post(
+    "/signups/{signup_id}/check-in",
+    response_model=SignupRead,
+    dependencies=[Depends(rate_limit(60, 60))],
+)
 def organizer_check_in(
     signup_id: UUID,
     db: Session = Depends(get_db),
     current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
 ):
-    """Organizer one-tap check-in. Idempotent."""
+    """Organizer one-tap check-in. Idempotent. Owner-scoped: organizers may
+    only act on their own events (admin bypasses)."""
+    event = _load_signup_event(db, signup_id)
+    ensure_event_owner_or_admin(event, current_user)
     try:
         signup = check_in_signup(db, signup_id, current_user.id, via="organizer")
         db.commit()
@@ -62,7 +81,11 @@ def organizer_check_in(
         )
 
 
-@router.post("/signups/{signup_id}/undo-check-in", response_model=SignupRead)
+@router.post(
+    "/signups/{signup_id}/undo-check-in",
+    response_model=SignupRead,
+    dependencies=[Depends(rate_limit(60, 60))],
+)
 def organizer_undo_check_in(
     signup_id: UUID,
     db: Session = Depends(get_db),
@@ -71,8 +94,10 @@ def organizer_undo_check_in(
     """Issue #31: revert a mis-tapped check-in (checked_in → confirmed).
 
     Idempotent; resolved states (attended/no_show) 409 — undo covers the
-    tap-slip, not resolution.
+    tap-slip, not resolution. Owner-scoped like organizer_check_in.
     """
+    event = _load_signup_event(db, signup_id)
+    ensure_event_owner_or_admin(event, current_user)
     try:
         signup = undo_check_in(db, signup_id, current_user.id)
         db.commit()
@@ -91,7 +116,11 @@ def organizer_undo_check_in(
         )
 
 
-@router.post("/events/{event_id}/self-check-in", response_model=SignupRead)
+@router.post(
+    "/events/{event_id}/self-check-in",
+    response_model=SignupRead,
+    dependencies=[Depends(rate_limit(30, 60))],
+)
 def self_check_in_endpoint(
     event_id: UUID,
     body: SelfCheckInRequest,
@@ -128,19 +157,25 @@ def self_check_in_endpoint(
         raise HTTPException(status_code=404, detail="Signup or event not found")
 
 
-@router.post("/events/{event_id}/resolve", response_model=RosterResponse)
+@router.post(
+    "/events/{event_id}/resolve",
+    response_model=RosterResponse,
+    dependencies=[Depends(rate_limit(60, 60))],
+)
 def resolve_event_endpoint(
     event_id: UUID,
     body: ResolveEventRequest,
     db: Session = Depends(get_db),
     current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
 ):
-    """Batch-resolve: mark signups as attended or no-show. Atomic."""
+    """Batch-resolve: mark signups as attended or no-show. Atomic.
+    Owner-scoped: organizers may only resolve their own events."""
+    event = db.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_owner_or_admin(event, current_user)
     try:
         resolve_event(db, event_id, current_user.id, body.attended, body.no_show)
-        event = db.get(Event, event_id)
-        if not event:
-            raise HTTPException(status_code=404, detail="Event not found")
         roster = _build_roster(db, event)
         db.commit()
         return roster
@@ -162,6 +197,7 @@ def resolve_event_endpoint(
 @router.post(
     "/events/{event_id}/check-in-lookup",
     response_model=CheckInLookupResponse,
+    dependencies=[Depends(rate_limit(30, 60))],
 )
 def check_in_lookup_endpoint(
     event_id: UUID,
@@ -171,9 +207,17 @@ def check_in_lookup_endpoint(
     """Issue #31 UX rework, step 1: the volunteer identifies with their email
     and gets back their shifts on this event with per-shift window verdicts.
     Read-only — nothing is checked in until they pick a shift.
+    Venue-code gated: the QR URL carries the code.
     """
     try:
-        volunteer, rows = lookup_check_in_options(db, event_id, body.email)
+        volunteer, rows = lookup_check_in_options(
+            db, event_id, body.email, body.venue_code
+        )
+    except VenueCodeError:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "WRONG_VENUE_CODE", "message": "Wrong venue code"},
+        )
     except NoSignupForEmailError:
         raise HTTPException(
             status_code=404,
@@ -211,6 +255,7 @@ def check_in_lookup_endpoint(
 @router.post(
     "/events/{event_id}/check-in-selected",
     response_model=EventCheckInByEmailResponse,
+    dependencies=[Depends(rate_limit(30, 60))],
 )
 def check_in_selected_endpoint(
     event_id: UUID,
@@ -219,10 +264,16 @@ def check_in_selected_endpoint(
 ):
     """Issue #31 UX rework, step 2: check in exactly the shifts the volunteer
     tapped. Window-gated per slot; selected signups must belong to the email.
+    Venue-code gated: the QR URL carries the code.
     """
     try:
-        volunteer, signups = check_in_selected(
-            db, event_id, body.email, body.signup_ids
+        volunteer, results = check_in_selected(
+            db, event_id, body.email, body.venue_code, body.signup_ids
+        )
+    except VenueCodeError:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "WRONG_VENUE_CODE", "message": "Wrong venue code"},
         )
     except NoSignupForEmailError:
         raise HTTPException(
@@ -233,6 +284,9 @@ def check_in_selected_endpoint(
             },
         )
     except CheckInWindowError:
+        # A later shift's closed window can fire after earlier shifts already
+        # transitioned in-session — discard those partial changes explicitly.
+        db.rollback()
         raise HTTPException(
             status_code=403,
             detail={
@@ -241,14 +295,20 @@ def check_in_selected_endpoint(
             },
         )
     except LookupError:
+        db.rollback()
         raise HTTPException(status_code=404, detail="Signup or event not found")
 
     event = db.get(Event, event_id)
-    from ..models import Slot
 
     rows: list[EventCheckInByEmailSignup] = []
-    for s in signups:
+    newly = 0
+    already = 0
+    for s, was_new in results:
         slot = db.get(Slot, s.slot_id)
+        if was_new:
+            newly += 1
+        else:
+            already += 1
         rows.append(
             EventCheckInByEmailSignup(
                 signup_id=s.id,
@@ -258,7 +318,7 @@ def check_in_selected_endpoint(
                 slot_type=slot.slot_type.value if slot else None,
                 slot_location=slot.location if slot else None,
                 status=s.status.value,
-                newly_checked_in=True,
+                newly_checked_in=was_new,
             )
         )
     db.commit()
@@ -267,8 +327,8 @@ def check_in_selected_endpoint(
         event_title=event.title if event else "",
         volunteer_name=f"{volunteer.first_name} {volunteer.last_name}".strip()
         or volunteer.email,
-        count_checked_in=len(rows),
-        count_already_checked_in=0,
+        count_checked_in=newly,
+        count_already_checked_in=already,
         signups=rows,
     )
 
@@ -276,6 +336,7 @@ def check_in_selected_endpoint(
 @router.post(
     "/events/{event_id}/check-in-by-email",
     response_model=EventCheckInByEmailResponse,
+    dependencies=[Depends(rate_limit(30, 60))],
 )
 def event_check_in_by_email_endpoint(
     event_id: UUID,
@@ -287,11 +348,18 @@ def event_check_in_by_email_endpoint(
     every confirmed signup they have on this event whose slot is inside the
     check-in window.
 
-    No auth. The organizer-displayed QR is the venue attestation. Per-slot
+    No auth, but venue-code gated: the QR URL carries the code. Per-slot
     time window still gates every transition.
     """
     try:
-        volunteer, signups = event_check_in_by_email(db, event_id, body.email)
+        volunteer, signups = event_check_in_by_email(
+            db, event_id, body.email, body.venue_code
+        )
+    except VenueCodeError:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "WRONG_VENUE_CODE", "message": "Wrong venue code"},
+        )
     except NoSignupForEmailError:
         raise HTTPException(
             status_code=404,
@@ -312,8 +380,6 @@ def event_check_in_by_email_endpoint(
         raise HTTPException(status_code=404, detail="Event not found")
 
     event = db.get(Event, event_id)
-
-    from ..models import Slot
 
     newly_checked_in = 0
     already_checked_in = 0

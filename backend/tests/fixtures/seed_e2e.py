@@ -197,8 +197,15 @@ def _ensure_module(admin_token: str, slug: str, name: str) -> None:
         raise RuntimeError(f"module template create failed: {cs}")
 
 
-def _get_or_create_event(admin_token: str, quarter: str, year: int, week_number: int) -> dict:
-    """Find existing seed event or create a new one. Returns event dict."""
+def _get_or_create_event(
+    admin_token: str, organizer_token: str, quarter: str, year: int, week_number: int
+) -> dict:
+    """Find existing seed event or create a new one. Returns event dict.
+
+    The event is created AS THE ORGANIZER: staff check-in/roster routes are
+    owner-scoped, and the e2e specs drive them with the organizer account.
+    Module-template setup stays admin (admin-only endpoints).
+    """
     _ensure_module(admin_token, "e2e-test", "E2E Test Module")
     s, events = _req(
         "GET",
@@ -261,7 +268,7 @@ def _get_or_create_event(admin_token: str, quarter: str, year: int, week_number:
             },
         ],
     }
-    s, body = _req("POST", "/events/", token=admin_token, json_body=payload)
+    s, body = _req("POST", "/events/", token=organizer_token, json_body=payload)
     if s not in (200, 201):
         raise RuntimeError(f"event create failed: {s} {body}")
     print(f"[seed] created new event {body['id']}", file=sys.stderr)
@@ -545,7 +552,7 @@ def main() -> int:
     print(f"[seed] current week: {quarter} {year} week {week_number}", file=sys.stderr)
 
     # 4. Get or create seed event
-    event = _get_or_create_event(admin_token, quarter, year, week_number)
+    event = _get_or_create_event(admin_token, organizer_token, quarter, year, week_number)
     event_id = event["id"]
     event_title = event.get("title", EVENT_TITLE)
 
