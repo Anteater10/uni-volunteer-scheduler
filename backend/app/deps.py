@@ -51,16 +51,17 @@ def rate_limit(max_requests: int | None = None, window_seconds: int | None = Non
             return
 
         key = f"rate:{request.client.host}:{request.url.path}"
-        current = redis_client.get(key)
-        if current is None:
-            redis_client.set(key, 1, ex=window)
-        else:
-            if int(current) >= max_req:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Too many requests, slow down.",
-                )
-            redis_client.incr(key)
+        # Atomic INCR-first: the old GET-then-SET pattern let a concurrent
+        # burst all observe "no key" and each reset the counter to 1,
+        # blowing past the cap exactly when it matters.
+        current = redis_client.incr(key)
+        if current == 1:
+            redis_client.expire(key, window)
+        if current > max_req:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests, slow down.",
+            )
 
     return dependency
 
