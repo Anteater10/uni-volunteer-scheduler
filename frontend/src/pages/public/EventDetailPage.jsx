@@ -945,6 +945,8 @@ export default function EventDetailPage() {
       if (err.code === "ORIENTATION_REQUIRED") {
         // Server-enforced backstop: the volunteer needs an orientation
         // session in this signup. Same modal as the pre-submit check.
+        // Refetch so the modal variant + schedule reflect current slots.
+        queryClient.invalidateQueries({ queryKey: ["publicEvent", eventId] });
         setStep("orientation-warning");
       } else if (err.status === 429) {
         toast.error("Too many submissions. Please wait a moment and try again.");
@@ -1016,6 +1018,10 @@ export default function EventDetailPage() {
         // so the check still works if we ever point at the legacy endpoint.
         const hasCredit = result?.has_credit ?? result?.has_attended_orientation;
         if (!hasCredit) {
+          // The modal's required/advisory variant derives from event.slots —
+          // refetch so it can't disagree with what the server will enforce
+          // (organizer may have added/removed orientation slots mid-visit).
+          queryClient.invalidateQueries({ queryKey: ["publicEvent", eventId] });
           setStep("orientation-warning");
           return;
         }
@@ -1046,6 +1052,8 @@ export default function EventDetailPage() {
   }
 
   function handleOrientationNo() {
+    // Fresh schedule for picking an orientation session.
+    queryClient.invalidateQueries({ queryKey: ["publicEvent", eventId] });
     setStep("browse");
     setHighlightOrientation(true);
   }

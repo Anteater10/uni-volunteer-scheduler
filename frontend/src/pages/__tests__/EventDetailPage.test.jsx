@@ -616,3 +616,53 @@ describe("EventDetailPage — orientation requirement gate", () => {
     ).toBeInTheDocument();
   });
 });
+
+// The modal's required/advisory variant derives from the slots cache; the
+// gate must refetch the event so client and server can't disagree on stale
+// slot data (e.g. organizer added/removed orientation slots mid-visit).
+describe("EventDetailPage — orientation gate refreshes slot data", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.public.getEvent.mockResolvedValue(MOCK_EVENT);
+  });
+
+  it("refetches the event when the server rejects with ORIENTATION_REQUIRED", async () => {
+    api.public.orientationCheck.mockResolvedValue({ has_credit: true });
+    const err = new Error("orientation required");
+    err.status = 422;
+    err.code = "ORIENTATION_REQUIRED";
+    api.public.createSignup.mockRejectedValue(err);
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    const callsAfterLoad = api.public.getEvent.mock.calls.length;
+
+    await clickSignUpForLabel(/^Period 1$/);
+    await screen.findByLabelText(/^first name$/i);
+    await fillIdentityForm();
+    clickFormSubmitButton(container);
+
+    await screen.findByRole("button", { name: /pick an orientation session/i });
+    await waitFor(() =>
+      expect(api.public.getEvent.mock.calls.length).toBeGreaterThan(callsAfterLoad),
+    );
+  });
+
+  it("refetches the event when the pre-submit credit check opens the modal", async () => {
+    api.public.orientationCheck.mockResolvedValue({ has_credit: false });
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    const callsAfterLoad = api.public.getEvent.mock.calls.length;
+
+    await clickSignUpForLabel(/^Period 1$/);
+    await screen.findByLabelText(/^first name$/i);
+    await fillIdentityForm();
+    clickFormSubmitButton(container);
+
+    await screen.findByRole("button", { name: /pick an orientation session/i });
+    await waitFor(() =>
+      expect(api.public.getEvent.mock.calls.length).toBeGreaterThan(callsAfterLoad),
+    );
+  });
+});
