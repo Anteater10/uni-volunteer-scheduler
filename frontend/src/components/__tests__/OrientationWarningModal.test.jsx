@@ -79,3 +79,40 @@ describe("OrientationWarningModal", () => {
     expect(onNo).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("OrientationWarningModal — required variant", () => {
+  it("renders the hard-requirement copy and steering button, with no bypass", () => {
+    render(
+      <OrientationWarningModal
+        open
+        required
+        onPickOrientation={() => {}}
+        onYes={() => {}}
+        onNo={() => {}}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /pick an orientation session/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /i've done orientation/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("fires onPickOrientation from the steering button", async () => {
+    const onPick = vi.fn();
+    render(
+      <OrientationWarningModal
+        open
+        required
+        onPickOrientation={onPick}
+        onYes={() => {}}
+        onNo={() => {}}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /pick an orientation session/i }),
+    );
+    expect(onPick).toHaveBeenCalled();
+  });
+});
