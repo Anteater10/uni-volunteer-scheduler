@@ -14,6 +14,7 @@ import {
 } from "../../components/ui";
 import { toast } from "../../state/toast";
 import { useAdminPageTitle } from "./AdminLayout";
+import AdminPageHeader from "../../components/admin/AdminPageHeader";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -501,13 +502,10 @@ export default function ImportsSection() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-5xl font-bold tracking-tight">Imports</h1>
-        <p className="text-xl text-[var(--color-fg-muted)] mt-3">
-          Upload a quarterly SciTrek CSV. The system reads the file, extracts
-          events, and shows you a preview before anything is saved.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Imports"
+        subtitle="Upload a quarterly SciTrek CSV. The system reads the file, extracts events, and shows you a preview before anything is saved."
+      />
 
       {/* Upload bar */}
       <div className="flex flex-wrap gap-3 items-center">
@@ -516,7 +514,7 @@ export default function ImportsSection() {
           onClick={() => fileInputRef.current?.click()}
           disabled={uploadMut.isPending}
           title="Upload a Sci Trek quarterly CSV to preview and commit events."
-          className="px-8 py-4 text-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow disabled:opacity-50"
+          className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow disabled:opacity-50"
         >
           {uploadMut.isPending ? "Uploading..." : "Upload quarterly CSV"}
         </button>
@@ -551,13 +549,13 @@ export default function ImportsSection() {
         <>
           {/* Admin-only, desktop-first (D-08): single table, no mobile fallback. */}
           <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-            <table className="min-w-full text-2xl">
-              <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
                 <tr>
-                  <th className="py-5 px-6">Filename</th>
-                  <th className="py-5 px-6">Status</th>
-                  <th className="py-5 px-6">Created</th>
-                  <th className="py-5 px-6 text-right">Actions</th>
+                  <th className="py-3 px-4">Filename</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4">Created</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -573,8 +571,8 @@ export default function ImportsSection() {
                       )
                     }
                   >
-                    <td className="py-6 px-6 font-semibold">{imp.filename}</td>
-                    <td className="py-6 px-6">
+                    <td className="py-3 px-4 font-semibold">{imp.filename}</td>
+                    <td className="py-3 px-4">
                       <span
                         className={`inline-flex items-center rounded-full px-3 py-1 text-base font-medium ${
                           IMPORT_STATUS_COLORS[imp.status] ||
@@ -584,11 +582,11 @@ export default function ImportsSection() {
                         {imp.status}
                       </span>
                     </td>
-                    <td className="py-6 px-6 text-gray-600 whitespace-nowrap">
+                    <td className="py-3 px-4 text-gray-600 whitespace-nowrap">
                       {formatTs(imp.created_at)}
                     </td>
                     <td
-                      className="py-6 px-6 text-right space-x-5 whitespace-nowrap"
+                      className="py-3 px-4 text-right space-x-5 whitespace-nowrap"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {imp.status === "failed" && (

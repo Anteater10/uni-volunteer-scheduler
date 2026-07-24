@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "../../lib/api";
 import { useQuarters } from "../../lib/useQuarters";
 import { useAdminPageTitle } from "./AdminLayout";
+import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import {
   Button,
   Card,
@@ -191,10 +192,9 @@ export default function OrientationCreditsSection() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Orientation Credits</h1>
+      <AdminPageHeader title="Orientation Credits">
         <Button onClick={() => setShowGrant(true)}>Grant credit</Button>
-      </div>
+      </AdminPageHeader>
 
       <Card>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">

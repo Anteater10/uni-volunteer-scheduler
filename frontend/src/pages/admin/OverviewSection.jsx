@@ -5,7 +5,7 @@
 // feed. Every string on this page is final admin-facing copy (D-18) and every
 // identifier shown is humanized (D-19): zero UUIDs should ever reach the DOM.
 
-import React from "react";
+import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -13,6 +13,8 @@ import { Card, Button, Skeleton, EmptyState } from "../../components/ui";
 import StatCard from "../../components/admin/StatCard";
 import RoleBadge from "../../components/admin/RoleBadge";
 import SiteSettingsCard from "../../components/admin/SiteSettingsCard";
+import SideDrawer from "../../components/admin/SideDrawer";
+import QuartersManager from "./QuartersManager";
 import { useAdminPageTitle } from "./AdminLayout";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +61,7 @@ const STATUS_BADGE = {
 
 export default function OverviewSection() {
   useAdminPageTitle("Overview");
+  const [quartersOpen, setQuartersOpen] = useState(false);
 
   const summaryQ = useQuery({
     queryKey: ["adminSummary"],
@@ -66,8 +69,8 @@ export default function OverviewSection() {
   });
 
   const activityQ = useQuery({
-    queryKey: ["adminRecentActivity", 20],
-    queryFn: () => api.admin.auditLogs({ limit: 20 }),
+    queryKey: ["adminRecentActivity", 5],
+    queryFn: () => api.admin.auditLogs({ page_size: 5 }),
   });
 
   if (summaryQ.isPending) {
@@ -103,9 +106,11 @@ export default function OverviewSection() {
     : [];
   const attendancePct = Math.round((s.attendance_rate_quarter || 0) * 100);
   const quarterPct = qp ? Math.round((qp.pct || 0) * 100) : 0;
-  const activityRows = Array.isArray(activityQ.data)
-    ? activityQ.data
-    : activityQ.data?.items || [];
+  const activityRows = (
+    Array.isArray(activityQ.data)
+      ? activityQ.data
+      : activityQ.data?.items || []
+  ).slice(0, 5);
 
   return (
     <div className="space-y-6">
@@ -147,31 +152,54 @@ export default function OverviewSection() {
       </div>
 
       {/* ---------------- Quarter progress bar ---------------- */}
+      {/* Quarters are the scheduling backbone but rarely edited, so they no
+          longer have a nav tab — this card is the day-to-day entry point,
+          opening the full quarter manager in a slide-over drawer. */}
       {qp ? (
         <Card>
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium">
-              Week {qp.week} of {qp.of}
-            </span>
-            <span className="text-gray-600">
-              {quarterPct}% through the quarter
-            </span>
-          </div>
-          <div className="mt-2 h-2 w-full rounded bg-gray-200">
-            <div
-              className="h-2 rounded bg-blue-500"
-              style={{ width: `${quarterPct}%` }}
-            />
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">
+                  Week {qp.week} of {qp.of}
+                </span>
+                <span className="text-gray-600">
+                  {quarterPct}% through the quarter
+                </span>
+              </div>
+              <div className="mt-2 h-2 w-full rounded bg-gray-200">
+                <div
+                  className="h-2 rounded bg-blue-500"
+                  style={{ width: `${quarterPct}%` }}
+                />
+              </div>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => setQuartersOpen(true)}
+              data-testid="manage-quarters"
+            >
+              Manage quarters
+            </Button>
           </div>
         </Card>
       ) : (
         <Card>
-          <div className="text-sm">
-            <span className="font-medium">Between quarters</span>
-            <span className="ml-2 text-gray-600">
-              Progress resumes when the next quarter starts — quarter stats
-              below cover the most recent quarter.
-            </span>
+          <div className="flex items-start justify-between gap-4">
+            <div className="text-sm">
+              <span className="font-medium">Between quarters</span>
+              <span className="ml-2 text-gray-600">
+                Progress resumes when the next quarter starts — quarter stats
+                below cover the most recent quarter.
+              </span>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => setQuartersOpen(true)}
+              data-testid="manage-quarters"
+            >
+              Manage quarters
+            </Button>
           </div>
         </Card>
       )}
@@ -267,7 +295,7 @@ export default function OverviewSection() {
           Recent activity
         </h3>
         <p className="mt-1 text-sm text-gray-600">
-          The last 20 important changes to the system.
+          The last 5 important changes to the system.
         </p>
         {activityQ.isPending ? (
           <div className="mt-3 space-y-2">
@@ -317,6 +345,16 @@ export default function OverviewSection() {
       <p className="text-right text-xs text-gray-500">
         Last updated: {formatClock(s.last_updated)}
       </p>
+
+      {/* Quarter management drawer — hosts the full manager without a nav tab. */}
+      <SideDrawer
+        open={quartersOpen}
+        onClose={() => setQuartersOpen(false)}
+        title="Quarters"
+        widthClass="w-full max-w-4xl"
+      >
+        <QuartersManager embedded />
+      </SideDrawer>
     </div>
   );
 }

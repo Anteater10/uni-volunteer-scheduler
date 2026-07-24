@@ -39,45 +39,65 @@ export default function SiteSettingsCard() {
   });
 
   const hidePast = q.data?.hide_past_events_from_public ?? true;
+  const showAuditLogs = q.data?.show_audit_logs_tab ?? false;
+  const disabled = !api_ok || q.isPending || m.isPending;
 
   return (
     <Card data-testid="site-settings-card">
       <h3 className="text-sm font-medium text-gray-700">Site settings</h3>
-      <div className="mt-3 flex items-start justify-between gap-4">
-        <div className="text-sm text-gray-700">
-          <div className="font-medium">Hide past events from public browse</div>
-          <div className="text-gray-500 text-xs mt-0.5">
-            When on, volunteers only see events whose last slot hasn't ended
-            yet. Admins always see everything.
-          </div>
-        </div>
-        <label className="inline-flex cursor-pointer items-center">
-          <input
-            type="checkbox"
-            className="peer sr-only"
-            checked={hidePast}
-            disabled={!api_ok || q.isPending || m.isPending}
-            onChange={(e) =>
-              m.mutate({ hide_past_events_from_public: e.target.checked })
-            }
-            aria-label="Hide past events from public browse"
-            data-testid="hide-past-toggle"
-          />
-          <span
-            className={
-              "relative inline-block h-6 w-11 rounded-full transition-colors " +
-              (hidePast ? "bg-blue-600" : "bg-gray-300")
-            }
-          >
-            <span
-              className={
-                "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform " +
-                (hidePast ? "translate-x-5" : "translate-x-0")
-              }
-            />
-          </span>
-        </label>
+      <div className="mt-3 space-y-4">
+        <ToggleRow
+          title="Hide past events from public browse"
+          description="When on, volunteers only see events whose last slot hasn't ended yet. Admins always see everything."
+          checked={hidePast}
+          disabled={disabled}
+          onChange={(v) => m.mutate({ hide_past_events_from_public: v })}
+          testid="hide-past-toggle"
+        />
+        <ToggleRow
+          title="Show Audit Logs tab"
+          description="When on, a full Audit Logs tab appears in the admin menu. Off by default — the Overview page already shows recent activity, so most day-to-day work doesn't need it."
+          checked={showAuditLogs}
+          disabled={disabled}
+          onChange={(v) => m.mutate({ show_audit_logs_tab: v })}
+          testid="show-audit-logs-toggle"
+        />
       </div>
     </Card>
+  );
+}
+
+function ToggleRow({ title, description, checked, disabled, onChange, testid }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="text-sm text-gray-700">
+        <div className="font-medium">{title}</div>
+        <div className="text-gray-500 text-xs mt-0.5">{description}</div>
+      </div>
+      <label className="inline-flex cursor-pointer items-center">
+        <input
+          type="checkbox"
+          className="peer sr-only"
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+          aria-label={title}
+          data-testid={testid}
+        />
+        <span
+          className={
+            "relative inline-block h-6 w-11 rounded-full transition-colors " +
+            (checked ? "bg-blue-600" : "bg-gray-300")
+          }
+        >
+          <span
+            className={
+              "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform " +
+              (checked ? "translate-x-5" : "translate-x-0")
+            }
+          />
+        </span>
+      </label>
+    </div>
   );
 }

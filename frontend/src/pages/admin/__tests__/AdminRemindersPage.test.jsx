@@ -74,7 +74,12 @@ describe("AdminRemindersPage", () => {
     );
     expect(await screen.findByText("CRISPR Week 4")).toBeInTheDocument();
     expect(screen.getByText("vee@example.com")).toBeInTheDocument();
-    expect(screen.getByText("24h")).toBeInTheDocument();
+    // The reminder kind is now shown as a grouped section header rather than
+    // a per-row badge.
+    expect(screen.getByText("24 hours before")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("reminders-group-pre_24h")
+    ).toBeInTheDocument();
   });
 
   it("renders the empty state when the list is empty", async () => {
