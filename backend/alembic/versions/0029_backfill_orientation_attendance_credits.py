@@ -17,19 +17,18 @@ Family resolution mirrors ``orientation_service.family_for_event``:
 template row → family_key or slug; no template → the event's raw module_slug;
 no module_slug → no family, no credit (fail-closed).
 
-NOTE (merge coordination): open PR #49 adds
-``0028_add_show_audit_logs_tab``, which ALSO revises 0027 — this file is
-numbered 0029 to signal the intended order, but whichever PR merges second
-must repoint its ``down_revision`` at the other's revision id (one-line
-change), or Alembic ends up with two heads and ``upgrade head`` fails.
+NOTE (merge coordination): on the standalone feature branch this revised
+0027 directly; on the integration branch with PR #49 it is repointed after
+#49's ``0028_add_show_audit_logs_tab`` so the chain stays linear
+(0027 → 0028 → 0029) and Alembic keeps a single head.
 
 Revision ID: 0029_backfill_orientation_attendance_credits
-Revises: 0027_orientation_credit_quarter_set_null
+Revises: 0028_add_show_audit_logs_tab
 """
 from alembic import op
 
 revision = "0029_backfill_orientation_attendance_credits"
-down_revision = "0027_orientation_credit_quarter_set_null"
+down_revision = "0028_add_show_audit_logs_tab"
 branch_labels = None
 depends_on = None
 
