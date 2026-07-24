@@ -12,7 +12,16 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, Event, Signup, SignupStatus, Slot, Volunteer
+from app.models import (
+    AuditLog,
+    Event,
+    OrientationCreditSource,
+    Signup,
+    SignupStatus,
+    Slot,
+    SlotType,
+    Volunteer,
+)
 
 # Window widened 15 -> 30 minutes before start (product decision, issue #31
 # UX rework): volunteers arrive early and shouldn't stare at a locked page.
@@ -64,8 +73,9 @@ def _transition(
     if new_status == SignupStatus.checked_in:
         signup.checked_in_at = datetime.now(timezone.utc)
     elif old == SignupStatus.checked_in and new_status == SignupStatus.confirmed:
-        # Undo path: the check-in never happened as far as credit derivation
-        # is concerned, so the timestamp must not linger.
+        # Undo path: the check-in never happened, so the timestamp must not
+        # linger. (Credit is unaffected either way — it's granted at slot
+        # resolve, never at check-in.)
         signup.checked_in_at = None
 
     log = AuditLog(
@@ -387,6 +397,98 @@ def check_in_selected(
     return volunteer, results
 
 
+def _grant_credits_for_attended(
+    db: Session,
+    actor_id: UUID | None,
+    attended: list[Signup],
+    via: str,
+) -> None:
+    """Auto-grant orientation credit for attended ORIENTATION-slot signups.
+
+    Design 2026-07-24 (grant-on-slot-end): ending a slot is the deliberate
+    moment credit is committed — check-in alone never grants. Volunteers who
+    already hold an active credit for the family are skipped, so repeat
+    orientations don't pile up duplicate rows; a revoked volunteer who
+    re-attends earns a fresh row.
+    """
+    from .orientation_service import (
+        family_for_event,
+        grant_orientation_credit,
+        has_active_credit,
+    )
+
+    family_cache: dict[UUID, str | None] = {}
+    for signup in attended:
+        slot = signup.slot
+        if slot is None or slot.slot_type != SlotType.ORIENTATION:
+            continue
+        if slot.event_id not in family_cache:
+            family_cache[slot.event_id] = family_for_event(db, slot.event_id)
+        family = family_cache[slot.event_id]
+        if family is None:
+            continue  # module-less event — nothing to credit against
+        email = signup.volunteer.email
+        if has_active_credit(db, email, family):
+            continue
+        credit = grant_orientation_credit(
+            db,
+            email,
+            family,
+            quarter_id=slot.event.quarter_id if slot.event else None,
+            granted_by_user_id=actor_id,
+            notes=f"auto-granted on {via}",
+            source=OrientationCreditSource.attendance,
+        )
+        db.add(
+            AuditLog(
+                actor_id=actor_id,
+                action="orientation_credit_grant",
+                entity_type="OrientationCredit",
+                entity_id=str(credit.id),
+                extra={
+                    "volunteer_email": email,
+                    "family_key": family,
+                    "signup_id": str(signup.id),
+                    "via": via,
+                },
+            )
+        )
+    db.flush()
+
+
+def _apply_resolutions(
+    db: Session,
+    signup_map: dict[UUID, Signup],
+    actor_id: UUID | None,
+    attended_ids: list[UUID],
+    no_show_ids: list[UUID],
+    *,
+    scope_label: str,
+    via: str,
+) -> list[Signup]:
+    """Shared resolve core: transition each id, then auto-grant credits."""
+    updated = []
+    attended = []
+
+    for sid in attended_ids:
+        signup = signup_map.get(sid)
+        if signup is None:
+            raise LookupError(f"Signup {sid} not found for {scope_label}")
+        _transition(db, signup, SignupStatus.attended, actor_id, via)
+        updated.append(signup)
+        attended.append(signup)
+
+    for sid in no_show_ids:
+        signup = signup_map.get(sid)
+        if signup is None:
+            raise LookupError(f"Signup {sid} not found for {scope_label}")
+        _transition(db, signup, SignupStatus.no_show, actor_id, via)
+        updated.append(signup)
+
+    _grant_credits_for_attended(db, actor_id, attended, via)
+    return updated
+
+
 def resolve_event(
     db: Session,
     event_id: UUID,
@@ -395,6 +497,9 @@ def resolve_event(
     no_show_ids: list[UUID],
 ) -> list[Signup]:
     """Batch-resolve an event: mark attended/no_show atomically.
+
+    Attended signups on ORIENTATION slots earn an orientation credit row —
+    the event-wide "End event" grants exactly like per-slot end.
 
     All-or-nothing: any InvalidTransitionError propagates and the caller's
     transaction rolls back.
@@ -412,20 +517,54 @@ def resolve_event(
     )
 
     signup_map = {s.id: s for s in all_signups}
-    updated = []
+    return _apply_resolutions(
+        db,
+        signup_map,
+        actor_id,
+        attended_ids,
+        no_show_ids,
+        scope_label=f"event {event_id}",
+        via="resolve_event",
+    )
 
-    for sid in attended_ids:
-        signup = signup_map.get(sid)
-        if signup is None:
-            raise LookupError(f"Signup {sid} not found for event {event_id}")
-        _transition(db, signup, SignupStatus.attended, actor_id, "resolve_event")
-        updated.append(signup)
 
-    for sid in no_show_ids:
-        signup = signup_map.get(sid)
-        if signup is None:
-            raise LookupError(f"Signup {sid} not found for event {event_id}")
-        _transition(db, signup, SignupStatus.no_show, actor_id, "resolve_event")
-        updated.append(signup)
+def resolve_slot(
+    db: Session,
+    slot_id: UUID,
+    actor_id: UUID | None,
+    attended_ids: list[UUID],
+    no_show_ids: list[UUID],
+) -> list[Signup]:
+    """Resolve one slot ("End slot"): mark attended/no_show atomically.
 
-    return updated
+    Ending an ORIENTATION slot is the moment orientation credit is granted —
+    every signup marked attended earns an ``orientation_credits`` row for the
+    event's module family (deduped against active credits).
+
+    Raises LookupError for an unknown slot or a signup outside the slot;
+    InvalidTransitionError propagates so the caller's transaction rolls back.
+    """
+    slot = db.get(Slot, slot_id)
+    if slot is None:
+        raise LookupError(f"Slot {slot_id} not found")
+
+    slot_signups = (
+        db.execute(
+            select(Signup)
+            .where(Signup.slot_id == slot_id)
+            .with_for_update()
+        )
+        .scalars()
+        .all()
+    )
+
+    signup_map = {s.id: s for s in slot_signups}
+    return _apply_resolutions(
+        db,
+        signup_map,
+        actor_id,
+        attended_ids,
+        no_show_ids,
+        scope_label=f"slot {slot_id}",
+        via="resolve_slot",
+    )

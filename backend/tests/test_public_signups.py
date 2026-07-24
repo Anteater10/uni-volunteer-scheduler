@@ -640,7 +640,10 @@ class TestOrientationRequirement:
     def test_attendance_credit_passes_period_only(self, client, db_session, monkeypatch):
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
-        # Prior event in the same family where this email attended orientation.
+        # Prior event in the same family where this email attended orientation
+        # and the organizer ended the slot (grant-on-slot-end writes the row).
+        from app.services.check_in_service import resolve_slot
+
         prior = _make_event(db_session, module_slug="bio-intro")
         prior_orient = _make_slot(db_session, prior.id, slot_type=SlotType.ORIENTATION)
         vol = Volunteer(
@@ -648,14 +651,15 @@ class TestOrientationRequirement:
         )
         db_session.add(vol)
         db_session.flush()
-        db_session.add(
-            Signup(
-                volunteer_id=vol.id,
-                slot_id=prior_orient.id,
-                status=SignupStatus.attended,
-                checked_in_at=datetime.now(timezone.utc),
-            )
+        prior_signup = Signup(
+            volunteer_id=vol.id,
+            slot_id=prior_orient.id,
+            status=SignupStatus.checked_in,
+            checked_in_at=datetime.now(timezone.utc),
         )
+        db_session.add(prior_signup)
+        db_session.flush()
+        resolve_slot(db_session, prior_orient.id, None, [prior_signup.id], [])
         event = _make_event(db_session, module_slug="bio-intro")
         period = _make_slot(db_session, event.id)
         _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)

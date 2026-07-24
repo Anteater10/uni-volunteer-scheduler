@@ -21,6 +21,12 @@ export async function resolveEvent(eventId, { attended, no_show }) {
   return _authedRequest("POST", `/events/${eventId}/resolve`, { attended, no_show });
 }
 
+// Grant-on-slot-end (2026-07-24): per-slot "End slot". Ending an orientation
+// slot auto-grants orientation credit to every volunteer marked attended.
+export async function resolveSlot(slotId, { attended, no_show }) {
+  return _authedRequest("POST", `/slots/${slotId}/resolve`, { attended, no_show });
+}
+
 // Internal: thin wrapper matching the api.js request pattern
 import authStorage from "../lib/authStorage";
 import { API_BASE } from "../lib/apiBase";

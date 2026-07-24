@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { resolveEvent } from "../api/roster";
+import { resolveEvent, resolveSlot } from "../api/roster";
 import { Button, Modal } from "./ui";
 import { toast } from "../state/toast";
 
@@ -7,6 +7,13 @@ import { toast } from "../state/toast";
  * Resolve modal: shows remaining confirmed/checked_in signups.
  * Each row gets a toggle: attended (check) or no-show (x).
  * Save is disabled until every row is marked.
+ *
+ * Two scopes (grant-on-slot-end, 2026-07-24):
+ *  - event mode (no `slot` prop): legacy "End event" across all slots
+ *  - slot mode (`slot` = {id, slot_type}): "End orientation" / "End module
+ *    slot" for one slot. Ending an orientation slot grants orientation
+ *    credit to every volunteer marked attended — the modal says so, since
+ *    that is the moment the credit commitment happens.
  */
 export default function ResolveEventModal({
   eventId,
@@ -14,6 +21,7 @@ export default function ResolveEventModal({
   isOpen,
   onClose,
   onResolved,
+  slot = null,
 }) {
   const unmarked = useMemo(
     () =>
@@ -33,6 +41,13 @@ export default function ResolveEventModal({
   const allMarked =
     unmarked.length > 0 && unmarked.every((s) => decisions[s.signup_id]);
 
+  const isOrientation = slot?.slot_type === "orientation";
+  const title = slot
+    ? isOrientation
+      ? "End orientation"
+      : "End module slot"
+    : "End event";
+
   async function handleSave() {
     setSaving(true);
     try {
@@ -45,8 +60,14 @@ export default function ResolveEventModal({
           no_show.push(s.signup_id);
         }
       }
-      await resolveEvent(eventId, { attended, no_show });
-      toast.success("Event resolved successfully.");
+      if (slot) {
+        await resolveSlot(slot.id, { attended, no_show });
+      } else {
+        await resolveEvent(eventId, { attended, no_show });
+      }
+      toast.success(
+        slot ? "Slot resolved successfully." : "Event resolved successfully.",
+      );
       if (onResolved) onResolved();
       if (onClose) onClose();
       setDecisions({});
@@ -61,7 +82,7 @@ export default function ResolveEventModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="End event"
+      title={title}
       role="dialog"
       aria-modal="true"
     >
@@ -77,9 +98,15 @@ export default function ResolveEventModal({
       ) : (
         <div>
           <p className="text-sm text-[var(--color-fg-muted)] mb-3">
-            {/* TODO(copy) */}
             Mark each remaining signup as attended or no-show.
           </p>
+          {isOrientation && (
+            <p className="text-sm font-medium text-[var(--color-fg)] mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+              Volunteers marked attended will be granted orientation credit
+              for this module. Credits can be revoked individually from the
+              admin Orientation credits page.
+            </p>
+          )}
           <ul className="space-y-2 max-h-[50vh] overflow-y-auto">
             {unmarked.map((s) => (
               <li

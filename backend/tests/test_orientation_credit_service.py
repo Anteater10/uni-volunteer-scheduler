@@ -7,8 +7,13 @@ must have zero effect on whether credit is honored. Replaces the Phase 21
 ORIENTATION_CREDIT_EXPIRY_DAYS env hack (still retired — no expiry of any
 kind).
 
+Design 2026-07-24 (grant-on-slot-end): attendance earns credit when the
+orientation slot is *resolved* (``resolve_slot`` writes the row) — a raw
+attended signup with no credit row grants nothing. Attendance scenarios below
+route through ``resolve_slot`` accordingly.
+
 Cases:
-  (a) same-week same-module (credit via signup)
+  (a) same-week same-module (credit via resolved orientation)
   (b) cross-week same-module (credit suppresses modal)
   (c) cross-module (no credit)
   (d) grant records quarter as metadata; honored in every quarter, and with
@@ -16,7 +21,8 @@ Cases:
   (e) revoke → credit absent
   (g) cross-quarter attendance carries over (permanent credit)
   (h) attendance on an event outside any quarter still earns credit
-  (i) null checked_in_at attendance still counts
+  (i) raw attended signup WITHOUT a credit row grants nothing (backfill
+      migration covers pre-existing rows)
 """
 from __future__ import annotations
 
@@ -159,6 +165,23 @@ def _attended_signup(db, volunteer, slot, *, checked_in_at: datetime | None = No
     return s
 
 
+def _earn_credit(db, actor_id, volunteer, slot, *, checked_in_at=None):
+    """Attend an orientation the new way: check in, then resolve the slot."""
+    from app.services.check_in_service import resolve_slot
+
+    s = Signup(
+        id=uuid.uuid4(),
+        volunteer_id=volunteer.id,
+        slot_id=slot.id,
+        status=SignupStatus.checked_in,
+        checked_in_at=checked_in_at or datetime.now(timezone.utc),
+    )
+    db.add(s)
+    db.flush()
+    resolve_slot(db, slot.id, actor_id, [s.id], [])
+    return s
+
+
 class TestOrientationCreditService:
     def test_a_same_week_same_module_has_credit(self, db_session, winter_q):
         owner = make_user(db_session)
@@ -168,9 +191,7 @@ class TestOrientationCreditService:
         )
         slot = _make_orientation_slot(db_session, event_id=event.id, days_ago=0)
         vol = _make_volunteer(db_session, "a@example.com")
-        _attended_signup(
-            db_session, vol, slot, checked_in_at=datetime.now(timezone.utc)
-        )
+        _earn_credit(db_session, owner.id, vol, slot)
         db_session.commit()
 
         result = has_orientation_credit(
@@ -190,8 +211,9 @@ class TestOrientationCreditService:
         )
         slot4 = _make_orientation_slot(db_session, event_id=week4.id, days_ago=14)
         vol = _make_volunteer(db_session, "cross@example.com")
-        _attended_signup(
+        _earn_credit(
             db_session,
+            owner.id,
             vol,
             slot4,
             checked_in_at=datetime.now(timezone.utc) - timedelta(days=14),
@@ -222,9 +244,7 @@ class TestOrientationCreditService:
             db_session, event_id=crispr_event.id, days_ago=0
         )
         vol = _make_volunteer(db_session, "xmod@example.com")
-        _attended_signup(
-            db_session, vol, crispr_slot, checked_in_at=datetime.now(timezone.utc)
-        )
+        _earn_credit(db_session, owner.id, vol, crispr_slot)
         db_session.commit()
 
         result = has_orientation_credit(
@@ -243,8 +263,9 @@ class TestOrientationCreditService:
         )
         slot = _make_orientation_slot(db_session, event_id=winter_event.id, days_ago=90)
         vol = _make_volunteer(db_session, "lastq@example.com")
-        _attended_signup(
+        _earn_credit(
             db_session,
+            owner.id,
             vol,
             slot,
             checked_in_at=datetime.now(timezone.utc) - timedelta(days=90),
@@ -339,9 +360,7 @@ class TestOrientationCreditService:
         event = _make_event(db_session, owner_id=owner.id, module_slug="crispr")
         slot = _make_orientation_slot(db_session, event_id=event.id)
         vol = _make_volunteer(db_session, "noq@example.com")
-        _attended_signup(
-            db_session, vol, slot, checked_in_at=datetime.now(timezone.utc)
-        )
+        _earn_credit(db_session, owner.id, vol, slot)
         db_session.commit()
 
         result = has_orientation_credit(
@@ -349,10 +368,19 @@ class TestOrientationCreditService:
         )
         assert result.has_credit is True
         assert result.source == "attendance"
+        # The auto-granted row records no quarter — the event has none.
+        row = (
+            db_session.query(OrientationCredit)
+            .filter(OrientationCredit.volunteer_email == "noq@example.com")
+            .one()
+        )
+        assert row.quarter_id is None
 
-    def test_i_null_checked_in_at_still_counts(self, db_session, winter_q):
-        """Legacy signups with status=attended but no checked_in_at timestamp
-        still earn credit (the old expiry-cutoff code could shadow these rows)."""
+    def test_i_raw_attendance_row_grants_nothing(self, db_session, winter_q):
+        """A raw attended signup with NO credit row grants nothing — explicit
+        rows are the only credit source. Pre-existing attendance was converted
+        to rows by the 0029 backfill migration; new attendance earns its row
+        when the slot is resolved."""
         owner = make_user(db_session)
         _make_template(db_session, slug="crispr")
         event = _make_event(
@@ -366,8 +394,8 @@ class TestOrientationCreditService:
         result = has_orientation_credit(
             db_session, "nots@example.com", family_key="crispr"
         )
-        assert result.has_credit is True
-        assert result.source == "attendance"
+        assert result.has_credit is False
+        assert result.source is None
 
     def test_family_for_event_uses_template_family_key(self, db_session):
         owner = make_user(db_session)
