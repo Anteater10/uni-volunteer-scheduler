@@ -1,6 +1,7 @@
 import React from "react";
 import { useAdminPageTitle } from "./AdminLayout";
 import Card from "../../components/ui/Card";
+import AdminPageHeader from "../../components/admin/AdminPageHeader";
 
 const SECTIONS = [
   {
@@ -41,10 +42,12 @@ export default function HelpSection() {
   useAdminPageTitle("Help");
   return (
     <div className="max-w-3xl">
-      <h1 className="text-2xl font-bold mb-2">Admin Help</h1>
-      <p className="text-gray-600 mb-6">
-        Short how-to answers for the most common admin tasks. Each card answers one question.
-      </p>
+      <div className="mb-6">
+        <AdminPageHeader
+          title="Admin Help"
+          subtitle="Short how-to answers for the most common admin tasks. Each card answers one question."
+        />
+      </div>
       <div className="space-y-4">
         {SECTIONS.map((s) => (
           <Card key={s.title}>

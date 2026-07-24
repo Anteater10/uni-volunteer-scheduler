@@ -506,6 +506,13 @@ class SiteSettings(Base):
         Boolean, nullable=False, server_default=text("true"), default=True
     )
 
+    # Show the standalone "Audit Logs" tab in the admin nav. Off by default —
+    # the Overview page already surfaces recent activity, so the full log is
+    # opt-in for the rare case an admin needs to dig deeper.
+    show_audit_logs_tab = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+
 
 # -------------------------
 # Portals (tabbed / grouped signups)

@@ -56,8 +56,16 @@ const SCOPES = [
   { id: "past", label: "Past" },
 ];
 
-export default function OrganizerDashboard() {
-  const [scope, setScope] = useState("today");
+export default function OrganizerDashboard({
+  embedded = false,
+  scope: controlledScope,
+}) {
+  // When a `scope` prop is supplied (Operations page's flat tab bar drives
+  // it), we're controlled: use that scope and hide our own scope tabs +
+  // summary line. Standalone (organizer home) keeps its internal tabs.
+  const controlled = controlledScope != null;
+  const [internalScope, setInternalScope] = useState("today");
+  const scope = controlled ? controlledScope : internalScope;
 
   const q = useQuery({
     queryKey: ["organizerEvents"],
@@ -71,14 +79,15 @@ export default function OrganizerDashboard() {
     const now = Date.now();
     return events
       .filter((e) => {
-        if (scope === "today") {
-          return isToday(e.start_date) || isToday(e.end_date);
-        }
+        // A "today" event owns the whole day: it must never also appear in
+        // Upcoming or Past, even after its end time has passed this afternoon.
+        const today = isToday(e.start_date) || isToday(e.end_date);
+        if (scope === "today") return today;
         if (scope === "upcoming") {
-          return new Date(e.end_date).getTime() >= now && !isToday(e.end_date);
+          return !today && new Date(e.end_date).getTime() >= now;
         }
         if (scope === "past") {
-          return new Date(e.end_date).getTime() < now;
+          return !today && new Date(e.end_date).getTime() < now;
         }
         return true;
       })
@@ -95,41 +104,53 @@ export default function OrganizerDashboard() {
   );
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
-      <header>
-        <h1 className="text-2xl font-semibold text-gray-900">Organizer</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          {todayCount > 0
-            ? `${todayCount} event${todayCount === 1 ? "" : "s"} today. Tap an event to open its roster.`
-            : "No events today. Switch tabs to see upcoming or past events."}
-        </p>
-      </header>
+    <div
+      className={
+        embedded
+          ? "space-y-5"
+          : "max-w-2xl mx-auto px-4 py-6 space-y-5"
+      }
+    >
+      {/* Controlled (Operations flat tabs own the scope): no header/tabs.
+          Standalone organizer home: full page header + internal scope tabs. */}
+      {!controlled && (
+        <header>
+          <h1 className="text-2xl font-semibold text-gray-900">Organizer</h1>
+          <p className="text-sm text-gray-600 mt-1">
+            {todayCount > 0
+              ? `${todayCount} event${todayCount === 1 ? "" : "s"} today. Tap an event to open its roster.`
+              : "No events today. Switch tabs to see upcoming or past events."}
+          </p>
+        </header>
+      )}
 
-      <div
-        role="tablist"
-        aria-label="Event scope"
-        className="flex gap-1 rounded-lg bg-gray-100 p-1"
-      >
-        {SCOPES.map((s) => {
-          const active = scope === s.id;
-          return (
-            <button
-              key={s.id}
-              role="tab"
-              aria-selected={active}
-              onClick={() => setScope(s.id)}
-              className={
-                "flex-1 min-h-[44px] text-sm font-medium rounded-md transition " +
-                (active
-                  ? "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-600 hover:text-gray-900")
-              }
-            >
-              {s.label}
-            </button>
-          );
-        })}
-      </div>
+      {!controlled && (
+        <div
+          role="tablist"
+          aria-label="Event scope"
+          className="flex gap-1 rounded-lg bg-gray-100 p-1"
+        >
+          {SCOPES.map((s) => {
+            const active = scope === s.id;
+            return (
+              <button
+                key={s.id}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setInternalScope(s.id)}
+                className={
+                  "flex-1 min-h-[44px] text-sm font-medium rounded-md transition " +
+                  (active
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900")
+                }
+              >
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {q.isPending ? (
         <p className="text-sm text-gray-500">Loading events…</p>
@@ -152,7 +173,13 @@ export default function OrganizerDashboard() {
               : "No past events."}
         </div>
       ) : (
-        <ul className="space-y-3">
+        <ul
+          className={
+            embedded
+              ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"
+              : "space-y-3"
+          }
+        >
           {filtered.map((e) => (
             <li
               key={e.id}

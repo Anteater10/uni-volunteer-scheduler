@@ -2605,6 +2605,9 @@ def update_site_settings(
     if payload.hide_past_events_from_public is not None:
         changes["hide_past_events_from_public"] = payload.hide_past_events_from_public
         row.hide_past_events_from_public = payload.hide_past_events_from_public
+    if payload.show_audit_logs_tab is not None:
+        changes["show_audit_logs_tab"] = payload.show_audit_logs_tab
+        row.show_audit_logs_tab = payload.show_audit_logs_tab
 
     log_action(
         db,

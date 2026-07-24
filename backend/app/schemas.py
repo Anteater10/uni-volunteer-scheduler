@@ -412,6 +412,8 @@ class SiteSettingsRead(ORMBase):
     allowed_email_domain: Optional[str] = None
     # Phase 29 (HIDE-01)
     hide_past_events_from_public: bool = True
+    # Gate the standalone Audit Logs tab; off by default.
+    show_audit_logs_tab: bool = False
 
 
 class SiteSettingsUpdate(BaseModel):
@@ -419,6 +421,7 @@ class SiteSettingsUpdate(BaseModel):
     allowed_email_domain: Optional[str] = None
     # Phase 29 (HIDE-01) — optional so existing callers can PATCH other fields.
     hide_past_events_from_public: Optional[bool] = None
+    show_audit_logs_tab: Optional[bool] = None
 
 
 # =========================

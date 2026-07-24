@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAdminPageTitle } from "./AdminLayout";
 import { toast } from "../../state/toast";
+import AdminPageHeader from "../../components/admin/AdminPageHeader";
 
 function fmtDateTime(iso) {
   if (!iso) return "—";
@@ -805,35 +806,32 @@ export default function EventsSection() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-5xl font-bold tracking-tight">Events</h1>
-          <p className="text-xl text-gray-600 mt-3">
-            All events in the system. Create, edit, or delete events here.
-          </p>
-        </div>
+      <AdminPageHeader
+        title="Events"
+        subtitle="All events in the system. Create, edit, or delete events here."
+      >
         <button
           onClick={() => {
             setEditing(null);
             setDrawerMode("create");
           }}
-          className="px-8 py-4 text-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow"
+          className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow"
         >
           + New event
         </button>
-      </div>
+      </AdminPageHeader>
 
       <div className="flex flex-wrap items-center gap-4">
         <input
           placeholder="Search by title…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[20rem] rounded-xl border border-gray-300 px-5 py-4 text-xl"
+          className="flex-1 min-w-[20rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
         <select
           value={scope}
           onChange={(e) => setScope(e.target.value)}
-          className="rounded-xl border border-gray-300 px-5 py-4 text-xl bg-white"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
         >
           <option value="upcoming">Upcoming</option>
           <option value="past">Past</option>
@@ -856,20 +854,20 @@ export default function EventsSection() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-          <table className="min-w-full text-2xl">
-            <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
               <tr>
-                <th className="py-5 px-6">Title</th>
-                <th className="py-5 px-6">Start</th>
-                <th className="py-5 px-6">End</th>
-                <th className="py-5 px-6">Location</th>
-                <th className="py-5 px-6 text-right">Actions</th>
+                <th className="py-3 px-4">Title</th>
+                <th className="py-3 px-4">Start</th>
+                <th className="py-3 px-4">End</th>
+                <th className="py-3 px-4">Location</th>
+                <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.map((e) => (
                 <tr key={e.id} className="hover:bg-gray-50">
-                  <td className="py-6 px-6 font-semibold">
+                  <td className="py-3 px-4 font-semibold">
                     <Link
                       to={`/admin/events/${e.id}`}
                       className="text-blue-600 hover:underline"
@@ -877,10 +875,10 @@ export default function EventsSection() {
                       {e.title || "(untitled)"}
                     </Link>
                   </td>
-                  <td className="py-6 px-6 text-gray-800">{fmtDateTime(e.start_date)}</td>
-                  <td className="py-6 px-6 text-gray-800">{fmtDateTime(e.end_date)}</td>
-                  <td className="py-6 px-6 text-gray-800">{e.location || "—"}</td>
-                  <td className="py-6 px-6 text-right space-x-5 whitespace-nowrap">
+                  <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.start_date)}</td>
+                  <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.end_date)}</td>
+                  <td className="py-3 px-4 text-gray-800">{e.location || "—"}</td>
+                  <td className="py-3 px-4 text-right space-x-5 whitespace-nowrap">
                     <button
                       onClick={() => {
                         setEditing(e);

@@ -40,7 +40,6 @@ import NotificationsPage from "./pages/NotificationsPage";
 import ProfilePage from "./pages/ProfilePage";
 
 import OrganizerRosterPage from "./pages/OrganizerRosterPage";
-import OrganizerDashboard from "./pages/organizer/OrganizerDashboard";
 
 import AdminLayout from "./pages/admin/AdminLayout";
 import OverviewSection from "./pages/admin/OverviewSection";
@@ -50,7 +49,7 @@ import { useAuth } from "./state/useAuth";
 
 function AdminIndexRoute() {
   const { role } = useAuth();
-  if (role === "organizer") return <Navigate to="/admin/preview" replace />;
+  if (role === "organizer") return <Navigate to="/admin/operations" replace />;
   return <OverviewSection />;
 }
 import AdminEventPage from "./pages/AdminEventPage";
@@ -62,8 +61,9 @@ import ImportsSection from "./pages/admin/ImportsSection";
 import OrientationCreditsSection from "./pages/admin/OrientationCreditsSection";
 import EventsSection from "./pages/admin/EventsSection";
 import HelpSection from "./pages/admin/HelpSection";
-// Phase 24 — scheduled reminder emails admin page
-import AdminRemindersPage from "./pages/admin/AdminRemindersPage";
+// Operations console — folds the former Preview + Reminders tabs into one
+// (it renders OrganizerDashboard + AdminRemindersPage internally).
+import OperationsPage from "./pages/admin/OperationsPage";
 // Phase 35-01 — copilot human-feedback admin page
 import AdminCopilotFeedbackPage from "./pages/admin/AdminCopilotFeedbackPage";
 
@@ -107,7 +107,7 @@ export default function App() {
 
         {/* Organizer roster — mobile check-in surface */}
         <Route element={<ProtectedRoute roles={["organizer", "admin"]} />}>
-          <Route path="organizer" element={<Navigate to="/admin/preview" replace />} />
+          <Route path="organizer" element={<Navigate to="/admin/operations" replace />} />
           <Route path="organizer/events/:eventId" element={<RedirectEventToAdmin />} />
           <Route path="organizer/events/:eventId/roster" element={<OrganizerRosterPage />} />
           {/* Legacy typo path — preserved as redirect for old bookmarks/tests */}
@@ -119,7 +119,12 @@ export default function App() {
           <Route path="admin" element={<AdminLayout />}>
             <Route index element={<AdminIndexRoute />} />
             <Route path="events" element={<EventsSection />} />
-            <Route path="preview" element={<OrganizerDashboard />} />
+            <Route path="operations" element={<OperationsPage />} />
+            {/* Legacy paths — folded into Operations; redirect old links. */}
+            <Route
+              path="preview"
+              element={<Navigate to="/admin/operations" replace />}
+            />
             <Route path="events/:eventId" element={<AdminEventPage />} />
             <Route
               path="events/:eventId/roster"
@@ -127,7 +132,10 @@ export default function App() {
             />
             <Route path="imports" element={<ImportsSection />} />
             <Route path="templates" element={<TemplatesSection />} />
-            <Route path="reminders" element={<AdminRemindersPage />} />
+            <Route
+              path="reminders"
+              element={<Navigate to="/admin/operations?tab=reminders" replace />}
+            />
             <Route
               path="copilot-feedback"
               element={<AdminCopilotFeedbackPage />}

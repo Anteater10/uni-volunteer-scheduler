@@ -170,15 +170,18 @@ describe("OverviewSection", () => {
 
   it("renders the recent activity feed with role badges and action labels (no UUIDs)", async () => {
     renderPage();
+    // Target the section heading specifically — "recent activity" also appears
+    // in the SiteSettingsCard Audit Logs toggle description on this page.
     await waitFor(() =>
-      expect(screen.getByText(/Recent activity/i)).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", { name: /Recent activity/i }),
+      ).toBeInTheDocument(),
     );
     await waitFor(() =>
       expect(screen.getByText("Admin User 0")).toBeInTheDocument(),
     );
-    expect(
-      screen.getAllByText("Invited a new user").length,
-    ).toBeGreaterThanOrEqual(20);
+    // The overview feed now shows only the last 5 changes (page_size: 5).
+    expect(screen.getAllByText("Invited a new user").length).toBe(5);
   });
 
   it("D-19 gate: no UUIDs anywhere in rendered text", async () => {
@@ -193,11 +196,11 @@ describe("OverviewSection", () => {
     expect(uuidRe.test(text)).toBe(false);
   });
 
-  it("requests exactly 20 activity rows", async () => {
+  it("requests exactly 5 activity rows", async () => {
     renderPage();
     await waitFor(() => expect(api.admin.auditLogs).toHaveBeenCalled());
     const firstCallArg = api.admin.auditLogs.mock.calls[0][0];
-    expect(firstCallArg).toEqual(expect.objectContaining({ limit: 20 }));
+    expect(firstCallArg).toEqual(expect.objectContaining({ page_size: 5 }));
   });
 });
 

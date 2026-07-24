@@ -14,8 +14,8 @@ vi.mock("../../../state/useAuth", () => ({
 
 // Issue #24: the layout queries the entered quarters for the setup guard.
 // A quarter covering "today" keeps the guard quiet in these layout tests.
-vi.mock("../../../lib/api", () => ({
-  default: {
+vi.mock("../../../lib/api", () => {
+  const apiMock = {
     public: {
       getQuarters: vi.fn(async () => {
         const today = new Date();
@@ -35,8 +35,17 @@ vi.mock("../../../lib/api", () => ({
         ];
       }),
     },
-  },
-}));
+    // The layout now reads site settings to decide whether the Audit Logs
+    // nav item is shown. Default the flag off for these tests.
+    admin: {
+      siteSettings: {
+        get: vi.fn(async () => ({ show_audit_logs_tab: false })),
+      },
+    },
+  };
+  // AdminLayout imports the named `api` export; older call sites use default.
+  return { default: apiMock, api: apiMock };
+});
 
 function renderAtDesktop(width = 1200) {
   Object.defineProperty(window, "innerWidth", {
@@ -64,25 +73,34 @@ describe("AdminLayout", () => {
     for (const label of [
       "Overview",
       "Events",
-      "Users",
-      "Audit Logs",
-      "Exports",
+      "Operations",
       "Templates",
       "Imports",
+      "Users",
+      "Exports",
     ]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
     expect(screen.queryByRole("link", { name: /overrides/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /portals/i })).toBeNull();
+    // Audit Logs is gated behind the show_audit_logs_tab site setting, which
+    // the mock returns false — so it must not appear by default.
+    expect(screen.queryByRole("link", { name: /audit logs/i })).toBeNull();
   });
 
   it("hides the Copilot feedback nav item when the copilot flag is off", () => {
     // Same gate as CopilotFab: the analytics page for an invisible feature
-    // must not be reachable from the nav.
-    renderAtDesktop();
-    expect(
-      screen.queryByRole("link", { name: /copilot feedback/i })
-    ).toBeNull();
+    // must not be reachable from the nav. Stub the env explicitly so the
+    // test doesn't depend on the developer's local .env value.
+    vi.stubEnv("VITE_COPILOT_ENABLED", "false");
+    try {
+      renderAtDesktop();
+      expect(
+        screen.queryByRole("link", { name: /copilot feedback/i })
+      ).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("shows the Copilot feedback nav item when VITE_COPILOT_ENABLED=true", () => {

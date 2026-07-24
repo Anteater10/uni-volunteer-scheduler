@@ -5,6 +5,7 @@ import api from "../../lib/api";
 import { Card, Button, Skeleton, EmptyState } from "../../components/ui";
 import DatePresetPicker, { rangeForPreset } from "../../components/admin/DatePresetPicker";
 import { useQuarters } from "../../lib/useQuarters";
+import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import { useAdminPageTitle } from "./AdminLayout";
 
 function toParams(dateState) {
@@ -43,7 +44,7 @@ function AnalyticsPanel({
 
   return (
     <Card>
-      <h2 className="text-xl font-semibold">{title}</h2>
+      <h2 className="text-lg font-semibold">{title}</h2>
       <p className="text-[var(--color-fg-muted)] mt-1">{explainer}</p>
       <div className="mt-3">
         <DatePresetPicker
@@ -99,13 +100,10 @@ export default function ExportsSection() {
   useAdminPageTitle("Exports");
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Exports</h1>
-        <p className="text-[var(--color-fg-muted)]">
-          Download CSV reports for volunteer hours and attendance. All exports
-          are generated live — no stale data.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="Exports"
+        subtitle="Download CSV reports for volunteer hours and attendance. All exports are generated live — no stale data."
+      />
 
       <AnalyticsPanel
         title="Volunteer hours"
