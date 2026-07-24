@@ -542,7 +542,8 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
   // Shared routes (positive checks — organizer MUST be able to reach these).
   // /admin/templates and /admin/imports are the Phase 17 / Phase 18 surfaces.
   // /organizer is the Phase 19 dashboard entry point; App.jsx client-side
-  // redirects it to /admin/preview, so that is the landing URL to assert.
+  // redirects it to /admin/operations (the console that folded in the former
+  // Preview tab), so that is the landing URL to assert.
   // (Asserting /organizer only ever passed when the URL poll won the race
   // against the React <Navigate> — timing-dependent, not a real pass.)
   // We assert these pages are NOT the Forbidden panel — they must mount the
@@ -553,7 +554,7 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
   const sharedRoutes = [
     ['/admin/templates', /\/admin\/templates$/],
     ['/admin/imports', /\/admin\/imports$/],
-    ['/organizer', /\/admin\/preview$/],
+    ['/organizer', /\/admin\/operations$/],
   ];
   for (const [path, landingUrl] of sharedRoutes) {
     await page.goto(path);
