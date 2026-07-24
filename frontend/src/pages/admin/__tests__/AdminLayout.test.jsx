@@ -1,13 +1,15 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import AdminLayout from "../AdminLayout";
 
-// Mock useAuth so the layout renders without a real AuthProvider.
+// Mock useAuth so the layout renders without a real AuthProvider. The role is
+// hoisted state so individual tests can flip to "organizer".
+const authState = vi.hoisted(() => ({ role: "admin" }));
 vi.mock("../../../state/useAuth", () => ({
   useAuth: () => ({
-    user: { name: "Andy", email: "andy@example.com", role: "admin" },
+    user: { name: "Andy", email: "andy@example.com", role: authState.role },
     logout: vi.fn(),
   }),
 }));
@@ -47,6 +49,8 @@ vi.mock("../../../lib/api", () => {
   return { default: apiMock, api: apiMock };
 });
 
+import { api } from "../../../lib/api";
+
 function renderAtDesktop(width = 1200) {
   Object.defineProperty(window, "innerWidth", {
     writable: true,
@@ -68,6 +72,12 @@ function renderAtDesktop(width = 1200) {
 }
 
 describe("AdminLayout", () => {
+  beforeEach(() => {
+    authState.role = "admin";
+    vi.clearAllMocks();
+    api.admin.siteSettings.get.mockResolvedValue({ show_audit_logs_tab: false });
+  });
+
   it("renders the expected sidebar nav items (no Overrides, no Portals)", () => {
     renderAtDesktop();
     for (const label of [
@@ -131,5 +141,37 @@ describe("AdminLayout", () => {
       screen.getByText(/This admin view is designed for screens ≥ 768px/i),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("child-outlet")).toBeNull();
+  });
+
+  it("shows the Audit Logs nav item when show_audit_logs_tab is on", async () => {
+    api.admin.siteSettings.get.mockResolvedValue({ show_audit_logs_tab: true });
+    renderAtDesktop();
+    expect(
+      await screen.findByRole("link", { name: /audit logs/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("organizer sees only shared nav items and never fetches site settings", async () => {
+    authState.role = "organizer";
+    renderAtDesktop();
+    // Shared tabs organizers own.
+    for (const label of ["Events", "Operations", "Templates", "Imports"]) {
+      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
+    }
+    // Admin-only tabs must not leak into the organizer nav.
+    for (const label of [
+      "Overview",
+      "Users",
+      "Exports",
+      "Orientation Credits",
+    ]) {
+      expect(screen.queryByRole("link", { name: label })).toBeNull();
+    }
+    expect(screen.queryByRole("link", { name: /audit logs/i })).toBeNull();
+    // The site-settings query is admin-gated (organizers may read the
+    // endpoint, but the nav only needs it for the admin-only tab).
+    await waitFor(() =>
+      expect(api.admin.siteSettings.get).not.toHaveBeenCalled(),
+    );
   });
 });

@@ -1,6 +1,6 @@
 // Phase 24 — AdminRemindersPage tests
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -90,6 +90,47 @@ describe("AdminRemindersPage", () => {
     expect(
       await screen.findByText(/no upcoming reminders/i)
     ).toBeInTheDocument();
+  });
+
+  it("groups many reminders by kind in kickoff → 24h → 2h order, only for kinds present", async () => {
+    api.admin.reminders.listUpcoming.mockResolvedValueOnce([
+      { ...ROW, signup_id: "aaaaaaaa-0000-0000-0000-000000000001", kind: "pre_2h" },
+      { ...ROW, signup_id: "aaaaaaaa-0000-0000-0000-000000000002", kind: "kickoff" },
+      { ...ROW, signup_id: "aaaaaaaa-0000-0000-0000-000000000003", kind: "kickoff" },
+      { ...ROW, signup_id: "aaaaaaaa-0000-0000-0000-000000000004", kind: "pre_24h" },
+    ]);
+
+    renderPage();
+
+    await screen.findByTestId("reminders-group-kickoff");
+    // Sections render in the canonical firing order, regardless of the order
+    // the API returned the rows in.
+    const sections = screen.getAllByTestId(/^reminders-group-/);
+    expect(sections.map((s) => s.getAttribute("data-testid"))).toEqual([
+      "reminders-group-kickoff",
+      "reminders-group-pre_24h",
+      "reminders-group-pre_2h",
+    ]);
+    // Each section holds only its own rows (header row + data rows).
+    expect(
+      within(sections[0]).getAllByText("vee@example.com"),
+    ).toHaveLength(2);
+    expect(
+      within(sections[1]).getAllByText("vee@example.com"),
+    ).toHaveLength(1);
+    expect(
+      within(sections[2]).getAllByText("vee@example.com"),
+    ).toHaveLength(1);
+  });
+
+  it("renders only the section for the single kind present", async () => {
+    api.admin.reminders.listUpcoming.mockResolvedValueOnce([ROW]);
+
+    renderPage();
+
+    await screen.findByTestId("reminders-group-pre_24h");
+    expect(screen.queryByTestId("reminders-group-kickoff")).toBeNull();
+    expect(screen.queryByTestId("reminders-group-pre_2h")).toBeNull();
   });
 
   it("calls sendNow with the row's signup id + kind after confirmation", async () => {

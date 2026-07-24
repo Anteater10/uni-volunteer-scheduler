@@ -34,6 +34,7 @@ vi.mock("../AdminLayout", () => ({
 }));
 
 import QuartersSection from "../QuartersSection";
+import QuartersManager from "../QuartersManager";
 
 const SPRING = {
   id: "spring-26",
@@ -209,6 +210,47 @@ describe("QuartersSection", () => {
 
     expect(await screen.findByText("Archived")).toBeInTheDocument();
     expect(screen.queryByTestId("archive-winter-26")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("restore-winter-26"));
+    await waitFor(() => expect(restoreMock).toHaveBeenCalledWith("winter-26"));
+  });
+});
+
+// PR #49 — the Overview page hosts the same manager inside a slide-over
+// drawer (embedded mode). Archive/restore/retrospective affordances must
+// survive the embedding; only the page-level header is swapped out.
+describe("QuartersManager (embedded drawer mode)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function renderEmbedded() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/admin"]}>
+          <QuartersManager embedded />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("shows archived rows with chip, Restore, and View events in the drawer", async () => {
+    listMock.mockResolvedValue([CURRENT, ARCHIVED]);
+    restoreMock.mockResolvedValue({ ...ARCHIVED, archived_at: null });
+    renderEmbedded();
+
+    expect(await screen.findByText("Archived")).toBeInTheDocument();
+    expect(screen.getByTestId("retro-winter-26")).toHaveAttribute(
+      "href",
+      "/admin/quarters/winter-26",
+    );
+    // No page-level H1 in embedded mode — the drawer supplies the title.
+    expect(
+      screen.queryByRole("heading", { name: "Quarters", level: 1 }),
+    ).toBeNull();
+    // Add quarter stays available inside the drawer.
+    expect(screen.getByTestId("add-quarter")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("restore-winter-26"));
     await waitFor(() => expect(restoreMock).toHaveBeenCalledWith("winter-26"));
