@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { resolveEvent, resolveSlot } from "../api/roster";
 import { Button, Modal } from "./ui";
 import { toast } from "../state/toast";
@@ -33,6 +33,20 @@ export default function ResolveEventModal({
 
   const [decisions, setDecisions] = useState({});
   const [saving, setSaving] = useState(false);
+
+  // Prefill from live check-in state (2026-07-24 fix): checked-in volunteers
+  // are pre-marked attended, everyone else no-show — ending a slot is one
+  // confirmation press, not a per-person marking chore. The organizer can
+  // still flip any row before saving.
+  useEffect(() => {
+    if (!isOpen) return;
+    const prefill = {};
+    for (const s of unmarked) {
+      prefill[s.signup_id] =
+        s.status === "checked_in" ? "attended" : "no_show";
+    }
+    setDecisions(prefill);
+  }, [isOpen, unmarked]);
 
   function mark(signupId, decision) {
     setDecisions((prev) => ({ ...prev, [signupId]: decision }));
@@ -98,7 +112,8 @@ export default function ResolveEventModal({
       ) : (
         <div>
           <p className="text-sm text-[var(--color-fg-muted)] mb-3">
-            Mark each remaining signup as attended or no-show.
+            Checked-in volunteers are pre-marked attended; everyone else is
+            pre-marked no-show. Adjust anyone if needed, then save.
           </p>
           {isOrientation && (
             <p className="text-sm font-medium text-[var(--color-fg)] mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">

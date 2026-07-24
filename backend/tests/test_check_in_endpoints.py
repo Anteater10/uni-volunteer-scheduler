@@ -40,6 +40,21 @@ class TestOrganizerCheckIn:
         assert resp.status_code == 200
         assert resp.json()["status"] == "checked_in"
 
+    def test_pending_walk_in_checks_in(self, client, db_session):
+        """RSVP-not-a-gate (2026-07-24): a pending signup — volunteer never
+        clicked the confirm email — still checks in at the door."""
+        organizer = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=organizer)
+        vol = _make_volunteer(db_session)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.pending)
+        db_session.add(signup)
+        db_session.flush()
+
+        headers = auth_headers(client, organizer)
+        resp = client.post(f"/api/v1/signups/{signup.id}/check-in", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "checked_in"
+
     def test_idempotent_repeat(self, client, db_session):
         organizer = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=organizer)

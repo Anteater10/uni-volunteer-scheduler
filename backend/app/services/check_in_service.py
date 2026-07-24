@@ -107,6 +107,14 @@ def check_in_signup(
     if signup.status == SignupStatus.checked_in:
         return signup
 
+    # Confirmation is an RSVP, not a gate (2026-07-24): walk-ins who never
+    # clicked the confirm email still get checked in. Mirrors the QR paths'
+    # self_qr_autoconfirm.
+    if signup.status == SignupStatus.pending:
+        _transition(
+            db, signup, SignupStatus.confirmed, actor_id, f"{via}_autoconfirm"
+        )
+
     _transition(db, signup, SignupStatus.checked_in, actor_id, via)
     return signup
 
@@ -177,6 +185,13 @@ def self_check_in(
     # Idempotency
     if signup.status == SignupStatus.checked_in:
         return signup
+
+    # RSVP-not-a-gate (2026-07-24): pending walk-ins auto-confirm first,
+    # mirroring the QR paths' self_qr_autoconfirm.
+    if signup.status == SignupStatus.pending:
+        _transition(
+            db, signup, SignupStatus.confirmed, actor_id, "self_autoconfirm"
+        )
 
     _transition(db, signup, SignupStatus.checked_in, actor_id, "self")
     return signup

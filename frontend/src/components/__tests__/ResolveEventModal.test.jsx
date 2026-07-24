@@ -71,6 +71,38 @@ describe("event mode (no slot prop)", () => {
   });
 });
 
+describe("prefill from check-in state (2026-07-24 fix)", () => {
+  it("pre-marks checked_in as attended, others as no-show — save works with zero clicks", async () => {
+    const user = userEvent.setup();
+    renderModal({ slot: { id: "slot-9", slot_type: "orientation" } });
+
+    // No manual marking: the organizer only presses Save.
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() =>
+      expect(resolveSlot).toHaveBeenCalledWith("slot-9", {
+        attended: ["s-1"],
+        no_show: ["s-2"],
+      }),
+    );
+  });
+
+  it("organizer can override a prefilled decision before saving", async () => {
+    const user = userEvent.setup();
+    renderModal({ slot: { id: "slot-9", slot_type: "orientation" } });
+
+    await user.click(screen.getByLabelText("Mark Ada Lovelace no-show"));
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() =>
+      expect(resolveSlot).toHaveBeenCalledWith("slot-9", {
+        attended: [],
+        no_show: ["s-1", "s-2"],
+      }),
+    );
+  });
+});
+
 describe("slot mode", () => {
   it("orientation slot: End orientation title, credit warning, resolveSlot", async () => {
     const user = userEvent.setup();

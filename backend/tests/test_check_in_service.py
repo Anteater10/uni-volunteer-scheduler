@@ -517,3 +517,46 @@ class TestEventCheckInByEmail:
         )
         with pytest.raises(VenueCodeError):
             event_check_in_by_email(db_session, event.id, "ghost@example.com", "9999")
+
+
+class TestPendingWalkInCheckIn:
+    """Confirmation is an RSVP, not a gate (fix 2026-07-24): students who
+    sign up but never click the confirm link still show up — every check-in
+    path must auto-confirm pending signups, mirroring the QR paths'
+    ``self_qr_autoconfirm`` precedent."""
+
+    def test_organizer_check_in_pending_auto_confirms(self, db_session):
+        vol, owner, event, slot, signup = _make_event_slot_signup(
+            db_session, status=SignupStatus.pending
+        )
+
+        result = check_in_signup(db_session, signup.id, owner.id, via="organizer")
+
+        assert result.status == SignupStatus.checked_in
+        assert result.checked_in_at is not None
+
+        logs = db_session.query(AuditLog).filter(
+            AuditLog.entity_id == str(signup.id),
+            AuditLog.action == "transition",
+        ).order_by(AuditLog.timestamp).all()
+        assert len(logs) == 2
+        assert logs[0].extra["from"] == "pending"
+        assert logs[0].extra["to"] == "confirmed"
+        assert logs[0].extra["via"] == "organizer_autoconfirm"
+        assert logs[1].extra["from"] == "confirmed"
+        assert logs[1].extra["to"] == "checked_in"
+
+    def test_self_check_in_pending_auto_confirms(self, db_session):
+        slot_start = datetime.now(timezone.utc) + timedelta(minutes=5)
+        vol, owner, event, slot, signup = _make_event_slot_signup(
+            db_session,
+            venue_code="1234",
+            slot_start=slot_start,
+            status=SignupStatus.pending,
+        )
+
+        result = self_check_in(
+            db_session, event.id, signup.id, "1234", actor_id=None
+        )
+
+        assert result.status == SignupStatus.checked_in
