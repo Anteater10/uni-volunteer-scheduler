@@ -57,11 +57,13 @@ Adding a 6th module later = create one template; it appears in the picker automa
   templates (only if unreferenced/safe — best effort).
 
 ### Service `import_service.create_events_bulk(db, user_id, template_slug, rows)`
-- `rows`: `[{school, date: "YYYY-MM-DD", start_time: "HH:MM", capacity?: int}]`.
+- `rows`: `[{school, date: "YYYY-MM-DD", start_time: "HH:MM", capacity?: int, kind}]`
+  where `kind` is `"module"` (teaching period → `slot_type=PERIOD`) or `"orientation"`
+  (→ `slot_type=ORIENTATION`); defaults to `"module"`.
 - Interpret each `date`+`start_time` as **America/Los_Angeles**, convert to UTC for storage;
   `end_time = start + template.duration_minutes`.
-- Reuses the existing group-by-(school, quarter_id) → Event + one Slot-per-row logic from
-  `commit_import`. Extract the shared grouping/creation into a private helper both paths call.
+- Groups rows by **(school, quarter_id, week_number)** → one Event, one Slot per row. See
+  the Amendment below for why the grain is the week, not the quarter.
 - **Validation (atomic):** template must exist and be active; every row needs school + date +
   time; every date must fall inside an entered quarter. If **any** row is invalid, return a
   `400` with a per-row error list and create nothing. Otherwise create all and return
@@ -109,3 +111,25 @@ Adding a 6th module later = create one template; it appears in the picker automa
 ## Out of scope
 - Draft/tentative staging, attendee signup, roster tracking, and any change to how existing
   events or the CSV backend behave.
+
+## Amendment — 2026-07-24 · event grain + orientation/module mix
+
+Client review added two structural requirements, both approved:
+
+**1. Event grain = one week (was: one quarter).** An Event is now exactly one school's
+one-week run of one module. The group/merge key gains `week_number`:
+`(module family, school, quarter_id, week_number)`. Consequences:
+- Same module, same school, two different weeks → **two** Events (was: one Event spanning
+  both weeks). Adding a later-confirmed week never mutates an earlier week's Event.
+- A batch whose dates straddle two quarter-weeks splits into two Events — intended.
+- Merge (returning to add more sessions) is scoped to the matching week's Event.
+
+**2. Slot type is per-row, not per-template.** Each row carries `kind` (`module` |
+`orientation`). One Event therefore holds both orientation slot(s) and module-session
+slots across several days, with multiple slots allowed per day. This matches the confirmed
+shape "one module + its orientation." No new orientation templates are needed — orientation
+credit is keyed by the event's module **family**, which is unambiguous inside a module Event.
+
+The quarter system is untouched: each date is still resolved through
+`quarter_service.derive_quarter_week` (the same helper the CSV path uses); the derived
+`week_number` now also drives grouping.

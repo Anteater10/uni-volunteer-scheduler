@@ -5,7 +5,8 @@ and performs atomic commit of validated events.
 """
 import hashlib
 import uuid
-from datetime import datetime, timezone, date as date_cls
+from datetime import datetime, timedelta, timezone, date as date_cls
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -458,4 +459,221 @@ def commit_import(db: Session, import_id, module_template_slug: str | None = Non
         raise HTTPException(
             status_code=500,
             detail={"error": "Import failed", "reason": str(e)}
+        )
+
+
+# ---------------------------------------------------------------------------
+# In-app bulk event builder (Approach A — replaces the CSV upload workflow).
+#
+# The admin picks one module template and types a row per school/date. No file,
+# no LLM, no async processing: rows arrive already-structured, so this validates
+# and creates Events + Slots synchronously, reusing the same group-by-(school,
+# quarter) shape as commit_import.
+# ---------------------------------------------------------------------------
+
+_PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def create_events_bulk(
+    db: Session, user_id: uuid.UUID, template_slug: str, rows: list[dict]
+) -> dict:
+    """Create Events + Slots from typed rows against one module template.
+
+    Each row: {school, date: "YYYY-MM-DD", start_time: "HH:MM", capacity?: int}.
+    Dates/times are interpreted as America/Los_Angeles and stored as UTC.
+
+    Validation is atomic: if ANY row is invalid (missing school, unparseable
+    date/time, or a date no entered quarter covers), nothing is created and the
+    result carries a per-row ``errors`` list (HTTP 200 — the request itself
+    succeeded, the rows just need fixing). Otherwise all rows are created.
+    Returns {created_count, merged_count, events[], errors[]}.
+
+    Only genuinely exceptional conditions (unknown template, DB constraint
+    violation) raise HTTPException.
+    """
+    template = (
+        db.query(ModuleTemplate)
+        .filter(ModuleTemplate.slug == template_slug, ModuleTemplate.deleted_at.is_(None))
+        .first()
+    )
+    if not template:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Module '{template_slug}' not found (or archived).",
+        )
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="Add at least one row before creating.")
+
+    family_slug = template.family_key or template.slug
+    # slot_type is chosen per row (orientation vs module session) — a single
+    # event carries both. It is NOT derived from the template type here.
+    duration = template.duration_minutes or 90
+
+    errors: list[dict] = []
+    normalised_rows: list[dict] = []
+
+    for i, row in enumerate(rows):
+        school = (row.get("school") or "").strip()
+        date_str = (row.get("date") or "").strip()
+        time_str = (row.get("start_time") or "").strip()
+
+        if not school:
+            errors.append({"row": i, "message": "School is required."})
+            continue
+        if not date_str or not time_str:
+            errors.append({"row": i, "message": "Date and start time are required."})
+            continue
+
+        try:
+            naive = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            errors.append({"row": i, "message": "Date or time is not valid."})
+            continue
+
+        kind = (row.get("kind") or "module").strip().lower()
+        if kind not in ("module", "orientation"):
+            errors.append({"row": i, "message": "Type must be 'module' or 'orientation'."})
+            continue
+        row_slot_type = SlotType.ORIENTATION if kind == "orientation" else SlotType.PERIOD
+
+        local_date = naive.date()
+        start_at = naive.replace(tzinfo=_PACIFIC).astimezone(timezone.utc)
+        end_at = start_at + timedelta(minutes=duration)
+
+        capacity_raw = row.get("capacity")
+        if capacity_raw in (None, ""):
+            capacity = template.default_capacity
+        else:
+            try:
+                capacity = int(capacity_raw)
+                if capacity < 1:
+                    raise ValueError
+            except (ValueError, TypeError):
+                errors.append({"row": i, "message": "Capacity must be a whole number ≥ 1."})
+                continue
+
+        # Quarter/week come from the entered local date, not the UTC instant —
+        # a late-afternoon PT time rolls into the next UTC day otherwise.
+        quarter, year, week, quarter_id = _compute_quarter_week(db, local_date)
+        if quarter_id is None:
+            errors.append({
+                "row": i,
+                "message": (
+                    f"No quarter covers {date_str}. Add the quarter in "
+                    "Admin → Quarters first."
+                ),
+            })
+            continue
+
+        normalised_rows.append({
+            "school": _normalize_school(school),
+            "start_at": start_at,
+            "end_at": end_at,
+            "capacity": capacity,
+            "slot_type": row_slot_type,
+            "quarter": quarter,
+            "year": year,
+            "week": week,
+            "quarter_id": quarter_id,
+        })
+
+    if errors:
+        # Atomic: nothing is created while any row is invalid. Returned in the
+        # body (not raised) so the per-row list survives the app's error handler,
+        # which flattens dict HTTPException details.
+        return {"created_count": 0, "merged_count": 0, "events": [], "errors": errors}
+
+    # Group by (school, quarter, week) so an Event is exactly one school's
+    # one-week run of one module — orientation + module-session slots for that
+    # week collapse into a single Event, while a different week (or module) is a
+    # separate Event. Dates that straddle two quarter-weeks split accordingly.
+    groups: dict[tuple[str, object, object], list[dict]] = {}
+    for r in normalised_rows:
+        groups.setdefault((r["school"], r["quarter_id"], r["week"]), []).append(r)
+
+    created_events: list[dict] = []
+    merged_events: list[dict] = []
+    try:
+        for (school, quarter_id, week), group in groups.items():
+            group.sort(key=lambda r: r["start_at"])
+            first = group[0]
+            last_end = max(r["end_at"] for r in group)
+
+            event = (
+                db.query(Event)
+                .filter(
+                    Event.module_slug == family_slug,
+                    Event.school == school,
+                    Event.quarter_id == quarter_id,
+                    Event.week_number == week,
+                )
+                .first()
+            )
+            existed = event is not None
+
+            if event is None:
+                event = Event(
+                    owner_id=user_id,
+                    title=template.name,
+                    description=template.description,
+                    location=school or None,
+                    start_date=first["start_at"],
+                    end_date=last_end,
+                    module_slug=family_slug,
+                    quarter=first["quarter"],
+                    year=first["year"],
+                    week_number=week,
+                    quarter_id=quarter_id,
+                    school=school or None,
+                )
+                db.add(event)
+                db.flush()
+            else:
+                if first["start_at"] < event.start_date:
+                    event.start_date = first["start_at"]
+                if last_end > event.end_date:
+                    event.end_date = last_end
+
+            for r in group:
+                db.add(Slot(
+                    event_id=event.id,
+                    start_time=r["start_at"],
+                    end_time=r["end_at"],
+                    capacity=r["capacity"],
+                    slot_type=r["slot_type"],
+                    date=r["start_at"].date(),
+                    location=school or None,
+                ))
+
+            record = {
+                "event_id": str(event.id),
+                "title": event.title,
+                "school": school,
+                "week_number": week,
+                "start_date": event.start_date.isoformat(),
+                "end_date": event.end_date.isoformat(),
+                "slot_count": len(group),
+                "merged": existed,
+            }
+            (merged_events if existed else created_events).append(record)
+
+        db.commit()
+        return {
+            "created_count": len(created_events),
+            "merged_count": len(merged_events),
+            "events": created_events + merged_events,
+            "errors": [],
+        }
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "Constraint violation", "reason": str(e.orig)},
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Bulk create failed", "reason": str(e)},
         )

@@ -2209,6 +2209,31 @@ def set_event_form_schema(
 
 
 # =========================
+# BULK EVENT BUILDER (in-app replacement for the CSV import workflow)
+# =========================
+
+
+@router.post("/events/bulk", response_model=schemas.BulkEventResult)
+def bulk_create_events(
+    payload: schemas.BulkEventCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """Create many events at once from typed rows against one module template.
+
+    The module-first, file-free replacement for CSV import: pick a module, add a
+    row per school/date, create them all. Synchronous; validates every row and
+    creates nothing if any row is invalid.
+    """
+    rows = [r.model_dump() for r in payload.rows]
+    return import_service.create_events_bulk(
+        db, current_user.id, payload.template_slug, rows
+    )
+
+
+# =========================
 # CSV IMPORT PIPELINE (Phase 5)
 # =========================
 

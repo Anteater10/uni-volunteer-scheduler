@@ -48,7 +48,8 @@ const allNavItems = [
   { to: "/admin/audit-logs", label: "Audit Logs", roles: ["admin"] },
   { to: "/admin/exports", label: "Exports", roles: ["admin"] },
   { to: "/admin/templates", label: "Templates", roles: ["admin", "organizer"] },
-  { to: "/admin/imports", label: "Imports", roles: ["admin", "organizer"] },
+  // In-app bulk event builder — replaces the retired CSV import workflow.
+  { to: "/admin/add-events", label: "Add events", roles: ["admin", "organizer"] },
   // Phase 21 — orientation credit engine
   {
     to: "/admin/orientation-credits",

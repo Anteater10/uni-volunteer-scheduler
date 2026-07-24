@@ -68,12 +68,14 @@ describe("AdminLayout", () => {
       "Audit Logs",
       "Exports",
       "Templates",
-      "Imports",
+      "Add events",
     ]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
     expect(screen.queryByRole("link", { name: /overrides/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /portals/i })).toBeNull();
+    // CSV Imports was retired in favour of the in-app bulk builder.
+    expect(screen.queryByRole("link", { name: /^imports$/i })).toBeNull();
   });
 
   it("hides the Copilot feedback nav item when the copilot flag is off", () => {

@@ -58,7 +58,7 @@ import UsersAdminPage from "./pages/UsersAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
 import ExportsSection from "./pages/admin/ExportsSection";
 import TemplatesSection from "./pages/admin/TemplatesSection";
-import ImportsSection from "./pages/admin/ImportsSection";
+import BulkAddSection from "./pages/admin/BulkAddSection";
 import OrientationCreditsSection from "./pages/admin/OrientationCreditsSection";
 import EventsSection from "./pages/admin/EventsSection";
 import HelpSection from "./pages/admin/HelpSection";
@@ -125,7 +125,7 @@ export default function App() {
               path="events/:eventId/roster"
               element={<OrganizerRosterPage />}
             />
-            <Route path="imports" element={<ImportsSection />} />
+            <Route path="add-events" element={<BulkAddSection />} />
             <Route path="templates" element={<TemplatesSection />} />
             <Route path="reminders" element={<AdminRemindersPage />} />
             <Route

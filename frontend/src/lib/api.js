@@ -854,6 +854,15 @@ export const api = {
       revoke: (creditId) =>
         request(`/admin/orientation-credits/${creditId}`, { method: "DELETE" }),
     },
+    // In-app bulk event builder — module-first, file-free replacement for CSV
+    // import. Posts typed rows; the backend creates Events + Slots synchronously.
+    events: {
+      bulkCreate: (templateSlug, rows) =>
+        request("/admin/events/bulk", {
+          method: "POST",
+          body: { template_slug: templateSlug, rows },
+        }),
+    },
     imports: {
       list: () => request("/admin/imports", { method: "GET" }),
       get: (importId) => request(`/admin/imports/${importId}`),

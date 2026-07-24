@@ -617,6 +617,30 @@ class CsvImportRead(ORMBase):
 
 
 # =========================
+# BULK EVENT BUILDER SCHEMAS (in-app replacement for CSV import)
+# =========================
+class BulkEventRow(BaseModel):
+    school: str
+    date: str  # "YYYY-MM-DD" (interpreted as America/Los_Angeles)
+    start_time: str  # "HH:MM"
+    capacity: Optional[int] = None
+    kind: str = "module"  # "module" (teaching period) | "orientation"
+
+
+class BulkEventCreate(BaseModel):
+    template_slug: str
+    rows: List[BulkEventRow]
+
+
+class BulkEventResult(BaseModel):
+    created_count: int
+    merged_count: int
+    events: List[dict]
+    # Per-row validation problems. When non-empty, nothing was created (atomic).
+    errors: List[dict] = []
+
+
+# =========================
 # PHASE 09: PUBLIC SIGNUP SCHEMAS
 # =========================
 from datetime import date  # noqa: E402 (local import to avoid circular)
