@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { resolveEvent, resolveSlot } from "../api/roster";
 import { Button, Modal } from "./ui";
 import { toast } from "../state/toast";
@@ -38,14 +38,23 @@ export default function ResolveEventModal({
   // are pre-marked attended, everyone else no-show — ending a slot is one
   // confirmation press, not a per-person marking chore. The organizer can
   // still flip any row before saving.
+  //
+  // Prefill runs only on the closed→open transition. In event mode `signups`
+  // is live roster data (5s poll + optimistic check-ins), so re-prefilling on
+  // every change would silently discard the organizer's manual overrides.
+  // A signup that appears while the modal is open stays unmarked, keeping
+  // Save disabled until the organizer decides that row.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (!isOpen) return;
-    const prefill = {};
-    for (const s of unmarked) {
-      prefill[s.signup_id] =
-        s.status === "checked_in" ? "attended" : "no_show";
+    if (isOpen && !wasOpenRef.current) {
+      const prefill = {};
+      for (const s of unmarked) {
+        prefill[s.signup_id] =
+          s.status === "checked_in" ? "attended" : "no_show";
+      }
+      setDecisions(prefill);
     }
-    setDecisions(prefill);
+    wasOpenRef.current = isOpen;
   }, [isOpen, unmarked]);
 
   function mark(signupId, decision) {

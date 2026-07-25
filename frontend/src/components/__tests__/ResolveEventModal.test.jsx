@@ -103,6 +103,87 @@ describe("prefill from check-in state (2026-07-24 fix)", () => {
   });
 });
 
+describe("live roster updates while open (poll/optimistic refresh)", () => {
+  function rerenderModal(rerender, props = {}) {
+    rerender(
+      <ResolveEventModal
+        eventId="ev-1"
+        signups={SIGNUPS}
+        isOpen
+        onClose={() => {}}
+        onResolved={() => {}}
+        {...props}
+      />,
+    );
+  }
+
+  it("preserves manual overrides when the signups prop refreshes", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderModal();
+
+    await user.click(screen.getByLabelText("Mark Ada Lovelace no-show"));
+
+    // Roster poll / optimistic check-in elsewhere: same rows, new references.
+    rerenderModal(rerender, { signups: SIGNUPS.map((s) => ({ ...s })) });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+        attended: [],
+        no_show: ["s-1", "s-2"],
+      }),
+    );
+  });
+
+  it("leaves a mid-session walk-in unmarked and disables Save until decided", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderModal();
+
+    rerenderModal(rerender, {
+      signups: [
+        ...SIGNUPS,
+        { signup_id: "s-3", student_name: "Katherine Johnson", status: "checked_in" },
+      ],
+    });
+
+    expect(screen.getByText("Katherine Johnson")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
+
+    await user.click(screen.getByLabelText("Mark Katherine Johnson attended"));
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+        attended: ["s-1", "s-3"],
+        no_show: ["s-2"],
+      }),
+    );
+  });
+
+  it("re-prefills from current check-in state when reopened after closing", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderModal();
+
+    await user.click(screen.getByLabelText("Mark Ada Lovelace no-show"));
+    rerenderModal(rerender, { isOpen: false });
+
+    // Grace checked in while the modal was closed.
+    rerenderModal(rerender, {
+      signups: [
+        SIGNUPS[0],
+        { ...SIGNUPS[1], status: "checked_in" },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+        attended: ["s-1", "s-2"],
+        no_show: [],
+      }),
+    );
+  });
+});
+
 describe("slot mode", () => {
   it("orientation slot: End orientation title, credit warning, resolveSlot", async () => {
     const user = userEvent.setup();
