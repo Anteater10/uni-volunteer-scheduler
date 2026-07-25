@@ -9,11 +9,17 @@ that is display/filter metadata only and never affects the lookup.
 
 Credit sources
 --------------
-1. ``attendance`` — derived: any prior Signup where the slot_type is ORIENTATION,
-   the signup status is in (attended, checked_in), and the slot's event resolves
-   to the same family_key (via ``module_templates.family_key``).
-2. ``grant`` — explicit row in the ``orientation_credits`` table, written by an
-   organizer ("vouched for") or admin.
+Explicit ``orientation_credits`` rows are the ONLY source of credit (design
+2026-07-24 — grant-on-slot-end). ``source`` records how the row came to be:
+
+1. ``attendance`` — written automatically when an organizer *ends* an
+   orientation slot (``check_in_service.resolve_slot`` / ``resolve_event``)
+   for every volunteer marked attended. Check-in alone grants nothing.
+2. ``grant`` — written manually by an organizer ("vouched for") or admin.
+
+Revoking a row genuinely removes credit — nothing re-derives it from the
+underlying signup. Pre-existing attendance was backfilled into rows by
+migration ``0029_backfill_orientation_attendance_credits``.
 
 Fail-closed rule
 ----------------
@@ -38,7 +44,6 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -46,11 +51,6 @@ from ..models import (
     ModuleTemplate,
     OrientationCredit,
     OrientationCreditSource,
-    Signup,
-    SignupStatus,
-    Slot,
-    SlotType,
-    Volunteer,
 )
 from ..schemas import OrientationStatusRead
 
@@ -77,42 +77,11 @@ def family_for_event(db: Session, event_id) -> Optional[str]:
     return tmpl.family_key or tmpl.slug
 
 
-def _latest_attendance(
+def _latest_active_credit(
     db: Session, email: str, family_key: str
-) -> tuple[bool, Optional[datetime]]:
-    """Return (has_attendance, most_recent_timestamp) for (email, family_key).
-
-    The returned timestamp may be None even when ``has_attendance`` is True —
-    legacy signups occasionally have status=attended without ``checked_in_at``
-    set. In that case the signup still counts for credit purposes.
-    """
-    row = (
-        db.query(Signup)
-        .join(Slot, Slot.id == Signup.slot_id)
-        .join(Volunteer, Volunteer.id == Signup.volunteer_id)
-        .join(Event, Event.id == Slot.event_id)
-        .outerjoin(ModuleTemplate, ModuleTemplate.slug == Event.module_slug)
-        .filter(
-            Volunteer.email == email.lower().strip(),
-            Slot.slot_type == SlotType.ORIENTATION,
-            Signup.status.in_([SignupStatus.attended, SignupStatus.checked_in]),
-            or_(
-                ModuleTemplate.family_key == family_key,
-                Event.module_slug == family_key,
-            ),
-        )
-        .order_by(Signup.checked_in_at.desc().nullslast())
-        .first()
-    )
-    if row is None:
-        return (False, None)
-    return (True, row.checked_in_at)
-
-
-def _latest_grant_ts(
-    db: Session, email: str, family_key: str
-) -> Optional[datetime]:
-    row = (
+) -> Optional[OrientationCredit]:
+    """Most recent unrevoked credit row for (email, family_key), or None."""
+    return (
         db.query(OrientationCredit)
         .filter(
             OrientationCredit.volunteer_email == email.lower().strip(),
@@ -122,7 +91,11 @@ def _latest_grant_ts(
         .order_by(OrientationCredit.granted_at.desc())
         .first()
     )
-    return row.granted_at if row else None
+
+
+def has_active_credit(db: Session, email: str, family_key: str) -> bool:
+    """True when an unrevoked credit row exists for (email, family_key)."""
+    return _latest_active_credit(db, email, family_key) is not None
 
 
 def has_orientation_credit(
@@ -132,12 +105,11 @@ def has_orientation_credit(
 ) -> OrientationStatusRead:
     """Return whether ``email`` has orientation credit for ``family_key``.
 
-    Fail-closed for ``family_key=None``: returns ``has_credit=False``. A credit
-    only exists for a specific module family, so "no module to check against"
-    means "no credit found." Credit is permanent — quarters never gate it.
-
-    Source priority: attendance wins over grant when both exist. The returned
-    ``last_attended_at`` is the more-recent of the two.
+    Answered purely from ``orientation_credits`` rows — attendance earns a row
+    when the orientation slot is ended, never implicitly. Fail-closed for
+    ``family_key=None``: returns ``has_credit=False``. A credit only exists
+    for a specific module family, so "no module to check against" means "no
+    credit found." Credit is permanent — quarters never gate it.
     """
     if family_key is None:
         return OrientationStatusRead(
@@ -147,37 +119,13 @@ def has_orientation_credit(
             source=None,
             family_key=None,
         )
-    has_attended, attended_ts = _latest_attendance(db, email, family_key)
-    grant_ts = _latest_grant_ts(db, email, family_key)
-
-    source: Optional[str] = None
-    last_ts: Optional[datetime] = None
-    if has_attended and grant_ts is not None:
-        # Both sources: prefer the one with the more-recent timestamp. Attendance
-        # rows with a null timestamp still outrank a grant only when the grant is
-        # also older — otherwise the grant wins the "last_attended_at" display.
-        if attended_ts is not None and attended_ts >= grant_ts:
-            source = "attendance"
-            last_ts = attended_ts
-        elif attended_ts is None:
-            source = "attendance"
-            last_ts = grant_ts  # best timestamp we have to surface
-        else:
-            source = "grant"
-            last_ts = grant_ts
-    elif has_attended:
-        source = "attendance"
-        last_ts = attended_ts
-    elif grant_ts is not None:
-        source = "grant"
-        last_ts = grant_ts
-
-    has_credit = source is not None
+    credit = _latest_active_credit(db, email, family_key)
+    has_credit = credit is not None
     return OrientationStatusRead(
         has_attended_orientation=has_credit,
-        last_attended_at=last_ts,
+        last_attended_at=credit.granted_at if credit else None,
         has_credit=has_credit,
-        source=source,
+        source=credit.source.value if credit else None,
         family_key=family_key,
     )
 
@@ -201,11 +149,13 @@ def grant_orientation_credit(
     quarter_id: Optional[UUID] = None,
     granted_by_user_id: Optional[UUID] = None,
     notes: Optional[str] = None,
+    source: OrientationCreditSource = OrientationCreditSource.grant,
 ) -> OrientationCredit:
     """Create an explicit orientation_credits row.
 
     ``quarter_id`` records which quarter the credit was earned in — display
     metadata only; the credit is honored in every quarter regardless.
+    ``source=attendance`` marks rows written by the slot-resolve auto-grant.
 
     Caller owns the transaction (no commit here). Duplicates are allowed — the
     table is an append-only audit trail; the lookup collapses them to the most
@@ -215,7 +165,7 @@ def grant_orientation_credit(
         volunteer_email=email.lower().strip(),
         family_key=family_key,
         quarter_id=quarter_id,
-        source=OrientationCreditSource.grant,
+        source=source,
         granted_by_user_id=granted_by_user_id,
         notes=notes,
     )

@@ -12,6 +12,7 @@ import api from "../lib/api";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 import SideDrawer from "../components/admin/SideDrawer";
 import RoleBadge from "../components/admin/RoleBadge";
+import AdminPageHeader from "../components/admin/AdminPageHeader";
 import {
   Button,
   Input,
@@ -149,24 +150,20 @@ export default function UsersAdminPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-5xl font-bold tracking-tight">Users</h1>
-          <p className="text-xl text-[var(--color-fg-muted)] mt-3">
-            People who can sign into this admin panel. Invite organizers and
-            other admins — students don't have accounts.
-          </p>
-        </div>
+      <AdminPageHeader
+        title="Users"
+        subtitle="People who can sign into this admin panel. Invite organizers and other admins — students don't have accounts."
+      >
         <button
           onClick={() => {
             setCreateError(null);
             setInviteOpen(true);
           }}
-          className="px-8 py-4 text-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow"
+          className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow"
         >
           Invite user
         </button>
-      </div>
+      </AdminPageHeader>
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-4">
@@ -175,20 +172,20 @@ export default function UsersAdminPage() {
           placeholder="Search name or email..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 min-w-[20rem] rounded-xl border border-gray-300 px-5 py-4 text-xl"
+          className="flex-1 min-w-[20rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
         <select
           id="role-filter"
           aria-label="Filter by role"
           value={roleFilter}
           onChange={(e) => setRoleFilter(e.target.value)}
-          className="rounded-xl border border-gray-300 px-5 py-4 text-xl bg-white"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
         >
           <option value="all">All roles</option>
           <option value="admin">Admin</option>
           <option value="organizer">Organizer</option>
         </select>
-        <label className="flex items-center gap-2 text-lg">
+        <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={showDeactivated}
@@ -221,14 +218,14 @@ export default function UsersAdminPage() {
           role="region"
           aria-label="Users table"
         >
-          <table className="min-w-full text-2xl">
-            <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
               <tr>
-                <th className="py-5 px-6">Name</th>
-                <th className="py-5 px-6">Email</th>
-                <th className="py-5 px-6">Role</th>
-                <th className="py-5 px-6">Last login</th>
-                <th className="py-5 px-6">Status</th>
+                <th className="py-3 px-4">Name</th>
+                <th className="py-3 px-4">Email</th>
+                <th className="py-3 px-4">Role</th>
+                <th className="py-3 px-4">Last login</th>
+                <th className="py-3 px-4">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -245,17 +242,17 @@ export default function UsersAdminPage() {
                       setDrawerUser(u);
                     }}
                   >
-                    <td className="py-6 px-6 font-semibold">
+                    <td className="py-3 px-4 font-semibold">
                       {u.name || "(no name)"}
                     </td>
-                    <td className="py-6 px-6 text-gray-800">{u.email}</td>
-                    <td className="py-6 px-6">
+                    <td className="py-3 px-4 text-gray-800">{u.email}</td>
+                    <td className="py-3 px-4">
                       <RoleBadge role={u.role} />
                     </td>
-                    <td className="py-6 px-6 text-gray-600">
+                    <td className="py-3 px-4 text-gray-600">
                       {lastLoginLabel(u.last_login_at)}
                     </td>
-                    <td className="py-6 px-6">
+                    <td className="py-3 px-4">
                       <span
                         className={`inline-flex items-center rounded-full px-3 py-1 text-base font-medium ${statusPillClass(
                           !inactive,
@@ -394,7 +391,7 @@ function InviteForm({ onSubmit, submitting, error }) {
   const [role, setRole] = useState("organizer");
 
   const fieldClass =
-    "w-full rounded-xl border border-gray-300 px-4 py-3 text-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500";
+    "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500";
 
   return (
     <form
@@ -459,7 +456,7 @@ function InviteForm({ onSubmit, submitting, error }) {
         <button
           type="submit"
           disabled={submitting}
-          className="px-6 py-3 text-lg font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow disabled:opacity-50"
+          className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow disabled:opacity-50"
         >
           {submitting ? "Sending..." : "Send invite"}
         </button>

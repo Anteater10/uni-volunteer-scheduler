@@ -6,6 +6,8 @@ import React, {
   useState,
 } from "react";
 import { Link, Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../lib/api";
 import { useAuth } from "../../state/useAuth";
 import DesktopOnlyBanner, {
   useIsDesktop,
@@ -29,40 +31,55 @@ export const AdminPageTitleContext = createContext({
 export function useAdminPageTitle(title) {
   const ctx = useContext(AdminPageTitleContext);
   useEffect(() => {
+    // Pass null/undefined to opt out of breadcrumb management — used by
+    // sections rendered embedded inside another page (e.g. the Operations
+    // page hosts Reminders) so they don't clobber the host's title.
+    if (title == null) return undefined;
     ctx.setTitle(title);
     return () => ctx.setTitle("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title]);
 }
 
-// Phase 16 Plan 01 (ADMIN-01): prereq-override nav item retired.
-// Phase 17/18 still own Templates + Imports — they stay visible because they
-// route to existing sections, but Phase 16 does not redesign them.
+// Nav is ordered by an admin's actual workflow, grouped by domain:
+//   1. Home            — Overview
+//   2. Core event work — Events → Operations (create events, then run them)
+//   3. Content library — Templates → Imports (the modules events draw from)
+//   4. People/credits  — Orientation Credits → Users
+//   5. Oversight/data  — Exports → Audit Logs (Audit Logs is toggle-gated)
+//   6. Advanced        — Copilot feedback (flag-gated)
+// Quarters (Issue #24) is intentionally NOT here — it's edited ~once a
+// quarter, so it lives in the "Manage quarters" drawer on Overview. Its
+// /admin/quarters route still exists for setup + retrospective.
 const allNavItems = [
+  // 1. Home
   { to: "/admin", label: "Overview", end: true, roles: ["admin"] },
+
+  // 2. Core event work
   { to: "/admin/events", label: "Events", roles: ["admin", "organizer"] },
-  // Issue #24 — admin-entered quarters (season/year/session + dates)
-  { to: "/admin/quarters", label: "Quarters", roles: ["admin"] },
-  { to: "/admin/preview", label: "Preview", roles: ["admin", "organizer"] },
-  { to: "/admin/users", label: "Users", roles: ["admin"] },
-  { to: "/admin/audit-logs", label: "Audit Logs", roles: ["admin"] },
-  { to: "/admin/exports", label: "Exports", roles: ["admin"] },
+  // Day-of console: schedule/rosters + reminder-email queue (formerly the
+  // separate "Preview" and "Reminders" tabs).
+  { to: "/admin/operations", label: "Operations", roles: ["admin", "organizer"] },
+
+  // 3. Content library the events are built from
   { to: "/admin/templates", label: "Templates", roles: ["admin", "organizer"] },
   { to: "/admin/imports", label: "Imports", roles: ["admin", "organizer"] },
+
+  // 4. People + credits
   // Phase 21 — orientation credit engine
   {
     to: "/admin/orientation-credits",
     label: "Orientation Credits",
     roles: ["admin"],
   },
-  // Phase 24 — scheduled reminder emails
-  {
-    to: "/admin/reminders",
-    label: "Reminders",
-    roles: ["admin", "organizer"],
-  },
-  // Phase 35-01 — copilot human-feedback aggregates. Hidden alongside the
-  // FAB when the copilot flag is off (same gate as CopilotFab).
+  { to: "/admin/users", label: "Users", roles: ["admin"] },
+
+  // 5. Oversight + data out
+  { to: "/admin/exports", label: "Exports", roles: ["admin"] },
+  { to: "/admin/audit-logs", label: "Audit Logs", roles: ["admin"] },
+
+  // 6. Advanced — Phase 35-01 copilot human-feedback aggregates. Hidden
+  // alongside the FAB when the copilot flag is off (same gate as CopilotFab).
   {
     to: "/admin/copilot-feedback",
     label: "Copilot feedback",
@@ -124,8 +141,21 @@ export default function AdminLayout() {
   const copilotEnabled =
     import.meta.env.VITE_COPILOT_ENABLED === "true" ||
     import.meta.env.VITE_COPILOT_ENABLED === "1";
+  // Audit Logs tab is gated behind a site setting (off by default). Shares
+  // the ["adminSiteSettings"] cache key with SiteSettingsCard so toggling it
+  // there updates this nav live. Admin-only; organizers can't read settings.
+  const siteSettingsQ = useQuery({
+    queryKey: ["adminSiteSettings"],
+    queryFn: () => api.admin.siteSettings.get(),
+    enabled: role === "admin" && typeof api?.admin?.siteSettings?.get === "function",
+  });
+  const showAuditLogs = siteSettingsQ.data?.show_audit_logs_tab ?? false;
+
   const navItems = allNavItems.filter(
-    (item) => item.roles.includes(role) && (!item.copilotOnly || copilotEnabled),
+    (item) =>
+      item.roles.includes(role) &&
+      (!item.copilotOnly || copilotEnabled) &&
+      (item.to !== "/admin/audit-logs" || showAuditLogs),
   );
 
   const rootLabel = role === "organizer" ? "Organizer" : "Admin";

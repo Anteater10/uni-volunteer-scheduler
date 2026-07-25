@@ -10,6 +10,7 @@ import api from "../../lib/api";
 import { useAdminPageTitle } from "./AdminLayout";
 import SideDrawer from "../../components/admin/SideDrawer";
 import Pagination from "../../components/admin/Pagination";
+import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import FormFieldsDrawer from "../../components/admin/FormFieldsDrawer";
 import {
   Button,
@@ -495,20 +496,17 @@ export default function TemplatesSection() {
   return (
     <div className="space-y-4">
       {/* Page header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-5xl font-bold tracking-tight">Templates</h1>
-          <p className="text-xl text-[var(--color-fg-muted)] mt-3">
-            Module templates define the sessions, capacity, and materials for each SciTrek module.
-          </p>
-        </div>
+      <AdminPageHeader
+        title="Templates"
+        subtitle="Module templates define the sessions, capacity, and materials for each SciTrek module."
+      >
         <button
           onClick={openCreate}
-          className="px-8 py-4 text-xl font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow"
+          className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow"
         >
           + New template
         </button>
-      </div>
+      </AdminPageHeader>
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-4">
@@ -517,21 +515,21 @@ export default function TemplatesSection() {
           placeholder="Search by name..."
           value={search}
           onChange={handleSearchChange}
-          className="flex-1 min-w-[20rem] rounded-xl border border-gray-300 px-5 py-4 text-xl"
+          className="flex-1 min-w-[20rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
         <select
           id="tmpl-type"
           aria-label="Filter by type"
           value={typeFilter}
           onChange={handleTypeFilterChange}
-          className="rounded-xl border border-gray-300 px-5 py-4 text-xl bg-white"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
         >
           <option value="all">All types</option>
           <option value="module">Module</option>
           <option value="seminar">Seminar</option>
           <option value="orientation">Orientation</option>
         </select>
-        <label className="flex items-center gap-2 text-lg" htmlFor="tmpl-archived">
+        <label className="flex items-center gap-2 text-sm" htmlFor="tmpl-archived">
           <input
             id="tmpl-archived"
             type="checkbox"
@@ -564,16 +562,16 @@ export default function TemplatesSection() {
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-            <table className="min-w-full text-2xl">
-              <thead className="bg-gray-50 text-left text-xl uppercase tracking-wide text-gray-600">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
                 <tr>
-                  <th className="py-5 px-6">Name</th>
-                  <th className="py-5 px-6">Type</th>
-                  <th className="py-5 px-6">Duration</th>
-                  <th className="py-5 px-6">Sessions</th>
-                  <th className="py-5 px-6">Capacity</th>
-                  {showArchived && <th className="py-5 px-6">Status</th>}
-                  <th className="py-5 px-6 text-right">Actions</th>
+                  <th className="py-3 px-4">Name</th>
+                  <th className="py-3 px-4">Type</th>
+                  <th className="py-3 px-4">Duration</th>
+                  <th className="py-3 px-4">Sessions</th>
+                  <th className="py-3 px-4">Capacity</th>
+                  {showArchived && <th className="py-3 px-4">Status</th>}
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -587,8 +585,8 @@ export default function TemplatesSection() {
                       }`}
                       onClick={() => !isArchived && openEdit(t)}
                     >
-                      <td className="py-6 px-6 font-semibold">{t.name}</td>
-                      <td className="py-6 px-6">
+                      <td className="py-3 px-4 font-semibold">{t.name}</td>
+                      <td className="py-3 px-4">
                         <span
                           className={`inline-flex items-center rounded-full px-3 py-1 text-base font-medium ${
                             TYPE_BADGE[t.type] || "bg-gray-100 text-gray-700"
@@ -597,15 +595,15 @@ export default function TemplatesSection() {
                           {capitalize(t.type)}
                         </span>
                       </td>
-                      <td className="py-6 px-6 text-gray-800">{t.duration_minutes} min</td>
-                      <td className="py-6 px-6 text-gray-800">
+                      <td className="py-3 px-4 text-gray-800">{t.duration_minutes} min</td>
+                      <td className="py-3 px-4 text-gray-800">
                         {t.session_count === 1
                           ? "1 session"
                           : `${t.session_count} sessions`}
                       </td>
-                      <td className="py-6 px-6 text-gray-800">{t.default_capacity}</td>
+                      <td className="py-3 px-4 text-gray-800">{t.default_capacity}</td>
                       {showArchived && (
-                        <td className="py-6 px-6">
+                        <td className="py-3 px-4">
                           {isArchived ? (
                             <span className="inline-flex items-center rounded-full px-3 py-1 text-base font-medium bg-gray-100 text-gray-600">
                               Archived
@@ -618,7 +616,7 @@ export default function TemplatesSection() {
                         </td>
                       )}
                       <td
-                        className="py-6 px-6 text-right space-x-5 whitespace-nowrap"
+                        className="py-3 px-4 text-right space-x-5 whitespace-nowrap"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {isArchived ? (

@@ -155,6 +155,9 @@ export default function OrganizerRosterPage() {
   const backTarget =
     role === "admin" ? `/admin/events/${eventId}` : "/admin/events";
   const [resolveOpen, setResolveOpen] = useState(false);
+  // Grant-on-slot-end (2026-07-24): per-slot "End slot" — holds the slot
+  // group being resolved, or null when the modal is closed.
+  const [resolveSlotGroup, setResolveSlotGroup] = useState(null);
   const [quickFieldOpen, setQuickFieldOpen] = useState(false);
   // Phase 26 — broadcast modal
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -403,9 +406,22 @@ export default function OrganizerRosterPage() {
                 </span>
               ) : null}
             </h2>
-            <span className="text-sm text-[var(--color-fg-muted)]">
-              {group.checkedIn}/{group.expected} checked in
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-[var(--color-fg-muted)]">
+                {group.checkedIn}/{group.expected} checked in
+              </span>
+              {group.key !== "unknown" && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setResolveSlotGroup(group)}
+                >
+                  {group.slotType === "orientation"
+                    ? "End orientation"
+                    : "End slot"}
+                </Button>
+              )}
+            </div>
           </div>
           <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {group.rows.map((row) => {
@@ -469,6 +485,24 @@ export default function OrganizerRosterPage() {
         signups={roster.rows}
         isOpen={resolveOpen}
         onClose={() => setResolveOpen(false)}
+        onResolved={() => {
+          qc.invalidateQueries({ queryKey: ["roster", eventId] });
+        }}
+      />
+
+      <ResolveEventModal
+        eventId={eventId}
+        signups={resolveSlotGroup ? resolveSlotGroup.rows : []}
+        slot={
+          resolveSlotGroup
+            ? {
+                id: resolveSlotGroup.key,
+                slot_type: resolveSlotGroup.slotType,
+              }
+            : null
+        }
+        isOpen={resolveSlotGroup !== null}
+        onClose={() => setResolveSlotGroup(null)}
         onResolved={() => {
           qc.invalidateQueries({ queryKey: ["roster", eventId] });
         }}

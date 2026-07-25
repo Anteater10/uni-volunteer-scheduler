@@ -509,3 +509,160 @@ describe("isValidPhone (PART-05)", () => {
     expect(isValidPhone("+1234567")).toBe(false); // E.164 too short (under 8 digits)
   });
 });
+
+// ---------------------------------------------------------------------------
+// Orientation requirement gate — server-enforced, modal steers instead of
+// offering a bypass when the event offers orientation sessions.
+// ---------------------------------------------------------------------------
+
+describe("EventDetailPage — orientation requirement gate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.public.getEvent.mockResolvedValue(MOCK_EVENT);
+  });
+
+  async function selectPeriodAndSubmit(container) {
+    await clickSignUpForLabel(/^Period 1$/);
+    await screen.findByLabelText(/^first name$/i);
+    await fillIdentityForm();
+    clickFormSubmitButton(container);
+  }
+
+  it("blocks period-only signup without credit when the event offers orientation", async () => {
+    api.public.orientationCheck.mockResolvedValue({ has_credit: false });
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    await selectPeriodAndSubmit(container);
+
+    expect(
+      await screen.findByRole("button", { name: /pick an orientation session/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /i've done orientation/i }),
+    ).not.toBeInTheDocument();
+    expect(api.public.createSignup).not.toHaveBeenCalled();
+  });
+
+  it("returns to the schedule when picking an orientation session", async () => {
+    api.public.orientationCheck.mockResolvedValue({ has_credit: false });
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    await selectPeriodAndSubmit(container);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /pick an orientation session/i }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/^first name$/i)).not.toBeInTheDocument(),
+    );
+    expect(api.public.createSignup).not.toHaveBeenCalled();
+  });
+
+  it("keeps the advisory click-through when the event has no orientation slots", async () => {
+    api.public.getEvent.mockResolvedValue({
+      ...MOCK_EVENT,
+      slots: [PERIOD_SLOT, FULL_SLOT],
+    });
+    api.public.orientationCheck.mockResolvedValue({ has_credit: false });
+    api.public.createSignup.mockResolvedValue({
+      volunteer_id: "vol-1",
+      signup_ids: ["sig-1"],
+      magic_link_sent: true,
+    });
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    await selectPeriodAndSubmit(container);
+
+    const continueBtn = await screen.findByRole("button", {
+      name: /i've done orientation/i,
+    });
+    fireEvent.click(continueBtn);
+
+    await waitFor(() => expect(api.public.createSignup).toHaveBeenCalled());
+  });
+
+  it("proceeds to submit when the credit check errors (server decides)", async () => {
+    api.public.orientationCheck.mockRejectedValue(new Error("boom"));
+    api.public.createSignup.mockResolvedValue({
+      volunteer_id: "vol-1",
+      signup_ids: ["sig-1"],
+      magic_link_sent: true,
+    });
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    await selectPeriodAndSubmit(container);
+
+    await waitFor(() => expect(api.public.createSignup).toHaveBeenCalled());
+  });
+
+  it("maps a server ORIENTATION_REQUIRED rejection to the required modal", async () => {
+    api.public.orientationCheck.mockResolvedValue({ has_credit: true });
+    const err = new Error("orientation required");
+    err.status = 422;
+    err.code = "ORIENTATION_REQUIRED";
+    api.public.createSignup.mockRejectedValue(err);
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    await selectPeriodAndSubmit(container);
+
+    expect(
+      await screen.findByRole("button", { name: /pick an orientation session/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+// The modal's required/advisory variant derives from the slots cache; the
+// gate must refetch the event so client and server can't disagree on stale
+// slot data (e.g. organizer added/removed orientation slots mid-visit).
+describe("EventDetailPage — orientation gate refreshes slot data", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.public.getEvent.mockResolvedValue(MOCK_EVENT);
+  });
+
+  it("refetches the event when the server rejects with ORIENTATION_REQUIRED", async () => {
+    api.public.orientationCheck.mockResolvedValue({ has_credit: true });
+    const err = new Error("orientation required");
+    err.status = 422;
+    err.code = "ORIENTATION_REQUIRED";
+    api.public.createSignup.mockRejectedValue(err);
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    const callsAfterLoad = api.public.getEvent.mock.calls.length;
+
+    await clickSignUpForLabel(/^Period 1$/);
+    await screen.findByLabelText(/^first name$/i);
+    await fillIdentityForm();
+    clickFormSubmitButton(container);
+
+    await screen.findByRole("button", { name: /pick an orientation session/i });
+    await waitFor(() =>
+      expect(api.public.getEvent.mock.calls.length).toBeGreaterThan(callsAfterLoad),
+    );
+  });
+
+  it("refetches the event when the pre-submit credit check opens the modal", async () => {
+    api.public.orientationCheck.mockResolvedValue({ has_credit: false });
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    const callsAfterLoad = api.public.getEvent.mock.calls.length;
+
+    await clickSignUpForLabel(/^Period 1$/);
+    await screen.findByLabelText(/^first name$/i);
+    await fillIdentityForm();
+    clickFormSubmitButton(container);
+
+    await screen.findByRole("button", { name: /pick an orientation session/i });
+    await waitFor(() =>
+      expect(api.public.getEvent.mock.calls.length).toBeGreaterThan(callsAfterLoad),
+    );
+  });
+});

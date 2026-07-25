@@ -29,6 +29,7 @@ from ..services.check_in_service import (
     event_check_in_by_email,
     lookup_check_in_options,
     resolve_event,
+    resolve_slot,
     self_check_in,
     undo_check_in,
 )
@@ -176,6 +177,47 @@ def resolve_event_endpoint(
     ensure_event_owner_or_admin(event, current_user)
     try:
         resolve_event(db, event_id, current_user.id, body.attended, body.no_show)
+        roster = _build_roster(db, event)
+        db.commit()
+        return roster
+    except InvalidTransitionError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INVALID_TRANSITION",
+                "from": e.from_status.value,
+                "to": e.to_status.value,
+            },
+        )
+    except LookupError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post(
+    "/slots/{slot_id}/resolve",
+    response_model=RosterResponse,
+)
+def resolve_slot_endpoint(
+    slot_id: UUID,
+    body: ResolveEventRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+):
+    """Per-slot resolve ("End slot"): mark this slot's signups attended or
+    no-show. Ending an ORIENTATION slot auto-grants orientation credit to
+    every volunteer marked attended (design 2026-07-24).
+    Owner-scoped: organizers may only resolve slots of their own events."""
+    slot = db.get(Slot, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Slot not found")
+    event = db.get(Event, slot.event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_owner_or_admin(event, current_user)
+    try:
+        resolve_slot(db, slot_id, current_user.id, body.attended, body.no_show)
         roster = _build_roster(db, event)
         db.commit()
         return roster

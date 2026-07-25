@@ -281,15 +281,19 @@ class TestPublicCheckNoQuarterEvent:
         )
         db_session.add(vol)
         db_session.flush()
-        db_session.add(
-            models.Signup(
-                id=uuid.uuid4(),
-                volunteer_id=vol.id,
-                slot_id=slot.id,
-                status=models.SignupStatus.attended,
-                checked_in_at=datetime.now(timezone.utc),
-            )
+        signup = models.Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=models.SignupStatus.checked_in,
+            checked_in_at=datetime.now(timezone.utc),
         )
+        db_session.add(signup)
+        db_session.flush()
+        # Grant-on-slot-end: credit is written when the slot is resolved.
+        from app.services.check_in_service import resolve_slot
+
+        resolve_slot(db_session, slot.id, owner.id, [signup.id], [])
         uncovered = _make_event(
             db_session, owner_id=owner.id, module_slug="crispr", quarter=None
         )
