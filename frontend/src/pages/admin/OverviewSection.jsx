@@ -159,9 +159,18 @@ export default function OverviewSection() {
         <Card>
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
+              {/* The day count is shown alongside the week count on purpose:
+                  a partial final week rounds "of" up, so on a quarter that
+                  isn't a whole number of weeks "Week 1 of 3" and "7%" look
+                  contradictory until you can see the real 15-day span. */}
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium">
                   Week {qp.week} of {qp.of}
+                  {qp.days ? (
+                    <span className="ml-2 font-normal text-gray-500">
+                      · day {qp.day} of {qp.days}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="text-gray-600">
                   {quarterPct}% through the quarter

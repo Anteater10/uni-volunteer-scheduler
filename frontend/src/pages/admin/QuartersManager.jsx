@@ -33,6 +33,11 @@ const EMPTY_FORM = {
   end_date: "",
 };
 
+// The end date is inclusive, so a range is only a whole number of weeks when
+// (span + 1) divides by 7. A short final week is legitimate — a 40-day summer
+// session really does have a 6th week of programming — but a 1-day week 3 is
+// almost always an off-by-one on the end date, so name the tail explicitly
+// rather than reporting a bare week count the admin has to verify by hand.
 function weeksPreview(startDate, endDate) {
   if (!startDate || !endDate) return null;
   const start = new Date(`${startDate}T00:00:00Z`);
@@ -40,8 +45,19 @@ function weeksPreview(startDate, endDate) {
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
     return null;
   }
-  const days = Math.floor((end.getTime() - start.getTime()) / (24 * 3600 * 1000));
-  return Math.floor(days / 7) + 1;
+  const span = Math.floor((end.getTime() - start.getTime()) / (24 * 3600 * 1000));
+  const days = span + 1;
+  const weeks = Math.floor(span / 7) + 1;
+  const tailDays = days - (weeks - 1) * 7;
+  const evenEnd = new Date(end.getTime() - tailDays * 24 * 3600 * 1000);
+  return {
+    weeks,
+    days,
+    tailDays,
+    // Suggested end date that would drop the stub and leave whole weeks.
+    evenEndDate: evenEnd.toISOString().slice(0, 10),
+    evenWeeks: weeks - 1,
+  };
 }
 
 function relinkToast(prefix, summary) {
@@ -391,9 +407,32 @@ export default function QuartersManager({ embedded = false }) {
           >
             {previewWeeks !== null ? (
               <>
-                → <strong>{previewWeeks} weeks</strong> · Week 1 starts{" "}
+                → <strong>{previewWeeks.weeks} weeks</strong> ·{" "}
+                {previewWeeks.days} days · Week 1 starts{" "}
                 {formatDate(form.start_date)}. Week numbers fill in
                 automatically — dates are the only input.
+                {previewWeeks.tailDays < 7 && previewWeeks.evenWeeks >= 1 ? (
+                  <div
+                    className="mt-2 text-amber-700"
+                    data-testid="weeks-preview-stub"
+                  >
+                    ⚠ Week {previewWeeks.weeks} is only{" "}
+                    {previewWeeks.tailDays} day
+                    {previewWeeks.tailDays === 1 ? "" : "s"} long. End on{" "}
+                    {formatDate(previewWeeks.evenEndDate)} instead for{" "}
+                    {previewWeeks.evenWeeks} even week
+                    {previewWeeks.evenWeeks === 1 ? "" : "s"}.{" "}
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() =>
+                        setForm({ ...form, end_date: previewWeeks.evenEndDate })
+                      }
+                    >
+                      Use {formatDate(previewWeeks.evenEndDate)}
+                    </button>
+                  </div>
+                ) : null}
               </>
             ) : (
               <>Enter both dates to see the week count.</>
