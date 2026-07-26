@@ -52,10 +52,8 @@ function formatSlotLine(slot) {
  *   onDismiss     {function}   — called when user clicks "Done"
  *   event         {object?}    — OPTIONAL. When provided alongside `slot`, enables
  *                                the Add-to-Calendar PRIMARY button (PART-13 surface B).
- *   slot          {object?}    — OPTIONAL. The single slot to encode into .ics.
- *                                Distinct from `slots` (the display list) so callers
- *                                can show multiple confirmed slots but only download
- *                                a calendar entry for the one most-recently confirmed.
+ *   slot          {object?}    — OPTIONAL. A single slot to encode instead of `slots`,
+ *                                for callers that confirm one session at a time.
  */
 export default function SignupSuccessCard({
   open,
@@ -65,6 +63,13 @@ export default function SignupSuccessCard({
   event,
   slot,
 }) {
+  // What the calendar buttons export. `slot` used to be required, which meant
+  // the buttons never appeared for the signup flow — it confirms a list of
+  // slots, not one — so the most useful moment to add to a calendar had no way
+  // to do it. Either shape works now.
+  const calendarSlots = slots?.length ? slots : slot ? [slot] : [];
+  const canAddToCalendar = Boolean(event) && calendarSlots.length > 0;
+
   return (
     <Modal open={open} onClose={onDismiss} title="Check your email!">
       <p className="text-sm text-[var(--color-fg)]">
@@ -91,37 +96,42 @@ export default function SignupSuccessCard({
         </div>
       )}
 
-      {event && slot ? (
+      {canAddToCalendar ? (
         <>
           <Button
             type="button"
             variant="primary"
             className="w-full min-h-11 mt-5"
             onClick={() => {
+              // Google's template URL carries one event, so this takes the
+              // first session. The .ics button below covers all of them.
               const url = buildGoogleCalendarUrl({
                 event,
-                slot,
+                slot: calendarSlots[0],
                 origin: window.location.origin,
               });
               window.open(url, "_blank", "noopener,noreferrer");
             }}
           >
-            Add to Google Calendar
+            {calendarSlots.length > 1
+              ? "Add first session to Google Calendar"
+              : "Add to Google Calendar"}
           </Button>
           <Button
             type="button"
             variant="secondary"
             className="w-full min-h-11 mt-3"
             onClick={() => {
-              const dateStr =
-                event.start_date ||
-                (slot.start_time
-                  ? new Date(slot.start_time).toISOString().slice(0, 10)
-                  : "event");
-              const slugPart = event.slug || event.id;
-              const filename = `scitrek-${slugPart}-${dateStr}.ics`;
-              downloadIcs({ event, slot, filename });
-              toast.success("Calendar file saved. Open it to add to your calendar.");
+              // Every slot the volunteer just took, not only the first — one
+              // file that fills in their whole commitment. The filename is
+              // derived in the lib so it can't pick up an ISO timestamp's
+              // colons, which Windows rejects.
+              downloadIcs({ event, slots: calendarSlots });
+              toast.success(
+                calendarSlots.length > 1
+                  ? `Calendar file saved with ${calendarSlots.length} sessions. Open it to add them.`
+                  : "Calendar file saved. Open it to add to your calendar.",
+              );
             }}
           >
             Download .ics (Apple / Outlook)
@@ -131,7 +141,7 @@ export default function SignupSuccessCard({
 
       <Button
         type="button"
-        variant={event && slot ? "secondary" : "primary"}
+        variant={canAddToCalendar ? "secondary" : "primary"}
         className="w-full min-h-11 mt-3"
         onClick={onDismiss}
       >

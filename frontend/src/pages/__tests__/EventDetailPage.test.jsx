@@ -440,7 +440,7 @@ describe("EventDetailPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("clicking 'Add to calendar' calls downloadIcs with UI-SPEC filename and shows success toast", async () => {
+  it("clicking 'Add to calendar' exports the chosen slots and shows success toast", async () => {
     renderDetailPage();
     await screen.findByText("CRISPR at Carpinteria HS");
 
@@ -449,11 +449,12 @@ describe("EventDetailPage", () => {
     expect(downloadIcs).toHaveBeenCalledTimes(1);
     const callArg = downloadIcs.mock.calls[0][0];
     expect(callArg).toHaveProperty("event");
-    expect(callArg).toHaveProperty("slot");
-    expect(callArg).toHaveProperty("filename");
-    expect(callArg.filename).toMatch(/^scitrek-crispr-carpinteria-2026-04-22\.ics$/);
-    // Selection precedence: no selection yet → falls back to first non-full orientation slot
-    expect(callArg.slot.id).toBe("slot-orient-1");
+    // Exports a `slots` array now, not a single `slot` — a volunteer who ticked
+    // several sessions gets all of them in one file. The filename is no longer
+    // passed in either: the page was interpolating a raw ISO timestamp, colons
+    // included, so calendar.js derives and sanitises it instead.
+    expect(callArg.slots.map((s) => s.id)).toEqual(["slot-orient-1"]);
+    expect(callArg).not.toHaveProperty("filename");
 
     expect(toast.success).toHaveBeenCalledWith(
       "Calendar file saved. Open it to add to your calendar."
