@@ -67,8 +67,14 @@ class Settings(BaseSettings):
 
     # --- Phase 30 (v1.4): AI Onboarding Copilot ---
     copilot_enabled: bool = False  # admin feature flag; flip in DB or env to enable
-    copilot_primary_model: str = "openai/gpt-oss-120b:free"
-    copilot_fallback_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    # OpenRouter retired the ":free" tiers of both of these — every copilot
+    # message 404'd with "This model is unavailable for free", for the primary
+    # AND the fallback, so the panel only ever printed "Stream failed:
+    # NotFoundError". These are the paid slugs OpenRouter names in that error.
+    # Both are env-overridable (COPILOT_PRIMARY_MODEL / COPILOT_FALLBACK_MODEL)
+    # if you want to point at something cheaper.
+    copilot_primary_model: str = "openai/gpt-oss-120b"
+    copilot_fallback_model: str = "meta-llama/llama-3.3-70b-instruct"
     copilot_request_timeout_seconds: int = 60
     copilot_max_completion_tokens: int = 1024
     # Phase 33-09: when True the chat endpoint streams ReAct-loop events

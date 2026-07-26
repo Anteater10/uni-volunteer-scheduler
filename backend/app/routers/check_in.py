@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from ..database import get_db
-from ..deps import ensure_event_owner_or_admin, rate_limit, require_role
+from ..deps import ensure_event_staff_access, rate_limit, require_role
 from ..models import Event, Signup, Slot, UserRole
 from ..schemas import (
     CheckInLookupResponse,
@@ -60,10 +60,10 @@ def organizer_check_in(
     db: Session = Depends(get_db),
     current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
 ):
-    """Organizer one-tap check-in. Idempotent. Owner-scoped: organizers may
-    only act on their own events (admin bypasses)."""
+    """Organizer one-tap check-in. Idempotent. Staff-scoped: any admin or
+    organizer may act on any event."""
     event = _load_signup_event(db, signup_id)
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
     try:
         signup = check_in_signup(db, signup_id, current_user.id, via="organizer")
         db.commit()
@@ -95,10 +95,10 @@ def organizer_undo_check_in(
     """Issue #31: revert a mis-tapped check-in (checked_in → confirmed).
 
     Idempotent; resolved states (attended/no_show) 409 — undo covers the
-    tap-slip, not resolution. Owner-scoped like organizer_check_in.
+    tap-slip, not resolution. Staff-scoped like organizer_check_in.
     """
     event = _load_signup_event(db, signup_id)
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
     try:
         signup = undo_check_in(db, signup_id, current_user.id)
         db.commit()
@@ -170,11 +170,11 @@ def resolve_event_endpoint(
     current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
 ):
     """Batch-resolve: mark signups as attended or no-show. Atomic.
-    Owner-scoped: organizers may only resolve their own events."""
+    Staff-scoped: any admin or organizer may resolve any event."""
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
     try:
         resolve_event(db, event_id, current_user.id, body.attended, body.no_show)
         roster = _build_roster(db, event)
@@ -208,14 +208,14 @@ def resolve_slot_endpoint(
     """Per-slot resolve ("End slot"): mark this slot's signups attended or
     no-show. Ending an ORIENTATION slot auto-grants orientation credit to
     every volunteer marked attended (design 2026-07-24).
-    Owner-scoped: organizers may only resolve slots of their own events."""
+    Staff-scoped: any admin or organizer may resolve any slot."""
     slot = db.get(Slot, slot_id)
     if slot is None:
         raise HTTPException(status_code=404, detail="Slot not found")
     event = db.get(Event, slot.event_id)
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
     try:
         resolve_slot(db, slot_id, current_user.id, body.attended, body.no_show)
         roster = _build_roster(db, event)

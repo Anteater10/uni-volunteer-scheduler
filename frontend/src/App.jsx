@@ -40,6 +40,7 @@ import NotificationsPage from "./pages/NotificationsPage";
 import UserSettingsPage from "./pages/UserSettingsPage";
 
 import OrganizerRosterPage from "./pages/OrganizerRosterPage";
+import OrganizerDashboard from "./pages/organizer/OrganizerDashboard";
 
 import AdminLayout from "./pages/admin/AdminLayout";
 import OverviewSection from "./pages/admin/OverviewSection";
@@ -109,6 +110,12 @@ export default function App() {
         {/* Organizer roster — mobile check-in surface */}
         <Route element={<ProtectedRoute roles={["organizer", "admin"]} />}>
           <Route path="organizer" element={<Navigate to="/admin/operations" replace />} />
+          {/* The same schedule as Operations, but outside the admin shell so it
+              renders on a phone. Day-of check-in is a phone job, and every
+              other organizer route lives under /admin/* behind the
+              desktop-only banner — this is how the roster is reachable at a
+              school without a laptop open. */}
+          <Route path="organizer/today" element={<OrganizerDashboard />} />
           <Route path="organizer/events/:eventId" element={<RedirectEventToAdmin />} />
           <Route path="organizer/events/:eventId/roster" element={<OrganizerRosterPage />} />
           {/* Legacy typo path — preserved as redirect for old bookmarks/tests */}

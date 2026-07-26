@@ -3,7 +3,7 @@
 Mounted under ``/api/v1/events/{event_id}`` so the URL reads
 ``POST /events/{event_id}/broadcast`` (BCAST-01). Admin has global
 access; organizers are limited to events they own via the canonical
-``ensure_event_owner_or_admin`` check.
+``ensure_event_staff_access`` check.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, ensure_event_owner_or_admin, redis_client
+from ..deps import require_role, ensure_event_staff_access, redis_client
 from ..services import broadcast_service
 
 router = APIRouter(prefix="/events", tags=["broadcasts"])
@@ -59,7 +59,7 @@ def send_event_broadcast(
     ),
 ):
     event = _load_event_or_404(db, event_id)
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
     _ensure_slot_in_event_or_404(db, event, payload.slot_id)
 
     try:
@@ -107,7 +107,7 @@ def list_event_broadcasts(
     ),
 ):
     event = _load_event_or_404(db, event_id)
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
     rows = broadcast_service.list_recent_broadcasts(db, event.id, days=days)
     return [schemas.BroadcastSummary(**r) for r in rows]
 
@@ -125,7 +125,7 @@ def preview_broadcast_recipients(
     ),
 ):
     event = _load_event_or_404(db, event_id)
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
     _ensure_slot_in_event_or_404(db, event, slot_id)
     return schemas.BroadcastRecipientCount(
         recipient_count=broadcast_service.count_recipients(

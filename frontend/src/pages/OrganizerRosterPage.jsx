@@ -258,13 +258,29 @@ export default function OrganizerRosterPage() {
   }
 
   if (rosterQ.error) {
+    // Every failure used to read "you appear to be offline", so a permission
+    // problem or a bad event id looked like a network blip and gave the
+    // organizer nothing to act on — and no way to retry.
+    const status = rosterQ.error?.status;
+    const message =
+      status === 403
+        ? "You don't have access to this event's roster. Ask an admin to check your account."
+        : status === 404
+          ? "This event no longer exists. It may have been deleted."
+          : "Couldn't load the roster. Check your connection and try again.";
     return (
       <div>
         <PageHeader title="Roster" />
-        <p className="text-sm text-red-600 mt-4">
-          {/* TODO(copy): offline message */}
-          You appear to be offline — retry in 5s
-        </p>
+        <p className="text-sm text-red-600 mt-4">{message}</p>
+        {status !== 403 && status !== 404 ? (
+          <Button
+            variant="secondary"
+            className="mt-3"
+            onClick={() => rosterQ.refetch()}
+          >
+            Try again
+          </Button>
+        ) : null}
       </div>
     );
   }

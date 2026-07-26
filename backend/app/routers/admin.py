@@ -15,7 +15,7 @@ from sqlalchemy import func, or_, cast, String, Integer
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, log_action, ensure_event_owner_or_admin
+from ..deps import require_role, log_action, ensure_event_staff_access
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
@@ -380,7 +380,7 @@ def event_analytics(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     total_slots = len(event.slots)
     total_capacity = sum(s.capacity for s in event.slots)
@@ -450,7 +450,7 @@ def event_roster(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     rows = []
     slots_sorted = sorted(event.slots, key=lambda s: s.start_time)
@@ -529,7 +529,7 @@ def export_event_csv(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     questions = event.questions
     question_headers = [q.prompt for q in questions]
@@ -651,7 +651,7 @@ def admin_cancel_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     actual_confirmed = _confirmed_count_for_slot(db, slot.id)
     if slot.current_count != actual_confirmed:
@@ -717,7 +717,7 @@ def admin_promote_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     if signup.status != models.SignupStatus.waitlisted:
         raise HTTPException(status_code=400, detail="Only waitlisted signups can be promoted")
@@ -857,7 +857,7 @@ def admin_move_signup(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     source_confirmed = _confirmed_count_for_slot(db, source_slot.id)
     target_confirmed = _confirmed_count_for_slot(db, target_slot.id)
@@ -919,7 +919,7 @@ def admin_resend_signup_email(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     # Phase 09: signup.user removed; use kind-based pipeline
     # Phase 12: full resend logic deferred
@@ -956,7 +956,7 @@ def notify_event_participants(
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ✅ ownership enforcement for organizers
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     # Phase 09: signup.user removed; collect volunteers
     recipient_volunteers: set = set()
@@ -1301,7 +1301,7 @@ def export_event_attendance_csv(
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    ensure_event_owner_or_admin(event, actor)
+    ensure_event_staff_access(event, actor)
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -2023,9 +2023,15 @@ def set_template_default_form_schema(
     slug: str,
     body: dict,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
 ):
-    """Replace the template's default form schema (admin only).
+    """Replace the template's default form schema (admin or organizer).
+
+    Matches the rest of the module-template routes, which all admit organizers
+    — including delete. This being the lone admin-only one meant an organizer
+    on the Modules tab could delete a whole module but not edit its questions.
 
     Body: ``{"schema": [<FormFieldSchema>, ...]}``.
     """
@@ -2189,9 +2195,17 @@ def set_event_form_schema(
     event_id: str,
     body: dict,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
 ):
-    """Replace the event's form schema override (admin only).
+    """Replace the event's form schema override (admin or organizer).
+
+    Organizers are included because the "Form fields — this event" drawer is on
+    an organizer-visible page, so restricting this to admins meant the drawer
+    opened, accepted edits and then failed on save. Organizers already have an
+    append-only path to the same data (POST /organizer/events/{id}/form-fields);
+    this is the edit/remove half of it.
 
     Body: ``{"schema": [...]}`` to set or ``{"schema": null}`` to clear and
     inherit the template default.

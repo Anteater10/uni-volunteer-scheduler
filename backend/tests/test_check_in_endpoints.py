@@ -682,9 +682,17 @@ class TestCheckInRateLimits:
         assert statuses[30] == 429
 
 
-class TestEventOwnershipEnforcement:
-    """Cross-organizer BAC fix: staff check-in routes must verify the caller
-    owns the event (admin bypasses)."""
+class TestEventStaffAccessEnforcement:
+    """Staff check-in routes admit any admin or organizer, and nobody else.
+
+    These previously asserted the opposite for organizers — that an organizer
+    could only act on events they owned. That rule broke the product rather
+    than protecting it: the staff event list is global, and nothing could
+    transfer ownership, so an organizer could only ever run events they had
+    personally created while still seeing every other event in their tabs.
+    Organizers are a trusted staff role; the boundary is the admin-only route
+    set, not per-event ownership. See deps.ensure_event_staff_access.
+    """
 
     def _other_org_signup(self, db_session):
         owner = make_user(db_session, role=UserRole.organizer)
@@ -700,24 +708,38 @@ class TestEventOwnershipEnforcement:
         db_session.flush()
         return event, signup
 
-    def test_non_owner_organizer_cannot_check_in(self, client, db_session):
+    def test_other_organizer_can_undo_check_in(self, client, db_session):
         event, signup = self._other_org_signup(db_session)
-        intruder = make_user(db_session, role=UserRole.organizer)
-        headers = auth_headers(client, intruder)
+        other = make_user(db_session, role=UserRole.organizer)
+        headers = auth_headers(client, other)
+        resp = client.post(f"/api/v1/signups/{signup.id}/undo-check-in", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "confirmed"
+
+    def test_other_organizer_can_resolve(self, client, db_session):
+        event, signup = self._other_org_signup(db_session)
+        other = make_user(db_session, role=UserRole.organizer)
+        headers = auth_headers(client, other)
+        resp = client.post(
+            f"/api/v1/events/{event.id}/resolve",
+            json={"attended": [str(signup.id)], "no_show": []},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+    def test_participant_cannot_check_in(self, client, db_session):
+        # The gate still has to hold against a non-staff role — widening it for
+        # organizers must not turn it into "any authenticated user".
+        event, signup = self._other_org_signup(db_session)
+        outsider = make_user(db_session, role=UserRole.participant)
+        headers = auth_headers(client, outsider)
         resp = client.post(f"/api/v1/signups/{signup.id}/check-in", headers=headers)
         assert resp.status_code == 403
 
-    def test_non_owner_organizer_cannot_undo(self, client, db_session):
+    def test_participant_cannot_resolve(self, client, db_session):
         event, signup = self._other_org_signup(db_session)
-        intruder = make_user(db_session, role=UserRole.organizer)
-        headers = auth_headers(client, intruder)
-        resp = client.post(f"/api/v1/signups/{signup.id}/undo-check-in", headers=headers)
-        assert resp.status_code == 403
-
-    def test_non_owner_organizer_cannot_resolve(self, client, db_session):
-        event, signup = self._other_org_signup(db_session)
-        intruder = make_user(db_session, role=UserRole.organizer)
-        headers = auth_headers(client, intruder)
+        outsider = make_user(db_session, role=UserRole.participant)
+        headers = auth_headers(client, outsider)
         resp = client.post(
             f"/api/v1/events/{event.id}/resolve",
             json={"attended": [str(signup.id)], "no_show": []},
@@ -725,7 +747,7 @@ class TestEventOwnershipEnforcement:
         )
         assert resp.status_code == 403
 
-    def test_admin_bypasses_ownership(self, client, db_session):
+    def test_admin_can_act_on_any_event(self, client, db_session):
         event, signup = self._other_org_signup(db_session)
         admin = make_user(db_session, role=UserRole.admin)
         headers = auth_headers(client, admin)

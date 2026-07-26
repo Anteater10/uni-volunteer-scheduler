@@ -7,9 +7,15 @@ import ToastHost from "./ui/Toast";
 import BottomNav from "./ui/BottomNav";
 import CopilotFab from "../copilot/CopilotFab";
 
+// This is the *mobile* bottom nav. It used to point at /admin/events and
+// /admin/templates, both of which sit inside the admin shell and render the
+// "please switch to a larger screen" banner — so an organizer on a phone had
+// no reachable destination at all. Today's schedule and the roster it links to
+// are the surfaces actually built for a phone, which is also the device an
+// organizer has on them at a school.
 const organizerNavItems = [
-  { to: "/admin/events", label: "Events", icon: <Calendar className="h-5 w-5" /> },
-  { to: "/admin/templates", label: "Modules", icon: <ClipboardList className="h-5 w-5" /> },
+  { to: "/organizer/today", label: "Today", icon: <Calendar className="h-5 w-5" /> },
+  { to: "/admin/events", label: "Events", icon: <ClipboardList className="h-5 w-5" /> },
   { to: "/settings", label: "Settings", icon: <User className="h-5 w-5" /> },
 ];
 

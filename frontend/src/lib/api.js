@@ -245,7 +245,9 @@ async function updateMe(body) {
 async function listEvents(params) {
   // Staff-only endpoint since the release hardening pass — anonymous
   // callers use api.public.listEvents (/public/events) instead.
-  return request("/events", { method: "GET", auth: true, params });
+  // Trailing slash matters: the router declares "/", so "/events" costs an
+  // extra 307 round-trip on every call.
+  return request("/events/", { method: "GET", auth: true, params });
 }
 
 async function getEvent(eventId) {
@@ -253,7 +255,7 @@ async function getEvent(eventId) {
 }
 
 async function createEvent(payload) {
-  return request("/events", { method: "POST", body: payload });
+  return request("/events/", { method: "POST", body: payload });
 }
 
 async function updateEvent(eventId, payload) {
@@ -674,9 +676,13 @@ export const api = {
         body: field,
       }),
     // Phase 25 — organizer manual waitlist promote (WAIT-03)
-    promoteSignup: (eventId, signupId) =>
+    // `allowOverfill` takes the slot past capacity — the organizer confirms
+    // it first. Without it the server refuses any promote into a full slot,
+    // which is nearly every waitlisted volunteer.
+    promoteSignup: (eventId, signupId, { allowOverfill = false } = {}) =>
       request(
-        `/organizer/events/${eventId}/signups/${signupId}/promote`,
+        `/organizer/events/${eventId}/signups/${signupId}/promote` +
+          (allowOverfill ? "?allow_overfill=true" : ""),
         { method: "POST" },
       ),
     // Phase 26 — broadcast messages (organizer reuse of same endpoints)

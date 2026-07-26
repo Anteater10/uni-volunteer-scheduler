@@ -193,6 +193,48 @@ class TestOrganizerGrantRoundTrip:
         assert check.json()["has_credit"] is True
 
 
+    def test_grant_rejected_for_cancelled_signup(
+        self, client, db_session, session_a
+    ):
+        """A cancelled signup means the volunteer isn't coming.
+
+        There was no status guard here at all, and the roster kept showing
+        "Grant orientation" after a cancellation — so one stray click wrote a
+        real, permanent credit row for someone who never attended. The button
+        is gated now too; this holds the server side of it.
+        """
+        organizer = make_user(
+            db_session,
+            email="org-cancelled@example.com",
+            role=models.UserRole.organizer,
+        )
+        _make_template(db_session, slug="crispr")
+        event = _make_event(
+            db_session, owner_id=organizer.id, module_slug="crispr", quarter=session_a
+        )
+        slot = _make_slot(db_session, event_id=event.id)
+        vol, signup = _make_signed_up_volunteer(
+            db_session, slot, email="cancelled-vol@example.com"
+        )
+        signup.status = models.SignupStatus.cancelled
+        db_session.commit()
+        headers = auth_headers(client, organizer)
+
+        resp = client.post(
+            f"/api/v1/organizer/events/{event.id}/signups/{signup.id}/grant-orientation",
+            headers=headers,
+        )
+        assert resp.status_code == 409, resp.text
+
+        # And nothing was written.
+        rows = (
+            db_session.query(models.OrientationCredit)
+            .filter(models.OrientationCredit.volunteer_email == vol.email)
+            .all()
+        )
+        assert rows == []
+
+
 class TestAdminCreditQuarter:
     @pytest.fixture
     def admin_headers(self, client, db_session):

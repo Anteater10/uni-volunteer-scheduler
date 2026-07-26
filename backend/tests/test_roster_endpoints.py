@@ -178,15 +178,31 @@ class TestAdminRosterSlotMetadata:
         assert "slot_location" in row
 
 
-class TestRosterOwnership:
-    """Cross-organizer BAC fix: an organizer must not read another
-    organizer's roster (which includes the venue code)."""
+class TestRosterStaffAccess:
+    """Any organizer may read any event's roster; non-staff may not.
 
-    def test_non_owner_organizer_forbidden(self, client, db_session):
+    This asserted the opposite until the event-access rule was fixed — an
+    organizer could only read rosters for events they had created themselves,
+    which made the roster tab fail on every event an admin had set up, with no
+    way to transfer ownership. See deps.ensure_event_staff_access.
+    """
+
+    def test_other_organizer_allowed(self, client, db_session):
         owner = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=owner)
-        intruder = make_user(db_session, role=UserRole.organizer)
+        other = make_user(db_session, role=UserRole.organizer)
 
-        headers = auth_headers(client, intruder)
+        headers = auth_headers(client, other)
+        resp = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
+        assert resp.status_code == 200
+
+    def test_participant_forbidden(self, client, db_session):
+        # The roster includes the venue check-in code, so the gate still has to
+        # hold against a non-staff account.
+        owner = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=owner)
+        outsider = make_user(db_session, role=UserRole.participant)
+
+        headers = auth_headers(client, outsider)
         resp = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
         assert resp.status_code == 403

@@ -186,14 +186,17 @@ export default function AdminEventPage() {
 
   // Phase 25 — organizer manual waitlist promote (WAIT-03).
   const promoteMut = useMutation({
-    mutationFn: (signupId) =>
-      api.organizer.promoteSignup(eventId, signupId),
+    mutationFn: ({ signupId, allowOverfill = false }) =>
+      api.organizer.promoteSignup(eventId, signupId, { allowOverfill }),
     onSuccess: () => {
       toast.success("Promoted from waitlist.");
       qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
       qc.invalidateQueries({ queryKey: ["adminEventAnalytics", eventId] });
     },
     onError: (e) => {
+      // "slot is full" isn't an error the organizer needs shouting at them —
+      // the click handler turns it into the over-capacity confirmation.
+      if (/full/i.test(e?.message || "")) return;
       toast.error(e?.message || "Promote failed");
     },
   });
@@ -376,14 +379,19 @@ export default function AdminEventPage() {
               <Mail className="h-4 w-4" />
               Message volunteers
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setDuplicateOpen(true)}
-              className="whitespace-nowrap"
-            >
-              <Copy className="h-4 w-4" />
-              Duplicate…
-            </Button>
+            {/* Duplicating an event is admin-only on the server. Rendering it
+                for organizers meant filling in the whole week-picker drawer and
+                only then being told no. */}
+            {isAdmin ? (
+              <Button
+                variant="secondary"
+                onClick={() => setDuplicateOpen(true)}
+                className="whitespace-nowrap"
+              >
+                <Copy className="h-4 w-4" />
+                Duplicate…
+              </Button>
+            ) : null}
             <Button
               variant="secondary"
               onClick={() => setConfirmExport(true)}
@@ -697,24 +705,49 @@ export default function AdminEventPage() {
                                 type="button"
                                 variant="primary"
                                 data-testid="promote-btn"
-                                onClick={() =>
-                                  promoteMut.mutate(r.signup_id || r.id)
-                                }
+                                onClick={async () => {
+                                  const signupId = r.signup_id || r.id;
+                                  try {
+                                    await promoteMut.mutateAsync({ signupId });
+                                  } catch (err) {
+                                    // A full slot is the usual reason this
+                                    // person is waitlisted, so "no" isn't a
+                                    // useful answer — ask whether to seat
+                                    // them over capacity and retry if so.
+                                    if (
+                                      !/full/i.test(err?.message || "") ||
+                                      !window.confirm(
+                                        `This slot is already at capacity. Promote ${name} anyway, putting the slot one over?`,
+                                      )
+                                    ) {
+                                      return;
+                                    }
+                                    promoteMut.mutate({
+                                      signupId,
+                                      allowOverfill: true,
+                                    });
+                                  }
+                                }}
                                 disabled={promoteMut.isPending}
                               >
                                 Promote
                               </Button>
                             )}
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              onClick={() =>
-                                grantOrientationMut.mutate(r.signup_id || r.id)
-                              }
-                              disabled={grantOrientationMut.isPending}
-                            >
-                              Grant orientation
-                            </Button>
+                            {/* Not for cancelled signups — the volunteer isn't
+                                coming, so there's no attendance to credit. The
+                                server rejects it now too. */}
+                            {r.status !== "cancelled" && (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() =>
+                                  grantOrientationMut.mutate(r.signup_id || r.id)
+                                }
+                                disabled={grantOrientationMut.isPending}
+                              >
+                                Grant orientation
+                              </Button>
+                            )}
                             {r.status !== "cancelled" && (
                               <Button
                                 type="button"
