@@ -305,12 +305,63 @@ describe("EventsSection — create flow", () => {
   it("add and remove slot buttons update the list", async () => {
     renderWithQuery(<EventsSection />);
     fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /\+ Add slot/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Add slot$/i }));
     expect(screen.getByTestId("slot-row-1")).toBeInTheDocument();
 
     const row1 = screen.getByTestId("slot-row-1");
     fireEvent.click(within(row1).getByRole("button", { name: /Remove/i }));
     expect(screen.queryByTestId("slot-row-1")).not.toBeInTheDocument();
+  });
+
+  // Native time inputs ignore the wheel entirely, but admins set dozens of
+  // slot times per sitting — so the field steps on scroll once focused.
+  it("steps a slot time with the mouse wheel while focused", async () => {
+    renderWithQuery(<EventsSection />);
+    fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+
+    const start = await screen.findByLabelText(/Slot 1 start time/i);
+    fireEvent.change(start, { target: { value: "09:00" } });
+    start.focus();
+
+    fireEvent.wheel(start, { deltaY: -1 }); // up = later
+    expect(start.value).toBe("09:05");
+
+    fireEvent.wheel(start, { deltaY: 1 }); // down = earlier
+    expect(start.value).toBe("09:00");
+
+    fireEvent.wheel(start, { deltaY: -1, shiftKey: true }); // shift = by the hour
+    expect(start.value).toBe("10:00");
+  });
+
+  // Safari renders <input type="time"> with no picker at all, so the dropdown
+  // is ours rather than the browser's.
+  it("opens a time dropdown on click and picks a value", async () => {
+    renderWithQuery(<EventsSection />);
+    fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+
+    const start = await screen.findByLabelText(/Slot 1 start time/i);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    fireEvent.click(start);
+    expect(await screen.findByRole("listbox")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("option", { name: "9:30 AM" }));
+    expect(start.value).toBe("09:30");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  // Scrolling the long modal must never silently rewrite a time the cursor
+  // happens to pass over — the field has to be focused first.
+  it("ignores the wheel when the time field is not focused", async () => {
+    renderWithQuery(<EventsSection />);
+    fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+
+    const start = await screen.findByLabelText(/Slot 1 start time/i);
+    fireEvent.change(start, { target: { value: "09:00" } });
+    start.blur();
+
+    fireEvent.wheel(start, { deltaY: -1 });
+    expect(start.value).toBe("09:00");
   });
 
   it("blocks submit when a slot has invalid times", async () => {
@@ -488,7 +539,7 @@ describe("EventsSection — edit flow diff", () => {
     );
 
     // add a new slot → POST
-    fireEvent.click(screen.getByRole("button", { name: /\+ Add slot/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Add slot$/i }));
     const newRow = screen.getByTestId("slot-row-1");
     fireEvent.change(within(newRow).getByLabelText(/Slot 2 date/i), {
       target: { value: "2026-04-20" },

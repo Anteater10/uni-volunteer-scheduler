@@ -52,9 +52,9 @@ const ACTION_LABEL_OPTIONS = [
   { value: "event_create", label: "Created an event" },
   { value: "event_update", label: "Updated an event" },
   { value: "event_notify", label: "Sent a notification to event attendees" },
-  { value: "template_create", label: "Created a module template" },
-  { value: "template_update", label: "Updated a module template" },
-  { value: "template_delete", label: "Archived a module template" },
+  { value: "template_create", label: "Created a module" },
+  { value: "template_update", label: "Updated a module" },
+  { value: "template_delete", label: "Archived a module" },
   { value: "import_upload", label: "Uploaded a CSV import" },
   { value: "import_commit", label: "Committed a CSV import" },
 ];

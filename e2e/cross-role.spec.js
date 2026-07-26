@@ -62,11 +62,11 @@ const ALLOWED_CONSOLE_PATTERNS = [
   // artefact, not a product bug.
   /^\[object Object\]$/,
   // Scenario 5 (organizer RBAC) deliberately hits shared admin pages that
-  // fire admin-only API calls (e.g. /admin/module-templates, /admin/imports).
+  // fire admin-only API calls (e.g. /admin/module-templates).
   // The backend correctly returns 403 for organizer; the browser logs the
   // 403 as a "Failed to load resource" console.error. The UI surfaces the
-  // denial as an in-page error state ("Couldn't load imports — Insufficient
-  // permissions") with a Retry button. This is correct cross-role UX.
+  // denial as an in-page error state with a Retry button. This is correct
+  // cross-role UX.
   /Failed to load resource.*403.*Forbidden/i,
   // WebKit-only pageerror artifact: when a navigation (e.g. to /signup/manage
   // or /admin/audit-logs) aborts in-flight fetches that were initiated by the
@@ -509,10 +509,10 @@ test('cross-role Scenario 4: public cancel via magic-link surfaces signup_cancel
 // inspection):
 // - Admin-only (roles=["admin"]): /admin/users, /admin/audit-logs, /admin/exports
 //   -> ProtectedRoute renders a "Forbidden" component (NOT a redirect).
-// - Shared (roles=["admin", "organizer"]): /admin/templates, /admin/imports,
-//   /admin/events, /admin plus /organizer.
+// - Shared (roles=["admin", "organizer"]): /admin/templates, /admin/events,
+//   /admin plus /organizer.
 //
-// Pitfall 5 from 20-RESEARCH.md: templates and imports MUST load for organizer.
+// Pitfall 5 from 20-RESEARCH.md: templates MUST load for organizer.
 // Do not invert the allow/deny lists.
 // ---------------------------------------------------------------------------
 
@@ -521,7 +521,7 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
 }, testInfo) => {
   installErrorCapture(page, testInfo);
 
-  // Scenario 5 navigates shared admin surfaces (/admin/users, /admin/imports,
+  // Scenario 5 navigates shared admin surfaces (/admin/users,
   // /admin/templates, /admin/audit-logs, /admin/exports). Force desktop
   // viewport so AdminLayout renders its actual content and the Forbidden
   // panel (for admin-only routes) rather than the DesktopOnlyBanner.
@@ -540,20 +540,19 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
   }
 
   // Shared routes (positive checks — organizer MUST be able to reach these).
-  // /admin/templates and /admin/imports are the Phase 17 / Phase 18 surfaces.
+  // /admin/templates is the Phase 17 surface.
   // /organizer is the Phase 19 dashboard entry point; App.jsx client-side
   // redirects it to /admin/operations (the console that folded in the former
   // Preview tab), so that is the landing URL to assert.
   // (Asserting /organizer only ever passed when the URL poll won the race
   // against the React <Navigate> — timing-dependent, not a real pass.)
   // We assert these pages are NOT the Forbidden panel — they must mount the
-  // real shared-admin shell. Some (e.g. /admin/imports) expose a backend API
-  // that denies organizer access; the page-level UI still renders the admin
-  // shell + section content and surfaces the API denial as a retryable
-  // in-page error. That is the correct UX, not a routing problem.
+  // real shared-admin shell. Some expose a backend API that denies organizer
+  // access; the page-level UI still renders the admin shell + section content
+  // and surfaces the API denial as a retryable in-page error. That is the
+  // correct UX, not a routing problem.
   const sharedRoutes = [
     ['/admin/templates', /\/admin\/templates$/],
-    ['/admin/imports', /\/admin\/imports$/],
     ['/organizer', /\/admin\/operations$/],
   ];
   for (const [path, landingUrl] of sharedRoutes) {

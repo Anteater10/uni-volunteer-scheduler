@@ -82,7 +82,7 @@ export default function LoginPage() {
             {[
               "One roster, shared across admins and organisers",
               "QR check-in with live attendance",
-              "CSV imports for modules and schools",
+              "Orientation credit tracked per module",
             ].map((item) => (
               <li key={item} className="flex items-start gap-3">
                 <span className="mt-0.5 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-orange-500 shadow-sm">
