@@ -109,7 +109,7 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
     <form onSubmit={handleSubmit} className="space-y-4">
       {/* Template name */}
       <div>
-        <Label htmlFor="tf-name">Template name</Label>
+        <Label htmlFor="tf-name">Module name</Label>
         <Input
           id="tf-name"
           value={form.name}
@@ -177,8 +177,7 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
           </select>
           <p className="text-xs text-[var(--color-fg-muted)] mt-1">
             Attending this orientation earns permanent credit for the linked
-            module — once oriented, always oriented. CSV imports also merge
-            the pair into one event (orientation slots + module slots).
+            module — once oriented, always oriented.
           </p>
         </div>
       )}
@@ -281,7 +280,7 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
               ? "Creating..."
               : "Saving..."
             : isCreate
-            ? "Create template"
+            ? "Create module"
             : "Save changes"}
         </Button>
       </div>
@@ -294,7 +293,7 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
 // ---------------------------------------------------------------------------
 
 export default function TemplatesSection() {
-  useAdminPageTitle("Templates");
+  useAdminPageTitle("Modules");
   const qc = useQueryClient();
 
   // --- UI state ---
@@ -324,9 +323,9 @@ export default function TemplatesSection() {
       qc.invalidateQueries({ queryKey: ["adminTemplates"] });
       setCreateOpen(false);
       setForm(emptyForm());
-      toast.success("Template created");
+      toast.success("Module created");
     },
-    onError: (e) => toast.error(e?.message || "Failed to create template"),
+    onError: (e) => toast.error(e?.message || "Failed to create module"),
   });
 
   const updateM = useMutation({
@@ -334,9 +333,9 @@ export default function TemplatesSection() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["adminTemplates"] });
       setDrawerTemplate(null);
-      toast.success("Template updated");
+      toast.success("Module updated");
     },
-    onError: (e) => toast.error(e?.message || "Failed to update template"),
+    onError: (e) => toast.error(e?.message || "Failed to update module"),
   });
 
   const archiveM = useMutation({
@@ -345,18 +344,18 @@ export default function TemplatesSection() {
       qc.invalidateQueries({ queryKey: ["adminTemplates"] });
       setArchiveConfirm(null);
       setDrawerTemplate(null);
-      toast.success("Template archived");
+      toast.success("Module archived");
     },
-    onError: (e) => toast.error(e?.message || "Failed to archive template"),
+    onError: (e) => toast.error(e?.message || "Failed to archive module"),
   });
 
   const restoreM = useMutation({
     mutationFn: (slug) => api.admin.templates.restore(slug),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["adminTemplates"] });
-      toast.success("Template restored");
+      toast.success("Module restored");
     },
-    onError: (e) => toast.error(e?.message || "Failed to restore template"),
+    onError: (e) => toast.error(e?.message || "Failed to restore module"),
   });
 
   const cloneM = useMutation({
@@ -365,21 +364,21 @@ export default function TemplatesSection() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["adminTemplates"] });
       setDrawerTemplate(null);
-      toast.success("Template cloned");
+      toast.success("Module cloned");
     },
-    onError: (e) => toast.error(e?.message || "Failed to clone template"),
+    onError: (e) => toast.error(e?.message || "Failed to clone module"),
   });
 
   function handleClone() {
     if (!drawerTemplate) return;
     const suggested = `${drawerTemplate.slug}-copy`;
     const new_slug = window.prompt(
-      "Slug for the cloned template (lowercase, hyphens only):",
+      "Slug for the cloned module (lowercase, hyphens only):",
       suggested,
     );
     if (!new_slug) return;
     const new_name = window.prompt(
-      "Name for the cloned template:",
+      "Name for the cloned module:",
       `${drawerTemplate.name} (copy)`,
     );
     cloneM.mutate({ slug: drawerTemplate.slug, new_slug, new_name });
@@ -497,14 +496,14 @@ export default function TemplatesSection() {
     <div className="space-y-4">
       {/* Page header */}
       <AdminPageHeader
-        title="Templates"
-        subtitle="Module templates define the sessions, capacity, and materials for each SciTrek module."
+        title="Modules"
+        subtitle="Define the sessions, capacity, and materials for each SciTrek module."
       >
         <button
           onClick={openCreate}
           className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow"
         >
-          + New template
+          + New module
         </button>
       </AdminPageHeader>
 
@@ -550,14 +549,14 @@ export default function TemplatesSection() {
         </div>
       ) : listQ.error ? (
         <EmptyState
-          title="Couldn't load templates"
+          title="Couldn't load modules"
           body={listQ.error.message}
           action={<Button onClick={() => listQ.refetch()}>Retry</Button>}
         />
       ) : filtered.length === 0 ? (
         <EmptyState
-          title="No templates yet"
-          body="Create a module template to get started."
+          title="No modules yet"
+          body="Create a module to get started."
         />
       ) : (
         <>
@@ -664,7 +663,7 @@ export default function TemplatesSection() {
       <SideDrawer
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        title="New template"
+        title="New module"
       >
         <TemplateForm
           form={form}
@@ -681,7 +680,7 @@ export default function TemplatesSection() {
       <SideDrawer
         open={!!drawerTemplate}
         onClose={() => setDrawerTemplate(null)}
-        title="Edit template"
+        title="Edit module"
       >
         {drawerTemplate && (
           <TemplateForm
@@ -718,7 +717,7 @@ export default function TemplatesSection() {
       <Modal
         open={!!archiveConfirm}
         onClose={() => setArchiveConfirm(null)}
-        title="Archive this template?"
+        title="Archive this module?"
       >
         <p className="text-sm">
           Archiving removes <strong>{archiveTargetName}</strong> from the active list.

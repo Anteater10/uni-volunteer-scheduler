@@ -44,7 +44,7 @@ export function useAdminPageTitle(title) {
 // Nav is ordered by an admin's actual workflow, grouped by domain:
 //   1. Home            — Overview
 //   2. Core event work — Events → Operations (create events, then run them)
-//   3. Content library — Templates → Imports (the modules events draw from)
+//   3. Content library — Modules (the modules events draw from)
 //   4. People/credits  — Orientation Credits → Users
 //   5. Oversight/data  — Exports → Audit Logs (Audit Logs is toggle-gated)
 //   6. Advanced        — Copilot feedback (flag-gated)
@@ -62,8 +62,8 @@ const allNavItems = [
   { to: "/admin/operations", label: "Operations", roles: ["admin", "organizer"] },
 
   // 3. Content library the events are built from
-  { to: "/admin/templates", label: "Templates", roles: ["admin", "organizer"] },
-  { to: "/admin/imports", label: "Imports", roles: ["admin", "organizer"] },
+  // Labelled "Modules" for admins; the route/table stay "templates".
+  { to: "/admin/templates", label: "Modules", roles: ["admin", "organizer"] },
 
   // 4. People + credits
   // Phase 21 — orientation credit engine

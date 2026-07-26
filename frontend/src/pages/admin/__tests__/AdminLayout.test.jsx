@@ -84,8 +84,7 @@ describe("AdminLayout", () => {
       "Overview",
       "Events",
       "Operations",
-      "Templates",
-      "Imports",
+      "Modules",
       "Users",
       "Exports",
     ]) {
@@ -155,7 +154,7 @@ describe("AdminLayout", () => {
     authState.role = "organizer";
     renderAtDesktop();
     // Shared tabs organizers own.
-    for (const label of ["Events", "Operations", "Templates", "Imports"]) {
+    for (const label of ["Events", "Operations", "Modules"]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
     // Admin-only tabs must not leak into the organizer nav.
