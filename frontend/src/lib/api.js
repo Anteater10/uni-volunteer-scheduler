@@ -233,6 +233,12 @@ async function me() {
   return request("/users/me", { method: "GET" });
 }
 
+// Self-service profile edit. The backend only honours name, university_id and
+// notify_email here — role and email are admin-only, by design.
+async function updateMe(body) {
+  return request("/users/me", { method: "PATCH", body });
+}
+
 // --------------------
 // EVENTS
 // --------------------
@@ -538,6 +544,7 @@ export const api = {
 
   // users
   me,
+  updateMe,
 
   // events
   listEvents,
@@ -652,28 +659,6 @@ export const api = {
   createModuleTemplate: (data) => request("/admin/module-templates", { method: "POST", body: data }),
   updateModuleTemplate: (slug, data) => request(`/admin/module-templates/${slug}`, { method: "PATCH", body: data }),
   deleteModuleTemplate: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
-
-  // --- CSV Imports (Phase 5) ---
-  uploadCsvImport: (file) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    const token = authStorage.getToken();
-    return fetch(`${API_BASE}/admin/imports`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: formData,
-    }).then(async (res) => {
-      if (!res.ok) {
-        const json = await safeReadJson(res);
-        throw new Error(extractErrorMessage(json, `Upload failed (${res.status})`));
-      }
-      return res.json();
-    });
-  },
-  getCsvImport: (importId) => request(`/admin/imports/${importId}`),
-  updateImportRow: (importId, rowIndex, data) =>
-    request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
-  commitCsvImport: (importId) => request(`/admin/imports/${importId}/commit`, { method: "POST" }),
 
   // Phase 21 — organizer-scoped helpers
   organizer: {
@@ -860,37 +845,6 @@ export const api = {
         }),
       revoke: (creditId) =>
         request(`/admin/orientation-credits/${creditId}`, { method: "DELETE" }),
-    },
-    imports: {
-      list: () => request("/admin/imports", { method: "GET" }),
-      get: (importId) => request(`/admin/imports/${importId}`),
-      upload: (file) => {
-        const formData = new FormData();
-        formData.append("file", file);
-        const token = authStorage.getToken();
-        return fetch(`${API_BASE}/admin/imports`, {
-          method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          body: formData,
-        }).then(async (res) => {
-          if (!res.ok) {
-            const json = await safeReadJson(res);
-            throw new Error(extractErrorMessage(json, `Upload failed (${res.status})`));
-          }
-          return res.json();
-        });
-      },
-      commit: (importId, moduleTemplateSlug) =>
-        request(`/admin/imports/${importId}/commit`, {
-          method: "POST",
-          body: { module_template_slug: moduleTemplateSlug },
-        }),
-      retry: (importId) => request(`/admin/imports/${importId}/retry`, { method: "POST" }),
-      revalidate: (importId) =>
-        request(`/admin/imports/${importId}/revalidate`, { method: "POST" }),
-      updateRow: (importId, rowIndex, data) =>
-        request(`/admin/imports/${importId}/rows/${rowIndex}`, { method: "PATCH", body: data }),
-      delete: (importId) => request(`/admin/imports/${importId}`, { method: "DELETE" }),
     },
   },
 };

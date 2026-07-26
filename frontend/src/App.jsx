@@ -37,7 +37,7 @@ import EventDetailPage from "./pages/public/EventDetailPage";
 import LoginPage from "./pages/LoginPage";
 import SetPasswordPage from "./pages/SetPasswordPage";
 import NotificationsPage from "./pages/NotificationsPage";
-import ProfilePage from "./pages/ProfilePage";
+import UserSettingsPage from "./pages/UserSettingsPage";
 
 import OrganizerRosterPage from "./pages/OrganizerRosterPage";
 
@@ -57,7 +57,6 @@ import UsersAdminPage from "./pages/UsersAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
 import ExportsSection from "./pages/admin/ExportsSection";
 import TemplatesSection from "./pages/admin/TemplatesSection";
-import ImportsSection from "./pages/admin/ImportsSection";
 import OrientationCreditsSection from "./pages/admin/OrientationCreditsSection";
 import EventsSection from "./pages/admin/EventsSection";
 import HelpSection from "./pages/admin/HelpSection";
@@ -102,7 +101,9 @@ export default function App() {
         {/* Auth-required — organizer/admin only */}
         <Route element={<ProtectedRoute roles={["organizer", "admin"]} />}>
           <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="profile" element={<ProfilePage />} />
+          <Route path="settings" element={<UserSettingsPage />} />
+          {/* Legacy path — the profile stub became Settings. */}
+          <Route path="profile" element={<Navigate to="/settings" replace />} />
         </Route>
 
         {/* Organizer roster — mobile check-in surface */}
@@ -130,7 +131,6 @@ export default function App() {
               path="events/:eventId/roster"
               element={<OrganizerRosterPage />}
             />
-            <Route path="imports" element={<ImportsSection />} />
             <Route path="templates" element={<TemplatesSection />} />
             <Route
               path="reminders"
