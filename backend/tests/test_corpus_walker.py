@@ -9,6 +9,48 @@ import hashlib
 
 from app.corpus.walker import walk_sources
 
+# The shipped SOURCE_GLOBS_V1 is markdown-only (the corpus is the curated
+# knowledge base, not the codebase), so the code-derived emitters are only
+# reachable by passing globs explicitly. These are the globs the walker used to
+# ship with; the emitters stay covered in case a code-aware corpus is ever
+# wanted again.
+CODE_GLOBS = [
+    "docs/*.md",
+    "backend/alembic/versions/*.py",
+    "backend/app/**/*.py",
+    "frontend/src/**/*.jsx",
+    "frontend/src/**/*.js",
+    "frontend/src/**/*.ts",
+    "frontend/src/**/*.tsx",
+]
+
+
+def test_shipped_globs_ingest_only_curated_markdown():
+    """Guard: the corpus is the curated knowledge base, not the codebase.
+
+    Ingesting code and planning docs as "knowledge" is what made the copilot
+    answer admin/organizer questions out of developer docstrings and stale phase
+    plans. Retrieval fusion has no notion of an authoritative source, so the
+    knowledge base wins by being the only domain voice in the corpus. If this
+    test fails because a source was added back, add source weighting to the
+    fusion SQL first — see the note on SOURCE_GLOBS_V1.
+    """
+    from app.corpus.walker import SOURCE_GLOBS_V1
+
+    assert all(g.endswith(".md") for g in SOURCE_GLOBS_V1), SOURCE_GLOBS_V1
+    assert "docs/knowledge-base/**/*.md" in SOURCE_GLOBS_V1
+    # No code, no planning docs, no dev journals, no repo-root markdown.
+    for pattern in (
+        "backend/app/**/*.py",
+        "backend/alembic/versions/*.py",
+        ".planning/phases/**/*.md",
+        ".planning/ROADMAP.md",
+        "docs/copilot-journal/**/*.md",
+        "docs/learning/**/*.md",
+        "*.md",
+    ):
+        assert pattern not in SOURCE_GLOBS_V1
+
 
 def test_walker_deterministic_order(tiny_markdown_corpus):
     a = list(walk_sources(root=tiny_markdown_corpus))
@@ -109,7 +151,7 @@ def test_walker_extracts_python_docstrings_not_bodies(tmp_path):
     #    "skip non-allow-listed file" branch).
     (tmp_path / "random.txt").write_text("ignored\n", encoding="utf-8")
 
-    docs = walk_sources(root=tmp_path)
+    docs = walk_sources(root=tmp_path, globs=CODE_GLOBS)
     by_kind: dict[str, list] = {}
     for d in docs:
         by_kind.setdefault(d.source_kind, []).append(d)
@@ -134,15 +176,15 @@ def test_walker_extracts_python_docstrings_not_bodies(tmp_path):
 
 def test_walker_lf_normalizes_line_endings(tmp_path):
     # Two markdown files with identical logical content but different EOLs.
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
+    docs_dir = tmp_path / "docs" / "knowledge-base"
+    docs_dir.mkdir(parents=True)
     lf = "# Title\n\nLine one.\nLine two.\n"
     crlf = lf.replace("\n", "\r\n")
     (docs_dir / "lf.md").write_bytes(lf.encode("utf-8"))
     (docs_dir / "crlf.md").write_bytes(crlf.encode("utf-8"))
     docs = {d.source_path: d for d in walk_sources(root=tmp_path)}
-    a = docs["docs/lf.md"]
-    b = docs["docs/crlf.md"]
+    a = docs["docs/knowledge-base/lf.md"]
+    b = docs["docs/knowledge-base/crlf.md"]
     assert a.byte_size == b.byte_size
     assert (
         hashlib.sha256(a.content.encode("utf-8")).hexdigest()
@@ -170,7 +212,7 @@ def test_walker_extracts_line_comments_with_leading_blanks(tmp_path):
         "export const x = 1;\n"
     )
     (fe / "Thing.tsx").write_text(contents, encoding="utf-8")
-    docs = walk_sources(root=tmp_path)
+    docs = walk_sources(root=tmp_path, globs=CODE_GLOBS)
     fe_docs = [d for d in docs if d.source_kind == "frontend_component"]
     assert fe_docs and "Component header." in fe_docs[0].content
     assert "More details about it." in fe_docs[0].content
