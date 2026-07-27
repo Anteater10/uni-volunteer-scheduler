@@ -8,8 +8,9 @@ two need opposite handling, which is the whole point of this file.
 """
 from __future__ import annotations
 
+import httpx
 import pytest
-from openai import APIError
+from openai import APIError, RateLimitError
 
 from app.copilot import llm as copilot_llm
 
@@ -34,6 +35,16 @@ def _upstream_error() -> APIError:
     )
 
 
+def _rate_limit_error() -> RateLimitError:
+    """A 429, the shape OpenRouter returns when a free tier is throttled."""
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    return RateLimitError(
+        "temporarily rate-limited upstream",
+        response=httpx.Response(429, request=request),
+        body=None,
+    )
+
+
 def _patch_models(monkeypatch) -> None:
     monkeypatch.setattr(
         copilot_llm, "_candidates", lambda: ["primary/m:free", "fallback/m:free"]
@@ -41,7 +52,10 @@ def _patch_models(monkeypatch) -> None:
 
 
 def _patch_stream_one(monkeypatch, behaviour) -> list[str]:
-    """Replace ``_stream_one``; return the list of model_ids it was called with."""
+    """Replace ``_stream_one``; return the list of model_ids it was called with.
+
+    Also stubs out the inter-sweep sleep so retry tests don't pay real seconds.
+    """
     called: list[str] = []
 
     def fake(*, client, model_id, messages, max_tokens):
@@ -49,6 +63,7 @@ def _patch_stream_one(monkeypatch, behaviour) -> list[str]:
         yield from behaviour(model_id)
 
     monkeypatch.setattr(copilot_llm, "_stream_one", fake)
+    monkeypatch.setattr(copilot_llm.time, "sleep", lambda _s: None)
     return called
 
 
@@ -100,7 +115,7 @@ def test_mid_stream_failure_does_not_splice_a_second_answer(monkeypatch):
     assert called == ["primary/m:free"], "fallback must not run after tokens escaped"
 
 
-def test_both_models_failing_reraises_the_last_error(monkeypatch):
+def test_both_models_failing_reraises_after_exhausting_sweeps(monkeypatch):
     _patch_models(monkeypatch)
 
     def behaviour(model_id):
@@ -111,4 +126,32 @@ def test_both_models_failing_reraises_the_last_error(monkeypatch):
 
     with pytest.raises(APIError):
         list(copilot_llm.stream_completion(messages=[]))
-    assert called == ["primary/m:free", "fallback/m:free"]
+    # Every model tried on every sweep, then the error surfaces.
+    assert called == ["primary/m:free", "fallback/m:free"] * copilot_llm._MAX_SWEEPS
+
+
+def test_second_sweep_recovers_from_a_transient_upstream_429(monkeypatch):
+    """A whole-list 429 must not end the turn.
+
+    Free tiers are rate-limited by the provider, so both candidates can be
+    briefly unavailable at once — two staff chatting simultaneously does it —
+    and then fine a second later. Without a second sweep that user gets
+    "Stream failed" for a condition that cleared on its own.
+    """
+    _patch_models(monkeypatch)
+    sweeps = {"n": 0}
+
+    def behaviour(model_id):
+        # Fail every model on the first sweep only.
+        sweeps["n"] += 1
+        if sweeps["n"] <= 2:
+            raise _rate_limit_error()
+        yield "recovered", {}
+        yield "", _meta(model_id, "recovered")
+
+    called = _patch_stream_one(monkeypatch, behaviour)
+
+    chunks = [c for c, _ in copilot_llm.stream_completion(messages=[]) if c]
+    assert "".join(chunks) == "recovered"
+    # Both failed on sweep 1; the primary succeeded on sweep 2.
+    assert called == ["primary/m:free", "fallback/m:free", "primary/m:free"]
