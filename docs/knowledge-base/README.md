@@ -42,4 +42,14 @@ for the wrong audience.
 **Answering people** — `28-task-guides` · `29-troubleshooting` · `30-not-built` ·
 `31-about-the-copilot`
 
-**Program and policy** — `32-scitrek-program` · `33-volunteer-guide`
+**Program and policy** — `32-scitrek-program` · `33-volunteer-guide` · `34-where-to-meet` ·
+`35-cancellation-notice` · `36-course-credit-and-hours` · `37-mentors-per-session` ·
+`38-who-to-contact`
+
+These five short documents were originally sections of `33-volunteer-guide`, and splitting them out
+is rule 4 above learned the hard way. As one document, the "understaffed" threshold and the
+course-credit contact were both in its *third* chunk, behind two chunks about mentoring style — so a
+question like "how do I get course credit?" retrieved the document, matched the wrong chunk, and the
+assistant answered "that isn't documented" while looking straight at the file that documented it.
+Retrieval matches chunks, not documents. A document that bundles unrelated topics can be found and
+still be useless.

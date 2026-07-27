@@ -76,6 +76,13 @@ DENY_LIST: list[str] = [
     "backend/.env*",
     "frontend/.env*",
     ".planning/notes/private-*",
+    # The knowledge base's README is authoring instructions for whoever writes
+    # the docs — style rules, a table of contents, a note about why one document
+    # got split. It is not domain content, and it retrieved as a source for a
+    # real question ("what does understaffed mean") purely because it names the
+    # topics it indexes. Meta-documentation about the corpus does not belong in
+    # the corpus.
+    "docs/knowledge-base/README.md",
 ]
 
 

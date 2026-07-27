@@ -52,6 +52,22 @@ def test_shipped_globs_ingest_only_curated_markdown():
         assert pattern not in SOURCE_GLOBS_V1
 
 
+def test_knowledge_base_readme_is_not_ingested(tmp_path):
+    """The KB's own README is authoring instructions, not domain content.
+
+    It lists every topic the knowledge base covers, which makes it a magnet for
+    topic-shaped queries — it retrieved as a source for "what does understaffed
+    mean" while saying nothing about the answer.
+    """
+    kb = tmp_path / "docs" / "knowledge-base"
+    kb.mkdir(parents=True)
+    (kb / "README.md").write_text("# Contents\n\nunderstaffed, orientation\n")
+    (kb / "37-mentors-per-session.md").write_text("# Mentors\n\nFewer than 6.\n")
+
+    paths = {d.source_path for d in walk_sources(root=tmp_path)}
+    assert paths == {"docs/knowledge-base/37-mentors-per-session.md"}
+
+
 def test_walker_deterministic_order(tiny_markdown_corpus):
     a = list(walk_sources(root=tiny_markdown_corpus))
     b = list(walk_sources(root=tiny_markdown_corpus))
