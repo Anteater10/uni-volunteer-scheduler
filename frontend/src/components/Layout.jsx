@@ -52,7 +52,10 @@ export default function Layout() {
     pathname.startsWith("/event-check-in") ||
     pathname.startsWith("/signup");
   const navItems = isAuthed && !isParticipantRoute ? navItemsForRole(role) : null;
-  const wideRoute = isAdminRoute || isOrganizerRoute;
+  // /settings is a desktop staff surface too (PR #51) — the old
+  // max-w-screen-md fallback squeezed it into a phone column on a monitor.
+  const wideRoute =
+    isAdminRoute || isOrganizerRoute || pathname.startsWith("/settings");
   const containerWidth = wideRoute
     ? "max-w-none"
     : isParticipantRoute

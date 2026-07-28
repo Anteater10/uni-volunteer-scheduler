@@ -36,6 +36,7 @@ import EventsBrowsePage from "./pages/public/EventsBrowsePage";
 import EventDetailPage from "./pages/public/EventDetailPage";
 import LoginPage from "./pages/LoginPage";
 import SetPasswordPage from "./pages/SetPasswordPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import UserSettingsPage from "./pages/UserSettingsPage";
 
@@ -82,6 +83,7 @@ export default function App() {
         <Route index element={<RootRoute />} />
         <Route path="login" element={<LoginPage />} />
         <Route path="set-password" element={<SetPasswordPage />} />
+        <Route path="forgot-password" element={<ForgotPasswordPage />} />
 
         {/* Participant surfaces (no login button anywhere) */}
         <Route path="volunteer" element={<EventsBrowsePage />} />

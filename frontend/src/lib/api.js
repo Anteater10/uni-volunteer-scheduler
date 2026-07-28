@@ -226,6 +226,23 @@ async function setPasswordFromInvite(token, password) {
   return json;
 }
 
+// PR #51 — self-service password management.
+async function changePassword(currentPassword, newPassword) {
+  return request("/auth/change-password", {
+    method: "POST",
+    body: { current_password: currentPassword, new_password: newPassword },
+  });
+}
+
+// Always resolves with 202 whether or not the address has an account.
+async function forgotPassword(email) {
+  return request("/auth/forgot-password", {
+    method: "POST",
+    auth: false,
+    body: { email },
+  });
+}
+
 // --------------------
 // USERS
 // --------------------
@@ -543,6 +560,8 @@ export const api = {
   login,
   logout,
   setPasswordFromInvite,
+  changePassword,
+  forgotPassword,
 
   // users
   me,

@@ -27,7 +27,10 @@ vi.mock("../../state/useAuth", () => ({
 }));
 
 vi.mock("../../lib/api", () => {
-  const apiMock = { updateMe: vi.fn(async () => ({})) };
+  const apiMock = {
+    updateMe: vi.fn(async () => ({})),
+    changePassword: vi.fn(async () => ({ status: "ok" })),
+  };
   return { default: apiMock, api: apiMock };
 });
 
@@ -77,8 +80,10 @@ describe("UserSettingsPage", () => {
     renderPage();
     // Both must be visible — they identify the user in the audit log — but
     // neither is self-editable, so they must not render as form fields.
-    expect(screen.getByText("andy@ucsb.edu")).toBeInTheDocument();
-    expect(screen.getByText("admin")).toBeInTheDocument();
+    // (PR #51: the wide layout repeats them in the identity card, so allow
+    // more than one occurrence.)
+    expect(screen.getAllByText("andy@ucsb.edu").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("admin").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText(/^email$/i)).toBeNull();
     expect(screen.queryByLabelText(/^role$/i)).toBeNull();
   });
@@ -141,5 +146,50 @@ describe("UserSettingsPage", () => {
     renderPage();
     await userEvent.click(screen.getByRole("button", { name: /log out/i }));
     expect(authState.logout).toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #51 — change password
+  // -------------------------------------------------------------------------
+
+  it("renders the password section with three fields", () => {
+    renderPage();
+    expect(screen.getByLabelText(/current password/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^new password/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/confirm new password/i)).toBeInTheDocument();
+  });
+
+  it("submits the change and clears the fields on success", async () => {
+    renderPage();
+    await userEvent.type(screen.getByLabelText(/current password/i), "old-pass-123");
+    await userEvent.type(screen.getByLabelText(/^new password/i), "new-pass-456");
+    await userEvent.type(screen.getByLabelText(/confirm new password/i), "new-pass-456");
+    await userEvent.click(screen.getByRole("button", { name: /change password/i }));
+    await waitFor(() => {
+      expect(api.changePassword).toHaveBeenCalledWith("old-pass-123", "new-pass-456");
+    });
+    expect(screen.getByLabelText(/current password/i)).toHaveValue("");
+  });
+
+  it("refuses mismatched confirmation without calling the API", async () => {
+    renderPage();
+    await userEvent.type(screen.getByLabelText(/current password/i), "old-pass-123");
+    await userEvent.type(screen.getByLabelText(/^new password/i), "new-pass-456");
+    await userEvent.type(screen.getByLabelText(/confirm new password/i), "different");
+    await userEvent.click(screen.getByRole("button", { name: /change password/i }));
+    expect(await screen.findByText(/don't match/i)).toBeInTheDocument();
+    expect(api.changePassword).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a change-password failure", async () => {
+    api.changePassword.mockRejectedValueOnce(new Error("Current password is incorrect."));
+    renderPage();
+    await userEvent.type(screen.getByLabelText(/current password/i), "wrong");
+    await userEvent.type(screen.getByLabelText(/^new password/i), "new-pass-456");
+    await userEvent.type(screen.getByLabelText(/confirm new password/i), "new-pass-456");
+    await userEvent.click(screen.getByRole("button", { name: /change password/i }));
+    expect(
+      await screen.findByText(/current password is incorrect/i),
+    ).toBeInTheDocument();
   });
 });

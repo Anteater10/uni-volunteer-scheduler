@@ -30,6 +30,8 @@ ACTION_LABELS: dict[str, str] = {
     "user_reactivate": "Reactivated a user",
     "user_update": "Updated a user",
     "user_login": "Logged in",
+    "user_set_password": "Set their password from an emailed link",
+    "user_change_password": "Changed their password",
     "ccpa_export": "Exported a user's personal data (CCPA)",
     "ccpa_delete": "Deleted a user's personal data (CCPA)",
     "event_create": "Created an event",

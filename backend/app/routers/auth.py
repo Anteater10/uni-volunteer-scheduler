@@ -21,6 +21,7 @@ from ..deps import (
     get_current_user,
 )
 from ..config import settings
+from ..services.password_reset import check_reset_rate_limit, send_reset_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -153,9 +154,12 @@ def set_password_from_invite(
     db: Session = Depends(get_db),
     _: None = Depends(rate_limit(20, 60)),
 ):
-    """Consume an invite JWT, set the user's password, return access+refresh tokens."""
+    """Consume an invite or password-reset JWT, set the user's password,
+    return access+refresh tokens. Both token kinds land on the same
+    /set-password page; only the purpose claim and TTL differ."""
     from jose import JWTError, ExpiredSignatureError
     from ..services.invite import verify_invite_token
+    from ..services.password_reset import verify_reset_token
 
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -163,9 +167,14 @@ def set_password_from_invite(
     try:
         user_id = verify_invite_token(payload.token)
     except ExpiredSignatureError:
-        raise HTTPException(status_code=400, detail="Invite link has expired. Ask an admin to re-invite you.")
+        raise HTTPException(status_code=400, detail="This link has expired. Request a new one.")
     except JWTError:
-        raise HTTPException(status_code=400, detail="Invalid invite link.")
+        try:
+            user_id = verify_reset_token(payload.token)
+        except ExpiredSignatureError:
+            raise HTTPException(status_code=400, detail="This link has expired. Request a new one.")
+        except JWTError:
+            raise HTTPException(status_code=400, detail="Invalid invite link.")
 
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None or user.is_active is False:
@@ -185,6 +194,89 @@ def set_password_from_invite(
         "token_type": "bearer",
         "refresh_token": raw_refresh,
     }
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    _: None = Depends(rate_limit(10, 60)),
+):
+    """Let a logged-in staff member rotate their own password.
+
+    Requires the current password even though the caller is authenticated —
+    a walk-up to an unlocked laptop must not be enough to take the account.
+    All refresh tokens are revoked so any other session has to log in again.
+    """
+    if current_user.hashed_password is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This account has no password yet — use the link from your invite email to set one.",
+        )
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.add(current_user)
+    db.query(models.RefreshToken).filter(
+        models.RefreshToken.user_id == current_user.id
+    ).delete()
+    log_action(db, current_user, "user_change_password", "User", str(current_user.id))
+    db.commit()
+    return {"status": "ok"}
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+@router.post("/forgot-password", status_code=202)
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(rate_limit(10, 60)),
+):
+    """Email a password-reset link if the address belongs to active staff.
+
+    Always answers 202 with the same body — a different status, error, or
+    timing-observable send for unknown addresses would confirm which emails
+    have accounts. Participants never have passwords, so they are treated
+    exactly like unknown addresses.
+    """
+    ip = request.client.host if request.client else "unknown"
+    from ..deps import redis_client
+
+    if not check_reset_rate_limit(redis_client, payload.email, ip):
+        # Rate-limited requests also answer 202: a 429 only for real
+        # addresses would leak existence just as loudly as a 404.
+        return {"status": "accepted"}
+
+    user = (
+        db.query(models.User)
+        .filter(
+            models.User.email == payload.email.lower().strip(),
+            models.User.is_active.is_(True),
+            models.User.deleted_at.is_(None),
+            models.User.role.in_([models.UserRole.admin, models.UserRole.organizer]),
+        )
+        .first()
+    )
+    if user is not None:
+        try:
+            send_reset_email(user, db)
+        except Exception:
+            # Logged inside the service; the client still gets 202.
+            pass
+    return {"status": "accepted"}
 
 
 @router.post("/token", response_model=schemas.Token)
