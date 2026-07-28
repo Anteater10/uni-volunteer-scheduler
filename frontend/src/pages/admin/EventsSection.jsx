@@ -674,6 +674,8 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
         />
       </div>
 
+      {/* Where + When sit side by side once the widened modal has room. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-x-8 lg:[&>section]:min-w-0">
       <FormSection icon={MapPin} title="Where">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
@@ -751,6 +753,7 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
           </div>
         </div>
       </FormSection>
+      </div>
 
       <FormSection
         icon={GraduationCap}
@@ -1214,6 +1217,7 @@ export default function EventsSection() {
       <FormModal
         open={drawerMode === "create"}
         title="New event"
+        subtitle="Schedule the visit, pick its module, and lay out the volunteer slots."
         onClose={() => setDrawerMode(null)}
       >
         <EventForm
@@ -1227,6 +1231,7 @@ export default function EventsSection() {
       <FormModal
         open={drawerMode === "edit"}
         title="Edit event"
+        subtitle="Details and slot changes save together when you hit Save."
         onClose={() => {
           setDrawerMode(null);
           setEditing(null);
