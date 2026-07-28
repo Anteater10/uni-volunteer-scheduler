@@ -81,7 +81,7 @@ const STATUS_STYLES = {
   waitlisted: "bg-amber-100 text-amber-800",
   pending: "bg-slate-100 text-slate-700",
   no_show: "bg-red-100 text-red-700",
-  cancelled: "bg-slate-100 text-slate-500 line-through",
+  cancelled: "bg-slate-100 text-slate-600 line-through",
 };
 
 function StatusPill({ status, waitlistPosition }) {
@@ -438,23 +438,9 @@ export default function AdminEventPage() {
       </section>
 
       <section>
-        {/* The read-only details are where you notice a wrong time, so put the
-            way to fix it right here as well as in the header. */}
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide">
-            Event details
-          </h2>
-          {eventQ.data ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setSettingsOpen(true)}
-            >
-              <Settings className="h-4 w-4" />
-              Edit details
-            </Button>
-          ) : null}
-        </div>
+        <h2 className="mb-3 text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide">
+          Event details
+        </h2>
         {eventQ.isPending ? (
           <Skeleton className="h-32" />
         ) : eventQ.error ? (
