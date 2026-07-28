@@ -206,3 +206,59 @@ class TestRosterStaffAccess:
         headers = auth_headers(client, outsider)
         resp = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
         assert resp.status_code == 403
+
+
+class TestRosterOrdering:
+    """Rows within a slot must come back in a deterministic, update-invariant
+    order. The query used to order by slot_id only, so Postgres returned heap
+    order — and a check-in UPDATE relocates the row version, visibly shuffling
+    the live roster on the next poll."""
+
+    def _add_signup(self, db_session, slot, first, last):
+        v = Volunteer(
+            id=uuid.uuid4(),
+            email=f"{first.lower()}.{last.lower()}-{uuid.uuid4().hex[:6]}@example.com",
+            first_name=first,
+            last_name=last,
+        )
+        db_session.add(v)
+        db_session.flush()
+        s = Signup(volunteer_id=v.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        db_session.add(s)
+        db_session.flush()
+        return s
+
+    def test_rows_alphabetical_within_slot(self, client, db_session):
+        organizer = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=organizer, capacity=5)
+        # Deliberately not in alphabetical order at insert time.
+        for first, last in [("Zoe", "Young"), ("Adam", "Brown"), ("Mia", "Cruz")]:
+            self._add_signup(db_session, slot, first, last)
+
+        headers = auth_headers(client, organizer)
+        resp = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
+        assert resp.status_code == 200
+        names = [r["student_name"] for r in resp.json()["rows"]]
+        assert names == ["Adam Brown", "Mia Cruz", "Zoe Young"]
+
+    def test_order_unchanged_after_status_update(self, client, db_session):
+        organizer = make_user(db_session, role=UserRole.organizer)
+        event, slot = make_event_with_slot(db_session, owner=organizer, capacity=5)
+        middle = None
+        for first, last in [("Zoe", "Young"), ("Adam", "Brown"), ("Mia", "Cruz")]:
+            s = self._add_signup(db_session, slot, first, last)
+            if first == "Mia":
+                middle = s
+
+        headers = auth_headers(client, organizer)
+        before = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
+        names_before = [r["student_name"] for r in before.json()["rows"]]
+
+        # A check-in is an UPDATE — it must not move the row.
+        middle.status = SignupStatus.checked_in
+        db_session.add(middle)
+        db_session.flush()
+
+        after = client.get(f"/api/v1/events/{event.id}/roster", headers=headers)
+        names_after = [r["student_name"] for r in after.json()["rows"]]
+        assert names_after == names_before
