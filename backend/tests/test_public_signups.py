@@ -563,13 +563,12 @@ class TestOrientationRequirement:
         )
 
     def _template(self, db_session, slug, family_key=None):
-        from app.models import ModuleTemplate, ModuleType
+        from app.models import ModuleTemplate
         tmpl = ModuleTemplate(
             slug=slug,
             name=slug.title(),
             default_capacity=20,
             duration_minutes=120,
-            type=ModuleType.orientation,
             session_count=1,
             family_key=family_key if family_key is not None else slug,
         )

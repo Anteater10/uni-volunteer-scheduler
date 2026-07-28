@@ -28,26 +28,9 @@ import { toast } from "../../state/toast";
 
 const PAGE_SIZE = 10;
 
-const TYPE_OPTIONS = [
-  { value: "module", label: "Module" },
-  { value: "seminar", label: "Seminar" },
-  { value: "orientation", label: "Orientation" },
-];
-
-const TYPE_BADGE = {
-  seminar: "bg-blue-100 text-blue-800",
-  orientation: "bg-green-100 text-green-800",
-  module: "bg-gray-100 text-gray-700",
-};
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function capitalize(str) {
-  if (!str) return "";
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
 
 function slugify(name) {
   return name
@@ -61,13 +44,11 @@ function emptyForm() {
   return {
     name: "",
     slug: "",
-    type: "module",
     duration_minutes: 90,
     session_count: 1,
     default_capacity: 30,
     description: "",
     materials: "",
-    family_key: "",
   };
 }
 
@@ -75,13 +56,11 @@ function templateToForm(t) {
   return {
     name: t.name || "",
     slug: t.slug || "",
-    type: t.type || "module",
     duration_minutes: t.duration_minutes ?? 90,
     session_count: t.session_count ?? 1,
     default_capacity: t.default_capacity ?? 30,
     description: t.description || "",
     materials: Array.isArray(t.materials) ? t.materials.join(", ") : (t.materials || ""),
-    family_key: t.family_key || "",
   };
 }
 
@@ -89,7 +68,7 @@ function templateToForm(t) {
 // TemplateForm — shared create/edit form rendered inside SideDrawer
 // ---------------------------------------------------------------------------
 
-function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
+function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
   function handleNameChange(e) {
     const name = e.target.value;
     setForm((prev) => ({
@@ -137,50 +116,6 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
           </p>
         )}
       </div>
-
-      {/* Type */}
-      <div>
-        <Label htmlFor="tf-type">Type</Label>
-        <select
-          id="tf-type"
-          value={form.type}
-          onChange={(e) => setForm((p) => ({ ...p, type: e.target.value }))}
-          className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
-        >
-          {TYPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Links to module (orientation only). Issue #30: an orientation must
-          name the module family it credits — a standalone orientation would
-          mint a credit family nothing ever checks against. */}
-      {form.type === "orientation" && (
-        <div>
-          <Label htmlFor="tf-family">Links to module</Label>
-          <select
-            id="tf-family"
-            required
-            value={form.family_key || ""}
-            onChange={(e) => setForm((p) => ({ ...p, family_key: e.target.value }))}
-            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
-          >
-            <option value="">Select the module this orientation credits…</option>
-            {moduleTemplates.map((m) => (
-              <option key={m.slug} value={m.family_key || m.slug}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-            Attending this orientation earns permanent credit for the linked
-            module — once oriented, always oriented.
-          </p>
-        </div>
-      )}
 
       {/* Duration */}
       <div>
@@ -301,7 +236,6 @@ export default function TemplatesSection() {
   const [createOpen, setCreateOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [archiveConfirm, setArchiveConfirm] = useState(null); // slug or null
   const [formFieldsFor, setFormFieldsFor] = useState(null); // template (with slug + default_form_schema) being edited
@@ -403,16 +337,8 @@ export default function TemplatesSection() {
       const q = search.toLowerCase();
       result = result.filter((t) => t.name.toLowerCase().includes(q));
     }
-    if (typeFilter !== "all") {
-      result = result.filter((t) => t.type === typeFilter);
-    }
     return result;
-  }, [listQ.data, search, typeFilter]);
-
-  const moduleTemplates = useMemo(
-    () => (listQ.data || []).filter((t) => t.type === "module" && !t.deleted_at),
-    [listQ.data],
-  );
+  }, [listQ.data, search]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -432,7 +358,6 @@ export default function TemplatesSection() {
     createM.mutate({
       slug: formData.slug,
       name: formData.name,
-      type: formData.type,
       duration_minutes: Number(formData.duration_minutes),
       session_count: Number(formData.session_count),
       default_capacity: Number(formData.default_capacity),
@@ -440,9 +365,6 @@ export default function TemplatesSection() {
       materials: formData.materials
         ? formData.materials.split(",").map((s) => s.trim()).filter(Boolean)
         : [],
-      ...(formData.type === "orientation" && formData.family_key
-        ? { family_key: formData.family_key }
-        : {}),
     });
   }
 
@@ -452,7 +374,6 @@ export default function TemplatesSection() {
       slug: drawerTemplate.slug,
       payload: {
         name: formData.name,
-        type: formData.type,
         duration_minutes: Number(formData.duration_minutes),
         session_count: Number(formData.session_count),
         default_capacity: Number(formData.default_capacity),
@@ -460,9 +381,6 @@ export default function TemplatesSection() {
         materials: formData.materials
           ? formData.materials.split(",").map((s) => s.trim()).filter(Boolean)
           : [],
-        ...(formData.type === "orientation"
-          ? { family_key: formData.family_key || null }
-          : {}),
       },
     });
   }
@@ -470,11 +388,6 @@ export default function TemplatesSection() {
   // Reset to page 1 when filters change
   function handleSearchChange(e) {
     setSearch(e.target.value);
-    setPage(1);
-  }
-
-  function handleTypeFilterChange(e) {
-    setTypeFilter(e.target.value);
     setPage(1);
   }
 
@@ -516,18 +429,6 @@ export default function TemplatesSection() {
           onChange={handleSearchChange}
           className="flex-1 min-w-[20rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
-        <select
-          id="tmpl-type"
-          aria-label="Filter by type"
-          value={typeFilter}
-          onChange={handleTypeFilterChange}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
-        >
-          <option value="all">All types</option>
-          <option value="module">Module</option>
-          <option value="seminar">Seminar</option>
-          <option value="orientation">Orientation</option>
-        </select>
         <label className="flex items-center gap-2 text-sm" htmlFor="tmpl-archived">
           <input
             id="tmpl-archived"
@@ -565,7 +466,6 @@ export default function TemplatesSection() {
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
                 <tr>
                   <th className="py-3 px-4">Name</th>
-                  <th className="py-3 px-4">Type</th>
                   <th className="py-3 px-4">Duration</th>
                   <th className="py-3 px-4">Sessions</th>
                   <th className="py-3 px-4">Capacity</th>
@@ -585,15 +485,6 @@ export default function TemplatesSection() {
                       onClick={() => !isArchived && openEdit(t)}
                     >
                       <td className="py-3 px-4 font-semibold">{t.name}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`inline-flex items-center rounded-full px-3 py-1 text-base font-medium ${
-                            TYPE_BADGE[t.type] || "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {capitalize(t.type)}
-                        </span>
-                      </td>
                       <td className="py-3 px-4 text-gray-800">{t.duration_minutes} min</td>
                       <td className="py-3 px-4 text-gray-800">
                         {t.session_count === 1
@@ -669,7 +560,6 @@ export default function TemplatesSection() {
           form={form}
           setForm={setForm}
           isCreate
-          moduleTemplates={moduleTemplates}
           onSubmit={handleCreate}
           onCancel={() => setCreateOpen(false)}
           submitting={createM.isPending}
@@ -687,7 +577,6 @@ export default function TemplatesSection() {
             form={form}
             setForm={setForm}
             isCreate={false}
-            moduleTemplates={moduleTemplates.filter((m) => m.slug !== drawerTemplate.slug)}
             onSubmit={handleUpdate}
             onArchive={() => setArchiveConfirm(drawerTemplate.slug)}
             onClone={handleClone}

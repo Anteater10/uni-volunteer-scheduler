@@ -1,6 +1,6 @@
 """Backend CRUD tests for module templates — Phase 17 Plan 01.
 
-Covers: type enum, session_count, restore, include_archived, validation, and auth.
+Covers: session_count, restore, include_archived, validation, and auth.
 """
 import pytest
 from app import models
@@ -44,29 +44,27 @@ def test_list_templates_empty(client, db_session, admin_headers):
     assert isinstance(resp.json(), list)
 
 
-def test_create_template_with_type(client, db_session, admin_headers):
-    """POST creates template with type=seminar and session_count=2; both appear in response."""
+def test_create_template_with_session_count(client, db_session, admin_headers):
+    """POST creates template with session_count=2; it appears in the response."""
     resp = _create_template(
         client,
         admin_headers,
         slug="seminars-intro",
         name="Intro Seminar",
-        type="seminar",
         session_count=2,
     )
     assert resp.status_code == 201
     body = resp.json()
     assert body["slug"] == "seminars-intro"
-    assert body["type"] == "seminar"
     assert body["session_count"] == 2
 
 
-def test_create_template_default_type(client, db_session, admin_headers):
-    """POST without explicit type gets type=module and session_count=1."""
+def test_create_template_defaults(client, db_session, admin_headers):
+    """POST without optional fields gets session_count=1 and no type key (PR #51)."""
     resp = _create_template(client, admin_headers, slug="plain-module", name="Plain Module")
     assert resp.status_code == 201
     body = resp.json()
-    assert body["type"] == "module"
+    assert "type" not in body
     assert body["session_count"] == 1
 
 
@@ -80,31 +78,18 @@ def test_create_template_slug_validation(client, db_session, admin_headers):
     assert resp.status_code == 422
 
 
-def test_update_template_type(client, db_session, admin_headers):
-    """PATCH changes type from module to orientation.
-
-    Issue #30 follow-up: the flip alone is rejected — this template's family
-    defaulted to its own slug, and turning the only module in that family into
-    an orientation would orphan the credit family. Naming a real family in the
-    same PATCH makes the flip legal.
-    """
-    _create_template(client, admin_headers, slug="update-type-test", name="Update Type")
+def test_update_template_family_key(client, db_session, admin_headers):
+    """PATCH can regroup a module into another credit family (PR #51: no
+    type flips anymore — family_key is the only grouping knob)."""
+    _create_template(client, admin_headers, slug="update-family-test", name="Update Family")
     _create_template(client, admin_headers, slug="target-module", name="Target Module")
 
     resp = client.patch(
-        "/api/v1/admin/module-templates/update-type-test",
-        json={"type": "orientation"},
-        headers=admin_headers,
-    )
-    assert resp.status_code == 422, resp.text
-
-    resp = client.patch(
-        "/api/v1/admin/module-templates/update-type-test",
-        json={"type": "orientation", "family_key": "target-module"},
+        "/api/v1/admin/module-templates/update-family-test",
+        json={"family_key": "target-module"},
         headers=admin_headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["type"] == "orientation"
     assert resp.json()["family_key"] == "target-module"
 
 

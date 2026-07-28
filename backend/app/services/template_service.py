@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models import ModuleTemplate, ModuleType
+from app.models import ModuleTemplate
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$")
 MAX_METADATA_BYTES = 10240  # 10KB
@@ -61,76 +61,6 @@ def restore_template(db: Session, slug: str) -> ModuleTemplate:
     return tpl
 
 
-def _known_family_keys(db: Session, exclude_slug: str | None = None) -> list[str]:
-    """Distinct family keys among active templates, ``family_key or slug``.
-
-    ``exclude_slug`` drops one template's contribution — used on update so a
-    template can't validate its own family binding against itself.
-    """
-    q = db.query(ModuleTemplate).filter(ModuleTemplate.deleted_at.is_(None))
-    if exclude_slug is not None:
-        q = q.filter(ModuleTemplate.slug != exclude_slug)
-    return sorted({t.family_key or t.slug for t in q.all()})
-
-
-def _resolve_orientation_family(db: Session, slug: str) -> str:
-    """Resolve the module family a new orientation template credits (issue #30).
-
-    Only the `<family>-orientation` slug derivation is accepted, and only when
-    the derived family actually exists among active templates. Anything else is
-    a 422 telling the admin to pass ``family_key`` explicitly — never a silent
-    binding to a family nothing checks against.
-    """
-    known_families = _known_family_keys(db)
-    candidate = (
-        slug[: -len("-orientation")] if slug.endswith("-orientation") else None
-    )
-    if candidate and candidate in known_families:
-        return candidate
-    hint = f"(derived '{candidate}' matches no module) " if candidate else ""
-    raise HTTPException(
-        status_code=422,
-        detail=(
-            "Orientation templates must name the module family they credit "
-            f"{hint}— pass family_key explicitly. Known families: "
-            f"{', '.join(known_families) or 'none yet'}."
-        ),
-    )
-
-
-def _validate_orientation_family_update(
-    db: Session, tpl: ModuleTemplate, data: dict
-) -> None:
-    """Issue #30 holds on update too: an orientation template's family binding
-    must land on a real active family.
-
-    Fires when the payload changes ``family_key`` on an orientation template,
-    or flips ``type`` to orientation (which orphans a family_key that defaulted
-    to the template's own slug). Explicit family_key at *create* stays
-    admin-trusted; this only guards changes to an existing binding.
-    """
-    new_type = data.get("type") or tpl.type
-    if new_type != ModuleType.orientation:
-        return
-    if "family_key" in data and data["family_key"] is not None:
-        candidate = data["family_key"]
-    elif data.get("type") == ModuleType.orientation and tpl.type != ModuleType.orientation:
-        candidate = tpl.family_key or tpl.slug
-    else:
-        return
-    known_families = _known_family_keys(db, exclude_slug=tpl.slug)
-    if candidate in known_families:
-        return
-    raise HTTPException(
-        status_code=422,
-        detail=(
-            "Orientation templates must name the module family they credit "
-            f"('{candidate}' matches no module) — pick an existing family. "
-            f"Known families: {', '.join(known_families) or 'none yet'}."
-        ),
-    )
-
-
 def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     _validate_slug(slug)
     _validate_metadata(data.get("metadata"))
@@ -156,16 +86,7 @@ def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     # multiple modules (e.g. "crispr-intro" + "crispr-advanced" both under
     # family_key="crispr").
     if not payload.get("family_key"):
-        if payload.get("type") == ModuleType.orientation:
-            # Issue #30: an orientation template must credit a real module
-            # family — silent name-magic minted orphan families nothing ever
-            # checked against ("biology-orientation" → "biology" ≠ "intro-bio").
-            # The `<family>-orientation` derivation survives only as a default
-            # that must land on an existing family; otherwise the admin has to
-            # pick one explicitly.
-            payload["family_key"] = _resolve_orientation_family(db, slug)
-        else:
-            payload["family_key"] = slug
+        payload["family_key"] = slug
     tpl = ModuleTemplate(slug=slug, **payload)
     if "metadata" in data:
         tpl.metadata_ = data["metadata"]
@@ -183,7 +104,6 @@ def update_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     _validate_metadata(data.get("metadata"))
     _validate_session_count(data.get("session_count"))
     tpl = get_template(db, slug)
-    _validate_orientation_family_update(db, tpl, data)
     for k, v in data.items():
         if v is not None:
             if k == "metadata":
@@ -203,7 +123,7 @@ def soft_delete_template(db: Session, slug: str) -> None:
 
 
 def clone_template(db: Session, source_slug: str, new_slug: str, new_name: str | None = None) -> ModuleTemplate:
-    """Deep-copy a template into a new slug. Copies type, capacity, duration,
+    """Deep-copy a template into a new slug. Copies capacity, duration,
     description, materials, metadata, family_key, and default_form_schema."""
     _validate_slug(new_slug)
     src = get_template(db, source_slug)
@@ -215,7 +135,6 @@ def clone_template(db: Session, source_slug: str, new_slug: str, new_name: str |
         name=new_name or f"{src.name} (copy)",
         default_capacity=src.default_capacity,
         duration_minutes=src.duration_minutes,
-        type=src.type,
         session_count=src.session_count,
         materials=list(src.materials or []),
         description=src.description,

@@ -38,7 +38,6 @@ def module_template(db_session):
         name="Boundary Bio",
         default_capacity=20,
         duration_minutes=90,
-        type=models.ModuleType.module,
         session_count=1,
     )
     db_session.add(tpl)

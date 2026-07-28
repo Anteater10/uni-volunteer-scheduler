@@ -48,7 +48,6 @@ const TEMPLATES = [
   {
     slug: "dna-module",
     name: "DNA Extraction",
-    type: "module",
     duration_minutes: 90,
     session_count: 2,
     default_capacity: 30,
@@ -59,7 +58,6 @@ const TEMPLATES = [
   {
     slug: "orientation-101",
     name: "General Orientation",
-    type: "orientation",
     duration_minutes: 120,
     session_count: 1,
     default_capacity: 50,
@@ -72,7 +70,6 @@ const TEMPLATES = [
 const ARCHIVED_TEMPLATE = {
   slug: "old-seminar",
   name: "Old Seminar",
-  type: "seminar",
   duration_minutes: 60,
   session_count: 1,
   default_capacity: 20,
@@ -131,7 +128,7 @@ test("renders empty state when list is empty", async () => {
   });
 });
 
-test("renders table with Name, Type, Duration, Sessions, Capacity columns when templates exist", async () => {
+test("renders table with Name, Duration, Sessions, Capacity columns and no Type column (PR #51)", async () => {
   api.admin.templates.list.mockResolvedValue(TEMPLATES);
   const qc = makeQC();
   renderSection(qc);
@@ -143,7 +140,7 @@ test("renders table with Name, Type, Duration, Sessions, Capacity columns when t
   const headers = table.querySelectorAll("th");
   const headerTexts = Array.from(headers).map((h) => h.textContent.toLowerCase());
   expect(headerTexts.some((h) => h.includes("name"))).toBe(true);
-  expect(headerTexts.some((h) => h.includes("type"))).toBe(true);
+  expect(headerTexts.some((h) => h.includes("type"))).toBe(false);
   expect(headerTexts.some((h) => h.includes("duration"))).toBe(true);
   expect(headerTexts.some((h) => h.includes("sessions"))).toBe(true);
   expect(headerTexts.some((h) => h.includes("capacity"))).toBe(true);
@@ -197,8 +194,8 @@ test("create form has all required fields", async () => {
   // Check for all required fields via their label text
   expect(screen.getByLabelText(/module name/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/url slug/i)).toBeInTheDocument();
-  // Type select — use its id since label text "Type" is common
-  expect(document.getElementById("tf-type")).toBeInTheDocument();
+  // PR #51: the Type picker is gone — every module is just a module
+  expect(document.getElementById("tf-type")).not.toBeInTheDocument();
   expect(screen.getByLabelText(/duration/i)).toBeInTheDocument();
   // session_count is no longer a user-editable field on the create form;
   // it's derived per template and surfaced in the table column instead.

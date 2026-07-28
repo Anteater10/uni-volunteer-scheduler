@@ -82,12 +82,6 @@ class SlotType(str, enum.Enum):
     PERIOD = "period"
 
 
-class ModuleType(str, enum.Enum):
-    seminar = "seminar"
-    orientation = "orientation"
-    module = "module"
-
-
 class OrientationCreditSource(str, enum.Enum):
     """Phase 21: how a volunteer earned orientation credit.
 
@@ -592,11 +586,9 @@ class ModuleTemplate(Base):
     # Phase 08: prereq_slugs column dropped (D-05)
     default_capacity = Column(Integer, nullable=False, server_default="20")
     duration_minutes = Column(Integer, nullable=False, server_default="90")
-    type = Column(
-        SqlEnum(ModuleType, values_callable=lambda x: [e.value for e in x], name="moduletype", create_type=False),
-        nullable=False,
-        server_default="module",
-    )
+    # PR #51: the type column (module/seminar/orientation) is gone — every row
+    # is a plain module now. Orientation is a *slot* concept (SlotType), and
+    # credit grouping lives on family_key.
     session_count = Column(Integer, nullable=False, server_default="1")
     materials = Column(ARRAY(String), nullable=False, server_default="{}")
     description = Column(Text, nullable=True)
