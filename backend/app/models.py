@@ -59,14 +59,6 @@ class MagicLinkPurpose(str, enum.Enum):
     SIGNUP_MANAGE = "signup_manage"    # NEW Phase 08
 
 
-class CsvImportStatus(str, enum.Enum):
-    pending = "pending"
-    processing = "processing"
-    ready = "ready"
-    committed = "committed"
-    failed = "failed"
-
-
 class NotificationType(str, enum.Enum):
     email = "email"
     sms = "sms"
@@ -694,31 +686,6 @@ class OrientationCredit(Base):
 
     granted_by = relationship("User")
     academic_quarter = relationship("AcademicQuarter")
-
-
-# -------------------------
-# CSV Import tracking
-# -------------------------
-
-
-class CsvImport(Base):
-    __tablename__ = "csv_imports"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    filename = Column(String(512), nullable=False)
-    raw_csv_hash = Column(String(64), nullable=False)
-    status = Column(
-        SqlEnum(CsvImportStatus, values_callable=lambda x: [e.value for e in x], name="csvimportstatus"),
-        default=CsvImportStatus.pending,
-        nullable=False,
-    )
-    result_payload = Column(JSONB, nullable=True)
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    uploader = relationship("User")
 
 
 # -------------------------

@@ -104,9 +104,9 @@ Drive from the Admin desktop window.
       errors.
 - [ ] `/admin/templates` — list shows slug / name / capacity / duration;
       create, edit, and delete/archive flows all work.
-- [ ] `/admin/imports` — upload a sample quarterly template CSV; preview
-      shows "N events will be created, M skipped"; confirm commits
-      atomically.
+- [ ] `/admin/imports` — route no longer exists; the sidebar has no Imports
+      entry and `GET /api/v1/admin/imports` returns 404 (feature removed in
+      PR #51).
 - [ ] `/admin/exports` — volunteer hours, attendance, and no-show CSVs all
       download with real (non-empty) data.
 - [ ] `Overrides` tab is **NOT** present in the admin sidebar (Phase 16
@@ -160,8 +160,8 @@ Drive all three windows in one sitting. Mirrors Scenario 1 from
 
 ## Section 5 — Regressions to watch
 
-- [ ] CSV import copy everywhere says **"quarterly"**, not "yearly" (admin
-      imports UI, template help text, any in-app docs).
+- [ ] No CSV-import copy anywhere in the UI (the import pipeline was
+      removed in PR #51; modules are managed by hand on `/admin/templates`).
 - [ ] No "student account", "student register", or "student login" copy
       anywhere in the UI (participants are account-less).
 - [ ] All in-app links use `/organizer/*`; none use bare `/organize/*`

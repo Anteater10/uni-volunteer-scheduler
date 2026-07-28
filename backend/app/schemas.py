@@ -608,17 +608,6 @@ class SentNotificationRead(ORMBase):
     provider_id: Optional[str] = None
 
 
-class CsvImportRead(ORMBase):
-    id: UUID
-    uploaded_by: UUID
-    filename: str
-    status: str
-    result_payload: Optional[dict] = None
-    error_message: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
-
-
 # =========================
 # PHASE 09: PUBLIC SIGNUP SCHEMAS
 # =========================
