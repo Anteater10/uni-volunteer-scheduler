@@ -35,7 +35,7 @@ vi.mock("../../../lib/api", () => {
     delete: vi.fn(),
   };
   const admin = {
-    templates: {
+    modules: {
       list: vi.fn(),
       create: vi.fn(),
     },
@@ -284,8 +284,8 @@ describe("EventsSection — create flow", () => {
     vi.clearAllMocks();
     api.events.list.mockResolvedValue([]);
     api.events.create.mockResolvedValue({ id: "new-evt" });
-    api.admin.templates.list.mockResolvedValue(FIXTURE_MODULES);
-    api.admin.templates.create.mockResolvedValue({
+    api.admin.modules.list.mockResolvedValue(FIXTURE_MODULES);
+    api.admin.modules.create.mockResolvedValue({
       slug: "new-module",
       name: "New Module",
       family_key: "new-module",
@@ -489,7 +489,7 @@ describe("EventsSection — edit flow diff", () => {
     api.slots.create.mockResolvedValue({});
     api.slots.update.mockResolvedValue({});
     api.slots.delete.mockResolvedValue({});
-    api.admin.templates.list.mockResolvedValue(FIXTURE_MODULES);
+    api.admin.modules.list.mockResolvedValue(FIXTURE_MODULES);
   });
 
   it("renders existing slots with their values and signup count", async () => {

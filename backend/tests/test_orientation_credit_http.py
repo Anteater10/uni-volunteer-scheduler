@@ -44,7 +44,7 @@ def session_b(db_session):
 
 
 def _make_template(db, *, slug: str, family_key: str | None = None):
-    tmpl = models.ModuleTemplate(
+    tmpl = models.Module(
         slug=slug,
         name=slug.title(),
         family_key=family_key or slug,

@@ -52,9 +52,9 @@ test.describe('admin dashboard smoke', () => {
     await expect(page.locator('#al-search').first()).toBeVisible({ timeout: 8000 });
   });
 
-  test('templates page loads', async ({ page }) => {
+  test('modules page loads', async ({ page }) => {
     await loginAsAdmin(page);
-    await page.goto('/admin/templates');
+    await page.goto('/admin/modules');
     // Wait for page to load — any heading is fine
     await page.waitForLoadState('networkidle');
     // Templates section renders a heading or table

@@ -238,7 +238,7 @@ class Event(Base):
     signup_open_at = Column(DateTime(timezone=True), nullable=True)
     signup_close_at = Column(DateTime(timezone=True), nullable=True)
     venue_code = Column(String(4), nullable=True)
-    # Phase 08: module_slug FK to module_templates dropped (D-07); column stays as plain String
+    # Phase 08: module_slug FK to modules dropped (D-07); column stays as plain String
     module_slug = Column(String, nullable=True)
     reminder_1h_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
 
@@ -574,12 +574,12 @@ class MagicLinkToken(Base):
 
 
 # -------------------------
-# Module templates
+# Modules
 # -------------------------
 
 
-class ModuleTemplate(Base):
-    __tablename__ = "module_templates"
+class Module(Base):
+    __tablename__ = "modules"
 
     slug = Column(String, primary_key=True)
     name = Column(String(255), nullable=False)
@@ -715,7 +715,7 @@ class SignupResponse(Base):
     """One per (signup, field_id). Free-text in ``value_text``; structured
     answers (multi-select, arrays) in ``value_json``. The effective schema
     lives on the event (``Event.form_schema``) or template
-    (``ModuleTemplate.default_form_schema``); responses are snapshotted by
+    (``Module.default_form_schema``); responses are snapshotted by
     ``field_id`` so schema edits don't retroactively break old signups.
     """
 

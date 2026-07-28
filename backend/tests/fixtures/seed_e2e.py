@@ -183,12 +183,12 @@ def _get_current_week() -> dict:
 def _ensure_module(admin_token: str, slug: str, name: str) -> None:
     """Ensure a module template exists — required since event create now
     rejects unknown module_slug (per-module orientation design, 2026-04-17)."""
-    s, _ = _req("GET", f"/admin/module-templates", token=admin_token)
+    s, _ = _req("GET", f"/admin/modules", token=admin_token)
     if s != 200:
         return
     cs, _ = _req(
         "POST",
-        "/admin/module-templates",
+        "/admin/modules",
         token=admin_token,
         json_body={"slug": slug, "name": name},
     )

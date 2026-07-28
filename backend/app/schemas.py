@@ -540,9 +540,9 @@ class EventCheckInByEmailResponse(BaseModel):
 
 
 # =========================
-# MODULE TEMPLATE SCHEMAS (Phase 5)
+# MODULE SCHEMAS (Phase 5)
 # =========================
-class ModuleTemplateBase(BaseModel):
+class ModuleBase(BaseModel):
     name: str
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
@@ -557,11 +557,11 @@ class ModuleTemplateBase(BaseModel):
     family_key: Optional[str] = None
 
 
-class ModuleTemplateCreate(ModuleTemplateBase):
+class ModuleCreate(ModuleBase):
     slug: str
 
 
-class ModuleTemplateUpdate(BaseModel):
+class ModuleUpdate(BaseModel):
     name: Optional[str] = None
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: Optional[int] = None
@@ -573,7 +573,7 @@ class ModuleTemplateUpdate(BaseModel):
     family_key: Optional[str] = None
 
 
-class ModuleTemplateRead(ORMBase):
+class ModuleRead(ORMBase):
     slug: str
     name: str
     # Phase 08 (D-05): prerequisite slugs field removed
@@ -869,7 +869,7 @@ class TokenedManageRead(BaseModel):
 # CUSTOM FORM FIELDS (Phase 22)
 # =========================
 # The form schema is a JSON array of field descriptors stored on
-# ``module_templates.default_form_schema`` and ``events.form_schema``.
+# ``modules.default_form_schema`` and ``events.form_schema``.
 # Responses land in the ``signup_responses`` table.
 
 FormFieldType = Literal[

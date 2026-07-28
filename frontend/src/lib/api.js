@@ -656,12 +656,6 @@ export const api = {
       }),
   },
 
-  // --- Module Templates (Phase 5) ---
-  getModuleTemplates: () => request("/admin/module-templates"),
-  createModuleTemplate: (data) => request("/admin/module-templates", { method: "POST", body: data }),
-  updateModuleTemplate: (slug, data) => request(`/admin/module-templates/${slug}`, { method: "PATCH", body: data }),
-  deleteModuleTemplate: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
-
   // Phase 21 — organizer-scoped helpers
   organizer: {
     grantOrientation: (eventId, signupId) =>
@@ -781,21 +775,21 @@ export const api = {
       // Issue #38 — per-event attendance breakdown for a past quarter.
       retrospective: (id) => request(`/admin/quarters/${id}/retrospective`),
     },
-    templates: {
-      list: (params) => request("/admin/module-templates", { params }),
-      create: (payload) => request("/admin/module-templates", { method: "POST", body: payload }),
-      update: (slug, payload) => request(`/admin/module-templates/${slug}`, { method: "PATCH", body: payload }),
-      delete: (slug) => request(`/admin/module-templates/${slug}`, { method: "DELETE" }),
-      bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/module-templates/${s}`, { method: "DELETE" }))),
-      restore: (slug) => request(`/admin/module-templates/${slug}/restore`, { method: "POST" }),
+    modules: {
+      list: (params) => request("/admin/modules", { params }),
+      create: (payload) => request("/admin/modules", { method: "POST", body: payload }),
+      update: (slug, payload) => request(`/admin/modules/${slug}`, { method: "PATCH", body: payload }),
+      delete: (slug) => request(`/admin/modules/${slug}`, { method: "DELETE" }),
+      bulkDelete: (slugs) => Promise.all(slugs.map((s) => request(`/admin/modules/${s}`, { method: "DELETE" }))),
+      restore: (slug) => request(`/admin/modules/${slug}/restore`, { method: "POST" }),
       clone: (slug, { new_slug, new_name }) =>
-        request(`/admin/module-templates/${slug}/clone`, {
+        request(`/admin/modules/${slug}/clone`, {
           method: "POST",
           body: { new_slug, new_name },
         }),
-      // Phase 22 — default form schema on template
+      // Phase 22 — default form schema on the module
       setDefaultFormSchema: (slug, schema) =>
-        request(`/admin/templates/${slug}/default-form-schema`, {
+        request(`/admin/modules/${slug}/default-form-schema`, {
           method: "PUT",
           body: { schema },
         }),

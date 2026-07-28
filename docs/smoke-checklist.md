@@ -102,7 +102,7 @@ Drive from the Admin desktop window.
       them appear; deactivate a user; CCPA export link is present.
 - [ ] `/admin/portals` — list loads; open a portal detail page without
       errors.
-- [ ] `/admin/templates` — list shows slug / name / capacity / duration;
+- [ ] `/admin/modules` — list shows slug / name / capacity / duration;
       create, edit, and delete/archive flows all work.
 - [ ] `/admin/imports` — route no longer exists; the sidebar has no Imports
       entry and `GET /api/v1/admin/imports` returns 404 (feature removed in
@@ -161,7 +161,7 @@ Drive all three windows in one sitting. Mirrors Scenario 1 from
 ## Section 5 — Regressions to watch
 
 - [ ] No CSV-import copy anywhere in the UI (the import pipeline was
-      removed in PR #51; modules are managed by hand on `/admin/templates`).
+      removed in PR #51; modules are managed by hand on `/admin/modules`).
 - [ ] No "student account", "student register", or "student login" copy
       anywhere in the UI (participants are account-less).
 - [ ] All in-app links use `/organizer/*`; none use bare `/organize/*`

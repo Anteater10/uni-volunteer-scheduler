@@ -201,7 +201,7 @@ def get_event(event_id: UUID, db: Session = Depends(get_db)):
 def get_event_form_schema(event_id: UUID, db: Session = Depends(get_db)):
     """Phase 22 — return the effective custom-form schema for this event.
 
-    Resolves event.form_schema ?? module_template.default_form_schema.
+    Resolves event.form_schema ?? module.default_form_schema.
     Public (no auth) so participants can fetch the form to render.
     """
     from ...services import form_schema_service

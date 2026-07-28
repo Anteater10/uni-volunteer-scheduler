@@ -1,6 +1,6 @@
-// src/pages/admin/TemplatesSection.jsx
+// src/pages/admin/ModulesSection.jsx
 //
-// Phase 17 Plan 02 — Templates CRUD with SideDrawer pattern.
+// Phase 17 Plan 02 — Modules CRUD with SideDrawer pattern.
 // ADMIN-08..11: list, create, edit (update), archive (soft-delete), restore.
 // D-18: plain-English labels. D-19: humanized names. D-52/53: breadcrumbs.
 
@@ -52,23 +52,23 @@ function emptyForm() {
   };
 }
 
-function templateToForm(t) {
+function moduleToForm(m) {
   return {
-    name: t.name || "",
-    slug: t.slug || "",
-    duration_minutes: t.duration_minutes ?? 90,
-    session_count: t.session_count ?? 1,
-    default_capacity: t.default_capacity ?? 30,
-    description: t.description || "",
-    materials: Array.isArray(t.materials) ? t.materials.join(", ") : (t.materials || ""),
+    name: m.name || "",
+    slug: m.slug || "",
+    duration_minutes: m.duration_minutes ?? 90,
+    session_count: m.session_count ?? 1,
+    default_capacity: m.default_capacity ?? 30,
+    description: m.description || "",
+    materials: Array.isArray(m.materials) ? m.materials.join(", ") : (m.materials || ""),
   };
 }
 
 // ---------------------------------------------------------------------------
-// TemplateForm — shared create/edit form rendered inside SideDrawer
+// ModuleForm — shared create/edit form rendered inside SideDrawer
 // ---------------------------------------------------------------------------
 
-function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
+function ModuleForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
   function handleNameChange(e) {
     const name = e.target.value;
     setForm((prev) => ({
@@ -180,7 +180,7 @@ function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, o
           </Button>
           <p className="text-xs text-[var(--color-fg-muted)] mt-1">
             Custom signup questions volunteers answer for every event created
-            from this template.
+            from this module.
           </p>
         </div>
       )}
@@ -224,37 +224,37 @@ function TemplateForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, o
 }
 
 // ---------------------------------------------------------------------------
-// TemplatesSection
+// ModulesSection
 // ---------------------------------------------------------------------------
 
-export default function TemplatesSection() {
+export default function ModulesSection() {
   useAdminPageTitle("Modules");
   const qc = useQueryClient();
 
   // --- UI state ---
-  const [drawerTemplate, setDrawerTemplate] = useState(null); // template being edited
+  const [drawerModule, setDrawerModule] = useState(null); // module being edited
   const [createOpen, setCreateOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [archiveConfirm, setArchiveConfirm] = useState(null); // slug or null
-  const [formFieldsFor, setFormFieldsFor] = useState(null); // template (with slug + default_form_schema) being edited
+  const [formFieldsFor, setFormFieldsFor] = useState(null); // module (with slug + default_form_schema) being edited
 
   // --- Form state for create/edit ---
   const [form, setForm] = useState(emptyForm());
 
   // --- Query ---
   const listQ = useQuery({
-    queryKey: ["adminTemplates", { include_archived: showArchived }],
+    queryKey: ["adminModules", { include_archived: showArchived }],
     queryFn: () =>
-      api.admin.templates.list(showArchived ? { include_archived: true } : undefined),
+      api.admin.modules.list(showArchived ? { include_archived: true } : undefined),
   });
 
   // --- Mutations ---
   const createM = useMutation({
-    mutationFn: (payload) => api.admin.templates.create(payload),
+    mutationFn: (payload) => api.admin.modules.create(payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
       setCreateOpen(false);
       setForm(emptyForm());
       toast.success("Module created");
@@ -263,30 +263,30 @@ export default function TemplatesSection() {
   });
 
   const updateM = useMutation({
-    mutationFn: ({ slug, payload }) => api.admin.templates.update(slug, payload),
+    mutationFn: ({ slug, payload }) => api.admin.modules.update(slug, payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
-      setDrawerTemplate(null);
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
+      setDrawerModule(null);
       toast.success("Module updated");
     },
     onError: (e) => toast.error(e?.message || "Failed to update module"),
   });
 
   const archiveM = useMutation({
-    mutationFn: (slug) => api.admin.templates.delete(slug),
+    mutationFn: (slug) => api.admin.modules.delete(slug),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
       setArchiveConfirm(null);
-      setDrawerTemplate(null);
+      setDrawerModule(null);
       toast.success("Module archived");
     },
     onError: (e) => toast.error(e?.message || "Failed to archive module"),
   });
 
   const restoreM = useMutation({
-    mutationFn: (slug) => api.admin.templates.restore(slug),
+    mutationFn: (slug) => api.admin.modules.restore(slug),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
       toast.success("Module restored");
     },
     onError: (e) => toast.error(e?.message || "Failed to restore module"),
@@ -294,18 +294,18 @@ export default function TemplatesSection() {
 
   const cloneM = useMutation({
     mutationFn: ({ slug, new_slug, new_name }) =>
-      api.admin.templates.clone(slug, { new_slug, new_name }),
+      api.admin.modules.clone(slug, { new_slug, new_name }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
-      setDrawerTemplate(null);
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
+      setDrawerModule(null);
       toast.success("Module cloned");
     },
     onError: (e) => toast.error(e?.message || "Failed to clone module"),
   });
 
   function handleClone() {
-    if (!drawerTemplate) return;
-    const suggested = `${drawerTemplate.slug}-copy`;
+    if (!drawerModule) return;
+    const suggested = `${drawerModule.slug}-copy`;
     const new_slug = window.prompt(
       "Slug for the cloned module (lowercase, hyphens only):",
       suggested,
@@ -313,17 +313,17 @@ export default function TemplatesSection() {
     if (!new_slug) return;
     const new_name = window.prompt(
       "Name for the cloned module:",
-      `${drawerTemplate.name} (copy)`,
+      `${drawerModule.name} (copy)`,
     );
-    cloneM.mutate({ slug: drawerTemplate.slug, new_slug, new_name });
+    cloneM.mutate({ slug: drawerModule.slug, new_slug, new_name });
   }
 
   // Phase 22 — default form schema persistence
   const defaultSchemaM = useMutation({
     mutationFn: ({ slug, schema }) =>
-      api.admin.templates.setDefaultFormSchema(slug, schema),
+      api.admin.modules.setDefaultFormSchema(slug, schema),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
       setFormFieldsFor(null);
       toast.success("Form fields saved");
     },
@@ -349,9 +349,9 @@ export default function TemplatesSection() {
     setCreateOpen(true);
   }
 
-  function openEdit(t) {
-    setForm(templateToForm(t));
-    setDrawerTemplate(t);
+  function openEdit(m) {
+    setForm(moduleToForm(m));
+    setDrawerModule(m);
   }
 
   function handleCreate(formData) {
@@ -369,9 +369,9 @@ export default function TemplatesSection() {
   }
 
   function handleUpdate(formData) {
-    if (!drawerTemplate) return;
+    if (!drawerModule) return;
     updateM.mutate({
-      slug: drawerTemplate.slug,
+      slug: drawerModule.slug,
       payload: {
         name: formData.name,
         duration_minutes: Number(formData.duration_minutes),
@@ -396,7 +396,7 @@ export default function TemplatesSection() {
     setPage(1);
   }
 
-  // Name of template being confirmed for archive
+  // Name of module being confirmed for archive
   const archiveTargetName = archiveConfirm
     ? (listQ.data || []).find((t) => t.slug === archiveConfirm)?.name || archiveConfirm
     : null;
@@ -556,7 +556,7 @@ export default function TemplatesSection() {
         onClose={() => setCreateOpen(false)}
         title="New module"
       >
-        <TemplateForm
+        <ModuleForm
           form={form}
           setForm={setForm}
           isCreate
@@ -568,20 +568,20 @@ export default function TemplatesSection() {
 
       {/* Edit SideDrawer */}
       <SideDrawer
-        open={!!drawerTemplate}
-        onClose={() => setDrawerTemplate(null)}
+        open={!!drawerModule}
+        onClose={() => setDrawerModule(null)}
         title="Edit module"
       >
-        {drawerTemplate && (
-          <TemplateForm
+        {drawerModule && (
+          <ModuleForm
             form={form}
             setForm={setForm}
             isCreate={false}
             onSubmit={handleUpdate}
-            onArchive={() => setArchiveConfirm(drawerTemplate.slug)}
+            onArchive={() => setArchiveConfirm(drawerModule.slug)}
             onClone={handleClone}
-            onCancel={() => setDrawerTemplate(null)}
-            onEditFormFields={() => setFormFieldsFor(drawerTemplate)}
+            onCancel={() => setDrawerModule(null)}
+            onEditFormFields={() => setFormFieldsFor(drawerModule)}
             submitting={updateM.isPending}
           />
         )}

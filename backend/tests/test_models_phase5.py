@@ -1,11 +1,11 @@
-"""Phase 5 model tests -- ModuleTemplate (extended) + Event.module_slug."""
+"""Phase 5 model tests -- Module (extended) + Event.module_slug."""
 import pytest
-from app.models import ModuleTemplate, Event
+from app.models import Module, Event
 
 
 def test_module_template_columns():
-    """ModuleTemplate has all required columns."""
-    cols = {c.name for c in ModuleTemplate.__table__.columns}
+    """Module has all required columns."""
+    cols = {c.name for c in Module.__table__.columns}
     expected = {
         # Phase 08 (D-05): prerequisite slugs column dropped in migration 0009
         "slug", "name", "default_capacity", "duration_minutes",

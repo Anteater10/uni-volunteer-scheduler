@@ -239,7 +239,6 @@ export const NODE_CONCEPTS = {
   "svc-check-in": ["sqlalchemy-orm-transactions"],
   "svc-orientation": ["sqlalchemy-orm-transactions"],
   "svc-event-tpl": ["sqlalchemy-orm-transactions"],
-  "svc-import": ["celery-redis-task-queues", "sqlalchemy-orm-transactions"],
   "svc-reminder": [
     "celery-redis-task-queues",
     "transactional-email",
@@ -453,17 +452,16 @@ export const NODES = [
   },
   {
     id: "ui-admin-templates",
-    label: "Templates + Imports",
-    subtitle: "/admin/templates + /admin/imports",
+    label: "Modules",
+    subtitle: "/admin/modules",
     category: "client",
     status: STATUS.WORKING,
     col: 2,
     row: 9,
     relatedFiles: [
-      "frontend/src/pages/admin/TemplatesSection.jsx",
-      "frontend/src/pages/admin/ImportsSection.jsx",
+      "frontend/src/pages/admin/ModulesSection.jsx",
     ],
-    evidence: "Phases 17/18 — LLM CSV imports unblocked.",
+    evidence: "Phase 17; CSV imports removed in PR #51.",
   },
   {
     id: "ui-admin-reminders",
@@ -739,32 +737,17 @@ export const NODES = [
   {
     id: "svc-event-tpl",
     label: "Templates + duplication + forms",
-    subtitle: "template_service, event_duplication, form_schema",
+    subtitle: "module_service, event_duplication, form_schema",
     category: "service",
     status: STATUS.WORKING,
     col: 4,
     row: 7,
     relatedFiles: [
-      "backend/app/services/template_service.py",
+      "backend/app/services/module_service.py",
       "backend/app/services/event_duplication_service.py",
       "backend/app/services/form_schema_service.py",
     ],
     evidence: "Phases 17 + 22 + 23.",
-  },
-  {
-    id: "svc-import",
-    label: "CSV import + validator",
-    subtitle: "LLM-normalised module template import",
-    category: "service",
-    status: STATUS.WORKING,
-    col: 4,
-    row: 8,
-    relatedFiles: [
-      "backend/app/services/import_service.py",
-      "backend/app/services/csv_validator.py",
-      "backend/app/tasks/import_csv.py",
-    ],
-    evidence: "Phase 18 — Phase 5.07 unblocked.",
   },
   {
     id: "svc-reminder",
@@ -880,8 +863,8 @@ export const NODES = [
   },
   {
     id: "data-audit-csv",
-    label: "Audit log + CSV history",
-    subtitle: "AuditLog, CsvImport",
+    label: "Audit log",
+    subtitle: "AuditLog",
     category: "data",
     status: STATUS.WORKING,
     col: 5,
@@ -1283,52 +1266,6 @@ export const FLOWS = [
         from: "api-admin",
         to: "data-audit-csv",
         label: "INSERT audit row",
-      },
-    ],
-  },
-
-  {
-    id: "flow-admin-import",
-    title: "Admin imports module templates from CSV",
-    description:
-      "LLM-normalised CSV import that runs once per quarter (every 11 weeks).",
-    status: STATUS.WORKING,
-    steps: [
-      {
-        number: 1,
-        from: "actor-admin",
-        to: "ui-admin-templates",
-        label: "open /admin/imports + upload",
-      },
-      {
-        number: 2,
-        from: "ui-admin-templates",
-        to: "api-admin",
-        label: "POST /imports/upload",
-      },
-      {
-        number: 3,
-        from: "api-admin",
-        to: "svc-import",
-        label: "queue parse task",
-      },
-      {
-        number: 4,
-        from: "svc-import",
-        to: "ext-celery-worker",
-        label: "run import_csv task",
-      },
-      {
-        number: 5,
-        from: "ext-celery-worker",
-        to: "data-orientation",
-        label: "UPSERT ModuleTemplate rows",
-      },
-      {
-        number: 6,
-        from: "ext-celery-worker",
-        to: "data-audit-csv",
-        label: "INSERT CsvImport history",
       },
     ],
   },

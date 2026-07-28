@@ -62,8 +62,7 @@ const allNavItems = [
   { to: "/admin/operations", label: "Operations", roles: ["admin", "organizer"] },
 
   // 3. Content library the events are built from
-  // Labelled "Modules" for admins; the route/table stay "templates".
-  { to: "/admin/templates", label: "Modules", roles: ["admin", "organizer"] },
+  { to: "/admin/modules", label: "Modules", roles: ["admin", "organizer"] },
 
   // 4. People + credits
   // Phase 21 — orientation credit engine

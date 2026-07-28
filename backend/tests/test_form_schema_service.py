@@ -6,7 +6,7 @@ Covers:
   3. append_event_field adds to override, persists without duplicate.
   4. validate_responses returns missing required ids (soft-warn).
   5. persist_responses upserts on (signup_id, field_id).
-  6. set_template_default_schema writes an audit log.
+  6. set_module_default_schema writes an audit log.
   7. set_event_schema validates schema shape and rejects duplicate ids.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from fastapi import HTTPException
 from app.models import (
     AuditLog,
     Event,
-    ModuleTemplate,
+    Module,
     Signup,
     SignupResponse,
     SignupStatus,
@@ -43,7 +43,7 @@ def _make_user(db):
 
 
 def _make_template(db, *, slug: str, default_form_schema=None):
-    tpl = ModuleTemplate(
+    tpl = Module(
         slug=slug,
         name=slug.title(),
         default_capacity=20,
@@ -242,12 +242,12 @@ def test_set_template_default_schema_writes_audit(db_session):
     schema = [
         {"id": "foo", "label": "Foo?", "type": "text", "required": True, "order": 1}
     ]
-    form_schema_service.set_template_default_schema(
+    form_schema_service.set_module_default_schema(
         db_session, "mod-e", schema, actor=admin
     )
     logs = (
         db_session.query(AuditLog)
-        .filter(AuditLog.action == "form_schema_template_set")
+        .filter(AuditLog.action == "form_schema_module_set")
         .all()
     )
     assert logs, "expected an audit log entry for template schema set"

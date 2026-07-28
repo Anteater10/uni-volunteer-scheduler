@@ -1,6 +1,6 @@
-// src/pages/admin/__tests__/TemplatesSection.test.jsx
+// src/pages/admin/__tests__/ModulesSection.test.jsx
 //
-// Phase 17 Plan 02 — TemplatesSection CRUD tests.
+// Phase 17 Plan 02 — ModulesSection CRUD tests.
 // Covers list, create, edit, archive, restore with SideDrawer pattern.
 
 import React from "react";
@@ -12,7 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // ---------------------------------------------------------------------------
 
 vi.mock("../../../lib/api", () => {
-  const templates = {
+  const modules = {
     list: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock("../../../lib/api", () => {
     restore: vi.fn(),
   };
   return {
-    default: { admin: { templates } },
+    default: { admin: { modules } },
   };
 });
 
@@ -38,13 +38,13 @@ vi.mock("../AdminLayout", () => ({
 import api from "../../../lib/api";
 import { toast } from "../../../state/toast";
 import { useAdminPageTitle } from "../AdminLayout";
-import TemplatesSection from "../TemplatesSection";
+import ModulesSection from "../ModulesSection";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const TEMPLATES = [
+const MODULES = [
   {
     slug: "dna-module",
     name: "DNA Extraction",
@@ -67,7 +67,7 @@ const TEMPLATES = [
   },
 ];
 
-const ARCHIVED_TEMPLATE = {
+const ARCHIVED_MODULE = {
   slug: "old-seminar",
   name: "Old Seminar",
   duration_minutes: 60,
@@ -91,7 +91,7 @@ function makeQC() {
 function renderSection(qc) {
   return render(
     <QueryClientProvider client={qc}>
-      <TemplatesSection />
+      <ModulesSection />
     </QueryClientProvider>,
   );
 }
@@ -106,7 +106,7 @@ beforeEach(() => {
 
 test("renders loading skeletons while data is pending", async () => {
   // Return a promise that never resolves to stay in loading state
-  api.admin.templates.list.mockReturnValue(new Promise(() => {}));
+  api.admin.modules.list.mockReturnValue(new Promise(() => {}));
   const qc = makeQC();
   renderSection(qc);
   // Skeletons should be visible during loading
@@ -120,7 +120,7 @@ test("renders loading skeletons while data is pending", async () => {
 });
 
 test("renders empty state when list is empty", async () => {
-  api.admin.templates.list.mockResolvedValue([]);
+  api.admin.modules.list.mockResolvedValue([]);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -129,7 +129,7 @@ test("renders empty state when list is empty", async () => {
 });
 
 test("renders table with Name, Duration, Sessions, Capacity columns and no Type column (PR #51)", async () => {
-  api.admin.templates.list.mockResolvedValue(TEMPLATES);
+  api.admin.modules.list.mockResolvedValue(MODULES);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -148,7 +148,7 @@ test("renders table with Name, Duration, Sessions, Capacity columns and no Type 
 });
 
 test("clicking 'New module' button opens SideDrawer with title 'New module'", async () => {
-  api.admin.templates.list.mockResolvedValue(TEMPLATES);
+  api.admin.modules.list.mockResolvedValue(MODULES);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -164,7 +164,7 @@ test("clicking 'New module' button opens SideDrawer with title 'New module'", as
 });
 
 test("clicking a table row opens SideDrawer with title 'Edit module' and pre-filled values", async () => {
-  api.admin.templates.list.mockResolvedValue(TEMPLATES);
+  api.admin.modules.list.mockResolvedValue(MODULES);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -181,7 +181,7 @@ test("clicking a table row opens SideDrawer with title 'Edit module' and pre-fil
 });
 
 test("create form has all required fields", async () => {
-  api.admin.templates.list.mockResolvedValue([]);
+  api.admin.modules.list.mockResolvedValue([]);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -205,7 +205,7 @@ test("create form has all required fields", async () => {
 });
 
 test("slug auto-generates from name as lowercase with hyphens", async () => {
-  api.admin.templates.list.mockResolvedValue([]);
+  api.admin.modules.list.mockResolvedValue([]);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -224,7 +224,7 @@ test("slug auto-generates from name as lowercase with hyphens", async () => {
 });
 
 test("Archive button triggers confirmation modal with plain-English text", async () => {
-  api.admin.templates.list.mockResolvedValue(TEMPLATES);
+  api.admin.modules.list.mockResolvedValue(MODULES);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -245,7 +245,7 @@ test("Archive button triggers confirmation modal with plain-English text", async
 });
 
 test("Show archived toggle adds include_archived=true to query", async () => {
-  api.admin.templates.list.mockResolvedValue(TEMPLATES);
+  api.admin.modules.list.mockResolvedValue(MODULES);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -254,17 +254,17 @@ test("Show archived toggle adds include_archived=true to query", async () => {
   const toggle = screen.getByLabelText(/show archived/i);
   fireEvent.click(toggle);
   await waitFor(() => {
-    expect(api.admin.templates.list).toHaveBeenCalledWith(
+    expect(api.admin.modules.list).toHaveBeenCalledWith(
       expect.objectContaining({ include_archived: true }),
     );
   });
 });
 
 test("archived template row shows Restore action", async () => {
-  // First call returns active templates, second (after toggling showArchived) returns archived
-  api.admin.templates.list
-    .mockResolvedValueOnce(TEMPLATES)
-    .mockResolvedValue([ARCHIVED_TEMPLATE]);
+  // First call returns active modules, second (after toggling showArchived) returns archived
+  api.admin.modules.list
+    .mockResolvedValueOnce(MODULES)
+    .mockResolvedValue([ARCHIVED_MODULE]);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -279,11 +279,11 @@ test("archived template row shows Restore action", async () => {
   expect(screen.getByRole("button", { name: /restore/i })).toBeInTheDocument();
 });
 
-test("Restore button calls api.admin.templates.restore", async () => {
-  api.admin.templates.list
-    .mockResolvedValueOnce(TEMPLATES)
-    .mockResolvedValue([ARCHIVED_TEMPLATE]);
-  api.admin.templates.restore.mockResolvedValue({});
+test("Restore button calls api.admin.modules.restore", async () => {
+  api.admin.modules.list
+    .mockResolvedValueOnce(MODULES)
+    .mockResolvedValue([ARCHIVED_MODULE]);
+  api.admin.modules.restore.mockResolvedValue({});
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
@@ -298,12 +298,12 @@ test("Restore button calls api.admin.templates.restore", async () => {
   const restoreBtn = screen.getByRole("button", { name: /restore/i });
   fireEvent.click(restoreBtn);
   await waitFor(() => {
-    expect(api.admin.templates.restore).toHaveBeenCalledWith("old-seminar");
+    expect(api.admin.modules.restore).toHaveBeenCalledWith("old-seminar");
   });
 });
 
 test("useAdminPageTitle is called with 'Modules'", () => {
-  api.admin.templates.list.mockResolvedValue([]);
+  api.admin.modules.list.mockResolvedValue([]);
   const qc = makeQC();
   renderSection(qc);
   expect(useAdminPageTitle).toHaveBeenCalledWith("Modules");

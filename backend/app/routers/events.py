@@ -39,10 +39,10 @@ def _validate_module_slug(db: Session, module_slug: str | None) -> None:
             detail="module_slug is required — every event must be tied to a module",
         )
     exists = (
-        db.query(models.ModuleTemplate)
+        db.query(models.Module)
         .filter(
-            models.ModuleTemplate.slug == module_slug,
-            models.ModuleTemplate.deleted_at.is_(None),
+            models.Module.slug == module_slug,
+            models.Module.deleted_at.is_(None),
         )
         .first()
     )

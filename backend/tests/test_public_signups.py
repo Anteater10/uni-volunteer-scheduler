@@ -563,8 +563,8 @@ class TestOrientationRequirement:
         )
 
     def _template(self, db_session, slug, family_key=None):
-        from app.models import ModuleTemplate
-        tmpl = ModuleTemplate(
+        from app.models import Module
+        tmpl = Module(
             slug=slug,
             name=slug.title(),
             default_capacity=20,

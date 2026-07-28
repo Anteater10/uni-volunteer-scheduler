@@ -19,9 +19,9 @@ from ..deps import require_role, log_action, ensure_event_staff_access
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification
 from ..signup_service import promote_waitlist_fifo
-from ..services import template_service, quarter_service
+from ..services import module_service, quarter_service
 from ..services.audit_log_humanize import humanize as humanize_audit_log
-from ..schemas import ModuleTemplateRead, ModuleTemplateCreate, ModuleTemplateUpdate, SentNotificationRead
+from ..schemas import ModuleRead, ModuleCreate, ModuleUpdate, SentNotificationRead
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -1763,7 +1763,7 @@ def analytics_module_popularity(
 
     # Resolve slug → friendly name
     slugs = [s for s in by_mod.keys() if s != "(no module)"]
-    templates = db.query(models.ModuleTemplate).filter(models.ModuleTemplate.slug.in_(slugs)).all()
+    templates = db.query(models.Module).filter(models.Module.slug.in_(slugs)).all()
     name_by_slug = {t.slug: t.name for t in templates}
 
     result = []
@@ -1946,60 +1946,60 @@ def ccpa_delete(
 
 
 # =========================
-# MODULE TEMPLATE CRUD (Phase 5)
+# MODULE CRUD (Phase 5)
 # =========================
 
 
-@router.get("/module-templates", response_model=list[ModuleTemplateRead])
-def list_module_templates(
+@router.get("/modules", response_model=list[ModuleRead])
+def list_modules(
     include_archived: bool = False,
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
-    return template_service.list_templates(db, include_archived=include_archived)
+    return module_service.list_modules(db, include_archived=include_archived)
 
 
-@router.post("/module-templates", response_model=ModuleTemplateRead, status_code=201)
-def create_module_template(
-    payload: ModuleTemplateCreate,
+@router.post("/modules", response_model=ModuleRead, status_code=201)
+def create_module(
+    payload: ModuleCreate,
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     data = payload.model_dump(exclude={"slug"})
-    return template_service.create_template(db, payload.slug, data)
+    return module_service.create_module(db, payload.slug, data)
 
 
-@router.patch("/module-templates/{slug}", response_model=ModuleTemplateRead)
-def update_module_template(
+@router.patch("/modules/{slug}", response_model=ModuleRead)
+def update_module(
     slug: str,
-    payload: ModuleTemplateUpdate,
+    payload: ModuleUpdate,
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
     data = payload.model_dump(exclude_unset=True)
-    return template_service.update_template(db, slug, data)
+    return module_service.update_module(db, slug, data)
 
 
-@router.delete("/module-templates/{slug}", status_code=204)
-def delete_module_template(
+@router.delete("/modules/{slug}", status_code=204)
+def delete_module(
     slug: str,
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
-    template_service.soft_delete_template(db, slug)
+    module_service.soft_delete_module(db, slug)
 
 
-@router.post("/module-templates/{slug}/restore", response_model=ModuleTemplateRead)
-def restore_module_template(
+@router.post("/modules/{slug}/restore", response_model=ModuleRead)
+def restore_module(
     slug: str,
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
 ):
-    return template_service.restore_template(db, slug)
+    return module_service.restore_module(db, slug)
 
 
-@router.post("/module-templates/{slug}/clone", response_model=ModuleTemplateRead, status_code=201)
-def clone_module_template(
+@router.post("/modules/{slug}/clone", response_model=ModuleRead, status_code=201)
+def clone_module(
     slug: str,
     payload: dict,
     db: Session = Depends(get_db),
@@ -2009,7 +2009,7 @@ def clone_module_template(
     new_name = (payload or {}).get("new_name")
     if not new_slug:
         raise HTTPException(status_code=422, detail="new_slug is required")
-    return template_service.clone_template(db, slug, new_slug, new_name)
+    return module_service.clone_module(db, slug, new_slug, new_name)
 
 
 # =========================
@@ -2017,8 +2017,8 @@ def clone_module_template(
 # =========================
 
 
-@router.put("/templates/{slug}/default-form-schema")
-def set_template_default_form_schema(
+@router.put("/modules/{slug}/default-form-schema")
+def set_module_default_form_schema(
     slug: str,
     body: dict,
     db: Session = Depends(get_db),
@@ -2026,9 +2026,9 @@ def set_template_default_form_schema(
         require_role(models.UserRole.admin, models.UserRole.organizer)
     ),
 ):
-    """Replace the template's default form schema (admin or organizer).
+    """Replace the module's default form schema (admin or organizer).
 
-    Matches the rest of the module-template routes, which all admit organizers
+    Matches the rest of the module routes, which all admit organizers
     — including delete. This being the lone admin-only one meant an organizer
     on the Modules tab could delete a whole module but not edit its questions.
 
@@ -2037,7 +2037,7 @@ def set_template_default_form_schema(
     from ..services import form_schema_service
 
     schema = body.get("schema") if isinstance(body, dict) else body
-    result = form_schema_service.set_template_default_schema(
+    result = form_schema_service.set_module_default_schema(
         db, slug, schema, actor=admin_user
     )
     return {"slug": slug, "schema": result}

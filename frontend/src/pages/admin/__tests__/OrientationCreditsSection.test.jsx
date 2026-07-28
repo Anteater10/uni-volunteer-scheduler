@@ -12,13 +12,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const creditsListMock = vi.fn();
 const creditsCreateMock = vi.fn();
 const creditsRevokeMock = vi.fn();
-const templatesListMock = vi.fn();
+const modulesListMock = vi.fn();
 const quartersMock = vi.fn();
 
 vi.mock("../../../lib/api", () => ({
   default: {
     admin: {
-      templates: { list: (...a) => templatesListMock(...a) },
+      modules: { list: (...a) => modulesListMock(...a) },
       orientationCredits: {
         list: (...a) => creditsListMock(...a),
         create: (...a) => creditsCreateMock(...a),
@@ -77,7 +77,7 @@ const CREDIT = {
   notes: null,
 };
 
-const TEMPLATES = [
+const MODULES = [
   { slug: "intro-bio", name: "Intro Bio", family_key: "intro-bio", deleted_at: null },
 ];
 
@@ -94,7 +94,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  templatesListMock.mockResolvedValue(TEMPLATES);
+  modulesListMock.mockResolvedValue(MODULES);
   quartersMock.mockResolvedValue([PAST_Q, CURRENT_Q]);
   creditsListMock.mockResolvedValue([CREDIT]);
 });

@@ -48,7 +48,7 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     Event,
-    ModuleTemplate,
+    Module,
     OrientationCredit,
     OrientationCreditSource,
 )
@@ -58,15 +58,15 @@ from ..schemas import OrientationStatusRead
 def family_for_event(db: Session, event_id) -> Optional[str]:
     """Resolve the family_key for an event.
 
-    event.module_slug → module_templates.slug → family_key or slug.
+    event.module_slug → modules.slug → family_key or slug.
     Returns None if the event has no module.
     """
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event or not event.module_slug:
         return None
     tmpl = (
-        db.query(ModuleTemplate)
-        .filter(ModuleTemplate.slug == event.module_slug)
+        db.query(Module)
+        .filter(Module.slug == event.module_slug)
         .first()
     )
     if not tmpl:

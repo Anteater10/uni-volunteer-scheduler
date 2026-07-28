@@ -454,7 +454,7 @@ function NewModuleDialog({ open, onCancel, onCreated }) {
     if (slug.length < 2) return setErr("Name must produce a slug of at least 2 characters.");
     setBusy(true);
     try {
-      const created = await api.admin.templates.create({
+      const created = await api.admin.modules.create({
         slug,
         name: name.trim(),
         description: description.trim() || null,
@@ -548,8 +548,8 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
   const [showNewModule, setShowNewModule] = useState(false);
 
   const modulesQ = useQuery({
-    queryKey: ["adminModuleTemplatesForEventForm"],
-    queryFn: () => api.admin.templates.list(),
+    queryKey: ["adminModulesForEventForm"],
+    queryFn: () => api.admin.modules.list(),
     staleTime: 30_000,
   });
   const modules = Array.isArray(modulesQ.data) ? modulesQ.data : [];

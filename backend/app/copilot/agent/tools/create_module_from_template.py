@@ -1,11 +1,11 @@
 """create_module_from_template write tool (admin-only).
 
-Creates a new Event from a ModuleTemplate, scheduled for the given ISO week.
+Creates a new Event from a Module, scheduled for the given ISO week.
 
 Plan-vs-reality:
-- ModuleTemplate is slug-keyed (no integer template_id). We accept the slug
+- Module is slug-keyed (no integer template_id). We accept the slug
   as ``template_id`` in the tool args; the LLM treats it as an opaque
-  string. The internal lookup uses ``ModuleTemplate.slug``.
+  string. The internal lookup uses ``Module.slug``.
 - Event.start_date / end_date are NOT NULL columns. We synthesize the
   Monday of the target ISO week (00:00 UTC) and add the template's
   ``duration_minutes`` for end_date. The richer scheduling flow (slots,
@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools.base import Tool
-from app.models import Event, ModuleTemplate, Quarter, User, UserRole
+from app.models import Event, Module, Quarter, User, UserRole
 from app.services import quarter_service
 
 _PII_SCHEMA = ["new_module_id", "name", "week"]
@@ -45,8 +45,8 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     week = args["week"]
 
     template = (
-        db.query(ModuleTemplate)
-        .filter(ModuleTemplate.slug == template_id)
+        db.query(Module)
+        .filter(Module.slug == template_id)
         .one_or_none()
     )
     if template is None:
@@ -114,7 +114,7 @@ CREATE_MODULE_FROM_TEMPLATE_TOOL = Tool(
         "properties": {
             "template_id": {
                 "type": "string",
-                "description": "ModuleTemplate slug.",
+                "description": "Module slug.",
             },
             "week": {
                 "type": "string",

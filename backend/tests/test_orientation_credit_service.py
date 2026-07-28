@@ -34,7 +34,7 @@ import pytest
 from app.models import (
     AcademicQuarter,
     Event,
-    ModuleTemplate,
+    Module,
     OrientationCredit,
     Quarter,
     Signup,
@@ -89,8 +89,8 @@ def spring_q(db_session):
     )
 
 
-def _make_template(db, *, slug: str, family_key: str | None = None) -> ModuleTemplate:
-    tmpl = ModuleTemplate(
+def _make_template(db, *, slug: str, family_key: str | None = None) -> Module:
+    tmpl = Module(
         slug=slug,
         name=slug.title(),
         default_capacity=20,

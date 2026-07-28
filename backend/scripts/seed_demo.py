@@ -141,11 +141,11 @@ def _admin_upsert_user(admin_token, email, password, name, role):
 
 def _ensure_module(token, slug, name, capacity=24):
     """Restore a soft-deleted template or create it; idempotent."""
-    rs, _ = _req("POST", f"/admin/module-templates/{urllib.parse.quote(slug)}/restore", token=token)
+    rs, _ = _req("POST", f"/admin/modules/{urllib.parse.quote(slug)}/restore", token=token)
     if rs in (200, 201):
         log(f"restored module template '{slug}'")
         return
-    cs, cb = _req("POST", "/admin/module-templates", token=token,
+    cs, cb = _req("POST", "/admin/modules", token=token,
                   json_body={"slug": slug, "name": name, "default_capacity": capacity})
     if cs in (200, 201, 409):
         return

@@ -1,4 +1,4 @@
-"""Service layer for module template CRUD with soft-delete."""
+"""Service layer for module CRUD with soft-delete."""
 import json
 import re
 from datetime import datetime, timezone
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models import ModuleTemplate
+from app.models import Module
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$")
 MAX_METADATA_BYTES = 10240  # 10KB
@@ -30,30 +30,30 @@ def _validate_session_count(session_count: int | None) -> None:
         raise HTTPException(status_code=422, detail="Session count must be between 1 and 10")
 
 
-def list_templates(db: Session, include_archived: bool = False) -> list[ModuleTemplate]:
-    q = db.query(ModuleTemplate)
+def list_modules(db: Session, include_archived: bool = False) -> list[Module]:
+    q = db.query(Module)
     if not include_archived:
-        q = q.filter(ModuleTemplate.deleted_at.is_(None))
-    return q.order_by(ModuleTemplate.name).all()
+        q = q.filter(Module.deleted_at.is_(None))
+    return q.order_by(Module.name).all()
 
 
-def get_template(db: Session, slug: str) -> ModuleTemplate:
+def get_module(db: Session, slug: str) -> Module:
     tpl = (
-        db.query(ModuleTemplate)
-        .filter(ModuleTemplate.slug == slug, ModuleTemplate.deleted_at.is_(None))
+        db.query(Module)
+        .filter(Module.slug == slug, Module.deleted_at.is_(None))
         .first()
     )
     if not tpl:
-        raise HTTPException(status_code=404, detail=f"Template '{slug}' not found")
+        raise HTTPException(status_code=404, detail=f"Module '{slug}' not found")
     return tpl
 
 
-def restore_template(db: Session, slug: str) -> ModuleTemplate:
-    tpl = db.query(ModuleTemplate).filter(ModuleTemplate.slug == slug).first()
+def restore_module(db: Session, slug: str) -> Module:
+    tpl = db.query(Module).filter(Module.slug == slug).first()
     if not tpl:
-        raise HTTPException(status_code=404, detail=f"Template '{slug}' not found")
+        raise HTTPException(status_code=404, detail=f"Module '{slug}' not found")
     if tpl.deleted_at is None:
-        raise HTTPException(status_code=409, detail=f"Template '{slug}' is not archived")
+        raise HTTPException(status_code=409, detail=f"Module '{slug}' is not archived")
     tpl.deleted_at = None
     tpl.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -61,13 +61,13 @@ def restore_template(db: Session, slug: str) -> ModuleTemplate:
     return tpl
 
 
-def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
+def create_module(db: Session, slug: str, data: dict) -> Module:
     _validate_slug(slug)
     _validate_metadata(data.get("metadata"))
     _validate_session_count(data.get("session_count"))
-    existing = db.query(ModuleTemplate).filter(ModuleTemplate.slug == slug).first()
+    existing = db.query(Module).filter(Module.slug == slug).first()
     if existing and existing.deleted_at is None:
-        raise HTTPException(status_code=409, detail=f"Template '{slug}' already exists")
+        raise HTTPException(status_code=409, detail=f"Module '{slug}' already exists")
     if existing and existing.deleted_at is not None:
         # Re-activate soft-deleted template (preserve any existing form schema)
         for k, v in data.items():
@@ -87,7 +87,7 @@ def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     # family_key="crispr").
     if not payload.get("family_key"):
         payload["family_key"] = slug
-    tpl = ModuleTemplate(slug=slug, **payload)
+    tpl = Module(slug=slug, **payload)
     if "metadata" in data:
         tpl.metadata_ = data["metadata"]
     if "default_form_schema" in data and data["default_form_schema"] is not None:
@@ -100,10 +100,10 @@ def create_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     return tpl
 
 
-def update_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
+def update_module(db: Session, slug: str, data: dict) -> Module:
     _validate_metadata(data.get("metadata"))
     _validate_session_count(data.get("session_count"))
-    tpl = get_template(db, slug)
+    tpl = get_module(db, slug)
     for k, v in data.items():
         if v is not None:
             if k == "metadata":
@@ -116,21 +116,21 @@ def update_template(db: Session, slug: str, data: dict) -> ModuleTemplate:
     return tpl
 
 
-def soft_delete_template(db: Session, slug: str) -> None:
-    tpl = get_template(db, slug)
+def soft_delete_module(db: Session, slug: str) -> None:
+    tpl = get_module(db, slug)
     tpl.deleted_at = datetime.now(timezone.utc)
     db.commit()
 
 
-def clone_template(db: Session, source_slug: str, new_slug: str, new_name: str | None = None) -> ModuleTemplate:
+def clone_module(db: Session, source_slug: str, new_slug: str, new_name: str | None = None) -> Module:
     """Deep-copy a template into a new slug. Copies capacity, duration,
     description, materials, metadata, family_key, and default_form_schema."""
     _validate_slug(new_slug)
-    src = get_template(db, source_slug)
-    existing = db.query(ModuleTemplate).filter(ModuleTemplate.slug == new_slug).first()
+    src = get_module(db, source_slug)
+    existing = db.query(Module).filter(Module.slug == new_slug).first()
     if existing:
-        raise HTTPException(status_code=409, detail=f"Template '{new_slug}' already exists")
-    tpl = ModuleTemplate(
+        raise HTTPException(status_code=409, detail=f"Module '{new_slug}' already exists")
+    tpl = Module(
         slug=new_slug,
         name=new_name or f"{src.name} (copy)",
         default_capacity=src.default_capacity,
