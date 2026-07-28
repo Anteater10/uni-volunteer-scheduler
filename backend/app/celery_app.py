@@ -8,7 +8,7 @@
 
 import logging
 import smtplib
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 
 from celery import Celery
@@ -534,6 +534,37 @@ def expire_pending_signups() -> None:
         db.close()
 
 
+@celery.task(name="app.celery_app.archive_ended_quarters")
+def archive_ended_quarters() -> None:
+    """Daily sweep: archive quarters whose (inclusive) end_date has passed.
+
+    PR #51 — same path as the manual Archive button (issue #33), run with
+    no acting user, so the audit row shows a system action (actor NULL).
+    end_date >= today stays live: the quarter's last day still counts.
+
+    Logs: auto_archived_quarters count=N
+    """
+    from .services import quarter_service
+
+    db: Session = SessionLocal()
+    try:
+        rows = (
+            db.query(models.AcademicQuarter)
+            .filter(
+                models.AcademicQuarter.archived_at.is_(None),
+                models.AcademicQuarter.end_date < date.today(),
+            )
+            .all()
+        )
+        count = 0
+        for row in rows:
+            quarter_service.archive_quarter(db, row.id, actor=None)
+            count += 1
+        logger.info("auto_archived_quarters count=%d", count)
+    finally:
+        db.close()
+
+
 # -------------------------
 # Celery beat schedule
 # -------------------------
@@ -554,6 +585,11 @@ celery.conf.beat_schedule = {
     "expire-pending-signups-daily-3am": {
         "task": "app.celery_app.expire_pending_signups",
         "schedule": crontab(hour=3, minute=0),
+    },
+    # PR #51 — quarters move to the archive on their own once they end.
+    "archive-ended-quarters-daily": {
+        "task": "app.celery_app.archive_ended_quarters",
+        "schedule": crontab(hour=3, minute=30),
     },
     # Phase 24 — kickoff + 24h + 2h reminders. The task is idempotent via
     # sent_notifications(signup_id, kind); running every 15 min leaves a

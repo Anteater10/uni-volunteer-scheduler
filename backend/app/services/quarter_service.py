@@ -359,7 +359,7 @@ def update_quarter(db: Session, quarter_id, payload: dict, actor: models.User) -
     return row, summary
 
 
-def archive_quarter(db: Session, quarter_id, actor: models.User) -> models.AcademicQuarter:
+def archive_quarter(db: Session, quarter_id, actor: models.User | None) -> models.AcademicQuarter:
     """Archive a past quarter (issue #33). Only quarters that have already
     ended can be archived — the current/upcoming schedule stays navigable."""
     row = _get_or_404(db, quarter_id)
