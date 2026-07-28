@@ -415,8 +415,11 @@ export default function OrganizerRosterPage() {
             <p className="text-sm text-emerald-800/80">
               Every session is resolved —{" "}
               {slotGroups.reduce((n, g) => n + g.attended, 0)} attended,{" "}
-              {slotGroups.reduce((n, g) => n + g.noShow, 0)} no-shows on the
-              books.
+              {slotGroups.reduce((n, g) => n + g.noShow, 0)}{" "}
+              {slotGroups.reduce((n, g) => n + g.noShow, 0) === 1
+                ? "no-show"
+                : "no-shows"}{" "}
+              on the books.
               {slotGroups.some((g) => g.slotType === "orientation")
                 ? " Orientation credit was granted with each ended session."
                 : ""}
