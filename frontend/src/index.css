@@ -61,11 +61,31 @@ body {
 .animate-fade-in { animation: fade-in 260ms ease-out both; }
 .animate-pop-in  { animation: pop-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both; }
 
+/* PR #51 — event-complete celebration on the roster. The circle badge lands
+   with a spring, then the check strokes itself in (SVG pathLength=1 so the
+   dash values are unit-free). */
+@keyframes badge-pop {
+  0%   { opacity: 0; transform: scale(0.4); }
+  70%  { transform: scale(1.12); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes draw-check {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
+}
+.animate-badge-pop { animation: badge-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.animate-draw-check {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw-check 380ms ease-out 320ms forwards;
+}
+
 .hover-lift { transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease; }
 .hover-lift:hover { transform: translateY(-2px); }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up, .animate-fade-in, .animate-pop-in { animation: none; }
+  .animate-fade-up, .animate-fade-in, .animate-pop-in, .animate-badge-pop { animation: none; }
+  .animate-draw-check { animation: none; stroke-dashoffset: 0; }
   .hover-lift { transition: none; }
   .hover-lift:hover { transform: none; }
 }

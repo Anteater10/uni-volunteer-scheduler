@@ -133,6 +133,45 @@ describe("OrganizerRosterPage — ended slots", () => {
     expect(screen.queryByText(/Ended/)).not.toBeInTheDocument();
   });
 
+  // PR #51 — a fully-ended event gets an animated completion banner.
+
+  it("celebrates a fully-ended event with the completion banner", async () => {
+    fetchRoster.mockResolvedValue({
+      event_name: "CRISPR Module 1",
+      total: 3,
+      checked_in_count: 0,
+      rows: [
+        row({ ...ENDED_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "attended" }),
+        row({ ...ENDED_SLOT, signup_id: "s2", student_name: "Marcus Delgado", status: "no_show" }),
+        row({ ...LIVE_SLOT, signup_id: "s3", student_name: "Priya Venkatesan", status: "attended" }),
+      ],
+    });
+
+    renderPage();
+
+    const banner = await screen.findByTestId("event-complete-banner");
+    expect(banner).toHaveTextContent(/event complete/i);
+    expect(banner).toHaveTextContent(/2 attended/i);
+    expect(banner).toHaveTextContent(/1 no.show/i);
+  });
+
+  it("shows no completion banner while any slot is live", async () => {
+    fetchRoster.mockResolvedValue({
+      event_name: "CRISPR Module 1",
+      total: 2,
+      checked_in_count: 1,
+      rows: [
+        row({ ...ENDED_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "attended" }),
+        row({ ...LIVE_SLOT, signup_id: "s2", student_name: "Jonah Whitfield", status: "confirmed" }),
+      ],
+    });
+
+    renderPage();
+
+    await screen.findByText("CRISPR Module 1");
+    expect(screen.queryByTestId("event-complete-banner")).not.toBeInTheDocument();
+  });
+
   it("does not treat a cancelled-only slot as ended", async () => {
     fetchRoster.mockResolvedValue({
       event_name: "CRISPR Module 1",
