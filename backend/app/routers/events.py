@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, log_action, ensure_event_owner_or_admin
+from ..deps import require_role, log_action, ensure_event_staff_access
 from ..services import quarter_service
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -189,7 +189,7 @@ def update_event(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
 
     data = event_in.model_dump(exclude_unset=True)
     for key in ("start_date", "end_date", "signup_open_at", "signup_close_at"):
@@ -247,7 +247,7 @@ def delete_event(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
 
     db.delete(event)
     db.commit()
@@ -272,7 +272,7 @@ def generate_slots(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
 
     start_time = _normalize_dt(recurrence.start_time)
     end_time = _normalize_dt(recurrence.end_time)
@@ -350,7 +350,7 @@ def list_custom_questions(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
 
     return (
         db.query(models.CustomQuestion)
@@ -375,7 +375,7 @@ def create_custom_question(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
 
     question = models.CustomQuestion(
         event_id=event.id,
@@ -409,7 +409,7 @@ def update_custom_question(
         raise HTTPException(status_code=404, detail="Question not found")
 
     # Ensure caller owns the event or is admin
-    ensure_event_owner_or_admin(question.event, current_user)
+    ensure_event_staff_access(question.event, current_user)
 
     data = updates.model_dump(exclude_unset=True)
     for field, value in data.items():
@@ -437,7 +437,7 @@ def delete_custom_question(
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    ensure_event_owner_or_admin(question.event, current_user)
+    ensure_event_staff_access(question.event, current_user)
 
     db.delete(question)
     db.commit()
@@ -464,7 +464,7 @@ def clone_event(
     if not original:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    ensure_event_owner_or_admin(original, current_user)
+    ensure_event_staff_access(original, current_user)
 
     # For simplicity, keep same dates; organizer can edit after cloning.
     cloned = models.Event(

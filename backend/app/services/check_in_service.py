@@ -30,7 +30,17 @@ CHECK_IN_WINDOW_AFTER = timedelta(minutes=30)
 
 ALLOWED_TRANSITIONS: dict[SignupStatus, set[SignupStatus]] = {
     SignupStatus.pending: {SignupStatus.confirmed, SignupStatus.cancelled},
-    SignupStatus.confirmed: {SignupStatus.checked_in, SignupStatus.no_show, SignupStatus.cancelled},
+    # confirmed -> attended is the walk-in case: the volunteer turned up but
+    # nobody tapped check-in for them, and the organizer marks it when ending
+    # the slot. Without it, the end-of-slot resolve modal offered "attended"
+    # on every confirmed row and then 409'd on save, rolling back the batch —
+    # so a slot could only ever be closed out with everyone as a no-show.
+    SignupStatus.confirmed: {
+        SignupStatus.checked_in,
+        SignupStatus.attended,
+        SignupStatus.no_show,
+        SignupStatus.cancelled,
+    },
     # checked_in -> confirmed is the organizer's mis-tap undo (issue #31);
     # resolved states (attended/no_show) stay final.
     SignupStatus.checked_in: {SignupStatus.confirmed, SignupStatus.attended, SignupStatus.no_show, SignupStatus.cancelled},

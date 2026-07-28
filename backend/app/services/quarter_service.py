@@ -179,14 +179,31 @@ def active_or_recent_quarter(db: Session, today: date) -> models.AcademicQuarter
 
 
 def quarter_progress(db: Session, now: datetime) -> dict | None:
-    """{"week", "of", "pct"} within the active quarter; None during gaps."""
+    """{"week", "of", "day", "days", "pct"} in the active quarter; None in gaps.
+
+    pct is day-granular, not week-granular: on the first day of the quarter
+    you are ~0% through, on the last day 100%. Counting the in-progress week
+    as complete (week / of) put you at 33% of a 3-week quarter on day one.
+
+    "week"/"of" round a partial final week up to a whole week (a 40-day summer
+    session really does have a 6th week of programming), so on a quarter that
+    isn't a whole number of weeks those two numbers imply more days than the
+    quarter has. day/days are returned so the UI can show the real denominator
+    beside the week count instead of leaving the mismatch unexplained.
+    """
     today = _as_utc_date(now)
     q = get_quarter_for_date(db, today)
     if q is None:
         return None
-    week = week_number_for(q, today)
-    of = weeks_in(q)
-    return {"week": week, "of": of, "pct": round(week / of, 2)}
+    days = (q.end_date - q.start_date).days + 1  # end_date is inclusive
+    day = min(days, max(1, (today - q.start_date).days + 1))  # today counts as elapsed
+    return {
+        "week": week_number_for(q, today),
+        "of": weeks_in(q),
+        "day": day,
+        "days": days,
+        "pct": round(day / days, 2),
+    }
 
 
 # ---------- event linking ----------

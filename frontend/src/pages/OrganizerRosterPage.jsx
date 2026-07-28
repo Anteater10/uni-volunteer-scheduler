@@ -258,13 +258,29 @@ export default function OrganizerRosterPage() {
   }
 
   if (rosterQ.error) {
+    // Every failure used to read "you appear to be offline", so a permission
+    // problem or a bad event id looked like a network blip and gave the
+    // organizer nothing to act on — and no way to retry.
+    const status = rosterQ.error?.status;
+    const message =
+      status === 403
+        ? "You don't have access to this event's roster. Ask an admin to check your account."
+        : status === 404
+          ? "This event no longer exists. It may have been deleted."
+          : "Couldn't load the roster. Check your connection and try again.";
     return (
       <div>
         <PageHeader title="Roster" />
-        <p className="text-sm text-red-600 mt-4">
-          {/* TODO(copy): offline message */}
-          You appear to be offline — retry in 5s
-        </p>
+        <p className="text-sm text-red-600 mt-4">{message}</p>
+        {status !== 403 && status !== 404 ? (
+          <Button
+            variant="secondary"
+            className="mt-3"
+            onClick={() => rosterQ.refetch()}
+          >
+            Try again
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -297,17 +313,31 @@ export default function OrganizerRosterPage() {
           rows: [],
           expected: 0,
           checkedIn: 0,
+          attended: 0,
+          noShow: 0,
         });
       }
       const g = map.get(key);
       g.rows.push(r);
       if (!["cancelled", "waitlisted"].includes(r.status)) g.expected += 1;
       if (["checked_in", "attended"].includes(r.status)) g.checkedIn += 1;
+      if (r.status === "attended") g.attended += 1;
+      if (r.status === "no_show") g.noShow += 1;
+    }
+    // Ending a slot resolves every expected signup to attended or no_show, so
+    // that is what "this slot is over" looks like in the data — there is no
+    // separate resolved flag on the slot itself.
+    for (const g of map.values()) {
+      g.resolved = g.expected > 0 && g.attended + g.noShow === g.expected;
     }
     return Array.from(map.values()).sort(
       (a, b) => new Date(a.start) - new Date(b.start),
     );
   })();
+
+  const eventResolved =
+    slotGroups.length > 0 &&
+    slotGroups.every((g) => g.resolved || g.expected === 0);
 
   return (
     <div className="pb-8 pt-4">
@@ -341,7 +371,15 @@ export default function OrganizerRosterPage() {
           >
             Add a question
           </Button>
-          <Button onClick={() => setResolveOpen(true)}>End event</Button>
+          {/* Nothing left to resolve once every slot is ended. */}
+          <Button
+            onClick={() => setResolveOpen(true)}
+            disabled={eventResolved}
+            className="disabled:bg-slate-200 disabled:text-slate-500"
+            title={eventResolved ? "Every slot has already been ended." : undefined}
+          >
+            {eventResolved ? "Event ended" : "End event"}
+          </Button>
         </div>
       </div>
 
@@ -405,25 +443,57 @@ export default function OrganizerRosterPage() {
                   · {group.location}
                 </span>
               ) : null}
+              {/* Ending a slot is irreversible from this screen, so say so
+                  plainly rather than leaving a live-looking header above a
+                  grid of frozen cards. */}
+              {group.resolved && (
+                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <span aria-hidden="true">✓</span> Ended
+                </span>
+              )}
             </h2>
             <div className="flex items-center gap-3">
-              <span className="text-sm text-[var(--color-fg-muted)]">
-                {group.checkedIn}/{group.expected} checked in
+              <span className="text-sm text-[var(--color-fg-muted)] tabular-nums">
+                {group.resolved
+                  ? `${group.attended} attended · ${group.noShow} no show`
+                  : `${group.checkedIn}/${group.expected} checked in`}
               </span>
               {group.key !== "unknown" && (
                 <Button
                   type="button"
                   variant="secondary"
+                  disabled={group.resolved}
+                  // Button's base only fades on :disabled, which leaves a
+                  // white pill. Grey the fill too so it reads as spent rather
+                  // than momentarily unavailable. The disabled: variants
+                  // out-specify the plain colours from variant="secondary".
+                  className="disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500"
+                  title={
+                    group.resolved
+                      ? "This slot has already been ended."
+                      : undefined
+                  }
                   onClick={() => setResolveSlotGroup(group)}
                 >
-                  {group.slotType === "orientation"
-                    ? "End orientation"
-                    : "End slot"}
+                  {group.resolved
+                    ? group.slotType === "orientation"
+                      ? "Orientation ended"
+                      : "Slot ended"
+                    : group.slotType === "orientation"
+                      ? "End orientation"
+                      : "End slot"}
                 </Button>
               )}
             </div>
           </div>
-          <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {/* Dim the whole grid once the slot is ended: nothing here is
+              actionable any more, and a full-strength card still reads as a
+              tap target. */}
+          <ul
+            className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 ${
+              group.resolved ? "opacity-[0.55]" : ""
+            }`}
+          >
             {group.rows.map((row) => {
               const active = canCheckIn(row.status);
               // Issue #31 — a checked-in card stays tappable so a mis-tap can
@@ -436,11 +506,17 @@ export default function OrganizerRosterPage() {
                   <button
                     type="button"
                     className={`w-full min-h-[84px] flex items-center justify-between px-5 py-4 rounded-xl border-2 text-left transition-all shadow-sm ${
-                      done
-                        ? `bg-green-50 border-green-300 ${canUndo ? "hover:bg-green-100 cursor-pointer" : "cursor-not-allowed"}`
-                        : active
-                          ? "bg-white border-gray-200 hover:border-blue-400 hover:shadow-md cursor-pointer"
-                          : "bg-gray-50 border-gray-200 opacity-70 cursor-not-allowed"
+                      // An ended slot goes uniformly grey regardless of
+                      // outcome — the attended green would otherwise still
+                      // read as a live, tappable card. Attended vs no-show is
+                      // carried by the status chip, which stays coloured.
+                      group.resolved
+                        ? "bg-slate-100 border-slate-200 cursor-not-allowed"
+                        : done
+                          ? `bg-green-50 border-green-300 ${canUndo ? "hover:bg-green-100 cursor-pointer" : "cursor-not-allowed"}`
+                          : active
+                            ? "bg-white border-gray-200 hover:border-blue-400 hover:shadow-md cursor-pointer"
+                            : "bg-gray-50 border-gray-200 opacity-70 cursor-not-allowed"
                     }`}
                     disabled={(!active && !canUndo) || busy}
                     onClick={() => {

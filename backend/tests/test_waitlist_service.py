@@ -317,6 +317,42 @@ def test_organizer_manual_promote_rejects_when_full(
     assert r.status_code == 409, r.text
 
 
+def test_organizer_manual_promote_allow_overfill_seats_past_capacity(
+    client, db_session, monkeypatch
+):
+    """A full slot is the *only* reason anyone is waitlisted, and auto-promote
+    already claims any seat that frees up — so refusing on capacity made the
+    WAIT-03 override unreachable: the roster's Promote button 409'd every
+    single time. ``allow_overfill`` is the explicit way through, and the UI
+    asks the organizer before sending it.
+    """
+    _bypass_celery(monkeypatch)
+    owner, event, slot = _make_event_and_slot(db_session, capacity=1)
+    _bind_factories(db_session)
+    vol_confirmed = VolunteerFactory(email="overfill_conf@example.com")
+    _seed_confirmed(db_session, slot, vol_confirmed)
+    vol_wait = VolunteerFactory(email="vouched@example.com")
+    wait = _seed_waitlisted(db_session, slot, vol_wait)
+    db_session.commit()
+
+    headers = auth_headers(client, owner)
+    r = client.post(
+        f"/api/v1/organizer/events/{event.id}/signups/{wait.id}"
+        f"/promote?allow_overfill=true",
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "confirmed"
+
+    db_session.expire_all()
+    promoted = db_session.query(models.Signup).filter_by(id=wait.id).one()
+    assert promoted.status == models.SignupStatus.confirmed
+    refreshed_slot = db_session.query(models.Slot).filter_by(id=slot.id).one()
+    # Deliberately one over — that's what the organizer asked for.
+    assert refreshed_slot.current_count == 2
+    assert refreshed_slot.capacity == 1
+
+
 # ------------------------------------------------------------------
 # WAIT-05 — admin reorder persists and flips FIFO
 # ------------------------------------------------------------------

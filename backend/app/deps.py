@@ -146,19 +146,32 @@ def get_current_user(
 # Role-based access helper
 # -------------------------
 
-def ensure_event_owner_or_admin(event: models.Event, user: models.User) -> None:
-    """Canonical event ownership check.
+def ensure_event_staff_access(event: models.Event, user: models.User) -> None:
+    """Canonical staff access check for a single event.
 
-    Admin can access any event; organizers must own the event. All
-    routers import this from app.deps — do not redefine locally.
+    Admins and organizers may operate any event. All routers import this from
+    app.deps — do not redefine locally.
+
+    This used to require organizers to *own* the event, which broke the shared
+    admin shell rather than protecting anything: the staff event list is global
+    (every organizer-visible tab lists all events), so an organizer would open
+    an event, read its details fine, and then get a 403 on its roster, its
+    attendance summary and its check-in screen. Nothing in the product could
+    transfer ownership either — owner_id is set to the creator and there is no
+    UI or field to reassign it — so an organizer could only ever operate events
+    they had personally created. Organizers are a trusted staff role, so the
+    gate is role-based; the boundary that matters is the set of admin-only
+    routes (user management, audit logs, quarter config, exports).
+
+    `event` is kept in the signature: callers have already loaded it, and a
+    future per-event rule belongs here rather than in 40-odd call sites.
     """
-    if user.role == models.UserRole.admin:
+    if user.role in (models.UserRole.admin, models.UserRole.organizer):
         return
-    if event.owner_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not allowed for this event",
-        )
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Not allowed for this event",
+    )
 
 
 def require_role(*roles: models.UserRole):

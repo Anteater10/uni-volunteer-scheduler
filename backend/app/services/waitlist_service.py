@@ -100,6 +100,7 @@ def manual_promote(
     db: Session,
     signup: models.Signup,
     slot: models.Slot,
+    allow_overfill: bool = False,
 ) -> models.Signup:
     """Bypass FIFO — promote ``signup`` specifically.
 
@@ -110,10 +111,17 @@ def manual_promote(
     Flow mirrors ``promote_waitlist_fifo``:
       - waitlisted → confirmed (volunteer already consented at initial signup)
       - increments ``slot.current_count``
+
+    ``allow_overfill`` exists because a full slot is normally the *only*
+    reason anyone is waitlisted, and auto-promote (WAIT-02) already claims any
+    seat that frees up. Refusing on capacity therefore made the manual
+    override (WAIT-03) unreachable in practice — the button 409'd every time.
+    Going over capacity is a real decision about a real room, so the caller
+    has to ask for it deliberately rather than get it by default.
     """
     if signup.status != models.SignupStatus.waitlisted:
         raise ValueError("only waitlisted signups can be promoted")
-    if slot.current_count >= slot.capacity:
+    if slot.current_count >= slot.capacity and not allow_overfill:
         raise ValueError("slot is full")
 
     signup.status = models.SignupStatus.confirmed

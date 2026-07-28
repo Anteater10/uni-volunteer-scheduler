@@ -94,9 +94,12 @@ def test_admin_summary_returns_expanded_shape(client, db_session, admin_headers)
         assert isinstance(v, int)
 
     qp = body["quarter_progress"]
-    assert set(qp.keys()) == {"week", "of", "pct"}
+    assert set(qp.keys()) == {"week", "of", "day", "days", "pct"}
     assert qp["of"] == 11  # derives from the entered 11-week range
     assert qp["week"] == 6  # 35 days in = week 6
+    assert qp["days"] == 77  # 11 whole weeks
+    assert qp["day"] == 36  # 35 days in, counting today
+    assert qp["pct"] == round(36 / 77, 2)
     assert isinstance(body["fill_rate_attention"], list)
     # last_updated is ISO format
     assert "T" in body["last_updated"]

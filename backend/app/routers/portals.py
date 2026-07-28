@@ -19,7 +19,7 @@ def _slugify(name: str) -> str:
     return slug or "portal"
 
 
-def _ensure_event_owner_or_admin(event: models.Event, actor: models.User) -> None:
+def _ensure_event_staff_access(event: models.Event, actor: models.User) -> None:
     """
     Organizers may only attach/detach events they own.
     Admins may attach/detach any event.
@@ -108,8 +108,8 @@ def attach_event_to_portal(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # ✅ SECURITY FIX: organizers can only attach their own events
-    _ensure_event_owner_or_admin(event, actor)
+    # Staff-scoped: any admin or organizer may attach an event to a portal.
+    _ensure_event_staff_access(event, actor)
 
     existing = (
         db.query(models.PortalEvent)
@@ -141,8 +141,8 @@ def detach_event_from_portal(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # ✅ SECURITY FIX: organizers can only detach their own events
-    _ensure_event_owner_or_admin(event, actor)
+    # Staff-scoped: any admin or organizer may detach an event from a portal.
+    _ensure_event_staff_access(event, actor)
 
     link = (
         db.query(models.PortalEvent)

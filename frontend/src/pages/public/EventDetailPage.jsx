@@ -1104,6 +1104,19 @@ export default function EventDetailPage() {
     .map((id) => labeledSlotMap[id])
     .filter(Boolean);
 
+  // What "Add to calendar" should export, in order of preference: whatever the
+  // volunteer has ticked, else the first orientation with room left, else the
+  // first slot on the page. Shared by both calendar buttons so they can never
+  // disagree about which session they added.
+  function calendarSlots() {
+    if (selectedSlots.length > 0) return selectedSlots;
+    const openOrientation = orientationSlots.find(
+      (s) => (s.filled ?? 0) < (s.capacity ?? 0),
+    );
+    const fallback = openOrientation || slots[0];
+    return fallback ? [fallback] : [];
+  }
+
   return (
     <div
       className="flex flex-col gap-5 pt-4 pb-8 max-w-5xl mx-auto w-full animate-fade-up"
@@ -1187,18 +1200,11 @@ export default function EventDetailPage() {
             type="button"
             variant="secondary"
             onClick={() => {
-              const selectedSlot =
-                [...selectedSlotIds]
-                  .map((id) => slotMap[id])
-                  .find(Boolean) ||
-                orientationSlots.find(
-                  (s) => (s.filled ?? 0) < (s.capacity ?? 0)
-                ) ||
-                slots[0];
-              if (!selectedSlot) return;
+              const [first] = calendarSlots();
+              if (!first) return;
               const url = buildGoogleCalendarUrl({
                 event,
-                slot: selectedSlot,
+                slot: first,
                 origin: window.location.origin,
               });
               window.open(url, "_blank", "noopener,noreferrer");
@@ -1210,29 +1216,16 @@ export default function EventDetailPage() {
             type="button"
             variant="secondary"
             onClick={() => {
-              // Slot precedence: selected → first non-full orientation → first slot
-              const selectedSlot =
-                [...selectedSlotIds]
-                  .map((id) => slotMap[id])
-                  .find(Boolean) ||
-                orientationSlots.find(
-                  (s) => (s.filled ?? 0) < (s.capacity ?? 0)
-                ) ||
-                slots[0];
-              if (!selectedSlot) return;
-              const dateStr =
-                event.start_date
-                  ? String(event.start_date).slice(0, 10)
-                  : selectedSlot.start_time
-                  ? new Date(selectedSlot.start_time)
-                      .toISOString()
-                      .slice(0, 10)
-                  : "event";
-              const slugPart = event.slug || event.id;
-              const filename = `scitrek-${slugPart}-${dateStr}.ics`;
-              downloadIcs({ event, slot: selectedSlot, filename });
+              // The .ics can hold every session at once, so when several slots
+              // are ticked the download covers all of them rather than
+              // silently exporting only the first.
+              const chosen = calendarSlots();
+              if (chosen.length === 0) return;
+              downloadIcs({ event, slots: chosen });
               toast.success(
-                "Calendar file saved. Open it to add to your calendar."
+                chosen.length > 1
+                  ? `Calendar file saved with ${chosen.length} sessions. Open it to add them.`
+                  : "Calendar file saved. Open it to add to your calendar."
               );
             }}
           >
@@ -1523,10 +1516,13 @@ export default function EventDetailPage() {
       />
 
       {/* Success popup card */}
+      {/* `event` enables the calendar buttons: right after signing up is the
+          moment a volunteer actually wants the sessions on their phone. */}
       <SignupSuccessCard
         open={step === "success"}
         volunteerName={identity.first_name}
         slots={successData?.slots || []}
+        event={event}
         onDismiss={handleDismissSuccess}
       />
     </div>

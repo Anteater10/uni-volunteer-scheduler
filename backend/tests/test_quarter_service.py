@@ -224,7 +224,24 @@ def test_quarter_progress(db_session):
     progress = quarter_service.quarter_progress(
         db_session, datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
     )
-    assert progress == {"week": 3, "of": 11, "pct": round(3 / 11, 2)}
+    # Apr 15 is day 17 of the 77-day (11-week) range, not "3 weeks done"
+    assert progress == {
+        "week": 3, "of": 11, "day": 17, "days": 77, "pct": round(17 / 77, 2)
+    }
+
+    # Day one is barely started, not 1/11th done
+    first_day = quarter_service.quarter_progress(
+        db_session, datetime(2026, 3, 30, 12, 0, tzinfo=timezone.utc)
+    )
+    assert first_day == {
+        "week": 1, "of": 11, "day": 1, "days": 77, "pct": round(1 / 77, 2)
+    }
+
+    # The final day reads as complete
+    last_day = quarter_service.quarter_progress(
+        db_session, datetime(2026, 6, 14, 12, 0, tzinfo=timezone.utc)
+    )
+    assert last_day == {"week": 11, "of": 11, "day": 77, "days": 77, "pct": 1.0}
 
     # In a gap there is no progress to report
     assert (
@@ -242,7 +259,11 @@ def test_quarter_progress_varies_with_session_length(db_session):
     progress = quarter_service.quarter_progress(
         db_session, datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc)
     )
-    assert progress == {"week": 2, "of": 6, "pct": round(2 / 6, 2)}
+    # Jun 30 is day 9 of the 40-day Session A range. Note "of": 6 rounds the
+    # partial final week (5 days) up — day/days carry the true denominator.
+    assert progress == {
+        "week": 2, "of": 6, "day": 9, "days": 40, "pct": round(9 / 40, 2)
+    }
 
 
 # ---------- event linking ----------

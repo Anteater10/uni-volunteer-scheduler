@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from ..database import get_db
-from ..deps import ensure_event_owner_or_admin, require_role
-from ..models import Event, Signup, SignupStatus, Slot, UserRole
+from ..deps import ensure_event_staff_access, require_role
+from ..models import Event, Signup, SignupStatus, Slot, UserRole, Volunteer
 from ..schemas import RosterResponse, RosterRow
 
 router = APIRouter(tags=["roster"])
@@ -31,13 +31,23 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
         event.venue_code = f"{secrets.randbelow(10000):04d}"
         db.flush()
 
+    # Order must be deterministic and update-invariant: ordering by slot_id
+    # alone left intra-slot order to the heap, so a check-in UPDATE (which
+    # relocates the row version) visibly shuffled the live roster on the next
+    # poll. Alphabetical within the slot, signup id as tiebreaker.
     signups = (
         db.execute(
             select(Signup)
+            .join(Volunteer, Signup.volunteer_id == Volunteer.id)
             .where(Signup.slot_id.in_(
                 select(Slot.id).where(Slot.event_id == event.id)
             ))
-            .order_by(Signup.slot_id)
+            .order_by(
+                Signup.slot_id,
+                Volunteer.first_name,
+                Volunteer.last_name,
+                Signup.id,
+            )
         )
         .scalars()
         .all()
@@ -87,9 +97,9 @@ def get_roster(
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    # Owner-scoped: the roster carries PII + the venue code; organizers may
-    # only read their own events (admin bypasses).
-    ensure_event_owner_or_admin(event, current_user)
+    # The roster carries PII and the venue code, so it stays staff-only —
+    # but any organizer may read any event's, not just ones they created.
+    ensure_event_staff_access(event, current_user)
     roster = _build_roster(db, event)
     # A lazily-generated venue code must outlive this request: the volunteer's
     # self-check-in validates it from a separate session, and get_db never

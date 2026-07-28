@@ -398,16 +398,35 @@ def _ensure_attended_volunteer(
     event_id: str,
     orientation_slot_id: str,
 ) -> None:
-    """Create attended-vol@e2e.example.com with a checked_in orientation signup.
+    """Create attended-vol@e2e.example.com with a checked_in orientation signup
+    AND an orientation credit row.
 
     Flow: public signup (pending) -> confirm via token -> organizer check-in (checked_in).
-    The orientation_service counts both 'attended' and 'checked_in' as having attended.
+    Credit is never implicit (grant-on-slot-end design): a checked_in orientation
+    signup earns nothing until the slot is ended, and the seed can't end the slot
+    (Test A still signs up for it live) — so grant the credit row explicitly, the
+    same way _create_seeded_pending does.
 
     Idempotent strategy:
-    1. Check roster — if already checked_in/attended, done.
-    2. If pending/confirmed, advance to checked_in.
-    3. If cancelled (or no signup), clean up cancelled rows first, then create fresh.
+    1. Grant orientation credit for the seed family (duplicate rows are harmless —
+       the lookup takes the most recent unrevoked row).
+    2. Check roster — if already checked_in/attended, done.
+    3. If pending/confirmed, advance to checked_in.
+    4. If cancelled (or no signup), clean up cancelled rows first, then create fresh.
     """
+    gs, gb = _req(
+        "POST",
+        "/admin/orientation-credits",
+        token=admin_token,
+        json_body={
+            "volunteer_email": ATTENDED_VOL["email"],
+            "family_key": "e2e-test",
+            "notes": "e2e seed grant (attended volunteer — orientation-modal Test B)",
+        },
+    )
+    if gs not in (200, 201):
+        print(f"[seed] warn: attended-vol credit grant returned {gs} {gb}", file=sys.stderr)
+
     row = _find_signup_in_roster(admin_token, event_id, "Attended Volunteer")
     if row is not None:
         status = row.get("status")

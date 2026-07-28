@@ -127,7 +127,7 @@ test("renders empty state when list is empty", async () => {
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
-    expect(screen.getByText(/no templates yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no modules yet/i)).toBeInTheDocument();
   });
 });
 
@@ -150,23 +150,23 @@ test("renders table with Name, Type, Duration, Sessions, Capacity columns when t
   expect(screen.getByText("General Orientation")).toBeInTheDocument();
 });
 
-test("clicking 'New template' button opens SideDrawer with title 'New template'", async () => {
+test("clicking 'New module' button opens SideDrawer with title 'New module'", async () => {
   api.admin.templates.list.mockResolvedValue(TEMPLATES);
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
     expect(screen.getByText("DNA Extraction")).toBeInTheDocument();
   });
-  const btn = screen.getByRole("button", { name: /new template/i });
+  const btn = screen.getByRole("button", { name: /new module/i });
   fireEvent.click(btn);
   await waitFor(() => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
-  // SideDrawer heading (h2) shows "New template"
-  expect(screen.getByRole("heading", { name: "New template" })).toBeInTheDocument();
+  // SideDrawer heading (h2) shows "New module"
+  expect(screen.getByRole("heading", { name: "New module" })).toBeInTheDocument();
 });
 
-test("clicking a table row opens SideDrawer with title 'Edit template' and pre-filled values", async () => {
+test("clicking a table row opens SideDrawer with title 'Edit module' and pre-filled values", async () => {
   api.admin.templates.list.mockResolvedValue(TEMPLATES);
   const qc = makeQC();
   renderSection(qc);
@@ -178,7 +178,7 @@ test("clicking a table row opens SideDrawer with title 'Edit template' and pre-f
   await waitFor(() => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
-  expect(screen.getByText("Edit template")).toBeInTheDocument();
+  expect(screen.getByText("Edit module")).toBeInTheDocument();
   // Pre-filled values
   expect(screen.getByDisplayValue("DNA Extraction")).toBeInTheDocument();
 });
@@ -188,14 +188,14 @@ test("create form has all required fields", async () => {
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
-    expect(screen.getByText(/no templates yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no modules yet/i)).toBeInTheDocument();
   });
-  fireEvent.click(screen.getByRole("button", { name: /new template/i }));
+  fireEvent.click(screen.getByRole("button", { name: /new module/i }));
   await waitFor(() => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
   // Check for all required fields via their label text
-  expect(screen.getByLabelText(/template name/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/module name/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/url slug/i)).toBeInTheDocument();
   // Type select — use its id since label text "Type" is common
   expect(document.getElementById("tf-type")).toBeInTheDocument();
@@ -212,13 +212,13 @@ test("slug auto-generates from name as lowercase with hyphens", async () => {
   const qc = makeQC();
   renderSection(qc);
   await waitFor(() => {
-    expect(screen.getByText(/no templates yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no modules yet/i)).toBeInTheDocument();
   });
-  fireEvent.click(screen.getByRole("button", { name: /new template/i }));
+  fireEvent.click(screen.getByRole("button", { name: /new module/i }));
   await waitFor(() => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
-  const nameInput = screen.getByLabelText(/template name/i);
+  const nameInput = screen.getByLabelText(/module name/i);
   fireEvent.change(nameInput, { target: { value: "Test Seminar" } });
   await waitFor(() => {
     const slugInput = screen.getByLabelText(/url slug/i);
@@ -237,13 +237,13 @@ test("Archive button triggers confirmation modal with plain-English text", async
   const row = screen.getByText("DNA Extraction").closest("tr");
   fireEvent.click(row);
   await waitFor(() => {
-    expect(screen.getByText("Edit template")).toBeInTheDocument();
+    expect(screen.getByText("Edit module")).toBeInTheDocument();
   });
   // Click archive button
   const archiveBtn = screen.getByRole("button", { name: /archive/i });
   fireEvent.click(archiveBtn);
   await waitFor(() => {
-    expect(screen.getByText("Archive this template?")).toBeInTheDocument();
+    expect(screen.getByText("Archive this module?")).toBeInTheDocument();
   });
 });
 
@@ -305,9 +305,9 @@ test("Restore button calls api.admin.templates.restore", async () => {
   });
 });
 
-test("useAdminPageTitle is called with 'Templates'", () => {
+test("useAdminPageTitle is called with 'Modules'", () => {
   api.admin.templates.list.mockResolvedValue([]);
   const qc = makeQC();
   renderSection(qc);
-  expect(useAdminPageTitle).toHaveBeenCalledWith("Templates");
+  expect(useAdminPageTitle).toHaveBeenCalledWith("Modules");
 });

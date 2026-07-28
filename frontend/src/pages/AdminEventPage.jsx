@@ -8,13 +8,21 @@ import {
   Card,
   Button,
   Modal,
-  Label,
   Input,
   FieldError,
   EmptyState,
   Skeleton,
 } from "../components/ui";
+import {
+  ClipboardCheck,
+  Copy,
+  Download,
+  Mail,
+  QrCode,
+  Settings,
+} from "lucide-react";
 import FormFieldsDrawer from "../components/admin/FormFieldsDrawer";
+import EventSettingsModal from "../components/admin/EventSettingsModal";
 import DuplicateEventDrawer from "../components/admin/DuplicateEventDrawer";
 import BroadcastModal from "../components/BroadcastModal";
 import CheckInQRModal from "../components/admin/CheckInQRModal";
@@ -64,6 +72,35 @@ function fmtDateTime(iso) {
   }
 }
 
+// A roster can run to ninety-odd rows across seventeen slots, so status has to
+// be readable at a glance rather than as another run of grey lowercase text.
+const STATUS_STYLES = {
+  confirmed: "bg-green-100 text-green-800",
+  checked_in: "bg-[var(--color-brand-soft)] text-[var(--color-brand)]",
+  attended: "bg-[var(--color-brand-soft)] text-[var(--color-brand)]",
+  waitlisted: "bg-amber-100 text-amber-800",
+  pending: "bg-slate-100 text-slate-700",
+  no_show: "bg-red-100 text-red-700",
+  cancelled: "bg-slate-100 text-slate-600 line-through",
+};
+
+function StatusPill({ status, waitlistPosition }) {
+  const label =
+    status === "waitlisted" && waitlistPosition
+      ? `Waitlist #${waitlistPosition}`
+      : String(status || "—").replace(/_/g, " ");
+  return (
+    <span
+      className={
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize " +
+        (STATUS_STYLES[status] || "bg-slate-100 text-slate-700")
+      }
+    >
+      {label}
+    </span>
+  );
+}
+
 function StatCard({ label, value }) {
   return (
     <Card>
@@ -91,7 +128,6 @@ export default function AdminEventPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
-  const [privacy, setPrivacy] = useState("full");
   const [confirmExport, setConfirmExport] = useState(false);
   const [err, setErr] = useState("");
   // Phase 22 — form fields drawer
@@ -104,6 +140,8 @@ export default function AdminEventPage() {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   // Event-QR check-in (post-integration)
   const [qrOpen, setQrOpen] = useState(false);
+  // Reconfigure title / where / when / slots without going back to the list
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const analyticsQ = useQuery({
     queryKey: ["adminEventAnalytics", eventId],
@@ -115,9 +153,12 @@ export default function AdminEventPage() {
     queryFn: () => api.events.get(eventId),
   });
 
+  // Admins and organizers always see full names — this is the staff-side
+  // roster, and the initials-only view just made check-in harder. The
+  // endpoint still takes a privacy argument for the public event page.
   const rosterQ = useQuery({
-    queryKey: ["adminEventRoster", eventId, privacy],
-    queryFn: () => api.admin.eventRoster(eventId, privacy),
+    queryKey: ["adminEventRoster", eventId, "full"],
+    queryFn: () => api.admin.eventRoster(eventId, "full"),
   });
 
   const eventTitle =
@@ -145,14 +186,17 @@ export default function AdminEventPage() {
 
   // Phase 25 — organizer manual waitlist promote (WAIT-03).
   const promoteMut = useMutation({
-    mutationFn: (signupId) =>
-      api.organizer.promoteSignup(eventId, signupId),
+    mutationFn: ({ signupId, allowOverfill = false }) =>
+      api.organizer.promoteSignup(eventId, signupId, { allowOverfill }),
     onSuccess: () => {
       toast.success("Promoted from waitlist.");
       qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
       qc.invalidateQueries({ queryKey: ["adminEventAnalytics", eventId] });
     },
     onError: (e) => {
+      // "slot is full" isn't an error the organizer needs shouting at them —
+      // the click handler turns it into the over-capacity confirmation.
+      if (/full/i.test(e?.message || "")) return;
       toast.error(e?.message || "Promote failed");
     },
   });
@@ -298,41 +342,76 @@ export default function AdminEventPage() {
       <PageHeader
         title={eventTitle}
         action={
-          <div className="flex gap-2">
-            <Button as={Link} to={`/admin/events/${eventId}/roster`}>
+          /* Six actions no longer fit on one line, and letting the labels
+             wrap inside the buttons looked broken. Wrap the row instead, keep
+             each label on one line, and lead each with an icon so the row
+             stays scannable once it spills. */
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              as={Link}
+              to={`/admin/events/${eventId}/roster`}
+              className="whitespace-nowrap"
+            >
+              <ClipboardCheck className="h-4 w-4" />
               Live roster (check-in)
             </Button>
-            <Button variant="secondary" onClick={() => setQrOpen(true)}>
-              Show check-in QR
+            <Button
+              variant="secondary"
+              onClick={() => setSettingsOpen(true)}
+              className="whitespace-nowrap"
+            >
+              <Settings className="h-4 w-4" />
+              Event settings
             </Button>
-            <Button variant="secondary" onClick={() => setBroadcastOpen(true)}>
+            <Button
+              variant="secondary"
+              onClick={() => setQrOpen(true)}
+              className="whitespace-nowrap"
+            >
+              <QrCode className="h-4 w-4" />
+              Check-in QR
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setBroadcastOpen(true)}
+              className="whitespace-nowrap"
+            >
+              <Mail className="h-4 w-4" />
               Message volunteers
             </Button>
-            <Button variant="secondary" onClick={() => setDuplicateOpen(true)}>
-              Duplicate…
-            </Button>
-            <Button variant="secondary" onClick={() => setConfirmExport(true)}>
-              Download roster CSV
+            {/* Duplicating an event is admin-only on the server. Rendering it
+                for organizers meant filling in the whole week-picker drawer and
+                only then being told no. */}
+            {isAdmin ? (
+              <Button
+                variant="secondary"
+                onClick={() => setDuplicateOpen(true)}
+                className="whitespace-nowrap"
+              >
+                <Copy className="h-4 w-4" />
+                Duplicate…
+              </Button>
+            ) : null}
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmExport(true)}
+              className="whitespace-nowrap"
+            >
+              <Download className="h-4 w-4" />
+              Roster CSV
             </Button>
           </div>
         }
       />
 
-      <Card>
-        <div>
-          <Label htmlFor="privacy">Who can see volunteer names on this roster?</Label>
-          <select
-            id="privacy"
-            value={privacy}
-            onChange={(e) => setPrivacy(e.target.value)}
-            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
-          >
-            <option value="full">Show full names</option>
-            <option value="minimal">Show initials only</option>
-          </select>
-        </div>
-        <FieldError>{err}</FieldError>
-      </Card>
+      {/* Page-level errors (e.g. a failed CSV export) used to live in the
+          privacy-setting card. That card is gone, so only surface the strip
+          when there is something to say. */}
+      {err ? (
+        <Card>
+          <FieldError>{err}</FieldError>
+        </Card>
+      ) : null}
 
       <section>
         <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide mb-3">
@@ -359,7 +438,7 @@ export default function AdminEventPage() {
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide mb-3">
+        <h2 className="mb-3 text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide">
           Event details
         </h2>
         {eventQ.isPending ? (
@@ -482,8 +561,16 @@ export default function AdminEventPage() {
             {grouped.map(({ slot, rows }) => {
               const waitlistedRows = rows.filter((r) => r.status === "waitlisted");
               return (
-              <Card key={slot.id}>
-                <div className="flex items-center justify-between gap-2">
+              // Not <Card>: its padding is baked in and cn() is a plain join
+              // with no Tailwind conflict resolution, so p-0 can't override it.
+              // The table needs to run edge to edge.
+              <div
+                key={slot.id}
+                className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-sm"
+              >
+                {/* Group header: tinted band so each slot reads as its own
+                    table rather than one continuous wall of names. */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
                   <p className="text-sm font-medium">
                     {/* Issue #31 — say what kind of shift this is and which
                         day, so orientation vs module rosters read at a glance. */}
@@ -503,6 +590,10 @@ export default function AdminEventPage() {
                       </span>
                     ) : null}
                   </p>
+                  <div className="flex items-center gap-2">
+                  <span className="rounded-full border border-[var(--color-border)] bg-white px-2 py-0.5 text-xs font-medium tabular-nums text-[var(--color-fg-muted)]">
+                    {rows.length} signed up
+                  </span>
                   {/* Phase 25 — admin-only reorder waitlist button per slot. */}
                   {isAdmin && waitlistedRows.length >= 2 && (
                     <Button
@@ -528,8 +619,27 @@ export default function AdminEventPage() {
                       Reorder waitlist
                     </Button>
                   )}
+                  </div>
                 </div>
-                <ul className="mt-2 space-y-1">
+                <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-sm">
+                  {/* Column headers repeat per slot rather than once at the
+                      top: each slot table scrolls past independently, so a
+                      single shared header would be off-screen immediately. */}
+                  <thead>
+                    <tr className="border-b border-[var(--color-border)] text-xs uppercase tracking-wide text-[var(--color-fg-muted)]">
+                      <th scope="col" className="px-4 py-2 text-left font-semibold">
+                        Volunteer
+                      </th>
+                      <th scope="col" className="px-4 py-2 text-left font-semibold">
+                        Status
+                      </th>
+                      <th scope="col" className="px-4 py-2 text-right font-semibold">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--color-border)]">
                   {rows.map((r) => {
                     const name =
                       r.participant?.name ||
@@ -541,48 +651,89 @@ export default function AdminEventPage() {
                       "Volunteer";
                     const email = r.participant?.email;
                     return (
-                      <li
+                      <tr
                         key={r.signup_id || r.id}
-                        className="text-sm py-1"
+                        className="align-top transition-colors hover:bg-[var(--color-brand-soft)]/50"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span>
-                            {name}
-                            {email && email !== name ? (
-                              <span className="text-[var(--color-fg-muted)] ml-2">
-                                ({email})
-                              </span>
-                            ) : null}
-                          </span>
-                          <span className="flex items-center gap-2">
-                            <span className="text-[var(--color-fg-muted)]">
-                              {r.status === "waitlisted" && r.waitlist_position
-                                ? `waitlist #${r.waitlist_position}`
-                                : r.status}
-                            </span>
+                        <td className="px-4 py-2.5">
+                          <div className="font-medium">{name}</div>
+                          {email && email !== name ? (
+                            <div className="text-xs text-[var(--color-fg-muted)]">
+                              {email}
+                            </div>
+                          ) : null}
+                          {Array.isArray(r.responses) && r.responses.length > 0 && (
+                            <dl className="mt-1.5 grid grid-cols-1 gap-x-4 gap-y-1 text-xs text-[var(--color-fg-muted)] sm:grid-cols-2">
+                              {r.responses.map((resp) => (
+                                <div key={resp.field_id} className="flex gap-1">
+                                  <dt className="font-medium">{resp.label}:</dt>
+                                  <dd>
+                                    {resp.value_text ??
+                                      (resp.value_json
+                                        ? JSON.stringify(resp.value_json)
+                                        : "—")}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <StatusPill
+                            status={r.status}
+                            waitlistPosition={r.waitlist_position}
+                          />
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <div className="inline-flex items-center justify-end gap-2">
                             {r.status === "waitlisted" && (
                               <Button
                                 type="button"
                                 variant="primary"
                                 data-testid="promote-btn"
-                                onClick={() =>
-                                  promoteMut.mutate(r.signup_id || r.id)
-                                }
+                                onClick={async () => {
+                                  const signupId = r.signup_id || r.id;
+                                  try {
+                                    await promoteMut.mutateAsync({ signupId });
+                                  } catch (err) {
+                                    // A full slot is the usual reason this
+                                    // person is waitlisted, so "no" isn't a
+                                    // useful answer — ask whether to seat
+                                    // them over capacity and retry if so.
+                                    if (
+                                      !/full/i.test(err?.message || "") ||
+                                      !window.confirm(
+                                        `This slot is already at capacity. Promote ${name} anyway, putting the slot one over?`,
+                                      )
+                                    ) {
+                                      return;
+                                    }
+                                    promoteMut.mutate({
+                                      signupId,
+                                      allowOverfill: true,
+                                    });
+                                  }
+                                }}
                                 disabled={promoteMut.isPending}
                               >
                                 Promote
                               </Button>
                             )}
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              onClick={() =>
-                                grantOrientationMut.mutate(r.signup_id || r.id)
-                              }
-                              disabled={grantOrientationMut.isPending}
-                            >
-                              Grant orientation
-                            </Button>
+                            {/* Not for cancelled signups — the volunteer isn't
+                                coming, so there's no attendance to credit. The
+                                server rejects it now too. */}
+                            {r.status !== "cancelled" && (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() =>
+                                  grantOrientationMut.mutate(r.signup_id || r.id)
+                                }
+                                disabled={grantOrientationMut.isPending}
+                              >
+                                Grant orientation
+                              </Button>
+                            )}
                             {r.status !== "cancelled" && (
                               <Button
                                 type="button"
@@ -601,28 +752,15 @@ export default function AdminEventPage() {
                                 Cancel
                               </Button>
                             )}
-                          </span>
-                        </div>
-                        {Array.isArray(r.responses) && r.responses.length > 0 && (
-                          <dl className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-[var(--color-fg-muted)]">
-                            {r.responses.map((resp) => (
-                              <div key={resp.field_id} className="flex gap-1">
-                                <dt className="font-medium">{resp.label}:</dt>
-                                <dd>
-                                  {resp.value_text ??
-                                    (resp.value_json
-                                      ? JSON.stringify(resp.value_json)
-                                      : "—")}
-                                </dd>
-                              </div>
-                            ))}
-                          </dl>
-                        )}
-                      </li>
+                          </div>
+                        </td>
+                      </tr>
                     );
                   })}
-                </ul>
-              </Card>
+                  </tbody>
+                </table>
+                </div>
+              </div>
               );
             })}
           </div>
@@ -652,6 +790,13 @@ export default function AdminEventPage() {
         onSubmit={(payload) => duplicateMut.mutateAsync(payload)}
       />
 
+      {/* Reconfigure the event in place — same form the Events list uses. */}
+      <EventSettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        event={eventQ.data}
+      />
+
       {/* Phase 22 — event form schema drawer */}
       <FormFieldsDrawer
         open={formFieldsOpen}
@@ -668,9 +813,8 @@ export default function AdminEventPage() {
         title="Download roster CSV"
       >
         <p className="text-sm">
-          Download the roster for this event as a CSV file? Volunteer names
-          will be shown using the privacy setting you selected
-          ({privacy === "full" ? "full names" : "initials only"}).
+          Download the roster for this event as a CSV file? Volunteer full
+          names and contact details are included.
         </p>
         <div className="flex justify-end gap-2 mt-4">
           <Button variant="ghost" onClick={() => setConfirmExport(false)}>

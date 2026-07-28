@@ -138,6 +138,50 @@ describe("QuartersSection", () => {
     });
   });
 
+  // Jul 25 -> Aug 8 is 15 days: two whole weeks plus a 1-day week 3. The bare
+  // "3 weeks" gave no hint the tail was a stub, so the off-by-one on the
+  // inclusive end date only surfaced once the quarter was live.
+  it("flags a stub final week and offers an even end date", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByTestId("add-quarter"));
+
+    fireEvent.change(screen.getByLabelText(/quarter begins/i), {
+      target: { value: "2026-07-25" },
+    });
+    fireEvent.change(screen.getByLabelText(/quarter ends/i), {
+      target: { value: "2026-08-08" },
+    });
+
+    expect(screen.getByTestId("weeks-preview").textContent).toMatch(/3 weeks/);
+    expect(screen.getByTestId("weeks-preview").textContent).toMatch(/15 days/);
+    const stub = screen.getByTestId("weeks-preview-stub");
+    expect(stub.textContent).toMatch(/Week 3 is only 1 day long/);
+    expect(stub.textContent).toMatch(/2 even weeks/);
+
+    // One click drops the stub, leaving whole weeks.
+    fireEvent.click(screen.getByRole("button", { name: /use aug 7, 2026/i }));
+    expect(screen.getByLabelText(/quarter ends/i).value).toBe("2026-08-07");
+    expect(screen.getByTestId("weeks-preview").textContent).toMatch(/2 weeks/);
+    expect(screen.queryByTestId("weeks-preview-stub")).toBeNull();
+  });
+
+  // A short final week is legitimate, so the nudge must not fire on a range
+  // that already divides evenly.
+  it("shows no stub warning on a whole number of weeks", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByTestId("add-quarter"));
+
+    fireEvent.change(screen.getByLabelText(/quarter begins/i), {
+      target: { value: "2026-09-21" },
+    });
+    fireEvent.change(screen.getByLabelText(/quarter ends/i), {
+      target: { value: "2026-12-06" },
+    });
+
+    expect(screen.getByTestId("weeks-preview").textContent).toMatch(/77 days/);
+    expect(screen.queryByTestId("weeks-preview-stub")).toBeNull();
+  });
+
   it("confirms before saving a date change (recategorizes events)", async () => {
     renderPage();
     fireEvent.click(await screen.findByTestId("edit-spring-26"));

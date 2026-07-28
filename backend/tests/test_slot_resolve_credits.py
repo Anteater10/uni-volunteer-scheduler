@@ -149,6 +149,35 @@ class TestResolveSlotGrantsCredit:
         assert result.has_credit is True
         assert result.source == "attendance"
 
+    def test_walk_in_attended_straight_from_confirmed(self, db_session):
+        """The volunteer turned up but nobody tapped check-in for them.
+
+        `confirmed -> attended` was not an allowed transition, yet the
+        end-of-slot resolve modal listed every confirmed row and invited
+        marking them attended — so saving 409'd INVALID_TRANSITION and rolled
+        the whole batch back. A slot could only ever be closed out with
+        everyone marked no-show, which is the opposite of the truth and cost
+        the volunteer their orientation credit.
+        """
+        owner = make_user(db_session, role=UserRole.organizer)
+        _make_template(db_session, slug="crispr")
+        event = _make_event(db_session, owner_id=owner.id)
+        slot = _make_slot(db_session, event_id=event.id)
+        s = _make_signup(
+            db_session,
+            slot=slot,
+            email="walkin@example.com",
+            status=SignupStatus.confirmed,
+        )
+
+        resolve_slot(db_session, slot.id, owner.id, [s.id], [])
+        db_session.commit()
+
+        assert s.status == SignupStatus.attended
+        rows = _credits(db_session, "walkin@example.com")
+        assert len(rows) == 1
+        assert rows[0].source == OrientationCreditSource.attendance
+
     def test_no_show_gets_no_credit(self, db_session):
         owner = make_user(db_session, role=UserRole.organizer)
         _make_template(db_session, slug="crispr")
@@ -310,11 +339,28 @@ class TestSlotResolveEndpoint:
         assert len(rows) == 1
         assert rows[0].source == OrientationCreditSource.attendance
 
-    def test_non_owner_organizer_403(self, client, db_session):
+    def test_other_organizer_can_resolve(self, client, db_session):
+        # Was a 403 assertion: organizers could only resolve slots on events
+        # they had created, which meant whoever ran the session on the day
+        # often could not close it out. See deps.ensure_event_staff_access.
         owner = make_user(db_session, role=UserRole.organizer)
-        intruder = make_user(db_session, role=UserRole.organizer)
+        other = make_user(db_session, role=UserRole.organizer)
         _, slot, s = self._setup(db_session, owner)
-        headers = auth_headers(client, intruder)
+        headers = auth_headers(client, other)
+
+        resp = client.post(
+            f"/api/v1/slots/{slot.id}/resolve",
+            json={"attended": [str(s.id)], "no_show": []},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert len(_credits(db_session, "http-vol@example.com")) == 1
+
+    def test_participant_403(self, client, db_session):
+        owner = make_user(db_session, role=UserRole.organizer)
+        outsider = make_user(db_session, role=UserRole.participant)
+        _, slot, s = self._setup(db_session, owner)
+        headers = auth_headers(client, outsider)
 
         resp = client.post(
             f"/api/v1/slots/{slot.id}/resolve",

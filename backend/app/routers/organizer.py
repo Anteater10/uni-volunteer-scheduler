@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..celery_app import send_email_notification
 from ..database import get_db
-from ..deps import ensure_event_owner_or_admin, log_action, require_role
+from ..deps import ensure_event_staff_access, log_action, require_role
 from ..services import form_schema_service
 from ..services.orientation_service import (
     family_for_event,
@@ -48,7 +48,7 @@ def grant_orientation_for_signup(
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
 
     signup = (
         db.query(models.Signup).filter(models.Signup.id == signup_id).first()
@@ -60,6 +60,15 @@ def grant_orientation_for_signup(
     if not slot or slot.event_id != event.id:
         raise HTTPException(
             status_code=400, detail="Signup does not belong to this event"
+        )
+    # A cancelled signup means the volunteer isn't coming, so there is nothing
+    # to grant credit for. There was no guard here at all, and the roster's
+    # "Grant orientation" button stayed visible after a cancellation — so one
+    # stray click wrote a real credit row for someone who never attended.
+    if signup.status == models.SignupStatus.cancelled:
+        raise HTTPException(
+            status_code=409,
+            detail="Signup is cancelled; cannot grant orientation credit.",
         )
 
     volunteer = signup.volunteer
@@ -138,7 +147,7 @@ def append_event_form_field(
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
 
     schema = form_schema_service.append_event_field(
         db, event_id, field, actor=current_user
@@ -158,6 +167,7 @@ def append_event_form_field(
 def organizer_promote_signup(
     event_id: UUID,
     signup_id: UUID,
+    allow_overfill: bool = False,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(
         require_role(models.UserRole.organizer, models.UserRole.admin)
@@ -168,11 +178,16 @@ def organizer_promote_signup(
     The organizer picks a specific waitlister (e.g. a vouched volunteer) and
     promotes them past the queue. Writes audit ``waitlist_promote_manual``.
     Returns the updated signup (status=pending).
+
+    ``allow_overfill=true`` takes the slot past capacity. It is opt-in because
+    a full slot is usually why the person is waitlisted at all; without it the
+    override 409s and the roster's Promote button can never succeed. The UI
+    confirms the over-capacity seat with the organizer before sending it.
     """
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    ensure_event_owner_or_admin(event, current_user)
+    ensure_event_staff_access(event, current_user)
 
     signup = (
         db.query(models.Signup)
@@ -195,7 +210,7 @@ def organizer_promote_signup(
         )
 
     try:
-        manual_promote(db, signup, slot)
+        manual_promote(db, signup, slot, allow_overfill=allow_overfill)
     except ValueError as exc:
         msg = str(exc)
         if "full" in msg:
@@ -213,6 +228,10 @@ def organizer_promote_signup(
             "slot_id": str(slot.id),
             "signup_id": str(signup.id),
             "via": "organizer_roster",
+            # Worth recording: an over-capacity seat is a judgement call the
+            # organizer made, and someone reading the log later will want to
+            # know it wasn't a counting bug.
+            "allow_overfill": allow_overfill,
         },
     )
     db.commit()
