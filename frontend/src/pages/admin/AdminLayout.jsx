@@ -85,6 +85,9 @@ const allNavItems = [
     roles: ["admin", "organizer"],
     copilotOnly: true,
   },
+
+  // 7. Account
+  { to: "/admin/settings", label: "Settings", roles: ["admin", "organizer"] },
 ];
 
 function NavItem({ to, label, end }) {
