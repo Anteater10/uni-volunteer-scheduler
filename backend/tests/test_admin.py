@@ -138,7 +138,7 @@ def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session,
     """The on-camera cancel→auto-promote must notify the promoted volunteer.
     Regression: the admin cancel path promoted silently ("email dispatch
     deferred to Phase 12") while the organizer manual promote already sends
-    the branded waitlist_promote email."""
+    the promotion confirmation email."""
     sent = []
     monkeypatch.setattr(
         "app.celery_app.send_email_notification.delay",

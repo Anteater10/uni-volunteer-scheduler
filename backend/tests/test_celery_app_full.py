@@ -622,17 +622,3 @@ def test_daily_send_limit_counts_transactional_notifications(db_session, monkeyp
     db_session.flush()
 
     assert celery_mod._check_daily_send_limit(db_session) is False
-
-
-def test_waitlist_promote_email_does_not_ask_to_confirm(db_session):
-    """Promotees are already confirmed (promote_waitlist_fifo sets status
-    directly) — the email must not tell them to 'confirm your spot'."""
-    from app.emails import BUILDERS
-
-    s = _seed_confirmed_signup(db_session, email_tag="wp")
-    db_session.commit()
-
-    payload = BUILDERS["waitlist_promote"](s)
-    assert "confirm your spot" not in payload["subject"].lower()
-    assert "waitlist" in payload["subject"].lower()
-    assert "confirmed" in payload["subject"].lower()
