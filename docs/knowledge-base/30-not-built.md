@@ -27,6 +27,10 @@ for a volunteer to log into.
 **Attended, no-show, and cancelled cannot be undone.** Once a session is closed out those statuses
 are final. A mis-tapped check-in *can* be undone, but only before close-out.
 
+**No email announces an automatic waitlist promotion.** When a cancellation frees a seat and the
+next volunteer is auto-promoted, no message is sent — they see the change through their manage
+link. A promotion done by staff from the roster does send one.
+
 **Calendar entries don't sync.** A volunteer can add a session to their calendar, but if the session
 later moves, their calendar entry won't update. Use a broadcast to tell them.
 

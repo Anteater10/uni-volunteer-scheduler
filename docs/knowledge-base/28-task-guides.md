@@ -63,9 +63,17 @@ waitlisted and cancelled people don't. You can send 5 broadcasts per hour per ev
 
 ## How do I invite a new organizer or admin?
 
-Admin → Users → "Invite new user". Enter their name, email, and role. They get an email with a
-sign-in link — **it expires in 15 minutes**, so send it when they're ready. No password needed from
-you.
+Admin → Users → "Invite new user". Enter their name, email, and role. They get an email with a link
+where they set their own password and are signed straight in — you never handle their password. The
+invite link lasts **7 days**; if it lapses, re-invite them.
+
+## How do I change my password, or reset one I've forgotten?
+
+Signed in: open your Settings page and change it there — the form asks for your current password,
+and changing it signs out any other sessions. Locked out: use **"Forgot password" on the login
+page**, which emails a reset link (valid for one hour) if the address belongs to active staff. If
+you never set a password because your invite lapsed, ask an admin to re-invite you — the invite
+link is where the password gets set.
 
 ## How do I deactivate someone who has left?
 
@@ -85,13 +93,15 @@ Account" permanently anonymizes their data. Both are logged.
 
 ## How do I archive a finished quarter?
 
-Admin → Quarters → Archive on that quarter's row. Archiving is only allowed once the quarter has
-ended. An archived quarter still appears in the list, stays reachable by link, and volunteers can
-still browse it under "Archived quarters" — it's just skipped when working out what week it
-currently is. Restore undoes it.
+You usually don't have to — a quarter is archived automatically overnight once its end date has
+passed. To archive one immediately, use Archive on its row in Admin → Quarters (allowed once the
+quarter has ended). An archived quarter still appears in the list, stays reachable by link, and
+volunteers can still browse it under "Archived quarters" — it's just skipped when working out what
+week it currently is. Restore undoes it, but an ended quarter will be re-archived by the nightly
+sweep unless its dates change.
 
 ## How do I change what questions volunteers answer when signing up?
 
 For one event, open the form-fields drawer on the event page. For every future event of a module,
 edit the module's default form in Admin → Modules. An event's own form always wins over the
-template default. Changing a form does not alter answers already submitted.
+module default. Changing a form does not alter answers already submitted.

@@ -21,6 +21,10 @@ for their email address without logging in. Nothing about that setting requires 
 each signup, and that record is what prevents duplicates — so a retried job or a double-fired
 schedule can't produce a second copy.
 
+**Volunteers also get a weekly digest.** On Mondays the app emails each volunteer a summary of the
+confirmed sessions they have in the coming week. It's a heads-up list, separate from the
+per-session reminders above.
+
 **Broadcasts ignore reminder preferences.** A broadcast is an operational instruction about a
 session someone is coming to ("we've moved to Lot 22"), not promotional email, so it goes to the
 roster regardless of the reminder opt-out. See the broadcasts document.

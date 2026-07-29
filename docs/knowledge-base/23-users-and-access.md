@@ -4,9 +4,16 @@ Staff accounts — organizers and admins — are managed by admins in **Admin �
 never appear here, because volunteers have no account.
 
 **Inviting a new staff member:** go to Users, click "Invite new user", and enter their name, email,
-and role (admin or organizer). They receive an email with a link to sign in — no password is set by
-you or by them at that point. **The invitation link expires in 15 minutes**, so send it when they're
-ready to use it, and just re-invite if it lapses.
+and role (admin or organizer). They receive an email with a link where they **set their own
+password** and are signed straight in — you never see or choose their password. **The invitation
+link lasts 7 days**; if it lapses before they use it, just re-invite them.
+
+**Staff manage their own passwords.** A signed-in staff member changes their password from their
+own Settings page — the form asks for the current password first, and changing it signs out any
+other sessions. A staff member who is locked out uses **"Forgot password" on the login page**: if
+the address belongs to active staff, they're emailed a reset link that lasts **one hour**. Reset
+requests are rate-limited, and the page never reveals whether an address has an account. Someone
+who never finished their invite has no password yet — send them a fresh invite rather than a reset.
 
 **Changing someone's role** is done from their row in the Users list. The role decides everything
 about what they can reach: organizers cannot open Users, Audit Logs, Exports, Orientation Credits,
@@ -22,8 +29,8 @@ restore access. Accounts are never destroyed by deactivation.
 system holds on that person. "CCPA Delete Account" permanently anonymizes their data. Both actions
 are recorded in the audit log.
 
-Every one of these actions — invite, role change, deactivate, reactivate, CCPA export, CCPA delete
-— is written to the **audit log** with who did it and when.
+Every one of these actions — invite, role change, deactivate, reactivate, CCPA export, CCPA delete,
+password set and password change — is written to the **audit log** with who did it and when.
 
 A site setting can restrict staff accounts to a **single allowed email domain**, so invitations
 outside your institution's domain are refused.

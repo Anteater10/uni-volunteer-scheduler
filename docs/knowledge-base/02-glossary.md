@@ -57,7 +57,9 @@ it.
 
 **Participant** — another word for volunteer. Both mean a UCSB student mentoring in a classroom.
 
-**Pending** — a signup status meaning the signup exists but has not been confirmed yet.
+**Pending** — a signup status meaning the signup exists but has not been confirmed yet. A pending
+signup holds its seat; one never confirmed expires after two weeks and is removed, freeing the
+seat.
 
 **Quarter** — an academic quarter an admin has entered by hand: season, year, an optional session
 label, and start and end dates. Weeks are numbered from the start date. Nothing is guessed or

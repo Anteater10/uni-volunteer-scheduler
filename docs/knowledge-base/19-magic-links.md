@@ -11,9 +11,11 @@ With their magic link a volunteer can **confirm** the signup, **view** what they
 **cancel** a signup, and **swap** to a different slot. They can also add the session to their
 calendar from the confirmation page.
 
-**Magic links expire and are single-use.** Each one is time-limited and is consumed when used, so a
-link that leaks later is worthless. Requesting new links is rate-limited per email address, so the
-endpoint can't be used to spam someone.
+**Magic links expire and are single-use.** A manage or cancel link lasts about **15 minutes** from
+when it's requested; the initial **confirmation link is the exception — it lasts two weeks**,
+matching how long an unconfirmed signup is held before it lapses. Each link is consumed when used,
+so a link that leaks later is worthless. Requesting new links is rate-limited per email address, so
+the endpoint can't be used to spam someone.
 
 **A volunteer who loses their email can be sent another link.** Staff can resend it from the admin
 side, and there's a resend path for volunteers too.

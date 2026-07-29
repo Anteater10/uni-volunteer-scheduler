@@ -14,6 +14,11 @@ to confirmed** — they are not asked to confirm again by email, because they al
 details and consented when they first signed up. Nobody has to notice the cancellation for this to
 work.
 
+**Auto-promotion does not send an email today.** The promoted volunteer isn't asked to confirm
+again — but neither are they notified automatically; the change shows up when they open their
+manage link. If it matters that they know they're in, tell them: send the event a broadcast (a
+promoted volunteer is confirmed, so they receive it) or contact them directly.
+
 Because auto-promotion already claims any seat that frees up, a slot's waitlist normally only
 exists while the slot is genuinely full. That has a consequence for the manual override below.
 
@@ -22,6 +27,8 @@ promote one specific waitlisted volunteer instead of taking the next in line. Si
 usually still full, this asks for confirmation to go **over capacity** — putting an extra person in
 a real room is a real decision, so it has to be made deliberately rather than happening by
 default. Without the over-capacity option the button would simply fail every time it was used.
+Unlike automatic promotion, a manual promotion **does email the volunteer** that they're off the
+waitlist and in.
 
 **Admins can reorder a waitlist** from the event page, which rewrites the queue so the order you
 set becomes the order used for automatic promotion. You must submit the whole current waitlist for

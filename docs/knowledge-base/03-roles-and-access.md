@@ -2,7 +2,8 @@
 
 The SciTrek scheduler has three roles: **volunteer** (participant), **organizer**, and **admin**.
 Volunteers have no account at all. Organizers and admins are staff with real login accounts, an
-email and a password, created by invitation from an admin.
+email and a password, created by invitation from an admin — the invite link is where the new staff
+member sets their own password.
 
 **Volunteers have no account and never log in.** A volunteer is identified only by their email
 address. They browse sessions at `/volunteer`, sign up, and then manage everything through magic
@@ -12,8 +13,9 @@ password, no volunteer dashboard, and no volunteer login page.
 **Organizers** run events day to day. An organizer can create and edit events, generate and edit
 slots, view rosters, check volunteers in, undo a mis-tapped check-in, close out a session
 (marking attended or no-show), grant orientation credit at the door, promote someone off the
-waitlist, send broadcasts, duplicate events, edit an event's signup form, and manage module
-templates. Organizers see the Overview, Events, Operations, Modules, and Help sections.
+waitlist, send broadcasts, duplicate events, edit an event's signup form, and manage modules.
+Organizers see the Events, Operations, Modules, and Help sections — the Overview dashboard is
+admin-only.
 
 **Admins** can do everything an organizer can, plus: manage staff users (invite, change role,
 deactivate, CCPA export and delete), enter and edit quarters, archive quarters, view the quarter

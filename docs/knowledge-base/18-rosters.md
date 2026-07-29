@@ -27,7 +27,9 @@ From the roster an organizer can:
 - **Reorder the waitlist** (admins).
 
 There is a **mobile-responsive roster page** for use at the classroom door. The rest of the admin
-side is desktop-only, but this page works properly on a phone because that's where it's used.
+side is desktop-only, but this page works properly on a phone because that's where it's used. On a
+phone, reach it through the **Today** page in the staff menu, which lists today's sessions and
+links straight to each roster.
 
 **Organizers can only open rosters for events they own.** The server checks ownership on the roster
 read itself, not just the link, so one organizer cannot see another's roster or their venue code.

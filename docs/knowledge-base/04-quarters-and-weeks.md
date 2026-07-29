@@ -40,10 +40,13 @@ save returns a relink summary — how many events were linked, how many changed 
 unlinked — and the UI shows those counts, so recategorizing events is never silent. Editing dates
 asks for confirmation first, for the same reason.
 
-**Past quarters can be archived.** Archiving is only allowed once the quarter has ended.
-An archived quarter stays listed and stays reachable by deep link, and volunteers can still browse
-it under "Archived quarters" on the public page, but the app skips archived quarters when working
-out what week it currently is. Archiving can be undone with Restore.
+**Ended quarters are archived automatically.** Overnight after a quarter's end date has passed, the
+app archives it on its own; an admin can also archive it by hand once it has ended. An archived
+quarter stays listed and stays reachable by deep link, and volunteers can still browse it under
+"Archived quarters" on the public page, but the app skips archived quarters when working out what
+week it currently is. Archiving can be undone with Restore — though a restored quarter whose end
+date is still in the past will be re-archived by the next nightly sweep, so restore is for fixing a
+quarter's dates, not for keeping an ended quarter live.
 
 **Deleting a quarter is blocked while events still reference it.** The delete fails with a conflict
 rather than orphaning events. Move or delete the events first.

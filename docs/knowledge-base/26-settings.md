@@ -33,7 +33,9 @@ Each event carries its own settings, edited from the event page in Admin → Eve
 ## User settings
 
 Each signed-in staff member has their own settings page at `/settings`, reached from the account
-menu. That's where they manage their own profile and password rather than anything program-wide.
+menu. That's where they update their own profile and change their password — the password form asks
+for the current password first, and changing it signs out any other sessions. Nothing on this page
+is program-wide.
 
 **Time is Pacific throughout the app.** Reminders, signup windows, check-in windows, and displayed
 times are all Pacific, matching the single venue — there is no per-user timezone setting.

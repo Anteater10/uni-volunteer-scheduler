@@ -21,6 +21,11 @@ work.
 **Quarters are not on this page.** Entering or editing a quarter happens roughly once a term, so it
 lives in the "Manage quarters" drawer on the Overview page rather than taking up a navigation tab.
 
+**On a phone, use the Today page instead.** The staff menu has a separate **Today** page — a
+mobile view of today's sessions that links straight into each event's roster. It exists because
+the admin pages are desktop-only, and Today is how an organizer standing at a school reaches the
+roster without opening a laptop.
+
 For an organizer, the normal day looks like: open Operations → Today, open the event that's
 running, work from the roster to check people in as they arrive, and end each slot once the session
 is over.

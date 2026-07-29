@@ -94,3 +94,18 @@ the current quarter and the app comes to life. Nothing is seeded by default, on 
 ## The Audit Logs tab isn't there
 
 It's hidden by default. Turn on "show audit logs tab" from the settings card on the Overview page.
+
+## A staff member can't sign in
+
+If they've forgotten their password, the **"Forgot password" link on the login page** emails them a
+reset link that lasts one hour — it only works for active staff, so a deactivated account has to be
+reactivated first. If they were recently invited and the link no longer works, the invite lasted
+7 days and has lapsed: re-invite them from Admin → Users. The invite link is also where the password
+gets set, so someone who never used theirs has no password to reset.
+
+## A volunteer's signup disappeared
+
+If it was never confirmed, it expired. A new signup sits at **pending** until the volunteer clicks
+the confirmation link, and that link lasts two weeks — a signup still pending after that is removed
+automatically overnight and its seat is freed. This is the one case where a signup vanishes rather
+than showing as cancelled. The volunteer can simply sign up again.
