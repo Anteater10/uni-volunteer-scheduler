@@ -464,3 +464,38 @@ def build_signup_confirmation_email(
     )
     subject = f"Confirm your SciTrek volunteer signup — {event.title}"
     return subject, html
+
+
+def build_waitlist_promotion_email(
+    volunteer: "models.Volunteer",
+    signup: "models.Signup",
+    token: str,
+    event: "models.Event",
+) -> tuple[str, str]:
+    """Build the waitlist-promotion confirm email (promotion → pending).
+
+    Unlike the old link-less 'waitlist_promote' notification, this carries
+    the magic-link confirm URL: the promotee must confirm within 3 days,
+    and the same link is their manage/cancel page.
+
+    Returns:
+        (subject, html_body) — HTML only, same as the fresh-signup flow.
+    """
+    from .config import settings
+
+    confirm_url = f"{settings.frontend_url}/signup/confirm?token={token}"
+    slot = signup.slot
+    slot_line = (
+        f"{slot.slot_type.value.title()}: {slot.date} "
+        f"{_fmt_slot_time(slot.start_time)} - {_fmt_slot_time(slot.end_time)} "
+        f"@ {slot.location or event.school or 'TBD'}"
+    )
+    html = _render_html(
+        "waitlist_promotion.html",
+        volunteer_first_name=volunteer.first_name,
+        event_title=event.title,
+        confirm_url=confirm_url,
+        slot_line=slot_line,
+    )
+    subject = f"A spot opened up — confirm your SciTrek signup for {event.title}"
+    return subject, html

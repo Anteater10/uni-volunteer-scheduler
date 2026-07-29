@@ -16,6 +16,7 @@ from app.celery_app import (
     send_broadcast_email,
     send_email_notification,
     send_signup_confirmation_email,
+    send_waitlist_promotion_email,
     weekly_digest,
 )
 from tests.fixtures.factories import SignupFactory, VolunteerFactory
@@ -466,6 +467,47 @@ def test_signup_confirmation_email_missing_entity_returns(
         token="t",
         event_id=str(_uuid.uuid4()),
     )
+
+
+# ---------------------------------------------------------------------------
+# send_waitlist_promotion_email
+# ---------------------------------------------------------------------------
+
+
+def test_waitlist_promotion_email_sends(
+    db_session, monkeypatch, patch_session_local
+):
+    s = _seed_confirmed_signup(db_session, email_tag="wpe")
+    db_session.commit()
+    sends = []
+    monkeypatch.setattr(celery_mod, "_send_email", lambda *a, **k: sends.append((a, k)))
+    monkeypatch.setattr(
+        celery_mod.settings, "frontend_url", "https://example.test", raising=False,
+    )
+    send_waitlist_promotion_email.run(
+        volunteer_id=str(s.volunteer.id),
+        signup_id=str(s.id),
+        token="raw-promo-token",
+        event_id=str(s.slot.event_id),
+    )
+    assert len(sends) == 1
+    html_body = sends[0][1]["html_body"]
+    assert "/signup/confirm?token=raw-promo-token" in html_body
+
+
+def test_waitlist_promotion_email_missing_entity_returns(
+    db_session, monkeypatch, patch_session_local
+):
+    import uuid as _uuid
+    sends = []
+    monkeypatch.setattr(celery_mod, "_send_email", lambda *a, **k: sends.append((a, k)))
+    send_waitlist_promotion_email.run(
+        volunteer_id=str(_uuid.uuid4()),
+        signup_id=str(_uuid.uuid4()),
+        token="t",
+        event_id=str(_uuid.uuid4()),
+    )
+    assert sends == []
 
 
 # ---------------------------------------------------------------------------

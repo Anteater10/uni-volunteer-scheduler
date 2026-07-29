@@ -487,6 +487,54 @@ def send_signup_confirmation_email(
         db.close()
 
 
+@celery.task(name="app.send_waitlist_promotion_email")
+def send_waitlist_promotion_email(
+    volunteer_id: str,
+    signup_id: str,
+    token: str,
+    event_id: str,
+) -> None:
+    """Send the confirm-your-spot email after a waitlist promotion.
+
+    Mirrors send_signup_confirmation_email: one-shot (no sent_notifications
+    dedup row, D-11), warn-and-skip on missing entities, debug-only token
+    echo. Enqueue strictly AFTER db.commit() — the worker reads rows from
+    its own session.
+    """
+    from uuid import UUID
+
+    from .emails import build_waitlist_promotion_email
+
+    db: Session = SessionLocal()
+    try:
+        volunteer = db.get(models.Volunteer, UUID(volunteer_id))
+        signup = db.get(models.Signup, UUID(signup_id))
+        event = db.get(models.Event, UUID(event_id))
+        if not volunteer or not signup or not event:
+            logger.warning(
+                "send_waitlist_promotion_email: missing entity, skipping "
+                "volunteer_id=%s signup_id=%s event_id=%s",
+                volunteer_id,
+                signup_id,
+                event_id,
+            )
+            return
+        subject, html = build_waitlist_promotion_email(
+            volunteer, signup, token, event
+        )
+        _send_email(to_email=volunteer.email, subject=subject, body="", html_body=html)
+        logger.info(
+            "waitlist_promotion_email_sent volunteer_id=%s signup_id=%s event_id=%s",
+            volunteer_id,
+            signup_id,
+            event_id,
+        )
+        if getattr(settings, "debug", False):
+            logger.debug("waitlist_promotion_token_preview token=%s", token)
+    finally:
+        db.close()
+
+
 @celery.task(name="app.celery_app.expire_pending_signups")
 def expire_pending_signups() -> None:
     """Daily cleanup: hard-delete pending signups whose SIGNUP_CONFIRM token has expired.
