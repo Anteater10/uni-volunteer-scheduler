@@ -112,6 +112,10 @@ _CONFIRMED_STATUSES = [
 
 @router.get("/summary")
 def admin_summary(
+    quarter_id: uuid_mod.UUID | None = Query(
+        None,
+        description="Scope the *_quarter aggregates to this quarter instead of the active one",
+    ),
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
@@ -126,7 +130,15 @@ def admin_summary(
     # Issue #24: "this quarter" = the admin-entered quarter covering today,
     # else the most recently ended one (gaps). With no quarters entered the
     # window is zero-width so quarter aggregates read 0.
-    active_q = quarter_service.active_or_recent_quarter(db, now.date())
+    # fix/ux-quarter-batch: an explicit ?quarter_id re-scopes every quarter
+    # aggregate so the Overview can follow the quarter picked in Manage
+    # Quarters — archived quarters included (that's the retrospective case).
+    if quarter_id is not None:
+        active_q = db.get(models.AcademicQuarter, quarter_id)
+        if active_q is None:
+            raise HTTPException(status_code=404, detail="Quarter not found")
+    else:
+        active_q = quarter_service.active_or_recent_quarter(db, now.date())
     if active_q is not None:
         q_start, q_end = quarter_service.quarter_bounds_utc(active_q)
     else:
@@ -355,7 +367,13 @@ def admin_summary(
             "events": events_this_week - events_last_week,
             "signups": signups_this_week - signups_last_week,
         },
-        "quarter_progress": quarter_service.quarter_progress(db, now),
+        "quarter_progress": quarter_service.quarter_progress(
+            db, now, quarter=active_q if quarter_id is not None else None
+        ),
+        # Which quarter the *_quarter aggregates describe, so the UI can
+        # label them without re-deriving the server's choice.
+        "quarter_id": str(active_q.id) if active_q is not None else None,
+        "quarter_name": active_q.display_name if active_q is not None else None,
         "fill_rate_attention": attention,
         "last_updated": now.isoformat(),
     }

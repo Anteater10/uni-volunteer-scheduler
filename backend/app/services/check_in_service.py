@@ -514,6 +514,100 @@ def _apply_resolutions(
     return updated
 
 
+# Statuses that still expect the volunteer on a roster vs. the terminal pair
+# a resolve lands them on. Mirrors _ATTENDEE_STATUSES in routers/roster.py.
+_EXPECTED_STATUSES = (
+    SignupStatus.pending,
+    SignupStatus.confirmed,
+    SignupStatus.checked_in,
+)
+_RESOLVED_STATUSES = (SignupStatus.attended, SignupStatus.no_show)
+
+
+def refresh_event_completion(db: Session, event_id: UUID) -> None:
+    """Stamp or clear events.completed_at from the live signup statuses.
+
+    Complete means: at least one resolved signup exists and none is still
+    expected (pending/confirmed/checked_in). Waitlisted and cancelled rows
+    never block completion; an event with no signups at all never completes.
+    """
+    event = db.get(Event, event_id)
+    if event is None:
+        return
+
+    def _exists(statuses) -> bool:
+        return (
+            db.execute(
+                select(Signup.id)
+                .join(Slot, Slot.id == Signup.slot_id)
+                .where(Slot.event_id == event_id, Signup.status.in_(statuses))
+                .limit(1)
+            ).scalar_one_or_none()
+            is not None
+        )
+
+    if _exists(_RESOLVED_STATUSES) and not _exists(_EXPECTED_STATUSES):
+        if event.completed_at is None:
+            event.completed_at = datetime.now(timezone.utc)
+    else:
+        event.completed_at = None
+    db.flush()
+
+
+def reopen_event(db: Session, event_id: UUID, actor_id: UUID | None) -> list[Signup]:
+    """Undo "End event": return resolved signups to the live roster.
+
+    attended -> checked_in when a check-in timestamp exists (the check-in
+    really happened and is kept); otherwise attended -> confirmed (walk-in
+    that was only recorded at resolve time). no_show -> confirmed. Clears
+    events.completed_at via refresh_event_completion.
+
+    Deliberately bypasses ALLOWED_TRANSITIONS — attended/no_show stay
+    terminal for every normal flow; this supervised undo is the one
+    exception, and it writes the same transition audit rows (via
+    "reopen_event").
+
+    Orientation credits granted on the way in are NOT auto-revoked: credit
+    is permanent per (email, family) by design (issue #30) and may predate
+    this event, so a blanket revoke could destroy legitimate credit.
+    Corrections go through Admin → Orientation Credits.
+    """
+    resolved = (
+        db.execute(
+            select(Signup)
+            .join(Slot, Slot.id == Signup.slot_id)
+            .where(
+                Slot.event_id == event_id,
+                Signup.status.in_(_RESOLVED_STATUSES),
+            )
+            .with_for_update(of=Signup)
+        )
+        .scalars()
+        .all()
+    )
+
+    for signup in resolved:
+        old = signup.status
+        if old == SignupStatus.attended and signup.checked_in_at is not None:
+            new_status = SignupStatus.checked_in
+        else:
+            new_status = SignupStatus.confirmed
+        signup.status = new_status
+        db.add(
+            AuditLog(
+                actor_id=actor_id,
+                action="transition",
+                entity_type="signup",
+                entity_id=str(signup.id),
+                extra={"from": old.value, "to": new_status.value, "via": "reopen_event"},
+            )
+        )
+
+    db.flush()
+    refresh_event_completion(db, event_id)
+    return resolved
+
+
 def resolve_event(
     db: Session,
     event_id: UUID,
@@ -542,7 +636,7 @@ def resolve_event(
     )
 
     signup_map = {s.id: s for s in all_signups}
-    return _apply_resolutions(
+    updated = _apply_resolutions(
         db,
         signup_map,
         actor_id,
@@ -551,6 +645,8 @@ def resolve_event(
         scope_label=f"event {event_id}",
         via="resolve_event",
     )
+    refresh_event_completion(db, event_id)
+    return updated
 
 
 def resolve_slot(
@@ -584,7 +680,7 @@ def resolve_slot(
     )
 
     signup_map = {s.id: s for s in slot_signups}
-    return _apply_resolutions(
+    updated = _apply_resolutions(
         db,
         signup_map,
         actor_id,
@@ -593,3 +689,6 @@ def resolve_slot(
         scope_label=f"slot {slot_id}",
         via="resolve_slot",
     )
+    # Ending the event's last open slot completes the whole event.
+    refresh_event_completion(db, slot.event_id)
+    return updated
