@@ -257,3 +257,19 @@ def test_local_bge_repr_includes_model_name():
 
     p = LocalBgeEmbeddingProvider(model="BAAI/bge-small-en-v1.5")
     assert "BAAI/bge-small-en-v1.5" in repr(p)
+
+
+def test_default_embedding_primary_matches_the_shipped_corpus():
+    """The class default must retrieve the chunks we actually ship.
+
+    Every chunk written by the shipped ingest is embedded by the local BGE
+    provider, and both halves of hybrid retrieval filter on that provider
+    name. A deploy that configures nothing therefore has to default to the
+    local provider — with the old ``jina`` default it got zero rows from
+    dense AND FTS, silently: no citations, no error. Checked against the
+    class field (not a ``Settings()`` instance) so a developer's ``.env``
+    can't mask a bad default.
+    """
+    from app.config import Settings
+
+    assert Settings.model_fields["corpus_embedding_primary"].default == "local"

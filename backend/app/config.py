@@ -104,7 +104,13 @@ class Settings(BaseSettings):
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is
     # immutable without a full re-embed — see RESEARCH D3 / Pitfall 3.
-    corpus_embedding_primary: str = "jina"            # 'jina' | 'local'
+    #
+    # Default must match the provider the shipped corpus was embedded with:
+    # both retrieval CTEs filter chunks on provider, so a deploy that leaves
+    # this unset with a 'jina' default read zero rows from BOTH halves of
+    # hybrid retrieval — no citations, no error. Every shipped chunk is
+    # local-bge, so 'local' is the only default that works out of the box.
+    corpus_embedding_primary: str = "local"           # 'jina' | 'local'
     corpus_embedding_fallback: str = "local"
     corpus_embedding_dimensions: int = 1024           # locked at 1024
     corpus_chunk_size: int = 1024
