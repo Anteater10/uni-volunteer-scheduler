@@ -190,15 +190,20 @@ def swap_signup_public(
     if signup.volunteer_id != token_row.volunteer_id:
         raise HTTPException(status_code=403, detail="token does not own this signup")
 
-    updated = swap_signup(
+    result = swap_signup(
         db,
         signup_id=signup_id,
         target_slot_id=body.target_slot_id,
         actor=None,
         actor_label="participant",
     )
+    updated = result.signup
+    promo_kwargs = result.promotion.email_kwargs if result.promotion else None
     db.commit()
     db.refresh(updated)
+    if promo_kwargs:
+        # Fixes the silent-promotion bug: swaps previously promoted with no email.
+        send_waitlist_promotion_email.delay(**promo_kwargs)
     return {
         "signup_id": str(updated.id),
         "slot_id": str(updated.slot_id),

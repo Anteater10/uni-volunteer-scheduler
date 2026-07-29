@@ -204,13 +204,18 @@ def swap_signup_authed(
     if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    updated = _swap_signup(
+    result = _swap_signup(
         db,
         signup_id=signup_id,
         target_slot_id=payload.target_slot_id,
         actor=current_user,
         actor_label=current_user.role.value,
     )
+    updated = result.signup
+    promo_kwargs = result.promotion.email_kwargs if result.promotion else None
     db.commit()
     db.refresh(updated)
+    if promo_kwargs:
+        # Fixes the silent-promotion bug: swaps previously promoted with no email.
+        send_waitlist_promotion_email.delay(**promo_kwargs)
     return updated
