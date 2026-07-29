@@ -18,6 +18,10 @@ Task 8 (2026-07-28 spec decision 5) additions — stale confirm-token GC:
 - test_deletes_token_when_no_upcoming_events
 - test_keeps_token_with_upcoming_signup
 - test_keeps_token_within_grace_window
+
+Task 8 fix round 1 — token-level liveness guard (a stale volunteer's still-
+live token must survive; only its own-expired tokens are reaped):
+- test_stale_sweep_keeps_live_token_deletes_expired_one
 """
 import pytest
 import uuid
@@ -378,8 +382,10 @@ class TestExpirePendingSignups:
         now = datetime(2030, 7, 7, 3, 0, tzinfo=timezone.utc)
         # Explicit future timing: the fixture default anchors to real
         # wall-clock time, which — relative to this test's frozen 2030
-        # "now" — reads as decades stale and would trip the Task 8
-        # stale-token sweep on this very volunteer.
+        # "now" — reads as decades stale. Fix round 1 confirmed the
+        # stale-sweep's expiry guard alone would also protect this test
+        # without the pin (see task-8-report.md); the pin stays anyway for
+        # clarity and to keep this test's intent legible at a glance.
         slot = _make_slot(
             db_session, event.id, capacity=1, current_count=1,
             start_time=now + timedelta(days=30),
@@ -437,7 +443,7 @@ class TestExpirePendingSignups:
         now = datetime(2030, 7, 8, 3, 0, tzinfo=timezone.utc)
         # Explicit future timing — see test_reap_chains_promotion_with_email
         # for why the fixture default isn't safe under Task 8's stale-token
-        # sweep.
+        # sweep, and for the fix-round-1 note on why the pin stays anyway.
         slot = _make_slot(
             db_session, event.id, capacity=1, current_count=1,
             start_time=now + timedelta(days=30),
@@ -710,3 +716,81 @@ class TestStaleTokenCleanup:
 
         db_session.expire_all()
         assert token_count_for(db_session, volunteer_id) > 0
+
+    def test_stale_sweep_keeps_live_token_deletes_expired_one(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Fix round 1 regression: token-level granularity, not volunteer-level.
+
+        A volunteer whose only slot ended 40 days ago (so the volunteer
+        itself reads as "stale" by the 30-day rule) has a *pending* signup
+        holding two SIGNUP_CONFIRM tokens: one already expired, and one
+        still live — e.g. a just-minted 3-day token from a promotion path
+        that (like every promotion path today) doesn't guard against
+        promoting on a slot whose event already ended. Before the fix,
+        _cleanup_stale_confirm_tokens deleted every SIGNUP_CONFIRM token for
+        a stale volunteer regardless of the token's own expiry, which would
+        wipe out the live token too — leaving the pending signup
+        unconfirmable and unmanageable with zero tokens. The expiry guard
+        must reap only the token whose own window has passed.
+        """
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 13, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id,
+            start_time=now - timedelta(days=40, hours=2),
+            end_time=now - timedelta(days=40),
+        )
+        vol = _make_volunteer(db_session)
+
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=SignupStatus.pending,
+        )
+        db_session.add(signup)
+        db_session.flush()
+
+        expired_token = MagicLinkToken(
+            token_hash=f"hash-expired-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now - timedelta(days=1),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        live_token = MagicLinkToken(
+            token_hash=f"hash-live-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now + timedelta(days=3),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add_all([expired_token, live_token])
+        db_session.commit()
+
+        signup_id = signup.id
+        volunteer_id = vol.id
+        live_token_hash = live_token.token_hash
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        # The signup itself must survive (it's still confirmable via the
+        # live token) — the reap's ~live_token_exists filter should already
+        # guarantee this, but pin it here too since it's the whole point.
+        still_pending = db_session.get(Signup, signup_id)
+        assert still_pending is not None
+        assert still_pending.status == SignupStatus.pending
+
+        remaining_hashes = {
+            t.token_hash
+            for t in db_session.query(MagicLinkToken)
+            .filter(MagicLinkToken.volunteer_id == volunteer_id)
+            .all()
+        }
+        assert remaining_hashes == {live_token_hash}

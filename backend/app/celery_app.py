@@ -537,13 +537,26 @@ def send_waitlist_promotion_email(
 
 
 def _cleanup_stale_confirm_tokens(db: Session, now: datetime) -> int:
-    """Delete SIGNUP_CONFIRM tokens for volunteers with nothing left to manage.
+    """Delete expired SIGNUP_CONFIRM tokens for volunteers with nothing left
+    to manage.
 
     2026-07-28 spec decision 5: manage links deliberately outlive expires_at,
     so token rows are garbage-collected by lifecycle instead — a token lives
     while its volunteer has ANY signup whose slot ends in the future or
     within the 30-day grace window. Volunteers absent from signups entirely
     are covered by the signup-cascade (tokens die with their anchor signup).
+
+    Liveness guard (fix round 1): the delete additionally requires the
+    token's OWN expires_at to already be in the past. No promotion path
+    (hourly chain, cancel/move/swap, manual staff promote) guards against
+    promoting on a slot whose event already ended, so a freshly-minted,
+    still-live 3-day confirm token can be issued to a volunteer whose
+    slot-history otherwise looks "stale" by the 30-day rule above. Without
+    this guard that live token would be deleted moments after being
+    created, leaving a pending signup with zero tokens — unconfirmable,
+    unmanageable, and skipped forever by the reap's tokenless-pending path.
+    Gating on expiry means a live token is never touched, no matter how
+    stale its volunteer's history looks.
     """
     cutoff = now - timedelta(days=30)
     stale_volunteers = (
@@ -556,6 +569,7 @@ def _cleanup_stale_confirm_tokens(db: Session, now: datetime) -> int:
         db.query(models.MagicLinkToken)
         .filter(
             models.MagicLinkToken.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+            models.MagicLinkToken.expires_at < now,
             models.MagicLinkToken.volunteer_id.in_(
                 select(stale_volunteers.c.volunteer_id)
             ),
