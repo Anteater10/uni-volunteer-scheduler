@@ -14,6 +14,7 @@ import DesktopOnlyBanner, {
 } from "../../components/admin/DesktopOnlyBanner";
 import AdminTopBar from "../../components/admin/AdminTopBar";
 import { useQuarters } from "../../lib/useQuarters";
+import { QuarterSelectionProvider } from "../../state/QuarterSelectionContext";
 import { activeQuarters } from "../../lib/weekUtils";
 
 // ---------------------------------------------------------------------------
@@ -176,6 +177,10 @@ export default function AdminLayout() {
     <AdminPageTitleContext.Provider
       value={{ title: pageTitle, setTitle: setPageTitle }}
     >
+      {/* fix/ux-quarter-batch: Overview and Events follow the quarter picked
+          in Manage Quarters; the selection lives at the shell level so it
+          survives navigating between admin pages. */}
+      <QuarterSelectionProvider>
       <div className="min-h-screen flex bg-gray-50">
         <aside className="hidden md:flex flex-col w-72 bg-slate-900 text-slate-100 p-5 gap-2">
           <div className="px-4 py-4 text-xl font-semibold tracking-tight">
@@ -220,6 +225,7 @@ export default function AdminLayout() {
           </div>
         </main>
       </div>
+      </QuarterSelectionProvider>
     </AdminPageTitleContext.Provider>
   );
 }

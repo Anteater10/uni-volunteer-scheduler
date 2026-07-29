@@ -368,8 +368,10 @@ async function detachEventFromPortal(portalId, eventId) {
 // --------------------
 // ADMIN
 // --------------------
-async function adminSummary() {
-  return request("/admin/summary", { method: "GET" });
+async function adminSummary(params) {
+  // fix/ux-quarter-batch: pass { quarter_id } to re-scope the *_quarter
+  // aggregates to an explicitly selected quarter.
+  return request("/admin/summary", { method: "GET", params });
 }
 
 async function adminListUsers(params) {
@@ -706,7 +708,7 @@ export const api = {
   },
 
   admin: {
-    summary: () => adminSummary(),
+    summary: (params) => adminSummary(params),
     // Phase 29 (HIDE-01) — site-wide settings singleton
     siteSettings: {
       get: () => request("/admin/site-settings", { method: "GET" }),

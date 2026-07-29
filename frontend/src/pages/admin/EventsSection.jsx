@@ -12,6 +12,10 @@ import {
 } from "lucide-react";
 import { api } from "../../lib/api";
 import { useAdminPageTitle } from "./AdminLayout";
+import {
+  useSelectedQuarter,
+  ALL_QUARTERS,
+} from "../../state/QuarterSelectionContext";
 import { toast } from "../../state/toast";
 import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import FormModal from "../../components/admin/FormModal";
@@ -1069,9 +1073,20 @@ export default function EventsSection() {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
+  // fix/ux-quarter-batch: the list is quarter-scoped and shares its selection
+  // with Overview / Manage Quarters. Default = the current quarter.
+  const {
+    quarters,
+    viewingAll,
+    selectedQuarter,
+    setSelectedQuarterId,
+  } = useSelectedQuarter();
+  const quarterParam = !viewingAll && selectedQuarter ? selectedQuarter.id : null;
+
   const q = useQuery({
-    queryKey: ["adminEventsList"],
-    queryFn: () => api.events.list(),
+    queryKey: ["adminEventsList", quarterParam || "all"],
+    queryFn: () =>
+      api.events.list(quarterParam ? { quarter_id: quarterParam } : undefined),
   });
 
   const events = q.data || [];
@@ -1144,7 +1159,11 @@ export default function EventsSection() {
     <div className="space-y-4">
       <AdminPageHeader
         title="Events"
-        subtitle="All events in the system. Create, edit, or delete events here."
+        subtitle={
+          viewingAll || !selectedQuarter
+            ? "All events across every quarter. Create, edit, or delete events here."
+            : `Events in ${selectedQuarter.display_name || "the selected quarter"} — upcoming and past. Create, edit, or delete events here.`
+        }
       >
         <button
           onClick={() => {
@@ -1164,7 +1183,29 @@ export default function EventsSection() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-[20rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+        {/* Quarter scope — shared with Overview, so switching here re-scopes
+            the dashboard too. Archived quarters stay pickable: that's how
+            past rosters and stats are revisited. */}
         <select
+          aria-label="Quarter"
+          value={viewingAll ? ALL_QUARTERS : selectedQuarter?.id || ALL_QUARTERS}
+          onChange={(e) =>
+            setSelectedQuarterId(
+              e.target.value === ALL_QUARTERS ? ALL_QUARTERS : e.target.value,
+            )
+          }
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
+        >
+          {(quarters || []).map((qr) => (
+            <option key={qr.id} value={qr.id}>
+              {qr.display_name || `${qr.season} ${qr.year}`}
+              {qr.archived_at ? " (archived)" : ""}
+            </option>
+          ))}
+          <option value={ALL_QUARTERS}>All quarters</option>
+        </select>
+        <select
+          aria-label="Time filter"
           value={scope}
           onChange={(e) => setScope(e.target.value)}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
