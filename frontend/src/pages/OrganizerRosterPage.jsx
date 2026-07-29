@@ -114,7 +114,9 @@ function QuickAddFieldModal({ open, onClose, onSubmit, saving }) {
   );
 }
 
-// Issue #31 — slot section header time range, e.g. "9:00 AM – 10:00 AM".
+// Issue #31 — slot section header, e.g. "Sun, Jul 26 · 9:00 AM – 10:00 AM".
+// The date matters: a multi-day event otherwise shows two identical-looking
+// time-only sections and the organizer can't tell which day is which.
 function fmtSlotRange(startIso, endIso) {
   const fmt = (iso) =>
     iso
@@ -122,7 +124,15 @@ function fmtSlotRange(startIso, endIso) {
       : "";
   const start = fmt(startIso);
   const end = fmt(endIso);
-  return end ? `${start} – ${end}` : start;
+  const range = end ? `${start} – ${end}` : start;
+  const dateIso = startIso || endIso;
+  if (!dateIso) return range;
+  const date = new Date(dateIso).toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  return range ? `${date} · ${range}` : date;
 }
 
 // TODO(brand): final status chip palette
