@@ -1,0 +1,14 @@
+<!-- 2026-07-28: waitlist promotion confirm email -->
+<!-- Uses string.Template safe_substitute() — variables: $volunteer_first_name, $event_title, $confirm_url, $slot_line -->
+<h1 style="font-size:20px;color:#1a1a1a;margin:0 0 16px;">A spot opened up — you&#39;re off the waitlist!</h1>
+<p style="margin:0 0 12px;">Hi $volunteer_first_name,</p>
+<p style="margin:0 0 12px;">A spot opened up for you in <strong>$event_title</strong>. Please confirm within <strong>3 days</strong> to claim it:</p>
+<p style="margin:0 0 16px;">
+  <a href="$confirm_url" style="display:inline-block;background:#0b5ed7;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:4px;font-size:16px;font-weight:bold;">Confirm my spot</a>
+</p>
+<p style="margin:0 0 8px;font-weight:bold;">Your slot:</p>
+<pre style="margin:0 0 16px;padding:12px;background:#f5f5f5;border-radius:4px;font-size:14px;white-space:pre-wrap;">$slot_line</pre>
+<p style="margin:0 0 12px;">If you don&#39;t confirm within 3 days, the spot passes to the next person on the waitlist.</p>
+<p style="margin:0 0 12px;">Can&#39;t make it? Use the same link to cancel so the next volunteer can step in. The link keeps working for managing your signups after you confirm.</p>
+<p style="margin:0 0 12px;font-size:14px;color:#555555;">If this wasn&#39;t you, you can ignore this email.</p>
+<p style="margin:0;">— UCSB SciTrek</p>

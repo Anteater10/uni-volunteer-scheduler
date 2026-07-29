@@ -117,8 +117,9 @@ def test_admin_cancel_promotes_oldest_waitlisted_fifo(client, db_session):
     db_session.expire_all()
     b_row = db_session.query(models.Signup).filter(models.Signup.id == signup_b.id).one()
     c_row = db_session.query(models.Signup).filter(models.Signup.id == signup_c.id).one()
-    # B was older — gets promoted directly to confirmed
-    assert b_row.status == models.SignupStatus.confirmed
+    # B was older — gets promoted to pending (2026-07-28 spec: promotion
+    # holds the seat pending the volunteer's confirm click).
+    assert b_row.status == models.SignupStatus.pending
     # C stays waitlisted
     assert c_row.status == models.SignupStatus.waitlisted
 
@@ -147,7 +148,7 @@ def test_admin_cancel_promotes_by_id_tiebreaker(client, db_session):
     db_session.expire_all()
     first_row = db_session.query(models.Signup).filter(models.Signup.id == first.id).one()
     second_row = db_session.query(models.Signup).filter(models.Signup.id == second.id).one()
-    assert first_row.status == models.SignupStatus.confirmed
+    assert first_row.status == models.SignupStatus.pending
     assert second_row.status == models.SignupStatus.waitlisted
 
 

@@ -1,6 +1,6 @@
 // src/pages/__tests__/ManageSignupsPage.test.jsx
 //
-// Component tests for ManageSignupsPage — 9 test cases.
+// Component tests for ManageSignupsPage — 11 test cases.
 
 import React from "react";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
@@ -339,5 +339,38 @@ describe("ManageSignupsPage", () => {
     });
     const badge = screen.getByTestId("waitlist-badge");
     expect(badge).toHaveTextContent(/Waitlist #3/i);
+  });
+
+  // Waitlist-promotion-confirmation (2026-07-28) — promoted signups land in
+  // 'pending' status and must still expose a working Cancel action.
+  it("11. renders a pending signup row with a visible Cancel button", async () => {
+    const PENDING_SIGNUP = {
+      signup_id: "sig-pending",
+      status: "pending",
+      slot: {
+        id: "slot-pending",
+        slot_type: "period",
+        date: "2026-04-25",
+        start_time: "2026-04-25T10:00:00",
+        end_time: "2026-04-25T12:00:00",
+        location: "Room 404",
+        capacity: 5,
+        filled: 4,
+      },
+    };
+    api.public.getManageSignups.mockResolvedValue({
+      volunteer_id: "vol-abc",
+      volunteer_first_name: "Hung",
+      volunteer_last_name: "Khuu",
+      event_id: "evt-xyz",
+      signups: [PENDING_SIGNUP],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText("Pending")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
 });

@@ -177,6 +177,9 @@ class TestCreatePublicSignup:
         item = data["signups"][0]
         assert item["status"] == "waitlisted"
         assert item["position"] == 1
+        # The UI badges each slot by matching result items on slot_id — the
+        # positional zip against the submitted slot_ids list is too fragile.
+        assert item["slot_id"] == str(slot.id)
 
         # Slot current_count must stay at capacity — waitlisted signups don't hold a seat.
         db_session.expire_all()
@@ -318,6 +321,39 @@ class TestManageSignups:
 
 
 class TestCancelSignup:
+    def test_public_cancel_sends_cancellation_email(self, client, db_session, monkeypatch):
+        """Task 9: Public self-cancel must send cancellation email for tamper-evidence."""
+        kinds = []
+        monkeypatch.setattr(
+            "app.celery_app.send_email_notification.delay",
+            lambda *a, **k: kinds.append(k.get("kind")),
+        )
+        monkeypatch.setattr(
+            "app.celery_app.send_waitlist_promotion_email.delay", lambda **k: None
+        )
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay", lambda *a, **k: None
+        )
+        # Setup: create event, slot, and public signup
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        with _TokenCapture(monkeypatch) as cap:
+            resp = client.post(
+                "/api/v1/public/signups",
+                json=_signup_payload(slot.id, email="cancel_email09@example.com"),
+            )
+        assert resp.status_code == 201
+        signup_id = resp.json()["signup_ids"][0]
+        raw_token = cap.last_token
+        if raw_token is None:
+            pytest.skip("Token capture failed")
+
+        resp = client.delete(f"/api/v1/public/signups/{signup_id}?token={raw_token}")
+        assert resp.status_code == 200
+        assert "cancellation" in kinds
+
     def test_cancel_with_wrong_volunteer_token_returns_403(self, client, db_session, monkeypatch):
         """T-09-04: token belonging to different volunteer must return 403."""
         monkeypatch.setattr(
@@ -503,7 +539,7 @@ def test_confirmation_email_enqueued_only_after_commit(client, db_session, monke
 
 def test_public_cancel_sends_waitlist_promote_email(client, db_session, monkeypatch):
     """Public (token) cancel also auto-promotes — the promoted volunteer must
-    get the branded waitlist_promote email."""
+    get the confirm-your-spot email."""
     monkeypatch.setattr(
         "app.celery_app.send_signup_confirmation_email.delay",
         lambda *a, **k: None,
@@ -512,6 +548,11 @@ def test_public_cancel_sends_waitlist_promote_email(client, db_session, monkeypa
     monkeypatch.setattr(
         "app.celery_app.send_email_notification.delay",
         lambda **kw: sent.append(kw),
+    )
+    promoted_emails = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: promoted_emails.append(kw),
     )
     event = _make_event(db_session)
     slot = _make_slot(db_session, event.id, capacity=1)
@@ -539,10 +580,59 @@ def test_public_cancel_sends_waitlist_promote_email(client, db_session, monkeypa
     assert resp.status_code == 200, resp.text
     assert resp.json()["promoted_from_waitlist"] == 1
 
-    pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
-    assert ("waitlist_promote", str(b_id)) in pairs, (
-        f"promoted volunteer got no waitlist_promote email (sent: {sent})"
+    assert any(kw["signup_id"] == str(b_id) for kw in promoted_emails), (
+        f"promoted volunteer got no waitlist promotion email (sent: {promoted_emails})"
     )
+
+
+def test_public_cancel_promotes_to_pending_with_confirm_email(
+    client, db_session, monkeypatch
+):
+    sent = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: sent.append(kw),
+    )
+    monkeypatch.setattr(
+        "app.celery_app.send_email_notification.delay", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "app.celery_app.send_signup_confirmation_email.delay",
+        lambda *a, **k: None,
+    )
+    # Setup copied from test_public_cancel_sends_waitlist_promote_email:
+    # capacity-1 slot, pending signup with manage token, waitlisted second.
+    event = _make_event(db_session)
+    slot = _make_slot(db_session, event.id, capacity=1)
+    db_session.commit()
+
+    with _TokenCapture(monkeypatch) as cap:
+        r1 = client.post(
+            "/api/v1/public/signups",
+            json=_signup_payload(slot.id, email="wl_pending_a@example.com"),
+        )
+    assert r1.status_code == 201
+    confirmed_id = r1.json()["signup_ids"][0]
+    raw_token = cap.last_token
+    if raw_token is None:
+        pytest.skip("Token capture failed")
+
+    r2 = client.post(
+        "/api/v1/public/signups",
+        json=_signup_payload(slot.id, email="wl_pending_b@example.com"),
+    )
+    assert r2.status_code == 201
+    waitlisted_id = r2.json()["signup_ids"][0]
+
+    resp = client.delete(f"/api/v1/public/signups/{confirmed_id}?token={raw_token}")
+    assert resp.status_code == 200
+    assert resp.json()["promoted_from_waitlist"] == 1
+    db_session.expire_all()
+    promoted = db_session.query(Signup).filter(Signup.id == waitlisted_id).one()
+    assert promoted.status == SignupStatus.pending
+    assert len(sent) == 1
+    assert sent[0]["signup_id"] == str(waitlisted_id)
+    assert sent[0]["token"]  # raw token travels to the email task
 
 
 class TestOrientationRequirement:

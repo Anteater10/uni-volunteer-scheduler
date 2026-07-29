@@ -21,6 +21,10 @@ from .models import MagicLinkToken, MagicLinkPurpose, Signup, SignupStatus, Slot
 # Phase 09 (D-06): 14-day TTL for signup-confirm tokens
 SIGNUP_CONFIRM_TTL_MINUTES = 20160  # 14 days * 24h * 60min
 
+# 2026-07-28 spec: promoted-from-waitlist signups get a shorter confirm
+# window than fresh signups — a ghost promotee must not block the seat.
+PROMOTION_CONFIRM_TTL_MINUTES = 4320  # 3 days * 24h * 60min
+
 
 class ConsumeResult(str, Enum):
     ok = "ok"

@@ -152,6 +152,10 @@ export default function App() {
               element={<AdminCopilotFeedbackPage />}
             />
             <Route path="help" element={<HelpSection />} />
+            {/* Same page as /settings, but inside the admin shell so desktop
+                staff keep the sidebar. /settings stays mounted outside for
+                phones (the shell is desktop-only). */}
+            <Route path="settings" element={<UserSettingsPage />} />
             {/* Admin-only surfaces */}
             <Route element={<ProtectedRoute roles={["admin"]} />}>
               <Route path="quarters" element={<QuartersSection />} />

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -12,6 +12,10 @@ import {
 } from "lucide-react";
 import { api } from "../../lib/api";
 import { useAdminPageTitle } from "./AdminLayout";
+import {
+  useSelectedQuarter,
+  ALL_QUARTERS,
+} from "../../state/QuarterSelectionContext";
 import { toast } from "../../state/toast";
 import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import FormModal from "../../components/admin/FormModal";
@@ -1035,18 +1039,69 @@ async function applySlotDiff(eventId, initialSlots, draftSlots) {
   }
 }
 
+// fix/ux-quarter-batch — make an ended event unmistakable in the list.
+// "Completed" = every slot was ended (events.completed_at is stamped);
+// "Ended" = the dates went by but attendance was never closed out.
+function EventStatusBadge({ event }) {
+  if (event.completed_at) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+        ✓ Completed
+      </span>
+    );
+  }
+  if (new Date(event.end_date).getTime() < Date.now()) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-700">
+        Ended — not closed out
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">
+      Upcoming
+    </span>
+  );
+}
+
 export default function EventsSection() {
   useAdminPageTitle("Events");
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
-  const [scope, setScope] = useState("upcoming"); // upcoming | past | all
+  // Default to everything — the quarter is the scope, the time filter is an
+  // opt-in narrowing. (live quarter: all | upcoming | past;
+  //  ended quarter:  all | completed | open)
+  const [scope, setScope] = useState("all");
   const [drawerMode, setDrawerMode] = useState(null); // "create" | "edit"
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
+  // fix/ux-quarter-batch: the list is quarter-scoped and shares its selection
+  // with Overview / Manage Quarters. Default = the current quarter.
+  const {
+    quarters,
+    viewingAll,
+    selectedQuarter,
+    setSelectedQuarterId,
+  } = useSelectedQuarter();
+  const quarterParam = !viewingAll && selectedQuarter ? selectedQuarter.id : null;
+
+  // An ended quarter is history: nothing in it is "upcoming" and no new
+  // events belong in it, so the page flips into a read-mostly mode.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const quarterEnded =
+    !viewingAll && Boolean(selectedQuarter) && selectedQuarter.end_date < todayIso;
+
+  // The filter options differ between live and ended quarters — reset when
+  // the quarter context changes so a stale value can't blank the list.
+  useEffect(() => {
+    setScope("all");
+  }, [quarterParam, viewingAll]);
+
   const q = useQuery({
-    queryKey: ["adminEventsList"],
-    queryFn: () => api.events.list(),
+    queryKey: ["adminEventsList", quarterParam || "all"],
+    queryFn: () =>
+      api.events.list(quarterParam ? { quarter_id: quarterParam } : undefined),
   });
 
   const events = q.data || [];
@@ -1054,15 +1109,27 @@ export default function EventsSection() {
   const filtered = useMemo(() => {
     const now = Date.now();
     const term = search.toLowerCase().trim();
+    // An event is "past" once its dates have gone by OR it was explicitly
+    // completed (every slot ended) — ending an event files it under Past
+    // immediately, and reopening it brings it back.
+    const isPast = (e) =>
+      Boolean(e.completed_at) || new Date(e.end_date).getTime() < now;
     return events
       .filter((e) => {
-        if (scope === "upcoming" && new Date(e.end_date).getTime() < now) return false;
-        if (scope === "past" && new Date(e.end_date).getTime() >= now) return false;
+        if (quarterEnded) {
+          // Everything in an ended quarter is past — filter by whether the
+          // attendance was actually closed out instead.
+          if (scope === "completed" && !e.completed_at) return false;
+          if (scope === "open" && e.completed_at) return false;
+        } else {
+          if (scope === "upcoming" && isPast(e)) return false;
+          if (scope === "past" && !isPast(e)) return false;
+        }
         if (term && !(e.title || "").toLowerCase().includes(term)) return false;
         return true;
       })
       .sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
-  }, [events, search, scope]);
+  }, [events, search, scope, quarterEnded]);
 
   const createM = useMutation({
     mutationFn: ({ metadata, slots }) =>
@@ -1114,18 +1181,57 @@ export default function EventsSection() {
     <div className="space-y-4">
       <AdminPageHeader
         title="Events"
-        subtitle="All events in the system. Create, edit, or delete events here."
+        subtitle={
+          viewingAll || !selectedQuarter
+            ? "All events across every quarter. Create, edit, or delete events here."
+            : quarterEnded
+              ? `Everything that ran in ${selectedQuarter.display_name || "the selected quarter"} — rosters and stats are kept for looking back.`
+              : `Events in ${selectedQuarter.display_name || "the selected quarter"} — upcoming and past. Create, edit, or delete events here.`
+        }
       >
-        <button
-          onClick={() => {
-            setEditing(null);
-            setDrawerMode("create");
-          }}
-          className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow"
-        >
-          + New event
-        </button>
+        {/* No new events in a quarter that's over — it's history. */}
+        {quarterEnded ? null : (
+          <button
+            onClick={() => {
+              setEditing(null);
+              setDrawerMode("create");
+            }}
+            className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow"
+          >
+            + New event
+          </button>
+        )}
       </AdminPageHeader>
+
+      {quarterEnded ? (
+        <div
+          data-testid="ended-quarter-strip"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900"
+        >
+          <span>
+            <span className="font-semibold">
+              {selectedQuarter.display_name}
+            </span>{" "}
+            ended{" "}
+            {new Date(
+              `${selectedQuarter.end_date}T00:00:00`,
+            ).toLocaleDateString("en-US", {
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            })}
+            {selectedQuarter.archived_at ? " and is archived" : ""} — you're
+            viewing its history. New events go in the current quarter.
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedQuarterId(null)}
+            className="font-semibold underline hover:no-underline"
+          >
+            Back to current quarter
+          </button>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-4">
         <input
@@ -1134,14 +1240,48 @@ export default function EventsSection() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-[20rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+        {/* Quarter scope — shared with Overview, so switching here re-scopes
+            the dashboard too. Archived quarters stay pickable: that's how
+            past rosters and stats are revisited. */}
         <select
+          aria-label="Quarter"
+          value={viewingAll ? ALL_QUARTERS : selectedQuarter?.id || ALL_QUARTERS}
+          onChange={(e) =>
+            setSelectedQuarterId(
+              e.target.value === ALL_QUARTERS ? ALL_QUARTERS : e.target.value,
+            )
+          }
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
+        >
+          {(quarters || []).map((qr) => (
+            <option key={qr.id} value={qr.id}>
+              {qr.display_name || `${qr.season} ${qr.year}`}
+              {qr.archived_at ? " (archived)" : ""}
+            </option>
+          ))}
+          <option value={ALL_QUARTERS}>All quarters</option>
+        </select>
+        <select
+          aria-label="Time filter"
           value={scope}
           onChange={(e) => setScope(e.target.value)}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
         >
-          <option value="upcoming">Upcoming</option>
-          <option value="past">Past</option>
-          <option value="all">All</option>
+          {quarterEnded ? (
+            /* Nothing in an ended quarter is upcoming — filter by whether
+               attendance was closed out instead. */
+            <>
+              <option value="all">All events</option>
+              <option value="completed">Completed</option>
+              <option value="open">Not closed out</option>
+            </>
+          ) : (
+            <>
+              <option value="all">All</option>
+              <option value="upcoming">Upcoming</option>
+              <option value="past">Past</option>
+            </>
+          )}
         </select>
       </div>
 
@@ -1164,6 +1304,7 @@ export default function EventsSection() {
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
               <tr>
                 <th className="py-3 px-4">Title</th>
+                <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4">Start</th>
                 <th className="py-3 px-4">End</th>
                 <th className="py-3 px-4">Location</th>
@@ -1180,6 +1321,9 @@ export default function EventsSection() {
                     >
                       {e.title || "(untitled)"}
                     </Link>
+                  </td>
+                  <td className="py-3 px-4">
+                    <EventStatusBadge event={e} />
                   </td>
                   <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.start_date)}</td>
                   <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.end_date)}</td>

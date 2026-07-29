@@ -2,7 +2,12 @@ import React, { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../state/useAuth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchRoster, checkInSignup, undoCheckInSignup } from "../api/roster";
+import {
+  fetchRoster,
+  checkInSignup,
+  undoCheckInSignup,
+  reopenEvent,
+} from "../api/roster";
 import api from "../lib/api";
 import { PageHeader, Button, Skeleton, Modal, Input, Label } from "../components/ui";
 import { toast } from "../state/toast";
@@ -179,6 +184,20 @@ export default function OrganizerRosterPage() {
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
     meta: { errorMessage: "Failed to load roster" },
+  });
+
+  // fix/ux-quarter-batch — undo "End event". The server returns everyone to
+  // the live roster (real check-ins keep their timestamp) and clears the
+  // event's completed stamp; orientation credits are left untouched.
+  const reopenMut = useMutation({
+    mutationFn: () => reopenEvent(eventId),
+    onSuccess: (fresh) => {
+      qc.setQueryData(["roster", eventId], fresh);
+      qc.invalidateQueries({ queryKey: ["roster", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventsList"] });
+      toast.success("Event reopened — volunteers are back on the live roster.");
+    },
+    onError: (err) => toast.error(err?.message || "Couldn't reopen the event"),
   });
 
   const checkInMut = useMutation({
@@ -408,7 +427,7 @@ export default function OrganizerRosterPage() {
               />
             </svg>
           </span>
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-base font-semibold text-emerald-900">
               Event complete 🎉
             </p>
@@ -425,6 +444,17 @@ export default function OrganizerRosterPage() {
                 : ""}
             </p>
           </div>
+          {/* Ended too early? Reopening puts everyone back on the live
+              roster (real check-ins keep their timestamps). */}
+          <Button
+            type="button"
+            variant="secondary"
+            className="shrink-0"
+            disabled={reopenMut.isPending}
+            onClick={() => reopenMut.mutate()}
+          >
+            {reopenMut.isPending ? "Reopening…" : "Reopen event"}
+          </Button>
         </div>
       ) : null}
 

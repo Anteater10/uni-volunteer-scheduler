@@ -320,29 +320,6 @@ def send_reminder_pre_2h(signup: "models.Signup") -> dict:
     return {"to": ctx["to"], "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
-def send_waitlist_promote(signup: models.Signup) -> dict:
-    """Phase 25 — branded "you're in from the waitlist" follow-up email.
-
-    Shares layout with ``send_confirmation`` so we don't spin up a new
-    template; only the subject line is overridden to make the state
-    transition legible. The dedup kind (``waitlist_promote``) is distinct
-    from the original ``confirmation`` kind so repeat promotions across
-    multiple cancel/promote cycles each earn one email.
-
-    Promotion needs no action from the volunteer: ``promote_waitlist_fifo``
-    sets the signup straight to ``confirmed`` (they already consented at
-    signup time), so the copy states the new status — it must not ask them
-    to confirm anything.
-    """
-    payload = send_confirmation(signup)
-    event = signup.slot.event
-    payload["subject"] = (
-        "You're in from the waitlist — you're confirmed for "
-        f"'{event.title}'"
-    )
-    return payload
-
-
 BUILDERS = {
     "confirmation": send_confirmation,
     "cancellation": send_cancellation,
@@ -354,8 +331,6 @@ BUILDERS = {
     "reminder_kickoff": send_reminder_kickoff,
     "reminder_pre_24h": send_reminder_pre_24h,
     "reminder_pre_2h": send_reminder_pre_2h,
-    # Phase 25 — waitlist promotion (organizer manual + admin override paths).
-    "waitlist_promote": send_waitlist_promote,
 }
 
 
@@ -456,11 +431,62 @@ def build_signup_confirmation_email(
             f"@ {slot.location or event.school or 'TBD'}"
         )
 
+    # fix/ux-quarter-batch: the task attaches an all-sessions .ics whenever at
+    # least one signup is actually booked — only advertise it then.
+    has_booked = any(
+        s.status not in (models.SignupStatus.waitlisted, models.SignupStatus.cancelled)
+        for s in signups
+    )
+    # NOTE: _render_html escapes every variable, so plain text only here.
+    calendar_note = (
+        "Want these on your calendar? Open the attached scitrek-sessions.ics "
+        "file to add every session to Google Calendar, Apple Calendar, or "
+        "Outlook in one go."
+        if has_booked
+        else ""
+    )
+
     html = _render_html(
         "signup_confirm.html",
         volunteer_first_name=volunteer.first_name,
         confirm_url=confirm_url,
         slot_list="\n".join(slot_lines),
+        calendar_note=calendar_note,
     )
     subject = f"Confirm your SciTrek volunteer signup — {event.title}"
+    return subject, html
+
+
+def build_waitlist_promotion_email(
+    volunteer: "models.Volunteer",
+    signup: "models.Signup",
+    token: str,
+    event: "models.Event",
+) -> tuple[str, str]:
+    """Build the waitlist-promotion confirm email (promotion → pending).
+
+    Unlike the old link-less promotion notification, this carries
+    the magic-link confirm URL: the promotee must confirm within 3 days,
+    and the same link is their manage/cancel page.
+
+    Returns:
+        (subject, html_body) — HTML only, same as the fresh-signup flow.
+    """
+    from .config import settings
+
+    confirm_url = f"{settings.frontend_url}/signup/confirm?token={token}"
+    slot = signup.slot
+    slot_line = (
+        f"{slot.slot_type.value.title()}: {slot.date} "
+        f"{_fmt_slot_time(slot.start_time)} - {_fmt_slot_time(slot.end_time)} "
+        f"@ {slot.location or event.school or 'TBD'}"
+    )
+    html = _render_html(
+        "waitlist_promotion.html",
+        volunteer_first_name=volunteer.first_name,
+        event_title=event.title,
+        confirm_url=confirm_url,
+        slot_line=slot_line,
+    )
+    subject = f"A spot opened up — confirm your SciTrek signup for {event.title}"
     return subject, html

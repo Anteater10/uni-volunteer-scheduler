@@ -15,6 +15,7 @@ vi.mock("../../api/roster", () => ({
   fetchRoster: vi.fn(),
   checkInSignup: vi.fn(),
   undoCheckInSignup: vi.fn(),
+  reopenEvent: vi.fn(),
 }));
 
 vi.mock("../../state/useAuth", () => ({
@@ -153,6 +154,37 @@ describe("OrganizerRosterPage — ended slots", () => {
     expect(banner).toHaveTextContent(/event complete/i);
     expect(banner).toHaveTextContent(/2 attended/i);
     expect(banner).toHaveTextContent(/1 no.show/i);
+  });
+
+  it("offers the reopen undo from the completion banner", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const { reopenEvent } = await import("../../api/roster");
+    reopenEvent.mockResolvedValue({
+      event_name: "CRISPR Module 1",
+      total: 1,
+      checked_in_count: 1,
+      rows: [
+        row({ ...ENDED_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "checked_in" }),
+      ],
+    });
+    fetchRoster.mockResolvedValue({
+      event_name: "CRISPR Module 1",
+      total: 1,
+      checked_in_count: 0,
+      rows: [
+        row({ ...ENDED_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "attended" }),
+      ],
+    });
+
+    renderPage();
+
+    const banner = await screen.findByTestId("event-complete-banner");
+    const reopenBtn = screen.getByRole("button", { name: /reopen event/i });
+    expect(banner).toContainElement(reopenBtn);
+
+    fireEvent.click(reopenBtn);
+    await screen.findByText("CRISPR Module 1");
+    expect(reopenEvent).toHaveBeenCalledTimes(1);
   });
 
   it("shows no completion banner while any slot is live", async () => {
