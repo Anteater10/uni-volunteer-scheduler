@@ -111,20 +111,82 @@ describe("SignupSuccessCard", () => {
     );
   });
 
-  it("sends the first session to Google, and says so when there are several", () => {
+  it("offers a Google Calendar button for every session, not just the first", () => {
     setup({ slots: [SLOT_A, SLOT_B] });
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /add first session to google/i }),
-    );
-    expect(buildGoogleCalendarUrl.mock.calls[0][0].slot.id).toBe("slot-a");
+    const googleButtons = screen.getAllByRole("button", {
+      name: /to google calendar/i,
+    });
+    expect(googleButtons).toHaveLength(2);
+
+    fireEvent.click(googleButtons[0]);
+    fireEvent.click(googleButtons[1]);
+    expect(
+      buildGoogleCalendarUrl.mock.calls.map((c) => c[0].slot.id),
+    ).toEqual(["slot-a", "slot-b"]);
+    expect(open).toHaveBeenCalledTimes(2);
     expect(open).toHaveBeenCalledWith(
       "https://calendar.google.com/stub",
       "_blank",
       "noopener,noreferrer",
     );
     open.mockRestore();
+  });
+
+  it("pushes the volunteer to confirm — spots aren't held forever", () => {
+    setup();
+    // The copy must convey urgency: the signup isn't final until confirmed,
+    // and unconfirmed spots get released.
+    expect(screen.getByText(/isn'?t secured yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/expire/i)).toBeInTheDocument();
+  });
+
+  it("badges waitlisted sessions and warns about the 3-day promotion window", () => {
+    setup({
+      slots: [SLOT_A, SLOT_B],
+      signups: [
+        { signup_id: "su-1", slot_id: "slot-a", status: "pending" },
+        { signup_id: "su-2", slot_id: "slot-b", status: "waitlisted", position: 2 },
+      ],
+    });
+
+    expect(screen.getByText(/waitlist #2/i)).toBeInTheDocument();
+    // The inbox warning: promotion emails are actionable for only 3 days.
+    const notice = screen.getByText(/check your inbox/i);
+    expect(notice).toBeInTheDocument();
+    expect(screen.getByText(/3 days/i)).toBeInTheDocument();
+
+    // Only the non-waitlisted session gets a Google button…
+    const googleButtons = screen.getAllByRole("button", {
+      name: /to google calendar/i,
+    });
+    expect(googleButtons).toHaveLength(1);
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    fireEvent.click(googleButtons[0]);
+    expect(buildGoogleCalendarUrl.mock.calls[0][0].slot.id).toBe("slot-a");
+    open.mockRestore();
+
+    // …and the .ics export skips the waitlisted one too.
+    fireEvent.click(icsButton());
+    expect(downloadIcs.mock.calls[0][0].slots.map((s) => s.id)).toEqual([
+      "slot-a",
+    ]);
+  });
+
+  it("hides the calendar buttons when every session is waitlisted", () => {
+    setup({
+      slots: [SLOT_A],
+      signups: [
+        { signup_id: "su-1", slot_id: "slot-a", status: "waitlisted", position: 1 },
+      ],
+    });
+    expect(
+      screen.queryByRole("button", { name: /google calendar/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /download \.ics/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("calls onDismiss from Done", () => {
