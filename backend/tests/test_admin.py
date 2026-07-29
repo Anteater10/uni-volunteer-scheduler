@@ -258,3 +258,89 @@ def test_admin_move_pending_signup_promotes_source_waitlist(client, db_session):
         "source waitlist was not promoted after the pending move freed a seat"
     )
     assert slot_a_row.current_count == 1
+
+
+def test_admin_move_pending_signup_stays_pending_when_target_has_room(client, db_session):
+    """Preserve-status fix: moving a pending signup into an open target slot
+    must NOT silently upgrade it to confirmed — the volunteer never clicked
+    a confirm link. Regression for admin_move_signup's preserve-status arm
+    (previously new_status was unconditionally 'confirmed' whenever the
+    target had room)."""
+    admin = _make_admin(db_session, email="admin_mv_stays_pending@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import SlotFactory, VolunteerFactory
+    slot_b = SlotFactory(event=event, event_id=event.id, capacity=1, current_count=0)
+    vol = VolunteerFactory(email="mv_stays_pending@example.com")
+    pending = SignupFactory(
+        volunteer=vol,
+        slot=slot_a,
+        status=models.SignupStatus.pending,
+    )
+    slot_a.current_count = 1
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/signups/{pending.id}/move",
+        json={"target_slot_id": str(slot_b.id)},
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "pending", (
+        "move silently upgraded a pending signup to confirmed"
+    )
+
+    db_session.expire_all()
+    moved = db_session.get(models.Signup, pending.id)
+    slot_b_row = db_session.get(models.Slot, slot_b.id)
+    assert moved.status == models.SignupStatus.pending
+    assert str(moved.slot_id) == str(slot_b.id)
+    assert slot_b_row.current_count == 1, "target slot should have incremented"
+
+
+def test_admin_move_sends_waitlist_promotion_email_for_source_promotion(
+    client, db_session, monkeypatch
+):
+    """Regression: the move path must enqueue send_waitlist_promotion_email
+    for anyone promoted off the source slot's waitlist when the move frees a
+    seat — the move previously promoted silently with no email at all."""
+    promoted_emails = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: promoted_emails.append(kw),
+    )
+    admin = _make_admin(db_session, email="admin_mv_email@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import SlotFactory, VolunteerFactory
+    slot_b = SlotFactory(event=event, event_id=event.id, capacity=1, current_count=0)
+    vol_p = VolunteerFactory(email="mv_email_pending@example.com")
+    vol_w = VolunteerFactory(email="mv_email_waiting@example.com")
+    pending = SignupFactory(
+        volunteer=vol_p,
+        slot=slot_a,
+        status=models.SignupStatus.pending,
+    )
+    slot_a.current_count = 1
+    waitlisted = SignupFactory(
+        volunteer=vol_w,
+        slot=slot_a,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/signups/{pending.id}/move",
+        json={"target_slot_id": str(slot_b.id)},
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+
+    assert len(promoted_emails) == 1, (
+        f"expected exactly one promotion email, got: {promoted_emails}"
+    )
+    assert promoted_emails[0]["signup_id"] == str(waitlisted.id)
+    assert promoted_emails[0]["token"], "raw token must travel to the email task"
