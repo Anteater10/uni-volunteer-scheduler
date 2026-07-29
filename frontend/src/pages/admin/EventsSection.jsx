@@ -19,6 +19,7 @@ import {
 import { toast } from "../../state/toast";
 import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import FormModal from "../../components/admin/FormModal";
+import DuplicateEventModal from "../../components/admin/DuplicateEventModal";
 
 // ---------------------------------------------------------------------------
 // Form styling tokens
@@ -538,7 +539,7 @@ function NewModuleDialog({ open, onCancel, onCreated }) {
   );
 }
 
-function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
+function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel = "Save" }) {
   const isEdit = mode === "edit";
   const [form, setForm] = useState(() => ({
     ...EMPTY_FORM,
@@ -974,7 +975,7 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting }) {
           disabled={submitting}
           className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-brand)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-[var(--color-brand)]/30 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {submitting ? "Saving…" : "Save"}
+          {submitting ? "Saving…" : submitLabel}
         </button>
       </div>
     </form>
@@ -1075,6 +1076,7 @@ export default function EventsSection() {
   const [drawerMode, setDrawerMode] = useState(null); // "create" | "edit"
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [duplicating, setDuplicating] = useState(null); // source event for the duplicate modal
 
   // fix/ux-quarter-batch: the list is quarter-scoped and shares its selection
   // with Overview / Manage Quarters. Default = the current quarter.
@@ -1166,15 +1168,6 @@ export default function EventsSection() {
       toast.success("Event deleted.");
     },
     onError: (e) => toast.error(e?.message || "Delete failed"),
-  });
-
-  const cloneM = useMutation({
-    mutationFn: (id) => api.events.clone(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminEventsList"] });
-      toast.success("Event cloned.");
-    },
-    onError: (e) => toast.error(e?.message || "Clone failed"),
   });
 
   return (
@@ -1339,10 +1332,10 @@ export default function EventsSection() {
                       Edit
                     </button>
                     <button
-                      onClick={() => cloneM.mutate(e.id)}
+                      onClick={() => setDuplicating(e)}
                       className="text-gray-700 hover:underline font-medium"
                     >
-                      Clone
+                      Duplicate
                     </button>
                     <button
                       onClick={() => setDeleting(e)}
@@ -1396,6 +1389,16 @@ export default function EventsSection() {
           />
         )}
       </FormModal>
+
+      {/* Duplicate = prefilled create form targeting another quarter/week.
+          Works from ended-quarter history too — that's the main use case:
+          re-run a past event in the current quarter. */}
+      <DuplicateEventModal
+        open={!!duplicating}
+        onClose={() => setDuplicating(null)}
+        sourceEvent={duplicating}
+        quarters={quarters}
+      />
 
       <ConfirmDialog
         open={!!deleting}
