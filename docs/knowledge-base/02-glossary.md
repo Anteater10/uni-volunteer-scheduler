@@ -27,21 +27,20 @@ between signing up and showing up.
 carries the module reference, school, week number, and quarter.
 
 **Family key** — the grouping key that ties related modules together for orientation purposes, so
-an intro module and an advanced module can share one orientation. Stored on the module template as
-`family_key`.
+an intro module and an advanced module can share one orientation. Stored on the module; a new
+module's family key starts out as its own slug.
 
 **Magic link** — a one-time, time-limited link emailed to a volunteer that lets them confirm, view,
 cancel, or swap a signup without an account or password.
 
-**Module** — a five-session science experience delivered to a class. In the app a module is
-represented by a module template, and each real-world delivery of it is an event.
+**Module** — a five-session science experience delivered to a class. In the app a module is the
+reusable definition — slug, name, default capacity, duration, session count, materials, default
+form fields, and family key — managed in Admin → Modules, and each real-world delivery of it is an
+event. Modules define module families and default signup forms; they are not used to import
+events. (Older notes sometimes say "module template" for the same thing.)
 
 **Module family** — a set of modules that share one orientation requirement, grouped by family key.
 Orientation credit is earned and checked per module family, never per module.
-
-**Module template** — the reusable definition of a module: slug, name, type, default capacity,
-duration, session count, materials, default form fields, and family key. Templates define module
-families and default signup forms. They are not used to import events.
 
 **No-show** — a signup status meaning the volunteer did not turn up and the organizer closed out
 the session. No-show is final.
@@ -50,7 +49,7 @@ the session. No-show is final.
 Upcoming, Past, and Reminders.
 
 **Organizer** — a staff member who creates and runs events: rosters, check-in, broadcasts,
-module templates, orientation grants at the door.
+modules, orientation grants at the door.
 
 **Orientation credit** — a permanent record that a volunteer has been oriented for one module
 family. Once earned it never expires, in any quarter or year. Only an explicit credit row grants

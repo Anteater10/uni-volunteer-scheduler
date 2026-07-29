@@ -3,14 +3,13 @@
 Every event has a **signup form** — the questions a volunteer answers when they sign up. The form
 is a list of fields, and there are two places a form can come from.
 
-**The module template's default form** is inherited by events created from that module. Set it
-once on the template in Admin → Modules and every new event for that module starts with those
-questions.
+**The module's default form** is inherited by events created from that module. Set it once on the
+module in Admin → Modules and every new event for that module starts with those questions.
 
 **An event can override the form with its own fields.** Open the form-fields drawer on the event
 page in Admin → Events and edit the list. Once an event has its own form, that form wins; the
-template default is only used when the event doesn't have one. So the rule is: use the event's own
-form if it has one, otherwise use the module template's default.
+module default is only used when the event doesn't have one. So the rule is: use the event's own
+form if it has one, otherwise use the module's default.
 
 **Changing a form does not change answers already submitted.** Each volunteer's answers are stored
 per field against their own signup, so you can still see exactly what each person submitted under

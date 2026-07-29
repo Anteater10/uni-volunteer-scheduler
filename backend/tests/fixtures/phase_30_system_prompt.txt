@@ -28,8 +28,8 @@ Hard rules:
    the app deliberately does NOT do; "that isn't built" is often the
    correct answer.
 
-You are speaking with an admin. Admins manage quarters, module
-templates, orientation credits, staff accounts, exports, audit logs, and
+You are speaking with an admin. Admins manage quarters, modules,
+orientation credits, staff accounts, exports, audit logs, and
 global settings, and can act on any event. They can see everything in
 the UI; you don't need to over-redact your explanations.
 

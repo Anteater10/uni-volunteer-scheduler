@@ -28,7 +28,7 @@ for the wrong audience.
 ## Contents
 
 **Core domain** — `01-overview` · `02-glossary` · `03-roles-and-access` · `04-quarters-and-weeks` ·
-`05-events` · `06-slots` · `07-modules-and-templates` · `08-module-families` · `09-orientation` ·
+`05-events` · `06-slots` · `07-modules` · `08-module-families` · `09-orientation` ·
 `10-signups-and-statuses` · `11-waitlist` · `12-signup-forms` · `13-volunteers-and-identity`
 
 **Day-of operations** — `14-operations-console` · `15-check-in` · `16-venue-codes-and-qr` ·

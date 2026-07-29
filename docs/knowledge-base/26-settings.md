@@ -27,7 +27,7 @@ Each event carries its own settings, edited from the event page in Admin → Eve
   naming the window in Pacific Time.
 - **A cap on how many slots one volunteer may take** within the event.
 - **Visibility** — whether the event shows on the public browse page.
-- **The signup form** — the event's own field list, which overrides the module template's default.
+- **The signup form** — the event's own field list, which overrides the module's default.
 - **Whether the short pre-session reminder is enabled.**
 
 ## User settings

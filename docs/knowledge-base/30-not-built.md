@@ -7,9 +7,10 @@ plausible invention.
 reserved for future work, but nothing sends text messages. All notifications are email.
 
 **There is no CSV import of events.** That admin surface was removed. Events are created manually,
-or by duplicating an existing event. Module templates still exist, but their job now is defining
-module families for orientation credit and holding default signup forms — not importing schedules.
-Any documentation that describes a quarterly CSV module import is out of date.
+or by duplicating an existing event. Modules still exist as the reusable definitions behind events,
+but their job is defining module families for orientation credit and holding default signup forms —
+not importing schedules. Any documentation that describes a quarterly CSV module import is out of
+date.
 
 **There is no single sign-on.** OIDC/SAML sign-in exists in the code but is not configured, so staff
 sign in with an email and password. Volunteers don't sign in at all.

@@ -28,8 +28,8 @@ events in the same quarter and module so you can see which weeks are already cov
 double-booking, and it targets real quarter rows with their real week counts — including summer
 sessions individually.
 
-Each event has its own **signup form**. By default the form comes from the module template's
-default fields, but an event can override it with its own field list. Edit it from the form-fields
+Each event has its own **signup form**. By default the form comes from the module's default
+fields, but an event can override it with its own field list. Edit it from the form-fields
 drawer on the event page. Volunteers' answers are stored per field against their signup.
 
 Each event has a **venue code**, a four-digit code used by the door check-in QR link. The QR
