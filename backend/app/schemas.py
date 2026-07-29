@@ -188,6 +188,10 @@ class EventCreate(EventBase):
     school: Optional[str] = None
     module_slug: Optional[str] = None
     slots: Optional[List[SlotCreate]] = None
+    # Duplicate flow: the event this payload was prefilled from. The server
+    # copies what the form can't carry (form_schema, reminder toggle,
+    # shifted signup window) and audits the create as event_duplicate.
+    source_event_id: Optional[UUID] = None
 
 
 class EventRead(ORMBase, EventBase):
