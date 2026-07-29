@@ -87,7 +87,13 @@ def _check_daily_send_limit(db: Session) -> bool:
     return True
 
 
-def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+def _send_via_smtp(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    attachments: list[tuple[str, str]] | None = None,
+) -> None:
     """Send an email via SMTP (stdlib smtplib).
 
     Used in two places:
@@ -108,6 +114,14 @@ def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None
     msg.set_content(body or "")
     if html_body:
         msg.add_alternative(html_body, subtype="html")
+    # (filename, text content) pairs — currently only .ics calendar files.
+    for filename, content in attachments or []:
+        msg.add_attachment(
+            content.encode("utf-8"),
+            maintype="text",
+            subtype="calendar",
+            filename=filename,
+        )
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
         if settings.smtp_use_tls:
@@ -117,7 +131,13 @@ def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None
         smtp.send_message(msg)
 
 
-def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+def _send_via_sendgrid(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    attachments: list[tuple[str, str]] | None = None,
+) -> None:
     """Send an email via SendGrid HTTPS API. Prod fallback; dev uses SMTP."""
     if not settings.sendgrid_api_key or not settings.email_from_address:
         logger.warning(
@@ -136,6 +156,26 @@ def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | 
     if html_body:
         mail_kwargs["html_content"] = html_body
     message = Mail(**mail_kwargs)
+    if attachments:
+        import base64
+
+        from sendgrid.helpers.mail import (
+            Attachment,
+            Disposition,
+            FileContent,
+            FileName,
+            FileType,
+        )
+
+        message.attachment = [
+            Attachment(
+                FileContent(base64.b64encode(content.encode("utf-8")).decode()),
+                FileName(filename),
+                FileType("text/calendar"),
+                Disposition("attachment"),
+            )
+            for filename, content in attachments
+        ]
     sg = SendGridAPIClient(settings.sendgrid_api_key)
     sg.send(message)
 
@@ -143,7 +183,13 @@ def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | 
 # Backward-compat alias — external callers (admin broadcast router) still
 # import `_send_email_via_sendgrid`. Resolved here at import time so renaming
 # the function didn't require cross-pillar edits.
-def _send_email(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+def _send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    attachments: list[tuple[str, str]] | None = None,
+) -> None:
     """Single entry point for transactional email. Dispatches on settings.email_mode.
 
     Errors are logged (not swallowed). The caller is a Celery task with
@@ -152,9 +198,13 @@ def _send_email(to_email: str, subject: str, body: str, html_body: str | None = 
     """
     try:
         if settings.email_mode == "sendgrid":
-            _send_via_sendgrid(to_email, subject, body, html_body=html_body)
+            _send_via_sendgrid(
+                to_email, subject, body, html_body=html_body, attachments=attachments
+            )
         else:  # "smtp" (default)
-            _send_via_smtp(to_email, subject, body, html_body=html_body)
+            _send_via_smtp(
+                to_email, subject, body, html_body=html_body, attachments=attachments
+            )
     except Exception:
         # Surface the failure in logs — previous silent-swallow behaviour
         # masked misconfigured sender identities for weeks.
@@ -472,7 +522,31 @@ def send_signup_confirmation_email(
             )
             return
         subject, html = build_signup_confirmation_email(volunteer, signups, token, event)
-        _send_email(to_email=volunteer.email, subject=subject, body="", html_body=html)
+        # fix/ux-quarter-batch: attach every booked session as one .ics so
+        # Gmail / Apple / Outlook add the whole schedule in a single action —
+        # there is no Google-web URL that carries more than one event.
+        # Waitlisted signups stay out: they're not on the schedule yet.
+        from .calendar_ics import build_signup_ics
+
+        booked_slots = [
+            s.slot
+            for s in signups
+            if s.status
+            not in (models.SignupStatus.waitlisted, models.SignupStatus.cancelled)
+            and s.slot is not None
+        ]
+        attachments = (
+            [("scitrek-sessions.ics", build_signup_ics(event, booked_slots))]
+            if booked_slots
+            else None
+        )
+        _send_email(
+            to_email=volunteer.email,
+            subject=subject,
+            body="",
+            html_body=html,
+            attachments=attachments,
+        )
         logger.info(
             "signup_confirmation_email_sent volunteer_id=%s event_id=%s signup_count=%d",
             volunteer_id, event_id, len(signups),

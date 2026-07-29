@@ -125,6 +125,11 @@ describe("SignupSuccessCard", () => {
     expect(
       buildGoogleCalendarUrl.mock.calls.map((c) => c[0].slot.id),
     ).toEqual(["slot-a", "slot-b"]);
+    // And the one-step path is advertised: the confirmation email carries a
+    // calendar attachment covering every session.
+    expect(
+      screen.getByText(/confirmation email includes a calendar file/i),
+    ).toBeInTheDocument();
     expect(open).toHaveBeenCalledTimes(2);
     expect(open).toHaveBeenCalledWith(
       "https://calendar.google.com/stub",

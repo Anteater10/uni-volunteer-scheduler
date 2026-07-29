@@ -456,11 +456,27 @@ def build_signup_confirmation_email(
             f"@ {slot.location or event.school or 'TBD'}"
         )
 
+    # fix/ux-quarter-batch: the task attaches an all-sessions .ics whenever at
+    # least one signup is actually booked — only advertise it then.
+    has_booked = any(
+        s.status not in (models.SignupStatus.waitlisted, models.SignupStatus.cancelled)
+        for s in signups
+    )
+    # NOTE: _render_html escapes every variable, so plain text only here.
+    calendar_note = (
+        "Want these on your calendar? Open the attached scitrek-sessions.ics "
+        "file to add every session to Google Calendar, Apple Calendar, or "
+        "Outlook in one go."
+        if has_booked
+        else ""
+    )
+
     html = _render_html(
         "signup_confirm.html",
         volunteer_first_name=volunteer.first_name,
         confirm_url=confirm_url,
         slot_list="\n".join(slot_lines),
+        calendar_note=calendar_note,
     )
     subject = f"Confirm your SciTrek volunteer signup — {event.title}"
     return subject, html

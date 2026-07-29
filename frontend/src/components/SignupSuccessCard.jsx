@@ -192,6 +192,11 @@ export default function SignupSuccessCard({
           >
             Download .ics (Apple / Outlook)
           </Button>
+          <p className="mt-3 text-xs text-[var(--color-fg-muted)]">
+            Want them all at once? Your confirmation email includes a calendar
+            file — open the attachment to add every session to Google
+            Calendar, Apple Calendar, or Outlook in one go.
+          </p>
         </>
       ) : null}
 
