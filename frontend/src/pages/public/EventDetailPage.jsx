@@ -1522,6 +1522,7 @@ export default function EventDetailPage() {
         open={step === "success"}
         volunteerName={identity.first_name}
         slots={successData?.slots || []}
+        signups={successData?.signups || []}
         event={event}
         onDismiss={handleDismissSuccess}
       />

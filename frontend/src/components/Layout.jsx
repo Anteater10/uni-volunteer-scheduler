@@ -6,6 +6,7 @@ import { useAuth } from "../state/useAuth";
 import ToastHost from "./ui/Toast";
 import BottomNav from "./ui/BottomNav";
 import CopilotFab from "../copilot/CopilotFab";
+import { useIsDesktop } from "./admin/DesktopOnlyBanner";
 
 // This is the *mobile* bottom nav. It used to point at /admin/events and
 // /admin/modules, both of which sit inside the admin shell and render the
@@ -70,6 +71,10 @@ export default function Layout() {
         : "/volunteer";
   const helpTarget =
     role === "admin" || role === "organizer" ? "/admin/help" : "/help";
+  // Desktop staff get Settings inside the admin shell (sidebar intact);
+  // phones keep the standalone /settings — the shell is desktop-only.
+  const isDesktop = useIsDesktop();
+  const settingsTarget = isDesktop ? "/admin/settings" : "/settings";
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -117,7 +122,7 @@ export default function Layout() {
                     className="absolute right-0 mt-2 w-48 rounded-lg border border-gray-200 bg-white p-2 shadow-lg z-50"
                   >
                     <Link
-                      to="/settings"
+                      to={settingsTarget}
                       role="menuitem"
                       onClick={() => setMenuOpen(false)}
                       className="block rounded-md px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-100"

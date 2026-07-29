@@ -199,6 +199,9 @@ class EventRead(ORMBase, EventBase):
     week_number: Optional[int] = None
     quarter_id: Optional[UUID] = None
     created_at: Optional[datetime] = None
+    # Set once every expected signup is resolved (attended/no_show); null
+    # again after a reopen. The admin list derives its Completed badge here.
+    completed_at: Optional[datetime] = None
     slots: List[SlotRead] = []
 
     # Same method name as EventBase's validator → replaces it, so Read
@@ -637,6 +640,9 @@ class PublicSignupResultItem(BaseModel):
     """Phase 25 — per-signup result so the UI can branch confirmed vs waitlisted."""
 
     signup_id: UUID
+    # Which slot this result belongs to — lets the UI badge slots without
+    # relying on the order of the submitted slot_ids list.
+    slot_id: UUID
     status: SignupStatus
     # 1-indexed position within the waitlist when status == waitlisted. None
     # otherwise. Ordering matches promote_waitlist_fifo (timestamp ASC, id ASC).

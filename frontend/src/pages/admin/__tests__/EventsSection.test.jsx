@@ -40,7 +40,14 @@ vi.mock("../../../lib/api", () => {
       create: vi.fn(),
     },
   };
-  const apiObj = { events, slots, admin };
+  const apiObj = {
+    events,
+    slots,
+    admin,
+    // fix/ux-quarter-batch: the QuarterSelectionProvider (ended-quarter
+    // tests) loads the quarter list through this.
+    public: { getQuarters: vi.fn().mockResolvedValue([]) },
+  };
   return { api: apiObj, default: apiObj };
 });
 
@@ -494,11 +501,8 @@ describe("EventsSection — edit flow diff", () => {
 
   it("renders existing slots with their values and signup count", async () => {
     renderWithQuery(<EventsSection />);
-    // FIXTURE_EVENT is dated 2026-04-20 which is in the past relative to
-    // "today"; the default scope filter is "upcoming" so the row gets
-    // hidden. Switch scope to "all" so the Edit button renders.
-    const scopeSelect = await screen.findByDisplayValue("Upcoming");
-    fireEvent.change(scopeSelect, { target: { value: "all" } });
+    // FIXTURE_EVENT is dated in the past, but the default scope is now
+    // "All" so the row (and its Edit button) is visible immediately.
     fireEvent.click(await screen.findByRole("button", { name: /^Edit$/i }));
 
     expect(await screen.findByTestId("slot-row-0")).toBeInTheDocument();
@@ -521,9 +525,7 @@ describe("EventsSection — edit flow diff", () => {
     api.events.list.mockResolvedValue([editable]);
 
     renderWithQuery(<EventsSection />);
-    // Same scope adjustment as above — fixture date is in the past.
-    const scopeSelect = await screen.findByDisplayValue("Upcoming");
-    fireEvent.change(scopeSelect, { target: { value: "all" } });
+    // Past-dated fixture is visible under the default "All" scope.
     fireEvent.click(await screen.findByRole("button", { name: /^Edit$/i }));
     await screen.findByTestId("slot-row-0");
 
@@ -566,5 +568,170 @@ describe("EventsSection — edit flow diff", () => {
     expect(api.slots.delete).toHaveBeenCalledWith("slot-2");
     expect(api.slots.create.mock.calls[0][0]).toBe("evt-1");
     expect(api.slots.create.mock.calls[0][1].capacity).toBe(15);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// fix/ux-quarter-batch — the list defaults to ALL events (upcoming + past),
+// completed events are badged and file under Past, and an ended quarter
+// flips into history mode: no event creation, status filter instead of the
+// meaningless Upcoming/Past pair.
+// ---------------------------------------------------------------------------
+
+import { QuarterSelectionProvider } from "../../../state/QuarterSelectionContext";
+
+const future = new Date(Date.now() + 7 * 86400e3).toISOString();
+const futureEnd = new Date(Date.now() + 8 * 86400e3).toISOString();
+const past = new Date(Date.now() - 8 * 86400e3).toISOString();
+const pastEnd = new Date(Date.now() - 7 * 86400e3).toISOString();
+
+const SCOPE_LIST = [
+  {
+    id: "e-completed",
+    title: "Completed early",
+    // Dates still ahead, but every slot was ended — completed wins.
+    start_date: future,
+    end_date: futureEnd,
+    completed_at: new Date().toISOString(),
+    location: "Lab 1",
+  },
+  {
+    id: "e-ended",
+    title: "Dates went by",
+    start_date: past,
+    end_date: pastEnd,
+    completed_at: null,
+    location: "Lab 2",
+  },
+  {
+    id: "e-upcoming",
+    title: "Still to come",
+    start_date: future,
+    end_date: futureEnd,
+    completed_at: null,
+    location: "Lab 3",
+  },
+];
+
+describe("EventsSection — completion badges and default-All scope", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    api.events.list.mockResolvedValue(SCOPE_LIST);
+    api.admin.modules.list.mockResolvedValue([]);
+  });
+
+  it("shows every event by default — upcoming and past together, badged", async () => {
+    renderWithQuery(<EventsSection />);
+    // All three rows visible without touching any filter.
+    expect(await screen.findByText("Completed early")).toBeInTheDocument();
+    expect(screen.getByText("Dates went by")).toBeInTheDocument();
+    expect(screen.getByText("Still to come")).toBeInTheDocument();
+    expect(screen.getByLabelText("Time filter")).toHaveValue("all");
+    // And each carries its status badge.
+    expect(screen.getByText(/✓ Completed/)).toBeInTheDocument();
+    expect(screen.getByText(/Ended — not closed out/)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("table")).getByText("Upcoming"),
+    ).toBeInTheDocument();
+  });
+
+  it("files a completed event under Past even when its dates are ahead", async () => {
+    renderWithQuery(<EventsSection />);
+    await screen.findByText("Still to come");
+
+    fireEvent.change(screen.getByLabelText("Time filter"), {
+      target: { value: "past" },
+    });
+    expect(await screen.findByText("Completed early")).toBeInTheDocument();
+    expect(screen.getByText("Dates went by")).toBeInTheDocument();
+    expect(screen.queryByText("Still to come")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Time filter"), {
+      target: { value: "upcoming" },
+    });
+    expect(await screen.findByText("Still to come")).toBeInTheDocument();
+    expect(screen.queryByText("Completed early")).not.toBeInTheDocument();
+  });
+});
+
+describe("EventsSection — ended quarter history mode", () => {
+  const OLD_Q = {
+    id: "q-old",
+    display_name: "Spring 2026",
+    season: "spring",
+    year: 2026,
+    start_date: "2026-03-30",
+    end_date: "2026-06-13",
+    archived_at: null,
+  };
+
+  function renderInEndedQuarter() {
+    window.localStorage.setItem("admin.selectedQuarterId", "q-old");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <QuarterSelectionProvider>
+            <EventsSection />
+          </QuarterSelectionProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    api.public.getQuarters.mockResolvedValue([OLD_Q]);
+    api.events.list.mockResolvedValue([
+      {
+        id: "e-old-done",
+        title: "Old and completed",
+        start_date: "2026-04-07T15:00:00Z",
+        end_date: "2026-04-09T19:00:00Z",
+        completed_at: "2026-04-09T19:12:00Z",
+        location: "Lab 1",
+      },
+      {
+        id: "e-old-open",
+        title: "Old but never closed out",
+        start_date: "2026-06-02T15:00:00Z",
+        end_date: "2026-06-02T19:00:00Z",
+        completed_at: null,
+        location: "Lab 2",
+      },
+    ]);
+    api.admin.modules.list.mockResolvedValue([]);
+  });
+
+  it("hides event creation and explains the quarter is history", async () => {
+    renderInEndedQuarter();
+    expect(await screen.findByTestId("ended-quarter-strip")).toHaveTextContent(
+      /Spring 2026 ended/,
+    );
+    expect(screen.queryByText("+ New event")).not.toBeInTheDocument();
+    // Escape hatch back to the live schedule.
+    expect(
+      screen.getByRole("button", { name: /back to current quarter/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("swaps Upcoming/Past for a completion-status filter", async () => {
+    renderInEndedQuarter();
+    await screen.findByText("Old and completed");
+
+    const filter = screen.getByLabelText("Time filter");
+    // No time-based options — everything here is in the past.
+    expect(within(filter).queryByText("Upcoming")).not.toBeInTheDocument();
+
+    fireEvent.change(filter, { target: { value: "open" } });
+    expect(await screen.findByText("Old but never closed out")).toBeInTheDocument();
+    expect(screen.queryByText("Old and completed")).not.toBeInTheDocument();
+
+    fireEvent.change(filter, { target: { value: "completed" } });
+    expect(await screen.findByText("Old and completed")).toBeInTheDocument();
+    expect(screen.queryByText("Old but never closed out")).not.toBeInTheDocument();
   });
 });

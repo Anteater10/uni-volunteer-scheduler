@@ -177,6 +177,9 @@ class TestCreatePublicSignup:
         item = data["signups"][0]
         assert item["status"] == "waitlisted"
         assert item["position"] == 1
+        # The UI badges each slot by matching result items on slot_id — the
+        # positional zip against the submitted slot_ids list is too fragile.
+        assert item["slot_id"] == str(slot.id)
 
         # Slot current_count must stay at capacity — waitlisted signups don't hold a seat.
         db_session.expire_all()

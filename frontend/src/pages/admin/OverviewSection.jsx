@@ -16,6 +16,7 @@ import SiteSettingsCard from "../../components/admin/SiteSettingsCard";
 import SideDrawer from "../../components/admin/SideDrawer";
 import QuartersManager from "./QuartersManager";
 import { useAdminPageTitle } from "./AdminLayout";
+import { useSelectedQuarter } from "../../state/QuarterSelectionContext";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -63,9 +64,16 @@ export default function OverviewSection() {
   useAdminPageTitle("Overview");
   const [quartersOpen, setQuartersOpen] = useState(false);
 
+  // fix/ux-quarter-batch: the overview follows the quarter picked in Manage
+  // Quarters. No explicit pick → the server's active-or-recent default.
+  const { isExplicitSelection, selectedQuarter, isViewingCurrent, setSelectedQuarterId } =
+    useSelectedQuarter();
+  const scopedQuarterId = isExplicitSelection ? selectedQuarter?.id : null;
+
   const summaryQ = useQuery({
-    queryKey: ["adminSummary"],
-    queryFn: api.admin.summary,
+    queryKey: ["adminSummary", scopedQuarterId],
+    queryFn: () =>
+      api.admin.summary(scopedQuarterId ? { quarter_id: scopedQuarterId } : undefined),
   });
 
   const activityQ = useQuery({
@@ -111,43 +119,76 @@ export default function OverviewSection() {
       ? activityQ.data
       : activityQ.data?.items || []
   ).slice(0, 5);
+  // The server names the quarter its aggregates describe.
+  const quarterLabel = s.quarter_name || "This quarter";
 
   return (
     <div className="space-y-6">
+      {/* ---------------- Quarter scope strip ---------------- */}
+      {s.quarter_name ? (
+        <div
+          data-testid="overview-quarter-scope"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-900"
+        >
+          <span>
+            Showing statistics for{" "}
+            <span className="font-semibold">{s.quarter_name}</span>
+            {isViewingCurrent || !isExplicitSelection ? (
+              <span className="ml-2 rounded-full bg-blue-200/70 px-2 py-0.5 text-xs font-semibold">
+                Current quarter
+              </span>
+            ) : (
+              <span className="ml-2 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-700">
+                Past / other quarter
+              </span>
+            )}
+          </span>
+          {isExplicitSelection && !isViewingCurrent ? (
+            <button
+              type="button"
+              onClick={() => setSelectedQuarterId(null)}
+              className="font-semibold underline hover:no-underline"
+            >
+              Back to current quarter
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* ---------------- 5 headline StatCards ---------------- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           label="Users"
           value={s.users_total ?? 0}
           explainer={`${s.users_total ?? 0} people can sign into this admin panel.`}
-          subline={`This quarter: ${s.users_quarter ?? 0}`}
+          subline={`${quarterLabel}: ${s.users_quarter ?? 0}`}
           trend={trendFrom(wow.users)}
         />
         <StatCard
           label="Events"
           value={s.events_total ?? 0}
           explainer={`${s.events_total ?? 0} scheduled activities students can sign up for.`}
-          subline={`This quarter: ${s.events_quarter ?? 0}`}
+          subline={`${quarterLabel}: ${s.events_quarter ?? 0}`}
           trend={trendFrom(wow.events)}
         />
         <StatCard
           label="Slots"
           value={s.slots_total ?? 0}
           explainer={`${s.slots_total ?? 0} time slots available across all events.`}
-          subline={`This quarter: ${s.slots_quarter ?? 0}`}
+          subline={`${quarterLabel}: ${s.slots_quarter ?? 0}`}
         />
         <StatCard
           label="Signups"
           value={s.signups_total ?? 0}
           explainer={`${s.signups_total ?? 0} students have signed up (all time).`}
-          subline={`This quarter: ${s.signups_quarter ?? 0}`}
+          subline={`${quarterLabel}: ${s.signups_quarter ?? 0}`}
           trend={trendFrom(wow.signups)}
         />
         <StatCard
           label="Confirmed signups"
           value={s.signups_confirmed_total ?? 0}
           explainer={`${s.signups_confirmed_total ?? 0} confirmed (ready to check in or done).`}
-          subline={`This quarter: ${s.signups_confirmed_quarter ?? 0}`}
+          subline={`${quarterLabel}: ${s.signups_confirmed_quarter ?? 0}`}
         />
       </div>
 

@@ -1,8 +1,9 @@
 # backend/app/routers/events.py
 from datetime import timedelta, datetime, timezone
-from typing import List
+from typing import List, Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -151,6 +152,9 @@ def create_event(
 
 @router.get("/", response_model=List[schemas.EventRead])
 def list_events(
+    quarter_id: Optional[UUID] = Query(
+        None, description="Only events linked to this academic quarter"
+    ),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(
         require_role(models.UserRole.organizer, models.UserRole.admin)
@@ -158,7 +162,10 @@ def list_events(
 ):
     # Staff-only: EventRead exposes owner_id and non-public events. The
     # anonymous surface is /public/events (PublicEventRead).
-    return db.query(models.Event).all()
+    query = db.query(models.Event)
+    if quarter_id is not None:
+        query = query.filter(models.Event.quarter_id == quarter_id)
+    return query.all()
 
 
 @router.get("/{event_id}", response_model=schemas.EventRead)

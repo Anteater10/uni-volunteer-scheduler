@@ -212,7 +212,7 @@ function PasswordForm() {
             required
           />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="space-y-4">
           <div>
             <Label htmlFor="settings-new-password">New password</Label>
             <Input
@@ -253,8 +253,8 @@ function PasswordForm() {
   );
 }
 
-// Identity summary for the left rail — gives the wide layout an anchor and
-// repeats the audit-identifying fields where the eye lands first.
+// Identity summary at the top of the stack — repeats the audit-identifying
+// fields where the eye lands first.
 function IdentityCard({ user }) {
   const initial = (user?.name || user?.email || "?").trim().charAt(0).toUpperCase();
   return (
@@ -285,55 +285,47 @@ export default function UserSettingsPage() {
     import.meta.env.VITE_COPILOT_ENABLED === "1";
 
   return (
-    <div className="w-full">
+    <div className="mx-auto w-full max-w-2xl">
       <PageHeader
         title="Settings"
         subtitle="Your account details, password, and notification preferences."
       />
 
-      <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-3 2xl:grid-cols-4">
-        {/* Identity rail */}
-        <div className="space-y-6 lg:col-span-1 2xl:col-span-1">
-          {user ? <IdentityCard user={user} /> : null}
+      {/* Single column: one card at a time, top to bottom. */}
+      <div className="mt-4 space-y-6">
+        {user ? <IdentityCard user={user} /> : null}
 
-          <SettingsSection
-            title="Account"
-            hint="Only an admin can change these — they identify you in the audit log."
-          >
-            <div className="grid grid-cols-1 gap-4">
-              <ReadOnlyRow label="Email" value={user?.email} />
-              <ReadOnlyRow label="Role" value={user?.role} />
-            </div>
-          </SettingsSection>
+        {/* The provider has already loaded /users/me to render the app
+            shell, so this is only ever briefly null on a cold open. */}
+        {user ? (
+          <ProfileForm key={user.id} user={user} reloadMe={reloadMe} />
+        ) : (
+          <Card>
+            <p className="text-sm text-[var(--color-fg-muted)]">
+              Loading your details…
+            </p>
+          </Card>
+        )}
 
-          <SettingsSection title="Session">
-            <Button variant="danger" onClick={logout}>
-              Log out
-            </Button>
-          </SettingsSection>
-        </div>
+        <PasswordForm />
 
-        {/* Main settings area */}
-        <div className="lg:col-span-2 2xl:col-span-3">
-          <div className="grid grid-cols-1 items-start gap-6 2xl:grid-cols-2">
-            {/* The provider has already loaded /users/me to render the app
-                shell, so this is only ever briefly null on a cold open. */}
-            {user ? (
-              <ProfileForm key={user.id} user={user} reloadMe={reloadMe} />
-            ) : (
-              <Card>
-                <p className="text-sm text-[var(--color-fg-muted)]">
-                  Loading your details…
-                </p>
-              </Card>
-            )}
+        {copilotEnabled ? <CopilotMemorySettings /> : null}
 
-            <div className="space-y-6">
-              <PasswordForm />
-              {copilotEnabled ? <CopilotMemorySettings /> : null}
-            </div>
+        <SettingsSection
+          title="Account"
+          hint="Only an admin can change these — they identify you in the audit log."
+        >
+          <div className="grid grid-cols-1 gap-4">
+            <ReadOnlyRow label="Email" value={user?.email} />
+            <ReadOnlyRow label="Role" value={user?.role} />
           </div>
-        </div>
+        </SettingsSection>
+
+        <SettingsSection title="Session">
+          <Button variant="danger" onClick={logout}>
+            Log out
+          </Button>
+        </SettingsSection>
       </div>
     </div>
   );

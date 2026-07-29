@@ -28,6 +28,7 @@ from ..services.check_in_service import (
     check_in_signup,
     event_check_in_by_email,
     lookup_check_in_options,
+    reopen_event,
     resolve_event,
     resolve_slot,
     self_check_in,
@@ -234,6 +235,31 @@ def resolve_slot_endpoint(
     except LookupError as e:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post(
+    "/events/{event_id}/reopen",
+    response_model=RosterResponse,
+    dependencies=[Depends(rate_limit(60, 60))],
+)
+def reopen_event_endpoint(
+    event_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+):
+    """Undo "End event": resolved signups return to the live roster
+    (attended -> checked_in when the check-in timestamp is real, else
+    confirmed; no_show -> confirmed) and completed_at clears. Orientation
+    credits are left alone — revoke them individually if needed.
+    Staff-scoped like the resolve endpoints."""
+    event = db.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, current_user)
+    reopen_event(db, event_id, current_user.id)
+    roster = _build_roster(db, event)
+    db.commit()
+    return roster
 
 
 @router.post(
