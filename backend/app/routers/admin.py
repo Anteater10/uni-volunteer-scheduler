@@ -17,8 +17,8 @@ from .. import models, schemas
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
 from ..models import PrivacyMode
-from ..celery_app import send_email_notification
-from ..signup_service import promote_waitlist_fifo
+from ..celery_app import send_email_notification, send_waitlist_promotion_email
+from ..signup_service import PromotionResult, promote_waitlist_fifo
 from ..services import module_service, quarter_service
 from ..services.audit_log_humanize import humanize as humanize_audit_log
 from ..schemas import ModuleRead, ModuleCreate, ModuleUpdate, SentNotificationRead
@@ -49,23 +49,21 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
     )
 
 
-def _promote_waitlist_fifo(db: Session, slot: models.Slot) -> List[str]:
+def _promote_waitlist_fifo(db: Session, slot: models.Slot) -> List[PromotionResult]:
     """Admin-side wrapper around the canonical promote_waitlist_fifo.
 
-    Loops until capacity is full, delegating each promotion to the single
-    source of truth in app.signup_service. Caller is responsible for
-    already holding a FOR UPDATE lock on the slot row.
-    Returns the promoted signup IDs so callers can enqueue the
-    waitlist_promote email after their commit.
+    Loops until capacity is full. Caller must hold FOR UPDATE on the slot,
+    capture each result's email_kwargs BEFORE commit, and enqueue
+    send_waitlist_promotion_email AFTER commit.
     """
-    promoted_ids: List[str] = []
+    results: List[PromotionResult] = []
     while slot.current_count < slot.capacity:
-        promoted = promote_waitlist_fifo(db, slot.id)
-        if promoted is None:
+        promo = promote_waitlist_fifo(db, slot.id)
+        if promo is None:
             break
         slot.current_count += 1
-        promoted_ids.append(str(promoted.id))
-    return promoted_ids
+        results.append(promo)
+    return results
 
 
 def _participant_payload(user: models.User, privacy: PrivacyMode) -> dict:
@@ -112,6 +110,10 @@ _CONFIRMED_STATUSES = [
 
 @router.get("/summary")
 def admin_summary(
+    quarter_id: uuid_mod.UUID | None = Query(
+        None,
+        description="Scope the *_quarter aggregates to this quarter instead of the active one",
+    ),
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
@@ -126,7 +128,15 @@ def admin_summary(
     # Issue #24: "this quarter" = the admin-entered quarter covering today,
     # else the most recently ended one (gaps). With no quarters entered the
     # window is zero-width so quarter aggregates read 0.
-    active_q = quarter_service.active_or_recent_quarter(db, now.date())
+    # fix/ux-quarter-batch: an explicit ?quarter_id re-scopes every quarter
+    # aggregate so the Overview can follow the quarter picked in Manage
+    # Quarters — archived quarters included (that's the retrospective case).
+    if quarter_id is not None:
+        active_q = db.get(models.AcademicQuarter, quarter_id)
+        if active_q is None:
+            raise HTTPException(status_code=404, detail="Quarter not found")
+    else:
+        active_q = quarter_service.active_or_recent_quarter(db, now.date())
     if active_q is not None:
         q_start, q_end = quarter_service.quarter_bounds_utc(active_q)
     else:
@@ -355,7 +365,13 @@ def admin_summary(
             "events": events_this_week - events_last_week,
             "signups": signups_this_week - signups_last_week,
         },
-        "quarter_progress": quarter_service.quarter_progress(db, now),
+        "quarter_progress": quarter_service.quarter_progress(
+            db, now, quarter=active_q if quarter_id is not None else None
+        ),
+        # Which quarter the *_quarter aggregates describe, so the UI can
+        # label them without re-deriving the server's choice.
+        "quarter_id": str(active_q.id) if active_q is not None else None,
+        "quarter_name": active_q.display_name if active_q is not None else None,
         "fill_rate_attention": attention,
         "last_updated": now.isoformat(),
     }
@@ -668,9 +684,11 @@ def admin_cancel_signup(
     if previous_status in (models.SignupStatus.confirmed, models.SignupStatus.pending) and slot.current_count > 0:
         slot.current_count -= 1
 
-    promoted_signup_ids = _promote_waitlist_fifo(db, slot)
+    promotions = _promote_waitlist_fifo(db, slot)
 
     log_action(db, actor, "admin_signup_cancel", "Signup", str(signup.id))
+    # Capture before commit — expire_on_commit would force refresh queries.
+    promotion_email_kwargs = [p.email_kwargs for p in promotions]
     db.commit()
     db.refresh(signup)
 
@@ -678,10 +696,10 @@ def admin_cancel_signup(
     # The cancellation email is dispatched via the deduped kind pipeline (volunteer-backed).
     send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
-    # Promoted volunteers get the branded waitlist_promote email — same kind
-    # pipeline the organizer manual-promote path uses.
-    for promoted_id in promoted_signup_ids:
-        send_email_notification.delay(signup_id=promoted_id, kind="waitlist_promote")
+    # Promoted volunteers get the confirm-your-spot email — pending status
+    # holds the seat until the volunteer clicks the emailed magic link.
+    for kwargs in promotion_email_kwargs:
+        send_waitlist_promotion_email.delay(**kwargs)
 
     return signup
 
@@ -728,16 +746,22 @@ def admin_promote_signup(
     if slot.current_count >= slot.capacity:
         raise HTTPException(status_code=400, detail="Slot is full")
 
-    signup.status = models.SignupStatus.confirmed
-    slot.current_count += 1
+    from ..services.waitlist_service import manual_promote
+
+    try:
+        promo = manual_promote(db, signup, slot, allow_overfill=False)
+    except ValueError as exc:  # belt-and-braces; pre-checks above match
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     log_action(db, actor, "admin_signup_promote", "Signup", str(signup.id))
+    promo_kwargs = promo.email_kwargs
     db.commit()
     db.refresh(signup)
 
-    # Phase 09: signup.user removed; use volunteer-backed email pipeline
-    # Phase 12: full admin promotion email deferred
-    send_email_notification.delay(signup_id=str(signup.id), kind="confirmation")
+    # Was kind="confirmation" — wrong template AND swallowed by the
+    # (signup_id, kind) dedup if a confirmation was ever sent. The promotion
+    # email is one-shot with the raw token, so no dedup applies.
+    send_waitlist_promotion_email.delay(**promo_kwargs)
 
     return signup
 
@@ -876,7 +900,14 @@ def admin_move_signup(
         source_slot.current_count -= 1
 
     if target_slot.current_count < target_slot.capacity:
-        new_status = models.SignupStatus.confirmed
+        # Preserve pending/confirmed on move — a staff move must not
+        # silently confirm a signup the volunteer never confirmed.
+        # Waitlisted → open seat still confirms (spec: same as swap).
+        new_status = (
+            previous_status
+            if held_source_capacity
+            else models.SignupStatus.confirmed
+        )
         target_slot.current_count += 1
     else:
         new_status = models.SignupStatus.waitlisted
@@ -884,16 +915,19 @@ def admin_move_signup(
     signup.slot_id = target_slot.id
     signup.status = new_status
 
-    if held_source_capacity:
-        _promote_waitlist_fifo(db, source_slot)
+    promotions = (
+        _promote_waitlist_fifo(db, source_slot) if held_source_capacity else []
+    )
 
     log_action(db, actor, "admin_signup_move", "Signup", str(signup.id))
+    promotion_email_kwargs = [p.email_kwargs for p in promotions]
     db.commit()
     db.refresh(signup)
 
-    # Phase 09: signup.user removed; use kind-based pipeline for reschedule
-    # Phase 12: full move email deferred
     send_email_notification.delay(signup_id=str(signup.id), kind="reschedule")
+    # Fixes the silent-promotion bug: move previously promoted with no email.
+    for kwargs in promotion_email_kwargs:
+        send_waitlist_promotion_email.delay(**kwargs)
 
     return signup
 

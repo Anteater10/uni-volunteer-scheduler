@@ -7,6 +7,26 @@ Tests:
 - test_expire_pending_signups_decrements_slot_current_count
 - test_expire_pending_signups_does_not_touch_signups_without_signup_confirm_token
 - test_notifications_xor_constraint (T-09-12)
+
+Task 7 (2026-07-28 spec) additions — reap-criteria fix + chained promotion:
+- test_pending_with_fresh_second_token_survives
+- test_reap_chains_promotion_with_email
+- test_chained_promotion_token_is_three_days
+- test_tokenless_pending_is_not_deleted
+
+Task 8 (2026-07-28 spec decision 5) additions — stale confirm-token GC:
+- test_deletes_token_when_no_upcoming_events
+- test_keeps_token_with_upcoming_signup
+- test_keeps_token_within_grace_window
+
+Task 8 fix round 1 — token-level liveness guard (a stale volunteer's still-
+live token must survive; only its own-expired tokens are reaped):
+- test_stale_sweep_keeps_live_token_deletes_expired_one
+
+Final-review fixes (2026-07-28) — chain loop must not promote into an
+ended event; reap EXISTS correlation pinned against de-correlation regressions:
+- test_chain_does_not_promote_into_ended_event
+- test_reap_correlates_live_token_to_its_own_signup
 """
 import pytest
 import uuid
@@ -65,12 +85,21 @@ def _make_volunteer(db_session, email=None):
     return v
 
 
-def _make_slot(db_session, event_id, capacity=5, current_count=1):
+def _make_slot(
+    db_session, event_id, capacity=5, current_count=1, *, start_time=None, end_time=None
+):
+    """Default timing (no override) parks the slot 30 days in the future —
+    fine for the reap tests above, which key off token expiry, not slot
+    timing. The stale-token cleanup tests below key off slot.end_time
+    directly, so they always pass explicit start_time/end_time anchored to
+    their own frozen ``now``.
+    """
+    now = datetime.now(timezone.utc)
     slot = Slot(
         id=uuid.uuid4(),
         event_id=event_id,
-        start_time=datetime.now(timezone.utc) + timedelta(days=30),
-        end_time=datetime.now(timezone.utc) + timedelta(days=30, hours=2),
+        start_time=start_time if start_time is not None else now + timedelta(days=30),
+        end_time=end_time if end_time is not None else now + timedelta(days=30, hours=2),
         capacity=capacity,
         current_count=current_count,
         slot_type=SlotType.PERIOD,
@@ -126,6 +155,15 @@ def _make_pending_signup_with_token(
     db_session.flush()
 
     return signup, token
+
+
+def token_count_for(db_session, volunteer_id) -> int:
+    """File-local helper (Task 8): count MagicLinkToken rows for a volunteer."""
+    return (
+        db_session.query(MagicLinkToken)
+        .filter(MagicLinkToken.volunteer_id == volunteer_id)
+        .count()
+    )
 
 
 class TestExpirePendingSignups:
@@ -287,6 +325,327 @@ class TestExpirePendingSignups:
         still_there = db_session.get(Signup, signup_id)
         assert still_there is not None, "Pending signup without token must not be deleted"
 
+    def test_pending_with_fresh_second_token_survives(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """A pending signup can hold two SIGNUP_CONFIRM tokens: the original
+        14-day token (now expired) and a live 3-day promotion token. The
+        reap must key on "no unexpired token remains", not "an expired
+        token exists" — otherwise every promotee whose original waitlist-era
+        token lapsed would be deleted the hour after promotion.
+        """
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        slot = _make_slot(db_session, event.id, current_count=1)
+        vol = _make_volunteer(db_session)
+
+        now = datetime(2030, 7, 6, 3, 0, tzinfo=timezone.utc)
+
+        # Token A: original 14-day signup token, expired.
+        signup, _token_a = _make_pending_signup_with_token(
+            db_session, vol, slot,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+        # Token B: promotion 3-day token, still live.
+        token_b = MagicLinkToken(
+            token_hash=f"hash-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now + timedelta(days=2),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add(token_b)
+        db_session.commit()
+
+        signup_id = signup.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert db_session.get(Signup, signup_id) is not None, (
+            "Signup with a live second token must survive the reap"
+        )
+
+    def test_reap_chains_promotion_with_email(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Freeing a seat via reap must chain-promote the slot's FIFO
+        waitlist and enqueue exactly one promotion email for the
+        newly-promoted signup.
+        """
+        sent = []
+        monkeypatch.setattr(
+            "app.celery_app.send_waitlist_promotion_email.delay",
+            lambda **kw: sent.append(kw),
+        )
+
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 7, 3, 0, tzinfo=timezone.utc)
+        # Explicit future timing: the fixture default anchors to real
+        # wall-clock time, which — relative to this test's frozen 2030
+        # "now" — reads as decades stale. Fix round 1 confirmed the
+        # stale-sweep's expiry guard alone would also protect this test
+        # without the pin (see task-8-report.md); the pin stays anyway for
+        # clarity and to keep this test's intent legible at a glance.
+        slot = _make_slot(
+            db_session, event.id, capacity=1, current_count=1,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol1 = _make_volunteer(db_session)
+        vol2 = _make_volunteer(db_session)
+
+        # capacity-1 slot: pending signup with expired token + waitlisted second.
+        expired_signup, _token = _make_pending_signup_with_token(
+            db_session, vol1, slot,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+        waitlisted = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol2.id,
+            slot_id=slot.id,
+            status=SignupStatus.waitlisted,
+            timestamp=now - timedelta(days=2),
+        )
+        db_session.add(waitlisted)
+        db_session.commit()
+
+        expired_id = expired_signup.id
+        waitlisted_id = waitlisted.id
+        slot_id = slot.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        # pending deleted, waitlisted promoted to pending, count still 1
+        assert db_session.get(Signup, expired_id) is None
+        promoted = db_session.get(Signup, waitlisted_id)
+        assert promoted.status == SignupStatus.pending
+        slot_reloaded = db_session.get(Slot, slot_id)
+        assert slot_reloaded.current_count == 1
+        assert len(sent) == 1 and sent[0]["signup_id"] == str(waitlisted_id)
+
+    def test_chained_promotion_token_is_three_days(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """After the chain, the promoted signup's newest token expires
+        ~3 days (4320 minutes) out — the same TTL as any other promotion
+        path.
+        """
+        monkeypatch.setattr(
+            "app.celery_app.send_waitlist_promotion_email.delay",
+            lambda **kw: None,
+        )
+
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 8, 3, 0, tzinfo=timezone.utc)
+        # Explicit future timing — see test_reap_chains_promotion_with_email
+        # for why the fixture default isn't safe under Task 8's stale-token
+        # sweep, and for the fix-round-1 note on why the pin stays anyway.
+        slot = _make_slot(
+            db_session, event.id, capacity=1, current_count=1,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol1 = _make_volunteer(db_session)
+        vol2 = _make_volunteer(db_session)
+
+        _make_pending_signup_with_token(
+            db_session, vol1, slot,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+        waitlisted = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol2.id,
+            slot_id=slot.id,
+            status=SignupStatus.waitlisted,
+            timestamp=now - timedelta(days=2),
+        )
+        db_session.add(waitlisted)
+        db_session.commit()
+
+        waitlisted_id = waitlisted.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+            db_session.expire_all()
+            token = (
+                db_session.query(MagicLinkToken)
+                .filter(MagicLinkToken.signup_id == waitlisted_id)
+                .order_by(MagicLinkToken.expires_at.desc())
+                .first()
+            )
+            expected = datetime.now(timezone.utc) + timedelta(minutes=4320)
+            assert abs((token.expires_at - expected).total_seconds()) < 3600
+
+    def test_tokenless_pending_is_not_deleted(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """A pending signup with NO SIGNUP_CONFIRM token at all is a data
+        anomaly (pending should always carry one) — warn-log and skip
+        rather than silently deleting it.
+        """
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        slot = _make_slot(db_session, event.id, current_count=1)
+        vol = _make_volunteer(db_session)
+
+        tokenless = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=SignupStatus.pending,
+        )
+        db_session.add(tokenless)
+        db_session.commit()
+
+        tokenless_id = tokenless.id
+        now = datetime(2030, 7, 9, 3, 0, tzinfo=timezone.utc)
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert db_session.get(Signup, tokenless_id) is not None
+
+    def test_chain_does_not_promote_into_ended_event(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """A freed seat on a slot whose event already ended must still be
+        reaped (pending deleted, count decremented) but must NOT
+        chain-promote the waitlist behind it.
+
+        Without this guard: a last-minute reap frees a seat on a slot whose
+        event is already over, chain-promotion fires anyway, the promotee
+        gets a "a spot opened up — confirm within 3 days" email for an
+        event that has already happened, their token expires unconfirmed,
+        and the NEXT hourly run reaps that pending and repeats the cycle
+        for the next waitlister — one nonsense email roughly every 3 days
+        until the waitlist drains.
+        """
+        sent = []
+        monkeypatch.setattr(
+            "app.celery_app.send_waitlist_promotion_email.delay",
+            lambda **kw: sent.append(kw),
+        )
+
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 14, 3, 0, tzinfo=timezone.utc)
+        # Event already ended 2 days ago.
+        slot = _make_slot(
+            db_session, event.id, capacity=1, current_count=1,
+            start_time=now - timedelta(days=2, hours=2),
+            end_time=now - timedelta(days=2),
+        )
+        vol1 = _make_volunteer(db_session)
+        vol2 = _make_volunteer(db_session)
+
+        expired_signup, _token = _make_pending_signup_with_token(
+            db_session, vol1, slot,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+        waitlisted = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol2.id,
+            slot_id=slot.id,
+            status=SignupStatus.waitlisted,
+            timestamp=now - timedelta(days=2, hours=1),
+        )
+        db_session.add(waitlisted)
+        db_session.commit()
+
+        expired_id = expired_signup.id
+        waitlisted_id = waitlisted.id
+        slot_id = slot.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        # Reaped: expired pending gone, count decremented.
+        assert db_session.get(Signup, expired_id) is None
+        slot_reloaded = db_session.get(Slot, slot_id)
+        assert slot_reloaded.current_count == 0
+        # NOT chain-promoted: waitlisted signup stays waitlisted, no email.
+        still_waitlisted = db_session.get(Signup, waitlisted_id)
+        assert still_waitlisted.status == SignupStatus.waitlisted
+        assert sent == []
+
+    def test_reap_correlates_live_token_to_its_own_signup(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Regression pin: ``live_token_exists`` must correlate to THIS
+        signup's own id, not just check whether a live SIGNUP_CONFIRM
+        token exists anywhere in the table.
+
+        Two independent volunteers/slots: A holds only an expired token
+        (reapable); B holds a live token on a different slot (not
+        reapable). If ``live_token_exists`` were ever de-correlated (e.g.
+        a refactor drops the ``MagicLinkToken.signup_id ==
+        models.Signup.id`` correlation), B's live token would satisfy the
+        EXISTS check for every row, including A's — the reap would stop
+        reaping anything, anywhere, silently, with zero test failures
+        under the pre-existing suite (every other reap test uses a single
+        signup, so a global EXISTS still "sees" its own token and passes
+        by coincidence).
+        """
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 15, 3, 0, tzinfo=timezone.utc)
+
+        # Volunteer A: reapable — only an expired token.
+        slot_a = _make_slot(
+            db_session, event.id,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol_a = _make_volunteer(db_session)
+        signup_a, _token_a = _make_pending_signup_with_token(
+            db_session, vol_a, slot_a,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+
+        # Volunteer B: NOT reapable — live token, different slot.
+        slot_b = _make_slot(
+            db_session, event.id,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol_b = _make_volunteer(db_session)
+        signup_b, _token_b = _make_pending_signup_with_token(
+            db_session, vol_b, slot_b,
+            token_issued_at=now - timedelta(days=1),
+            token_expires_at=now + timedelta(days=2),
+        )
+        db_session.commit()
+
+        signup_a_id = signup_a.id
+        signup_b_id = signup_b.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert db_session.get(Signup, signup_a_id) is None, (
+            "A's expired-token signup should be reaped"
+        )
+        still_b = db_session.get(Signup, signup_b_id)
+        assert still_b is not None and still_b.status == SignupStatus.pending, (
+            "B's live-token signup must survive independently of A"
+        )
+
 
 class TestNotificationsXorConstraint:
     def test_xor_constraint_rejects_both_user_id_and_volunteer_id(self, db_session):
@@ -339,3 +698,233 @@ class TestNotificationsXorConstraint:
         db_session.add(notif)
         db_session.flush()  # Should not raise
         assert notif.id is not None
+
+
+class TestStaleTokenCleanup:
+    """Task 8 (2026-07-28 spec decision 5): stale SIGNUP_CONFIRM token GC.
+
+    A token lives while its volunteer has ANY signup whose slot ends in the
+    future or within the 30-day grace window. Once every one of a
+    volunteer's slots ended more than 30 days ago, their SIGNUP_CONFIRM
+    tokens are garbage-collected by ``_cleanup_stale_confirm_tokens``.
+
+    All signups here are ``confirmed`` (not ``pending``) so the earlier
+    reap stage of ``expire_pending_signups`` never touches them — only the
+    stale-token sweep at the end of the job is under test.
+    """
+
+    def test_deletes_token_when_no_upcoming_events(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Volunteer's only signup: slot ended 40 days ago (confirmed)."""
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 10, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id,
+            start_time=now - timedelta(days=40, hours=2),
+            end_time=now - timedelta(days=40),
+        )
+        vol = _make_volunteer(db_session)
+
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add(signup)
+        db_session.flush()
+
+        token = MagicLinkToken(
+            token_hash=f"hash-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now - timedelta(days=1),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add(token)
+        db_session.commit()
+
+        volunteer_id = vol.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert token_count_for(db_session, volunteer_id) == 0
+
+    def test_keeps_token_with_upcoming_signup(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """One past slot (40 days ago) AND one future slot → keep all tokens."""
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 11, 3, 0, tzinfo=timezone.utc)
+
+        past_slot = _make_slot(
+            db_session, event.id,
+            start_time=now - timedelta(days=40, hours=2),
+            end_time=now - timedelta(days=40),
+        )
+        future_slot = _make_slot(
+            db_session, event.id,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol = _make_volunteer(db_session)
+
+        past_signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=past_slot.id,
+            status=SignupStatus.confirmed,
+        )
+        future_signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=future_slot.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add_all([past_signup, future_signup])
+        db_session.flush()
+
+        token = MagicLinkToken(
+            token_hash=f"hash-{uuid.uuid4().hex}",
+            signup_id=past_signup.id,
+            email=vol.email,
+            expires_at=now - timedelta(days=1),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add(token)
+        db_session.commit()
+
+        volunteer_id = vol.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert token_count_for(db_session, volunteer_id) > 0
+
+    def test_keeps_token_within_grace_window(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Last slot ended 10 days ago (< 30-day grace) → keep."""
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 12, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id,
+            start_time=now - timedelta(days=10, hours=2),
+            end_time=now - timedelta(days=10),
+        )
+        vol = _make_volunteer(db_session)
+
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add(signup)
+        db_session.flush()
+
+        token = MagicLinkToken(
+            token_hash=f"hash-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now + timedelta(days=4),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add(token)
+        db_session.commit()
+
+        volunteer_id = vol.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert token_count_for(db_session, volunteer_id) > 0
+
+    def test_stale_sweep_keeps_live_token_deletes_expired_one(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Fix round 1 regression: token-level granularity, not volunteer-level.
+
+        A volunteer whose only slot ended 40 days ago (so the volunteer
+        itself reads as "stale" by the 30-day rule) has a *pending* signup
+        holding two SIGNUP_CONFIRM tokens: one already expired, and one
+        still live — e.g. a just-minted 3-day token from a promotion path
+        that (like every promotion path today) doesn't guard against
+        promoting on a slot whose event already ended. Before the fix,
+        _cleanup_stale_confirm_tokens deleted every SIGNUP_CONFIRM token for
+        a stale volunteer regardless of the token's own expiry, which would
+        wipe out the live token too — leaving the pending signup
+        unconfirmable and unmanageable with zero tokens. The expiry guard
+        must reap only the token whose own window has passed.
+        """
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 13, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id,
+            start_time=now - timedelta(days=40, hours=2),
+            end_time=now - timedelta(days=40),
+        )
+        vol = _make_volunteer(db_session)
+
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=SignupStatus.pending,
+        )
+        db_session.add(signup)
+        db_session.flush()
+
+        expired_token = MagicLinkToken(
+            token_hash=f"hash-expired-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now - timedelta(days=1),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        live_token = MagicLinkToken(
+            token_hash=f"hash-live-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now + timedelta(days=3),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add_all([expired_token, live_token])
+        db_session.commit()
+
+        signup_id = signup.id
+        volunteer_id = vol.id
+        live_token_hash = live_token.token_hash
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        # The signup itself must survive (it's still confirmable via the
+        # live token) — the reap's ~live_token_exists filter should already
+        # guarantee this, but pin it here too since it's the whole point.
+        still_pending = db_session.get(Signup, signup_id)
+        assert still_pending is not None
+        assert still_pending.status == SignupStatus.pending
+
+        remaining_hashes = {
+            t.token_hash
+            for t in db_session.query(MagicLinkToken)
+            .filter(MagicLinkToken.volunteer_id == volunteer_id)
+            .all()
+        }
+        assert remaining_hashes == {live_token_hash}

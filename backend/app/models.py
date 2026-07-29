@@ -244,6 +244,11 @@ class Event(Base):
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    # fix/ux-quarter-batch: stamped when the last expected signup lands on a
+    # terminal status (attended/no_show), cleared by the reopen undo. The
+    # events list uses it to badge completed events and file them under Past.
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
     # Phase 08: new structured columns (R08-02)
     # feat/24-quarters: quarter/year/week_number are now a derived cache,
     # recomputed from the linked AcademicQuarter row (quarter_id below).

@@ -21,6 +21,7 @@ import { Button, Card, EmptyState, Input, Label, Modal, Skeleton } from "../../c
 import SideDrawer from "../../components/admin/SideDrawer";
 import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import { toast } from "../../state/toast";
+import { useSelectedQuarter } from "../../state/QuarterSelectionContext";
 
 const SEASONS = ["winter", "spring", "summer", "fall"];
 const UCSB_CALENDAR_URL = "https://registrar.ucsb.edu/calendars/academic-calendars";
@@ -82,6 +83,9 @@ export default function QuartersManager({ embedded = false }) {
   const qc = useQueryClient();
   const [searchParams] = useSearchParams();
   const setupMode = searchParams.get("setup") === "1";
+  // fix/ux-quarter-batch: picking a quarter here re-scopes Overview + Events.
+  const { selectedQuarter, viewingAll, setSelectedQuarterId } =
+    useSelectedQuarter();
 
   const listQ = useQuery({
     queryKey: ["adminQuarters"],
@@ -278,6 +282,19 @@ export default function QuartersManager({ embedded = false }) {
                 <tr key={row.id} className="border-t border-[var(--color-border)]">
                   <td className="py-3 pr-4 font-medium">
                     {row.display_name}
+                    {row.start_date <= todayIso && row.end_date >= todayIso && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">
+                        Current
+                      </span>
+                    )}
+                    {!viewingAll && selectedQuarter?.id === row.id && (
+                      <span
+                        data-testid={`viewing-${row.id}`}
+                        className="ml-2 inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800"
+                      >
+                        Viewing
+                      </span>
+                    )}
                     {row.archived_at && (
                       <span className="ml-2 inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
                         Archived
@@ -288,6 +305,16 @@ export default function QuartersManager({ embedded = false }) {
                   <td className="py-3 pr-4">{formatDate(row.end_date)}</td>
                   <td className="py-3 pr-4">{row.weeks_in_quarter}</td>
                   <td className="py-3 text-right space-x-2">
+                    {/* Re-scope Overview + Events to this quarter. */}
+                    {!viewingAll && selectedQuarter?.id === row.id ? null : (
+                      <Button
+                        variant="secondary"
+                        onClick={() => setSelectedQuarterId(row.id)}
+                        data-testid={`select-${row.id}`}
+                      >
+                        View this quarter
+                      </Button>
+                    )}
                     {/* Issue #38 — ended quarters get a retrospective view */}
                     {(row.archived_at || row.end_date < todayIso) && (
                       <Button

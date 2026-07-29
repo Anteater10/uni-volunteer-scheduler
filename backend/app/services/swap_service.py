@@ -15,6 +15,15 @@ Contract
   increments target ``current_count``.
 - Calls ``promote_waitlist_fifo(db, source_slot_id)`` on the freed source
   to auto-promote the oldest waitlisted entry (Phase 25 integration).
+  2026-07-28 spec: the promoted signup goes to ``pending`` (not
+  ``confirmed``) with a fresh confirm token, returned as
+  ``SwapResult.promotion``. The **caller** — not this service — must
+  enqueue ``send_waitlist_promotion_email(**promotion.email_kwargs)``
+  AFTER ``db.commit()``.
+- The in-place flip — a waitlisted signup swapping directly into an open
+  target slot — still goes straight to ``confirmed``, unchanged (tokened
+  volunteer action = verified intent; kept identical for staff to match
+  the spec table).
 - Writes an ``AuditLog`` row with
   ``action='signup_swap', extra={'from_slot_id', 'to_slot_id',
   'signup_id', 'actor'}``.
@@ -22,19 +31,34 @@ Contract
   is keyed by ``(volunteer_email, family_key)`` — slot changes do not
   touch the credit lookup.
 
+Returns
+-------
+``SwapResult(signup, promotion)`` — ``promotion`` is ``None`` when the
+source waitlist was empty or no seat was freed.
+
 The caller owns commit/rollback. This service calls ``db.flush()`` so
 the promotion helper sees up-to-date rows, but never commits.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import NamedTuple, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..signup_service import promote_waitlist_fifo
+from ..signup_service import PromotionResult, promote_waitlist_fifo
+
+
+class SwapResult(NamedTuple):
+    """swap_signup outcome: the moved signup + the source-slot promotion
+    (None when the source waitlist was empty or no seat was freed).
+    The caller must enqueue send_waitlist_promotion_email(**promotion.email_kwargs)
+    AFTER commit."""
+
+    signup: "models.Signup"
+    promotion: Optional[PromotionResult]
 
 
 def _lock_slots_in_order(db: Session, slot_a_id, slot_b_id) -> tuple[models.Slot, models.Slot]:
@@ -62,7 +86,7 @@ def swap_signup(
     actor: Optional[models.User] = None,
     actor_label: Optional[str] = None,
     bypass_capacity: bool = False,
-) -> models.Signup:
+) -> SwapResult:
     """Atomically move ``signup_id`` to ``target_slot_id``.
 
     Args:
@@ -78,7 +102,12 @@ def swap_signup(
             because Phase 29 scope explicitly forbids waitlist fallback.
 
     Returns:
-        The updated (and refreshed) Signup row.
+        SwapResult(signup, promotion) — ``signup`` is the updated (and
+        flushed) Signup row; ``promotion`` is the PromotionResult from
+        the freed source seat's FIFO promotion, or None if nothing was
+        promoted. The caller must enqueue
+        send_waitlist_promotion_email(**promotion.email_kwargs) AFTER
+        db.commit() when promotion is not None.
 
     Raises:
         HTTPException(404) if signup or target slot not found.
@@ -143,10 +172,13 @@ def swap_signup(
 
     # Auto-promote source waitlist if we freed capacity. The promoted
     # signup takes over the freed seat, so the source count goes back up —
-    # promote_waitlist_fifo leaves the increment to the caller.
+    # promote_waitlist_fifo leaves the increment to the caller. Promotion
+    # lands in 'pending' with a fresh confirm token; the caller must
+    # enqueue the confirm email post-commit (see SwapResult docstring).
+    promotion: Optional[PromotionResult] = None
     if holds_capacity:
-        promoted = promote_waitlist_fifo(db, source_slot.id)
-        if promoted is not None:
+        promotion = promote_waitlist_fifo(db, source_slot.id)
+        if promotion is not None:
             source_slot.current_count += 1
 
     # Audit row — reuse the AuditLog model directly so we can include
@@ -167,4 +199,4 @@ def swap_signup(
     db.add(audit)
     db.flush()
 
-    return signup
+    return SwapResult(signup=signup, promotion=promotion)

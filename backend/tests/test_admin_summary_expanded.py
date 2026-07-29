@@ -155,3 +155,56 @@ def test_admin_summary_requires_admin(client, db_session):
 
     resp = client.get("/api/v1/admin/summary", headers=headers)
     assert resp.status_code == 403
+
+
+def test_admin_summary_scopes_to_requested_quarter(client, db_session, admin_headers):
+    """fix/ux-quarter-batch: ?quarter_id re-scopes every *_quarter aggregate
+    so the Overview can follow the quarter selected in Manage Quarters."""
+    today = datetime.now(timezone.utc).date()
+    owner = make_user(db_session, email="sum-owner@example.com")
+
+    cur_start = today - timedelta(days=10)
+    q_cur = _make_quarter(
+        db_session, start=cur_start, end=cur_start + timedelta(days=70)
+    )
+    past_start = today - timedelta(days=300)
+    q_past = _make_quarter(
+        db_session,
+        start=past_start,
+        end=past_start + timedelta(days=70),
+        season=models.Quarter.FALL,
+        year=past_start.year,
+    )
+
+    def _noon(d):
+        return datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc)
+
+    _make_event_on(db_session, owner, _noon(cur_start + timedelta(days=3)))
+    _make_event_on(db_session, owner, _noon(past_start + timedelta(days=3)))
+    _make_event_on(db_session, owner, _noon(past_start + timedelta(days=10)))
+    db_session.commit()
+
+    # Default stays the active quarter.
+    body = client.get("/api/v1/admin/summary", headers=admin_headers).json()
+    assert body["events_quarter"] == 1
+    assert body["quarter_id"] == str(q_cur.id)
+
+    # Explicit selection re-scopes the aggregates to that quarter.
+    body = client.get(
+        "/api/v1/admin/summary",
+        params={"quarter_id": str(q_past.id)},
+        headers=admin_headers,
+    ).json()
+    assert body["events_quarter"] == 2
+    assert body["quarter_id"] == str(q_past.id)
+    # A finished quarter reads as fully elapsed, not None.
+    assert body["quarter_progress"] is not None
+    assert body["quarter_progress"]["pct"] == 1.0
+
+    # Unknown quarter ids are a 404, not a silent fallback.
+    resp = client.get(
+        "/api/v1/admin/summary",
+        params={"quarter_id": str(uuid.uuid4())},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 404

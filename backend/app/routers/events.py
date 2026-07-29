@@ -1,8 +1,9 @@
 # backend/app/routers/events.py
 from datetime import timedelta, datetime, timezone
-from typing import List
+from typing import List, Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -91,6 +92,26 @@ def create_event(
     signup_open_at = _normalize_dt(event_in.signup_open_at) if event_in.signup_open_at else None
     signup_close_at = _normalize_dt(event_in.signup_close_at) if event_in.signup_close_at else None
 
+    # Duplicate flow: the form sends the full (edited) payload; the source
+    # only contributes what the form can't carry.
+    source: models.Event | None = None
+    if event_in.source_event_id is not None:
+        source = (
+            db.query(models.Event)
+            .filter(models.Event.id == event_in.source_event_id)
+            .first()
+        )
+        if source is None:
+            raise HTTPException(status_code=404, detail="Source event not found")
+        ensure_event_staff_access(source, current_user)
+        shift = start_date - _normalize_dt(source.start_date)
+        # Explicit windows in the payload win; otherwise the source's window
+        # rides along, shifted by the same delta as the event start.
+        if signup_open_at is None and source.signup_open_at is not None:
+            signup_open_at = source.signup_open_at + shift
+        if signup_close_at is None and source.signup_close_at is not None:
+            signup_close_at = source.signup_close_at + shift
+
     # Issue #24 decision 6: every event belongs to an admin-entered quarter.
     # quarter/year/week_number are a derived cache — always computed from the
     # entered range; explicit values in the payload are overridden.
@@ -125,6 +146,12 @@ def create_event(
         school=event_in.school,
         module_slug=event_in.module_slug,
     )
+    if source is not None:
+        # NULL form_schema means "inherit the module default" — copy it as-is.
+        event.form_schema = (
+            list(source.form_schema) if source.form_schema is not None else None
+        )
+        event.reminder_1h_enabled = source.reminder_1h_enabled
     db.add(event)
     db.flush()
 
@@ -145,12 +172,28 @@ def create_event(
     db.commit()
     db.refresh(event)
 
-    log_action(db, current_user, "event_create", "Event", str(event.id))
+    if source is not None:
+        log_action(
+            db,
+            current_user,
+            "event_duplicate",
+            "Event",
+            str(event.id),
+            extra={
+                "source_event_id": str(source.id),
+                "target_event_ids": [str(event.id)],
+            },
+        )
+    else:
+        log_action(db, current_user, "event_create", "Event", str(event.id))
     return event
 
 
 @router.get("/", response_model=List[schemas.EventRead])
 def list_events(
+    quarter_id: Optional[UUID] = Query(
+        None, description="Only events linked to this academic quarter"
+    ),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(
         require_role(models.UserRole.organizer, models.UserRole.admin)
@@ -158,7 +201,10 @@ def list_events(
 ):
     # Staff-only: EventRead exposes owner_id and non-public events. The
     # anonymous surface is /public/events (PublicEventRead).
-    return db.query(models.Event).all()
+    query = db.query(models.Event)
+    if quarter_id is not None:
+        query = query.filter(models.Event.quarter_id == quarter_id)
+    return query.all()
 
 
 @router.get("/{event_id}", response_model=schemas.EventRead)

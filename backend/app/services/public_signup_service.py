@@ -280,6 +280,7 @@ def create_public_signup(
         result_items.append(
             PublicSignupResultItem(
                 signup_id=s.id,
+                slot_id=s.slot_id,
                 status=s.status,
                 position=position,
             )

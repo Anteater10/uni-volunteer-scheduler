@@ -17,7 +17,7 @@ import pytest
 from fastapi import HTTPException
 
 from app import models
-from app.services.swap_service import swap_signup
+from app.services.swap_service import SwapResult, swap_signup
 from tests.fixtures.factories import (
     EventFactory,
     SignupFactory,
@@ -64,7 +64,7 @@ def test_swap_happy_path_moves_signup(db_session):
     result = swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="participant")
     db_session.flush()
 
-    assert str(result.slot_id) == str(slot_b.id)
+    assert str(result.signup.slot_id) == str(slot_b.id)
     assert slot_a.current_count == 0
     assert slot_b.current_count == 1
 
@@ -147,8 +147,10 @@ def test_swap_auto_promotes_source_waitlist(db_session):
     db_session.flush()
     db_session.refresh(waitlisted)
 
-    # Waitlisted gets promoted to confirmed (matches promote_waitlist_fifo contract).
-    assert waitlisted.status == models.SignupStatus.confirmed
+    # Waitlisted gets promoted to pending (2026-07-28 spec: promote_waitlist_fifo
+    # now holds the seat pending the volunteer's confirm click; email plumbing
+    # for the swap path lands in Task 4).
+    assert waitlisted.status == models.SignupStatus.pending
 
 
 def test_swap_auto_promote_restores_source_count(db_session):
@@ -178,7 +180,7 @@ def test_swap_auto_promote_restores_source_count(db_session):
     db_session.refresh(waitlisted)
     db_session.refresh(slot_a)
 
-    assert waitlisted.status == models.SignupStatus.confirmed
+    assert waitlisted.status == models.SignupStatus.pending
     assert slot_a.current_count == 1
 
 
@@ -267,3 +269,56 @@ def test_swap_preserves_orientation_credit_via_email(db_session):
     assert post.volunteer_email == "preserved@example.com"
     assert post.family_key == "module-x"
     assert post.revoked_at is None
+
+
+def test_swap_returns_promotion_result_for_freed_seat(db_session):
+    # Reuse the exact setup of the existing "swap auto-promotes source
+    # waitlist" test (test_swap_service.py:126).
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    vol_conf = VolunteerFactory()
+    vol_wait = VolunteerFactory()
+    confirmed = SignupFactory(
+        volunteer=vol_conf, volunteer_id=vol_conf.id,
+        slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.confirmed,
+    )
+    slot_a.current_count = 1
+    waitlisted = SignupFactory(
+        volunteer=vol_wait, volunteer_id=vol_wait.id,
+        slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    db_session.flush()
+
+    result = swap_signup(db_session, signup_id=confirmed.id, target_slot_id=slot_b.id)
+    db_session.flush()
+
+    assert isinstance(result, SwapResult)
+    assert result.signup.slot_id == slot_b.id
+    assert result.promotion is not None
+    assert result.promotion.signup.id == waitlisted.id
+    assert result.promotion.signup.status == models.SignupStatus.pending
+    assert result.promotion.email_kwargs["signup_id"] == str(
+        result.promotion.signup.id
+    )
+
+
+def test_swap_without_waitlist_has_no_promotion(db_session):
+    # Reuse the "no-waitlist case" setup (test_swap_service.py:185).
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, volunteer_id=vol.id,
+        slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.confirmed,
+    )
+    slot_a.current_count = 1
+    db_session.flush()
+
+    result = swap_signup(db_session, signup_id=signup.id, target_slot_id=slot_b.id)
+    db_session.flush()
+
+    assert result.promotion is None

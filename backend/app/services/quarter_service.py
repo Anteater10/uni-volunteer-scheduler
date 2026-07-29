@@ -178,8 +178,14 @@ def active_or_recent_quarter(db: Session, today: date) -> models.AcademicQuarter
     return _last_quarter_before(db, today, include_archived=False)
 
 
-def quarter_progress(db: Session, now: datetime) -> dict | None:
+def quarter_progress(
+    db: Session, now: datetime, quarter: AcademicQuarter | None = None
+) -> dict | None:
     """{"week", "of", "day", "days", "pct"} in the active quarter; None in gaps.
+
+    Pass ``quarter`` to compute progress for an explicitly selected quarter
+    instead of the one covering today — a finished quarter clamps to 100%,
+    an upcoming one to day 1.
 
     pct is day-granular, not week-granular: on the first day of the quarter
     you are ~0% through, on the last day 100%. Counting the in-progress week
@@ -192,7 +198,7 @@ def quarter_progress(db: Session, now: datetime) -> dict | None:
     beside the week count instead of leaving the mismatch unexplained.
     """
     today = _as_utc_date(now)
-    q = get_quarter_for_date(db, today)
+    q = quarter if quarter is not None else get_quarter_for_date(db, today)
     if q is None:
         return None
     days = (q.end_date - q.start_date).days + 1  # end_date is inclusive

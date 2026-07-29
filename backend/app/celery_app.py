@@ -13,7 +13,7 @@ from email.message import EmailMessage
 
 from celery import Celery
 from celery.schedules import crontab
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sendgrid import SendGridAPIClient
@@ -24,6 +24,7 @@ from .database import SessionLocal
 from . import models
 from .emails import BUILDERS
 from .observability import init_sentry
+from .signup_service import promote_waitlist_fifo
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,13 @@ def _check_daily_send_limit(db: Session) -> bool:
     return True
 
 
-def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+def _send_via_smtp(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    attachments: list[tuple[str, str]] | None = None,
+) -> None:
     """Send an email via SMTP (stdlib smtplib).
 
     Used in two places:
@@ -108,6 +115,14 @@ def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None
     msg.set_content(body or "")
     if html_body:
         msg.add_alternative(html_body, subtype="html")
+    # (filename, text content) pairs — currently only .ics calendar files.
+    for filename, content in attachments or []:
+        msg.add_attachment(
+            content.encode("utf-8"),
+            maintype="text",
+            subtype="calendar",
+            filename=filename,
+        )
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as smtp:
         if settings.smtp_use_tls:
@@ -117,7 +132,13 @@ def _send_via_smtp(to_email: str, subject: str, body: str, html_body: str | None
         smtp.send_message(msg)
 
 
-def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+def _send_via_sendgrid(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    attachments: list[tuple[str, str]] | None = None,
+) -> None:
     """Send an email via SendGrid HTTPS API. Prod fallback; dev uses SMTP."""
     if not settings.sendgrid_api_key or not settings.email_from_address:
         logger.warning(
@@ -136,6 +157,26 @@ def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | 
     if html_body:
         mail_kwargs["html_content"] = html_body
     message = Mail(**mail_kwargs)
+    if attachments:
+        import base64
+
+        from sendgrid.helpers.mail import (
+            Attachment,
+            Disposition,
+            FileContent,
+            FileName,
+            FileType,
+        )
+
+        message.attachment = [
+            Attachment(
+                FileContent(base64.b64encode(content.encode("utf-8")).decode()),
+                FileName(filename),
+                FileType("text/calendar"),
+                Disposition("attachment"),
+            )
+            for filename, content in attachments
+        ]
     sg = SendGridAPIClient(settings.sendgrid_api_key)
     sg.send(message)
 
@@ -143,7 +184,13 @@ def _send_via_sendgrid(to_email: str, subject: str, body: str, html_body: str | 
 # Backward-compat alias — external callers (admin broadcast router) still
 # import `_send_email_via_sendgrid`. Resolved here at import time so renaming
 # the function didn't require cross-pillar edits.
-def _send_email(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
+def _send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    html_body: str | None = None,
+    attachments: list[tuple[str, str]] | None = None,
+) -> None:
     """Single entry point for transactional email. Dispatches on settings.email_mode.
 
     Errors are logged (not swallowed). The caller is a Celery task with
@@ -152,9 +199,13 @@ def _send_email(to_email: str, subject: str, body: str, html_body: str | None = 
     """
     try:
         if settings.email_mode == "sendgrid":
-            _send_via_sendgrid(to_email, subject, body, html_body=html_body)
+            _send_via_sendgrid(
+                to_email, subject, body, html_body=html_body, attachments=attachments
+            )
         else:  # "smtp" (default)
-            _send_via_smtp(to_email, subject, body, html_body=html_body)
+            _send_via_smtp(
+                to_email, subject, body, html_body=html_body, attachments=attachments
+            )
     except Exception:
         # Surface the failure in logs — previous silent-swallow behaviour
         # masked misconfigured sender identities for weeks.
@@ -472,7 +523,31 @@ def send_signup_confirmation_email(
             )
             return
         subject, html = build_signup_confirmation_email(volunteer, signups, token, event)
-        _send_email(to_email=volunteer.email, subject=subject, body="", html_body=html)
+        # fix/ux-quarter-batch: attach every booked session as one .ics so
+        # Gmail / Apple / Outlook add the whole schedule in a single action —
+        # there is no Google-web URL that carries more than one event.
+        # Waitlisted signups stay out: they're not on the schedule yet.
+        from .calendar_ics import build_signup_ics
+
+        booked_slots = [
+            s.slot
+            for s in signups
+            if s.status
+            not in (models.SignupStatus.waitlisted, models.SignupStatus.cancelled)
+            and s.slot is not None
+        ]
+        attachments = (
+            [("scitrek-sessions.ics", build_signup_ics(event, booked_slots))]
+            if booked_slots
+            else None
+        )
+        _send_email(
+            to_email=volunteer.email,
+            subject=subject,
+            body="",
+            html_body=html,
+            attachments=attachments,
+        )
         logger.info(
             "signup_confirmation_email_sent volunteer_id=%s event_id=%s signup_count=%d",
             volunteer_id, event_id, len(signups),
@@ -487,49 +562,215 @@ def send_signup_confirmation_email(
         db.close()
 
 
+@celery.task(name="app.send_waitlist_promotion_email")
+def send_waitlist_promotion_email(
+    volunteer_id: str,
+    signup_id: str,
+    token: str,
+    event_id: str,
+) -> None:
+    """Send the confirm-your-spot email after a waitlist promotion.
+
+    Mirrors send_signup_confirmation_email: one-shot (no sent_notifications
+    dedup row, D-11), warn-and-skip on missing entities, debug-only token
+    echo. Enqueue strictly AFTER db.commit() — the worker reads rows from
+    its own session.
+    """
+    from uuid import UUID
+
+    from .emails import build_waitlist_promotion_email
+
+    db: Session = SessionLocal()
+    try:
+        volunteer = db.get(models.Volunteer, UUID(volunteer_id))
+        signup = db.get(models.Signup, UUID(signup_id))
+        event = db.get(models.Event, UUID(event_id))
+        if not volunteer or not signup or not event:
+            logger.warning(
+                "send_waitlist_promotion_email: missing entity, skipping "
+                "volunteer_id=%s signup_id=%s event_id=%s",
+                volunteer_id,
+                signup_id,
+                event_id,
+            )
+            return
+        subject, html = build_waitlist_promotion_email(
+            volunteer, signup, token, event
+        )
+        _send_email(to_email=volunteer.email, subject=subject, body="", html_body=html)
+        logger.info(
+            "waitlist_promotion_email_sent volunteer_id=%s signup_id=%s event_id=%s",
+            volunteer_id,
+            signup_id,
+            event_id,
+        )
+        if getattr(settings, "debug", False):
+            logger.debug("waitlist_promotion_token_preview token=%s", token)
+    finally:
+        db.close()
+
+
+def _cleanup_stale_confirm_tokens(db: Session, now: datetime) -> int:
+    """Delete expired SIGNUP_CONFIRM tokens for volunteers with nothing left
+    to manage.
+
+    2026-07-28 spec decision 5: manage links deliberately outlive expires_at,
+    so token rows are garbage-collected by lifecycle instead — a token lives
+    while its volunteer has ANY signup whose slot ends in the future or
+    within the 30-day grace window. Volunteers absent from signups entirely
+    are covered by the signup-cascade (tokens die with their anchor signup).
+
+    Liveness guard (fix round 1): the delete additionally requires the
+    token's OWN expires_at to already be in the past. No promotion path
+    (hourly chain, cancel/move/swap, manual staff promote) guards against
+    promoting on a slot whose event already ended, so a freshly-minted,
+    still-live 3-day confirm token can be issued to a volunteer whose
+    slot-history otherwise looks "stale" by the 30-day rule above. Without
+    this guard that live token would be deleted moments after being
+    created, leaving a pending signup with zero tokens — unconfirmable,
+    unmanageable, and skipped forever by the reap's tokenless-pending path.
+    Gating on expiry means a live token is never touched, no matter how
+    stale its volunteer's history looks.
+    """
+    cutoff = now - timedelta(days=30)
+    stale_volunteers = (
+        db.query(models.Signup.volunteer_id)
+        .join(models.Slot, models.Signup.slot_id == models.Slot.id)
+        .group_by(models.Signup.volunteer_id)
+        .having(func.max(models.Slot.end_time) < cutoff)
+    ).subquery()
+    deleted = (
+        db.query(models.MagicLinkToken)
+        .filter(
+            models.MagicLinkToken.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+            models.MagicLinkToken.expires_at < now,
+            models.MagicLinkToken.volunteer_id.in_(
+                select(stale_volunteers.c.volunteer_id)
+            ),
+        )
+        .delete(synchronize_session=False)
+    )
+    return deleted
+
+
 @celery.task(name="app.celery_app.expire_pending_signups")
 def expire_pending_signups() -> None:
-    """Daily cleanup: hard-delete pending signups whose SIGNUP_CONFIRM token has expired.
+    """Hourly sweep (2026-07-28 spec): reap unconfirmed pendings, chain-promote,
+    then clean up stale manage tokens.
 
-    Criteria:
-      - Signup.status == pending
-      - Has a MagicLinkToken with purpose == SIGNUP_CONFIRM
-      - That token's expires_at < now (UTC)
+    Reap criteria — a pending signup is deleted only when it has at least one
+    SIGNUP_CONFIRM token and NONE of them is still unexpired. A signup can
+    legitimately hold several tokens (original 14-day + promotion 3-day);
+    keying on "an expired token exists" would delete freshly promoted rows.
 
     Side effects:
-      - slot.current_count decremented for each deleted signup
-      - MagicLinkToken cascade-deleted with the signup (ondelete=CASCADE)
-
-    Logs: expired_pending_signups_cleaned count=N
+      - slot.current_count decremented per deleted signup
+      - freed seats chain-promote the slot's waitlist FIFO (pending + email,
+        their own 3-day clock — an unbroken chain across successive runs)
+      - MagicLinkToken rows cascade-delete with their signup
+      - stale confirm tokens removed (see _cleanup_stale_confirm_tokens)
     """
     db: Session = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
 
-        # Find pending signups that have an expired SIGNUP_CONFIRM token
+        live_token_exists = (
+            db.query(models.MagicLinkToken.token_hash)
+            .filter(
+                models.MagicLinkToken.signup_id == models.Signup.id,
+                models.MagicLinkToken.purpose
+                == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+                models.MagicLinkToken.expires_at >= now,
+            )
+            .exists()
+        )
+        any_token_exists = (
+            db.query(models.MagicLinkToken.token_hash)
+            .filter(
+                models.MagicLinkToken.signup_id == models.Signup.id,
+                models.MagicLinkToken.purpose
+                == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+            )
+            .exists()
+        )
+
         rows = (
             db.query(models.Signup, models.Slot)
             .join(models.Slot, models.Signup.slot_id == models.Slot.id)
-            .join(
-                models.MagicLinkToken,
-                models.MagicLinkToken.signup_id == models.Signup.id,
-            )
             .filter(
                 models.Signup.status == models.SignupStatus.pending,
-                models.MagicLinkToken.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM,
-                models.MagicLinkToken.expires_at < now,
+                any_token_exists,
+                ~live_token_exists,
             )
             .all()
         )
 
+        tokenless = (
+            db.query(func.count(models.Signup.id))
+            .filter(
+                models.Signup.status == models.SignupStatus.pending,
+                ~any_token_exists,
+            )
+            .scalar()
+            or 0
+        )
+        if tokenless:
+            logger.warning(
+                "expire_pending_signups: %d tokenless pending signups skipped "
+                "(data problem — pending must always carry a confirm token)",
+                tokenless,
+            )
+
+        affected_slot_ids: list = []
         count = 0
         for signup, slot in rows:
             slot.current_count = max(0, slot.current_count - 1)
+            if slot.id not in affected_slot_ids:
+                affected_slot_ids.append(slot.id)
             db.delete(signup)
             count += 1
+        db.flush()
+
+        promotion_email_kwargs: list[dict] = []
+        for slot_id in affected_slot_ids:
+            slot = (
+                db.query(models.Slot)
+                .filter(models.Slot.id == slot_id)
+                .with_for_update()
+                .first()
+            )
+            if slot is None:
+                continue
+            if slot.end_time <= now:
+                # The event already ended — the seat was still reaped and
+                # decremented above, but don't chain-promote into a
+                # finished event. Otherwise a promotee gets a 3-day
+                # "confirm your spot" email for an event that already
+                # happened; the token lapses unconfirmed, and the next
+                # hourly run reaps it and repeats the cycle for the next
+                # waitlister.
+                continue
+            while slot.current_count < slot.capacity:
+                promo = promote_waitlist_fifo(db, slot.id)
+                if promo is None:
+                    break
+                slot.current_count += 1
+                promotion_email_kwargs.append(promo.email_kwargs)
 
         db.commit()
-        logger.info("expired_pending_signups_cleaned count=%d", count)
+        logger.info(
+            "expired_pending_signups_cleaned count=%d promoted=%d",
+            count,
+            len(promotion_email_kwargs),
+        )
+        for kwargs in promotion_email_kwargs:
+            send_waitlist_promotion_email.delay(**kwargs)
+
+        # Second transaction: stale-token sweep.
+        stale = _cleanup_stale_confirm_tokens(db, now)
+        db.commit()
+        if stale:
+            logger.info("stale_confirm_tokens_cleaned count=%d", stale)
     finally:
         db.close()
 
@@ -582,9 +823,9 @@ celery.conf.beat_schedule = {
         "task": "app.celery_app.weekly_digest",
         "schedule": crontab(hour=8, minute=0, day_of_week="monday"),
     },
-    "expire-pending-signups-daily-3am": {
+    "expire-pending-signups-hourly": {
         "task": "app.celery_app.expire_pending_signups",
-        "schedule": crontab(hour=3, minute=0),
+        "schedule": crontab(minute=0),
     },
     # PR #51 — quarters move to the archive on their own once they end.
     "archive-ended-quarters-daily": {
