@@ -290,6 +290,11 @@ def cancel_signup(
     promotion_email_kwargs = [p.email_kwargs for p in promotions]
     db.commit()
 
+    # Tamper-evidence for long-lived manage links (2026-07-28 spec decision 6):
+    # the volunteer learns immediately if someone else cancels them. Deduped
+    # by (signup_id, "cancellation") — a signup cancels at most once.
+    send_email_notification.delay(signup_id=str(signup_id), kind="cancellation")
+
     # Emails only after commit — the worker reads rows from its own session.
     for kwargs in promotion_email_kwargs:
         send_waitlist_promotion_email.delay(**kwargs)

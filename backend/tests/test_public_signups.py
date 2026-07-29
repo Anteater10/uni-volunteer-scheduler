@@ -318,6 +318,39 @@ class TestManageSignups:
 
 
 class TestCancelSignup:
+    def test_public_cancel_sends_cancellation_email(self, client, db_session, monkeypatch):
+        """Task 9: Public self-cancel must send cancellation email for tamper-evidence."""
+        kinds = []
+        monkeypatch.setattr(
+            "app.celery_app.send_email_notification.delay",
+            lambda *a, **k: kinds.append(k.get("kind")),
+        )
+        monkeypatch.setattr(
+            "app.celery_app.send_waitlist_promotion_email.delay", lambda **k: None
+        )
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay", lambda *a, **k: None
+        )
+        # Setup: create event, slot, and public signup
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        with _TokenCapture(monkeypatch) as cap:
+            resp = client.post(
+                "/api/v1/public/signups",
+                json=_signup_payload(slot.id, email="cancel_email09@example.com"),
+            )
+        assert resp.status_code == 201
+        signup_id = resp.json()["signup_ids"][0]
+        raw_token = cap.last_token
+        if raw_token is None:
+            pytest.skip("Token capture failed")
+
+        resp = client.delete(f"/api/v1/public/signups/{signup_id}?token={raw_token}")
+        assert resp.status_code == 200
+        assert "cancellation" in kinds
+
     def test_cancel_with_wrong_volunteer_token_returns_403(self, client, db_session, monkeypatch):
         """T-09-04: token belonging to different volunteer must return 403."""
         monkeypatch.setattr(
