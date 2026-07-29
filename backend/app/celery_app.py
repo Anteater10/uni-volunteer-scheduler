@@ -13,7 +13,7 @@ from email.message import EmailMessage
 
 from celery import Celery
 from celery.schedules import crontab
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sendgrid import SendGridAPIClient
@@ -536,6 +536,35 @@ def send_waitlist_promotion_email(
         db.close()
 
 
+def _cleanup_stale_confirm_tokens(db: Session, now: datetime) -> int:
+    """Delete SIGNUP_CONFIRM tokens for volunteers with nothing left to manage.
+
+    2026-07-28 spec decision 5: manage links deliberately outlive expires_at,
+    so token rows are garbage-collected by lifecycle instead — a token lives
+    while its volunteer has ANY signup whose slot ends in the future or
+    within the 30-day grace window. Volunteers absent from signups entirely
+    are covered by the signup-cascade (tokens die with their anchor signup).
+    """
+    cutoff = now - timedelta(days=30)
+    stale_volunteers = (
+        db.query(models.Signup.volunteer_id)
+        .join(models.Slot, models.Signup.slot_id == models.Slot.id)
+        .group_by(models.Signup.volunteer_id)
+        .having(func.max(models.Slot.end_time) < cutoff)
+    ).subquery()
+    deleted = (
+        db.query(models.MagicLinkToken)
+        .filter(
+            models.MagicLinkToken.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+            models.MagicLinkToken.volunteer_id.in_(
+                select(stale_volunteers.c.volunteer_id)
+            ),
+        )
+        .delete(synchronize_session=False)
+    )
+    return deleted
+
+
 @celery.task(name="app.celery_app.expire_pending_signups")
 def expire_pending_signups() -> None:
     """Hourly sweep (2026-07-28 spec): reap unconfirmed pendings, chain-promote,
@@ -549,7 +578,7 @@ def expire_pending_signups() -> None:
     Side effects:
       - slot.current_count decremented per deleted signup
       - freed seats chain-promote the slot's waitlist FIFO (pending + email,
-        their own 3-day clock — an unbroken chain across nightly runs)
+        their own 3-day clock — an unbroken chain across successive runs)
       - MagicLinkToken rows cascade-delete with their signup
       - stale confirm tokens removed (see _cleanup_stale_confirm_tokens)
     """
@@ -632,15 +661,19 @@ def expire_pending_signups() -> None:
                 promotion_email_kwargs.append(promo.email_kwargs)
 
         db.commit()
-        for kwargs in promotion_email_kwargs:
-            send_waitlist_promotion_email.delay(**kwargs)
         logger.info(
             "expired_pending_signups_cleaned count=%d promoted=%d",
             count,
             len(promotion_email_kwargs),
         )
+        for kwargs in promotion_email_kwargs:
+            send_waitlist_promotion_email.delay(**kwargs)
 
-        # Second transaction: stale-token sweep (Task 8 adds the helper).
+        # Second transaction: stale-token sweep.
+        stale = _cleanup_stale_confirm_tokens(db, now)
+        db.commit()
+        if stale:
+            logger.info("stale_confirm_tokens_cleaned count=%d", stale)
     finally:
         db.close()
 

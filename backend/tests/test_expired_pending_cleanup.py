@@ -13,6 +13,11 @@ Task 7 (2026-07-28 spec) additions — reap-criteria fix + chained promotion:
 - test_reap_chains_promotion_with_email
 - test_chained_promotion_token_is_three_days
 - test_tokenless_pending_is_not_deleted
+
+Task 8 (2026-07-28 spec decision 5) additions — stale confirm-token GC:
+- test_deletes_token_when_no_upcoming_events
+- test_keeps_token_with_upcoming_signup
+- test_keeps_token_within_grace_window
 """
 import pytest
 import uuid
@@ -71,12 +76,21 @@ def _make_volunteer(db_session, email=None):
     return v
 
 
-def _make_slot(db_session, event_id, capacity=5, current_count=1):
+def _make_slot(
+    db_session, event_id, capacity=5, current_count=1, *, start_time=None, end_time=None
+):
+    """Default timing (no override) parks the slot 30 days in the future —
+    fine for the reap tests above, which key off token expiry, not slot
+    timing. The stale-token cleanup tests below key off slot.end_time
+    directly, so they always pass explicit start_time/end_time anchored to
+    their own frozen ``now``.
+    """
+    now = datetime.now(timezone.utc)
     slot = Slot(
         id=uuid.uuid4(),
         event_id=event_id,
-        start_time=datetime.now(timezone.utc) + timedelta(days=30),
-        end_time=datetime.now(timezone.utc) + timedelta(days=30, hours=2),
+        start_time=start_time if start_time is not None else now + timedelta(days=30),
+        end_time=end_time if end_time is not None else now + timedelta(days=30, hours=2),
         capacity=capacity,
         current_count=current_count,
         slot_type=SlotType.PERIOD,
@@ -132,6 +146,15 @@ def _make_pending_signup_with_token(
     db_session.flush()
 
     return signup, token
+
+
+def token_count_for(db_session, volunteer_id) -> int:
+    """File-local helper (Task 8): count MagicLinkToken rows for a volunteer."""
+    return (
+        db_session.query(MagicLinkToken)
+        .filter(MagicLinkToken.volunteer_id == volunteer_id)
+        .count()
+    )
 
 
 class TestExpirePendingSignups:
@@ -352,11 +375,18 @@ class TestExpirePendingSignups:
 
         owner = make_user(db_session)
         event = _make_event(db_session, owner.id)
-        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
+        now = datetime(2030, 7, 7, 3, 0, tzinfo=timezone.utc)
+        # Explicit future timing: the fixture default anchors to real
+        # wall-clock time, which — relative to this test's frozen 2030
+        # "now" — reads as decades stale and would trip the Task 8
+        # stale-token sweep on this very volunteer.
+        slot = _make_slot(
+            db_session, event.id, capacity=1, current_count=1,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
         vol1 = _make_volunteer(db_session)
         vol2 = _make_volunteer(db_session)
-
-        now = datetime(2030, 7, 7, 3, 0, tzinfo=timezone.utc)
 
         # capacity-1 slot: pending signup with expired token + waitlisted second.
         expired_signup, _token = _make_pending_signup_with_token(
@@ -404,11 +434,17 @@ class TestExpirePendingSignups:
 
         owner = make_user(db_session)
         event = _make_event(db_session, owner.id)
-        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
+        now = datetime(2030, 7, 8, 3, 0, tzinfo=timezone.utc)
+        # Explicit future timing — see test_reap_chains_promotion_with_email
+        # for why the fixture default isn't safe under Task 8's stale-token
+        # sweep.
+        slot = _make_slot(
+            db_session, event.id, capacity=1, current_count=1,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
         vol1 = _make_volunteer(db_session)
         vol2 = _make_volunteer(db_session)
-
-        now = datetime(2030, 7, 8, 3, 0, tzinfo=timezone.utc)
 
         _make_pending_signup_with_token(
             db_session, vol1, slot,
@@ -522,3 +558,155 @@ class TestNotificationsXorConstraint:
         db_session.add(notif)
         db_session.flush()  # Should not raise
         assert notif.id is not None
+
+
+class TestStaleTokenCleanup:
+    """Task 8 (2026-07-28 spec decision 5): stale SIGNUP_CONFIRM token GC.
+
+    A token lives while its volunteer has ANY signup whose slot ends in the
+    future or within the 30-day grace window. Once every one of a
+    volunteer's slots ended more than 30 days ago, their SIGNUP_CONFIRM
+    tokens are garbage-collected by ``_cleanup_stale_confirm_tokens``.
+
+    All signups here are ``confirmed`` (not ``pending``) so the earlier
+    reap stage of ``expire_pending_signups`` never touches them — only the
+    stale-token sweep at the end of the job is under test.
+    """
+
+    def test_deletes_token_when_no_upcoming_events(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Volunteer's only signup: slot ended 40 days ago (confirmed)."""
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 10, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id,
+            start_time=now - timedelta(days=40, hours=2),
+            end_time=now - timedelta(days=40),
+        )
+        vol = _make_volunteer(db_session)
+
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add(signup)
+        db_session.flush()
+
+        token = MagicLinkToken(
+            token_hash=f"hash-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now - timedelta(days=1),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add(token)
+        db_session.commit()
+
+        volunteer_id = vol.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert token_count_for(db_session, volunteer_id) == 0
+
+    def test_keeps_token_with_upcoming_signup(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """One past slot (40 days ago) AND one future slot → keep all tokens."""
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 11, 3, 0, tzinfo=timezone.utc)
+
+        past_slot = _make_slot(
+            db_session, event.id,
+            start_time=now - timedelta(days=40, hours=2),
+            end_time=now - timedelta(days=40),
+        )
+        future_slot = _make_slot(
+            db_session, event.id,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol = _make_volunteer(db_session)
+
+        past_signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=past_slot.id,
+            status=SignupStatus.confirmed,
+        )
+        future_signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=future_slot.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add_all([past_signup, future_signup])
+        db_session.flush()
+
+        token = MagicLinkToken(
+            token_hash=f"hash-{uuid.uuid4().hex}",
+            signup_id=past_signup.id,
+            email=vol.email,
+            expires_at=now - timedelta(days=1),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add(token)
+        db_session.commit()
+
+        volunteer_id = vol.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert token_count_for(db_session, volunteer_id) > 0
+
+    def test_keeps_token_within_grace_window(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Last slot ended 10 days ago (< 30-day grace) → keep."""
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 12, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id,
+            start_time=now - timedelta(days=10, hours=2),
+            end_time=now - timedelta(days=10),
+        )
+        vol = _make_volunteer(db_session)
+
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            slot_id=slot.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add(signup)
+        db_session.flush()
+
+        token = MagicLinkToken(
+            token_hash=f"hash-{uuid.uuid4().hex}",
+            signup_id=signup.id,
+            email=vol.email,
+            expires_at=now + timedelta(days=4),
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=vol.id,
+        )
+        db_session.add(token)
+        db_session.commit()
+
+        volunteer_id = vol.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert token_count_for(db_session, volunteer_id) > 0
