@@ -5,7 +5,6 @@ POST   /public/signups/confirm    — consume confirm token (batch-flip pending�
 GET    /public/signups/manage     — view signups for a token's volunteer+event scope
 DELETE /public/signups/{id}       — cancel one signup (token must own the signup)
 """
-from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -82,9 +81,12 @@ def manage_signups(
 
     Does NOT consume the token. Works with both signup_confirm and signup_manage purpose.
     """
+    # 2026-07-28 spec: expires_at is the CONFIRMATION deadline only.
+    # Manage/swap/cancel stay usable for as long as the token row exists
+    # (rows die with their signup via cascade, or via the stale-token sweep).
     token_row = _lookup_token(db, token)
-    if token_row is None or token_row.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="token invalid or expired")
+    if token_row is None:
+        raise HTTPException(status_code=400, detail="token invalid")
     if token_row.purpose not in (
         MagicLinkPurpose.SIGNUP_CONFIRM,
         MagicLinkPurpose.SIGNUP_MANAGE,
@@ -176,8 +178,8 @@ def swap_signup_public(
     (409) and cross-event (400).
     """
     token_row = _lookup_token(db, token)
-    if token_row is None or token_row.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="token invalid or expired")
+    if token_row is None:
+        raise HTTPException(status_code=400, detail="token invalid")
     if token_row.purpose not in (
         MagicLinkPurpose.SIGNUP_CONFIRM,
         MagicLinkPurpose.SIGNUP_MANAGE,
@@ -225,8 +227,8 @@ def cancel_signup(
     T-09-04 mitigation: rejects tokens belonging to different volunteers (403).
     """
     token_row = _lookup_token(db, token)
-    if token_row is None or token_row.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=400, detail="token invalid or expired")
+    if token_row is None:
+        raise HTTPException(status_code=400, detail="token invalid")
 
     # Phase 25 (WAIT-02): lock signup + slot, cancel, then auto-promote the
     # FIFO head of the waitlist. Mirrors the admin cancel flow.
