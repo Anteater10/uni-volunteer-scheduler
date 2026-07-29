@@ -26,8 +26,9 @@ orientation credit — closing out the slot does. End the slot (attendance can s
 point), or grant the credit manually.
 
 The other possibility is a **module family mismatch**: the orientation credited a different family
-than the module checks against. Confirm the event's module slug still matches a live module
-template, and that the orientation template is bound to the right family.
+than the module checks against. Confirm the event's module slug still matches a live module, and
+that the two modules involved actually share a family key — credit earned in one family never
+counts for another.
 
 ## The waitlist promote button says the slot is full
 
