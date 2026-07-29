@@ -6,11 +6,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..celery_app import send_email_notification
+from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..database import get_db
 from ..deps import get_current_user, log_action
 from ..services.swap_service import swap_signup as _swap_signup
-from ..signup_service import promote_waitlist_fifo
+from ..signup_service import PromotionResult, promote_waitlist_fifo
 
 router = APIRouter(prefix="/signups", tags=["signups"])
 
@@ -96,19 +96,19 @@ def cancel_signup(
 
     # Auto-promote from waitlist FIFO until capacity is full
     # Canonical promotion path: app.signup_service.promote_waitlist_fifo
-    promoted_signups: List[models.Signup] = []
+    promotions: List[PromotionResult] = []
     while slot.current_count < slot.capacity:
-        promoted = promote_waitlist_fifo(db, slot.id)
-        if promoted is None:
+        promo = promote_waitlist_fifo(db, slot.id)
+        if promo is None:
             break
         slot.current_count += 1
-        promoted_signups.append(promoted)
+        promotions.append(promo)
 
     # Audit log before commit
     log_action(db, current_user, "signup_cancelled", "Signup", str(signup.id))
 
     # Capture before commit — expire_on_commit would force refresh queries.
-    promoted_signup_ids = [str(s.id) for s in promoted_signups]
+    promotion_email_kwargs = [p.email_kwargs for p in promotions]
 
     db.commit()
     db.refresh(signup)
@@ -116,10 +116,10 @@ def cancel_signup(
     # Emails after commit — dispatched via app.emails.BUILDERS by kind.
     send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
 
-    # Promoted volunteers get the branded waitlist_promote email — same kind
-    # pipeline the organizer manual-promote path uses.
-    for promoted_id in promoted_signup_ids:
-        send_email_notification.delay(signup_id=promoted_id, kind="waitlist_promote")
+    # Promoted volunteers get the confirm-your-spot email — pending status
+    # holds the seat until the volunteer clicks the emailed magic link.
+    for kwargs in promotion_email_kwargs:
+        send_waitlist_promotion_email.delay(**kwargs)
 
     return signup
 

@@ -147,8 +147,10 @@ def test_swap_auto_promotes_source_waitlist(db_session):
     db_session.flush()
     db_session.refresh(waitlisted)
 
-    # Waitlisted gets promoted to confirmed (matches promote_waitlist_fifo contract).
-    assert waitlisted.status == models.SignupStatus.confirmed
+    # Waitlisted gets promoted to pending (2026-07-28 spec: promote_waitlist_fifo
+    # now holds the seat pending the volunteer's confirm click; email plumbing
+    # for the swap path lands in Task 4).
+    assert waitlisted.status == models.SignupStatus.pending
 
 
 def test_swap_auto_promote_restores_source_count(db_session):
@@ -178,7 +180,7 @@ def test_swap_auto_promote_restores_source_count(db_session):
     db_session.refresh(waitlisted)
     db_session.refresh(slot_a)
 
-    assert waitlisted.status == models.SignupStatus.confirmed
+    assert waitlisted.status == models.SignupStatus.pending
     assert slot_a.current_count == 1
 
 

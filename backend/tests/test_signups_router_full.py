@@ -323,6 +323,11 @@ def test_cancel_via_signups_sends_waitlist_promote_email(client, db_session, mon
         "app.celery_app.send_email_notification.delay",
         lambda **kw: sent.append(kw),
     )
+    promoted_emails = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: promoted_emails.append(kw),
+    )
     admin = _make_admin(db_session, email="admin_wpe@example.com")
     _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
     _bind_factories(db_session)
@@ -342,6 +347,6 @@ def test_cancel_via_signups_sends_waitlist_promote_email(client, db_session, mon
 
     pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
     assert ("cancellation", str(a.id)) in pairs
-    assert ("waitlist_promote", str(b.id)) in pairs, (
-        f"promoted volunteer got no waitlist_promote email (sent: {sent})"
+    assert any(kw["signup_id"] == str(b.id) for kw in promoted_emails), (
+        f"promoted volunteer got no waitlist promotion email (sent: {promoted_emails})"
     )

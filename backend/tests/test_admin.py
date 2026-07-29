@@ -99,9 +99,9 @@ def test_admin_cancel_signup_promotes_waitlist(client, db_session):
 
     db_session.expire_all()
     b_row = db_session.query(models.Signup).filter(models.Signup.id == b_signup.id).one()
-    # Promoted signups go directly to 'confirmed' — the volunteer already
-    # consented at initial signup time; no double-confirm needed.
-    assert b_row.status == models.SignupStatus.confirmed
+    # Promoted signups go to 'pending' (2026-07-28 spec) — promotion is a
+    # system/staff action, so the volunteer confirms via the emailed link.
+    assert b_row.status == models.SignupStatus.pending
 
 
 def test_admin_summary_requires_admin(client, db_session):
@@ -144,6 +144,11 @@ def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session,
         "app.celery_app.send_email_notification.delay",
         lambda **kw: sent.append(kw),
     )
+    promoted_emails = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: promoted_emails.append(kw),
+    )
     admin = _make_admin(db_session, email="admin_pf_email@example.com")
     _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
 
@@ -174,8 +179,8 @@ def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session,
 
     pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
     assert ("cancellation", str(a_signup.id)) in pairs
-    assert ("waitlist_promote", str(b_signup.id)) in pairs, (
-        f"promoted volunteer got no waitlist_promote email (sent: {sent})"
+    assert any(kw["signup_id"] == str(b_signup.id) for kw in promoted_emails), (
+        f"promoted volunteer got no waitlist promotion email (sent: {promoted_emails})"
     )
 
 
@@ -249,7 +254,7 @@ def test_admin_move_pending_signup_promotes_source_waitlist(client, db_session):
     db_session.expire_all()
     w = db_session.get(models.Signup, waitlisted.id)
     slot_a_row = db_session.get(models.Slot, slot_a.id)
-    assert w.status == models.SignupStatus.confirmed, (
+    assert w.status == models.SignupStatus.pending, (
         "source waitlist was not promoted after the pending move freed a seat"
     )
     assert slot_a_row.current_count == 1

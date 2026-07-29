@@ -32,13 +32,17 @@ GOOD_PHONE = "(213) 867-5309"
 
 
 def _bypass_celery(monkeypatch):
-    """Silence the two Celery fan-outs used by this phase's hot path."""
+    """Silence the Celery fan-outs used by this phase's hot path."""
     monkeypatch.setattr(
         "app.celery_app.send_signup_confirmation_email.delay",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
         "app.celery_app.send_email_notification.delay",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
         lambda *a, **k: None,
     )
 
@@ -219,8 +223,9 @@ def test_public_cancel_promotes_oldest_waitlisted(
         db_session.expire_all()
         a = db_session.query(models.Signup).filter_by(id=wait_a.id).one()
         b = db_session.query(models.Signup).filter_by(id=wait_b.id).one()
-        # Older waitlister gets promoted directly to confirmed.
-        assert a.status == models.SignupStatus.confirmed
+        # Older waitlister gets promoted to pending (2026-07-28 spec: FIFO
+        # promotion holds the seat pending the volunteer's confirm click).
+        assert a.status == models.SignupStatus.pending
         assert b.status == models.SignupStatus.waitlisted
 
         # Slot stays full via the promoted row.
@@ -413,7 +418,7 @@ def test_admin_reorder_waitlist_persists_and_flips_fifo(
     db_session.expire_all()
     c_row = db_session.query(models.Signup).filter_by(id=wait_c.id).one()
     a_row = db_session.query(models.Signup).filter_by(id=wait_a.id).one()
-    assert c_row.status == models.SignupStatus.confirmed
+    assert c_row.status == models.SignupStatus.pending
     assert a_row.status == models.SignupStatus.waitlisted
 
 
