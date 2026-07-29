@@ -184,6 +184,71 @@ def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session,
     )
 
 
+def test_admin_promote_signup_goes_pending_with_confirm_email(client, db_session, monkeypatch):
+    """admin_promote_signup (WAIT-03 admin path) now delegates to
+    manual_promote/mark_promoted_pending like the organizer path: the
+    promoted signup goes to 'pending' (not instantly 'confirmed'), the
+    confirm-your-spot email goes out via send_waitlist_promotion_email
+    (previously wrong kind="confirmation", which the (signup_id, kind)
+    dedup could silently swallow), and slot.current_count is incremented
+    exactly once — manual_promote owns the increment now, so the endpoint
+    must not also do it (regression: double-counting)."""
+    sent = []
+    monkeypatch.setattr(
+        "app.celery_app.send_email_notification.delay",
+        lambda **kw: sent.append(kw),
+    )
+    promoted_emails = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: promoted_emails.append(kw),
+    )
+    admin = _make_admin(db_session, email="admin_promote_pending@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=2, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import VolunteerFactory
+    vol_confirmed = VolunteerFactory(email="admin_promote_conf@example.com")
+    vol_wait = VolunteerFactory(email="admin_promote_wait@example.com")
+    SignupFactory(
+        volunteer=vol_confirmed,
+        slot=slot,
+        status=models.SignupStatus.confirmed,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    slot.current_count = 1
+    wait_signup = SignupFactory(
+        volunteer=vol_wait,
+        slot=slot,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/signups/{wait_signup.id}/promote",
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "pending"
+
+    db_session.expire_all()
+    row = db_session.query(models.Signup).filter_by(id=wait_signup.id).one()
+    assert row.status == models.SignupStatus.pending
+    refreshed_slot = db_session.query(models.Slot).filter_by(id=slot.id).one()
+    assert refreshed_slot.current_count == 2, (
+        "capacity must be incremented exactly once, not double-counted"
+    )
+
+    assert any(kw["signup_id"] == str(wait_signup.id) for kw in promoted_emails), (
+        f"promoted volunteer got no confirm-your-spot email (sent: {promoted_emails})"
+    )
+    assert not any(
+        kw.get("kind") == "confirmation" and kw.get("signup_id") == str(wait_signup.id)
+        for kw in sent
+    ), "promote must not use the generic confirmation kind (dedup can swallow it)"
+
+
 def test_admin_move_pending_signup_frees_source_capacity(client, db_session):
     """Moving a pending signup must free its source seat — pending holds
     capacity (see _confirmed_count_for_slot), so skipping the decrement

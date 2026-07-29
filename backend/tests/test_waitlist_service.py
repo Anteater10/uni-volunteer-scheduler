@@ -274,13 +274,13 @@ def test_organizer_manual_promote_bypasses_fifo(
     )
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data["status"] == "confirmed"
+    assert data["status"] == "pending"
 
     db_session.expire_all()
     old = db_session.query(models.Signup).filter_by(id=wait_old.id).one()
     new_row = db_session.query(models.Signup).filter_by(id=wait_new.id).one()
     # Newer volunteer got in ahead of the FIFO head — WAIT-03 override.
-    assert new_row.status == models.SignupStatus.confirmed
+    assert new_row.status == models.SignupStatus.pending
     assert old.status == models.SignupStatus.waitlisted
 
 
@@ -347,15 +347,38 @@ def test_organizer_manual_promote_allow_overfill_seats_past_capacity(
         headers=headers,
     )
     assert r.status_code == 200, r.text
-    assert r.json()["status"] == "confirmed"
+    assert r.json()["status"] == "pending"
 
     db_session.expire_all()
     promoted = db_session.query(models.Signup).filter_by(id=wait.id).one()
-    assert promoted.status == models.SignupStatus.confirmed
+    assert promoted.status == models.SignupStatus.pending
     refreshed_slot = db_session.query(models.Slot).filter_by(id=slot.id).one()
     # Deliberately one over — that's what the organizer asked for.
     assert refreshed_slot.current_count == 2
     assert refreshed_slot.capacity == 1
+
+
+def test_manual_promote_returns_pending_promotion_result(db_session):
+    """manual_promote (WAIT-03) now delegates to mark_promoted_pending: the
+    promoted signup goes to 'pending' with a fresh 3-day SIGNUP_CONFIRM
+    token, matching every other promotion path (2026-07-28 spec)."""
+    # Reuse the existing manual-promote setup in this file.
+    _, _, slot = _make_event_and_slot(db_session, capacity=1)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="direct_manual_promote@example.com")
+    signup = _seed_waitlisted(db_session, slot, vol)
+    db_session.commit()
+
+    result = manual_promote(db_session, signup, slot, allow_overfill=True)
+
+    assert result.signup.status == models.SignupStatus.pending
+    assert result.raw_token
+    token_row = (
+        db_session.query(models.MagicLinkToken)
+        .filter(models.MagicLinkToken.signup_id == signup.id)
+        .one()
+    )
+    assert token_row.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM
 
 
 # ------------------------------------------------------------------

@@ -728,16 +728,22 @@ def admin_promote_signup(
     if slot.current_count >= slot.capacity:
         raise HTTPException(status_code=400, detail="Slot is full")
 
-    signup.status = models.SignupStatus.confirmed
-    slot.current_count += 1
+    from ..services.waitlist_service import manual_promote
+
+    try:
+        promo = manual_promote(db, signup, slot, allow_overfill=False)
+    except ValueError as exc:  # belt-and-braces; pre-checks above match
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     log_action(db, actor, "admin_signup_promote", "Signup", str(signup.id))
+    promo_kwargs = promo.email_kwargs
     db.commit()
     db.refresh(signup)
 
-    # Phase 09: signup.user removed; use volunteer-backed email pipeline
-    # Phase 12: full admin promotion email deferred
-    send_email_notification.delay(signup_id=str(signup.id), kind="confirmation")
+    # Was kind="confirmation" — wrong template AND swallowed by the
+    # (signup_id, kind) dedup if a confirmation was ever sent. The promotion
+    # email is one-shot with the raw token, so no dedup applies.
+    send_waitlist_promotion_email.delay(**promo_kwargs)
 
     return signup
 

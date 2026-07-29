@@ -18,6 +18,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..signup_service import PromotionResult, mark_promoted_pending
 
 
 def compute_waitlist_position(
@@ -101,16 +102,21 @@ def manual_promote(
     signup: models.Signup,
     slot: models.Slot,
     allow_overfill: bool = False,
-) -> models.Signup:
+) -> PromotionResult:
     """Bypass FIFO — promote ``signup`` specifically.
 
     Caller must hold FOR UPDATE on both rows and must have verified the
     signup belongs to the slot. Raises ``ValueError`` on invalid state so
     the router can translate to an HTTP status.
 
-    Flow mirrors ``promote_waitlist_fifo``:
-      - waitlisted → confirmed (volunteer already consented at initial signup)
-      - increments ``slot.current_count``
+    Delegates the status flip to ``mark_promoted_pending`` (waitlisted →
+    pending, issues a fresh 3-day SIGNUP_CONFIRM token) then increments
+    ``slot.current_count`` itself, since ``mark_promoted_pending``
+    deliberately leaves capacity accounting to the caller. 2026-07-28 spec:
+    staff promotion is not volunteer intent — the volunteer confirms via the
+    emailed magic link, which doubles as their manage/cancel page. Caller
+    must enqueue ``send_waitlist_promotion_email(**result.email_kwargs)``
+    AFTER commit.
 
     ``allow_overfill`` exists because a full slot is normally the *only*
     reason anyone is waitlisted, and auto-promote (WAIT-02) already claims any
@@ -124,8 +130,11 @@ def manual_promote(
     if slot.current_count >= slot.capacity and not allow_overfill:
         raise ValueError("slot is full")
 
-    signup.status = models.SignupStatus.confirmed
+    # 2026-07-28 spec: staff promotion is not volunteer intent — the
+    # volunteer confirms via the emailed 3-day magic link, which is also
+    # their manage/cancel page. Caller enqueues the email after commit.
+    result = mark_promoted_pending(db, signup)
     slot.current_count += 1
     db.flush()
 
-    return signup
+    return result

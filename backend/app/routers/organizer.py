@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..celery_app import send_email_notification
+from ..celery_app import send_waitlist_promotion_email
 from ..database import get_db
 from ..deps import ensure_event_staff_access, log_action, require_role
 from ..services import form_schema_service
@@ -177,7 +177,9 @@ def organizer_promote_signup(
 
     The organizer picks a specific waitlister (e.g. a vouched volunteer) and
     promotes them past the queue. Writes audit ``waitlist_promote_manual``.
-    Returns the updated signup (status=pending).
+    Returns the updated signup (status=pending) — the seat isn't guaranteed
+    until the volunteer clicks the confirm-your-spot email's magic link,
+    sent immediately after this call returns.
 
     ``allow_overfill=true`` takes the slot past capacity. It is opt-in because
     a full slot is usually why the person is waitlisted at all; without it the
@@ -210,7 +212,7 @@ def organizer_promote_signup(
         )
 
     try:
-        manual_promote(db, signup, slot, allow_overfill=allow_overfill)
+        promo = manual_promote(db, signup, slot, allow_overfill=allow_overfill)
     except ValueError as exc:
         msg = str(exc)
         if "full" in msg:
@@ -234,14 +236,11 @@ def organizer_promote_signup(
             "allow_overfill": allow_overfill,
         },
     )
+    promo_kwargs = promo.email_kwargs
     db.commit()
     db.refresh(signup)
 
-    # Send a "you're in from the waitlist" follow-up email. The magic-link
-    # confirm was already sent inside manual_promote via dispatch_email; this
-    # sends the branded promote notification (idempotent via kind dedup).
-    send_email_notification.delay(
-        signup_id=str(signup.id), kind="waitlist_promote"
-    )
+    # Confirm-your-spot email with the 3-day magic link (2026-07-28 spec).
+    send_waitlist_promotion_email.delay(**promo_kwargs)
 
     return signup
