@@ -568,3 +568,75 @@ describe("EventsSection — edit flow diff", () => {
     expect(api.slots.create.mock.calls[0][1].capacity).toBe(15);
   });
 });
+
+// ---------------------------------------------------------------------------
+// fix/ux-quarter-batch — completed events must be visible in the list, and
+// completing an event files it under Past regardless of its dates.
+// ---------------------------------------------------------------------------
+
+describe("EventsSection — completion badges and scope", () => {
+  const future = new Date(Date.now() + 7 * 86400e3).toISOString();
+  const futureEnd = new Date(Date.now() + 8 * 86400e3).toISOString();
+  const past = new Date(Date.now() - 8 * 86400e3).toISOString();
+  const pastEnd = new Date(Date.now() - 7 * 86400e3).toISOString();
+
+  const LIST = [
+    {
+      id: "e-completed",
+      title: "Completed early",
+      // Dates still in the future, but every slot was ended — completed wins.
+      start_date: future,
+      end_date: futureEnd,
+      completed_at: new Date().toISOString(),
+      location: "Lab 1",
+    },
+    {
+      id: "e-ended",
+      title: "Dates went by",
+      start_date: past,
+      end_date: pastEnd,
+      completed_at: null,
+      location: "Lab 2",
+    },
+    {
+      id: "e-upcoming",
+      title: "Still to come",
+      start_date: future,
+      end_date: futureEnd,
+      completed_at: null,
+      location: "Lab 3",
+    },
+  ];
+
+  beforeEach(() => {
+    api.events.list.mockResolvedValue(LIST);
+    api.admin.modules.list.mockResolvedValue([]);
+  });
+
+  it("badges completed, ended-not-closed-out, and upcoming rows", async () => {
+    renderWithQuery(<EventsSection />);
+    // Default scope is Upcoming — switch to All to see every row.
+    fireEvent.change(await screen.findByDisplayValue("Upcoming"), {
+      target: { value: "all" },
+    });
+    expect(await screen.findByText(/✓ Completed/)).toBeInTheDocument();
+    expect(screen.getByText(/Ended — not closed out/)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("table")).getByText("Upcoming"),
+    ).toBeInTheDocument();
+  });
+
+  it("files a completed event under Past even when its dates are ahead", async () => {
+    renderWithQuery(<EventsSection />);
+    // Upcoming (default): the completed event is gone.
+    await screen.findByText("Still to come");
+    expect(screen.queryByText("Completed early")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByDisplayValue("Upcoming"), {
+      target: { value: "past" },
+    });
+    expect(await screen.findByText("Completed early")).toBeInTheDocument();
+    expect(screen.getByText("Dates went by")).toBeInTheDocument();
+    expect(screen.queryByText("Still to come")).not.toBeInTheDocument();
+  });
+});

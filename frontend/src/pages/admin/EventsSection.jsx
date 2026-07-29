@@ -1035,6 +1035,31 @@ async function applySlotDiff(eventId, initialSlots, draftSlots) {
   }
 }
 
+// fix/ux-quarter-batch — make an ended event unmistakable in the list.
+// "Completed" = every slot was ended (events.completed_at is stamped);
+// "Ended" = the dates went by but attendance was never closed out.
+function EventStatusBadge({ event }) {
+  if (event.completed_at) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+        ✓ Completed
+      </span>
+    );
+  }
+  if (new Date(event.end_date).getTime() < Date.now()) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-700">
+        Ended — not closed out
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">
+      Upcoming
+    </span>
+  );
+}
+
 export default function EventsSection() {
   useAdminPageTitle("Events");
   const qc = useQueryClient();
@@ -1054,10 +1079,15 @@ export default function EventsSection() {
   const filtered = useMemo(() => {
     const now = Date.now();
     const term = search.toLowerCase().trim();
+    // An event is "past" once its dates have gone by OR it was explicitly
+    // completed (every slot ended) — ending an event files it under Past
+    // immediately, and reopening it brings it back.
+    const isPast = (e) =>
+      Boolean(e.completed_at) || new Date(e.end_date).getTime() < now;
     return events
       .filter((e) => {
-        if (scope === "upcoming" && new Date(e.end_date).getTime() < now) return false;
-        if (scope === "past" && new Date(e.end_date).getTime() >= now) return false;
+        if (scope === "upcoming" && isPast(e)) return false;
+        if (scope === "past" && !isPast(e)) return false;
         if (term && !(e.title || "").toLowerCase().includes(term)) return false;
         return true;
       })
@@ -1164,6 +1194,7 @@ export default function EventsSection() {
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
               <tr>
                 <th className="py-3 px-4">Title</th>
+                <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4">Start</th>
                 <th className="py-3 px-4">End</th>
                 <th className="py-3 px-4">Location</th>
@@ -1180,6 +1211,9 @@ export default function EventsSection() {
                     >
                       {e.title || "(untitled)"}
                     </Link>
+                  </td>
+                  <td className="py-3 px-4">
+                    <EventStatusBadge event={e} />
                   </td>
                   <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.start_date)}</td>
                   <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.end_date)}</td>

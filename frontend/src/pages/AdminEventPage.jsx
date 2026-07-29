@@ -27,6 +27,7 @@ import DuplicateEventDrawer from "../components/admin/DuplicateEventDrawer";
 import BroadcastModal from "../components/BroadcastModal";
 import CheckInQRModal from "../components/admin/CheckInQRModal";
 import { toast } from "../state/toast";
+import { reopenEvent } from "../api/roster";
 import { useQuarters } from "../lib/useQuarters";
 import { findQuarterById } from "../lib/weekUtils";
 import { useAdminPageTitle } from "./admin/AdminLayout";
@@ -199,6 +200,19 @@ export default function AdminEventPage() {
       if (/full/i.test(e?.message || "")) return;
       toast.error(e?.message || "Promote failed");
     },
+  });
+
+  // fix/ux-quarter-batch — undo "End event" straight from the detail page.
+  const reopenMut = useMutation({
+    mutationFn: () => reopenEvent(eventId),
+    onSuccess: () => {
+      toast.success("Event reopened — volunteers are back on the live roster.");
+      qc.invalidateQueries({ queryKey: ["adminEventDetail", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventAnalytics", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventsList"] });
+    },
+    onError: (e) => toast.error(e?.message || "Couldn't reopen the event"),
   });
 
   // Admin/organizer cancel signup (triggers Phase 25 FIFO auto-promote).
@@ -411,6 +425,39 @@ export default function AdminEventPage() {
         <Card>
           <FieldError>{err}</FieldError>
         </Card>
+      ) : null}
+
+      {/* fix/ux-quarter-batch — a completed event should be unmissable, not
+          inferred from greyed-out roster buttons two clicks away. */}
+      {eventQ.data?.completed_at ? (
+        <div
+          data-testid="event-completed-strip"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3"
+        >
+          <div>
+            <p className="text-sm font-semibold text-emerald-900">
+              ✓ This event is completed
+            </p>
+            <p className="text-sm text-emerald-800/80">
+              Every session was ended and all attendance is on the books
+              (finished{" "}
+              {new Date(eventQ.data.completed_at).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              })}
+              ). It's filed under Past events.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            className="shrink-0"
+            disabled={reopenMut.isPending}
+            onClick={() => reopenMut.mutate()}
+          >
+            {reopenMut.isPending ? "Reopening…" : "Reopen event"}
+          </Button>
+        </div>
       ) : null}
 
       <section>

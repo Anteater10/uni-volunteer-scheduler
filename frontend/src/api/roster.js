@@ -27,6 +27,12 @@ export async function resolveSlot(slotId, { attended, no_show }) {
   return _authedRequest("POST", `/slots/${slotId}/resolve`, { attended, no_show });
 }
 
+// fix/ux-quarter-batch — undo "End event": resolved signups return to the
+// live roster and the event's completed_at stamp clears.
+export async function reopenEvent(eventId) {
+  return _authedRequest("POST", `/events/${eventId}/reopen`);
+}
+
 // Internal: thin wrapper matching the api.js request pattern
 import authStorage from "../lib/authStorage";
 import { API_BASE } from "../lib/apiBase";
