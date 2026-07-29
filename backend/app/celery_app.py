@@ -667,6 +667,15 @@ def expire_pending_signups() -> None:
             )
             if slot is None:
                 continue
+            if slot.end_time <= now:
+                # The event already ended — the seat was still reaped and
+                # decremented above, but don't chain-promote into a
+                # finished event. Otherwise a promotee gets a 3-day
+                # "confirm your spot" email for an event that already
+                # happened; the token lapses unconfirmed, and the next
+                # hourly run reaps it and repeats the cycle for the next
+                # waitlister.
+                continue
             while slot.current_count < slot.capacity:
                 promo = promote_waitlist_fifo(db, slot.id)
                 if promo is None:

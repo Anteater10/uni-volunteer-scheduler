@@ -22,6 +22,11 @@ Task 8 (2026-07-28 spec decision 5) additions — stale confirm-token GC:
 Task 8 fix round 1 — token-level liveness guard (a stale volunteer's still-
 live token must survive; only its own-expired tokens are reaped):
 - test_stale_sweep_keeps_live_token_deletes_expired_one
+
+Final-review fixes (2026-07-28) — chain loop must not promote into an
+ended event; reap EXISTS correlation pinned against de-correlation regressions:
+- test_chain_does_not_promote_into_ended_event
+- test_reap_correlates_live_token_to_its_own_signup
 """
 import pytest
 import uuid
@@ -511,6 +516,135 @@ class TestExpirePendingSignups:
 
         db_session.expire_all()
         assert db_session.get(Signup, tokenless_id) is not None
+
+    def test_chain_does_not_promote_into_ended_event(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """A freed seat on a slot whose event already ended must still be
+        reaped (pending deleted, count decremented) but must NOT
+        chain-promote the waitlist behind it.
+
+        Without this guard: a last-minute reap frees a seat on a slot whose
+        event is already over, chain-promotion fires anyway, the promotee
+        gets a "a spot opened up — confirm within 3 days" email for an
+        event that has already happened, their token expires unconfirmed,
+        and the NEXT hourly run reaps that pending and repeats the cycle
+        for the next waitlister — one nonsense email roughly every 3 days
+        until the waitlist drains.
+        """
+        sent = []
+        monkeypatch.setattr(
+            "app.celery_app.send_waitlist_promotion_email.delay",
+            lambda **kw: sent.append(kw),
+        )
+
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 14, 3, 0, tzinfo=timezone.utc)
+        # Event already ended 2 days ago.
+        slot = _make_slot(
+            db_session, event.id, capacity=1, current_count=1,
+            start_time=now - timedelta(days=2, hours=2),
+            end_time=now - timedelta(days=2),
+        )
+        vol1 = _make_volunteer(db_session)
+        vol2 = _make_volunteer(db_session)
+
+        expired_signup, _token = _make_pending_signup_with_token(
+            db_session, vol1, slot,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+        waitlisted = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=vol2.id,
+            slot_id=slot.id,
+            status=SignupStatus.waitlisted,
+            timestamp=now - timedelta(days=2, hours=1),
+        )
+        db_session.add(waitlisted)
+        db_session.commit()
+
+        expired_id = expired_signup.id
+        waitlisted_id = waitlisted.id
+        slot_id = slot.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        # Reaped: expired pending gone, count decremented.
+        assert db_session.get(Signup, expired_id) is None
+        slot_reloaded = db_session.get(Slot, slot_id)
+        assert slot_reloaded.current_count == 0
+        # NOT chain-promoted: waitlisted signup stays waitlisted, no email.
+        still_waitlisted = db_session.get(Signup, waitlisted_id)
+        assert still_waitlisted.status == SignupStatus.waitlisted
+        assert sent == []
+
+    def test_reap_correlates_live_token_to_its_own_signup(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Regression pin: ``live_token_exists`` must correlate to THIS
+        signup's own id, not just check whether a live SIGNUP_CONFIRM
+        token exists anywhere in the table.
+
+        Two independent volunteers/slots: A holds only an expired token
+        (reapable); B holds a live token on a different slot (not
+        reapable). If ``live_token_exists`` were ever de-correlated (e.g.
+        a refactor drops the ``MagicLinkToken.signup_id ==
+        models.Signup.id`` correlation), B's live token would satisfy the
+        EXISTS check for every row, including A's — the reap would stop
+        reaping anything, anywhere, silently, with zero test failures
+        under the pre-existing suite (every other reap test uses a single
+        signup, so a global EXISTS still "sees" its own token and passes
+        by coincidence).
+        """
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 15, 3, 0, tzinfo=timezone.utc)
+
+        # Volunteer A: reapable — only an expired token.
+        slot_a = _make_slot(
+            db_session, event.id,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol_a = _make_volunteer(db_session)
+        signup_a, _token_a = _make_pending_signup_with_token(
+            db_session, vol_a, slot_a,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+
+        # Volunteer B: NOT reapable — live token, different slot.
+        slot_b = _make_slot(
+            db_session, event.id,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol_b = _make_volunteer(db_session)
+        signup_b, _token_b = _make_pending_signup_with_token(
+            db_session, vol_b, slot_b,
+            token_issued_at=now - timedelta(days=1),
+            token_expires_at=now + timedelta(days=2),
+        )
+        db_session.commit()
+
+        signup_a_id = signup_a.id
+        signup_b_id = signup_b.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert db_session.get(Signup, signup_a_id) is None, (
+            "A's expired-token signup should be reaped"
+        )
+        still_b = db_session.get(Signup, signup_b_id)
+        assert still_b is not None and still_b.status == SignupStatus.pending, (
+            "B's live-token signup must survive independently of A"
+        )
 
 
 class TestNotificationsXorConstraint:
