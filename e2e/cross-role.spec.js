@@ -62,7 +62,7 @@ const ALLOWED_CONSOLE_PATTERNS = [
   // artefact, not a product bug.
   /^\[object Object\]$/,
   // Scenario 5 (organizer RBAC) deliberately hits shared admin pages that
-  // fire admin-only API calls (e.g. /admin/module-templates).
+  // fire admin-only API calls (e.g. /admin/modules).
   // The backend correctly returns 403 for organizer; the browser logs the
   // 403 as a "Failed to load resource" console.error. The UI surfaces the
   // denial as an in-page error state with a Retry button. This is correct
@@ -509,10 +509,10 @@ test('cross-role Scenario 4: public cancel via magic-link surfaces signup_cancel
 // inspection):
 // - Admin-only (roles=["admin"]): /admin/users, /admin/audit-logs, /admin/exports
 //   -> ProtectedRoute renders a "Forbidden" component (NOT a redirect).
-// - Shared (roles=["admin", "organizer"]): /admin/templates, /admin/events,
+// - Shared (roles=["admin", "organizer"]): /admin/modules, /admin/events,
 //   /admin plus /organizer.
 //
-// Pitfall 5 from 20-RESEARCH.md: templates MUST load for organizer.
+// Pitfall 5 from 20-RESEARCH.md: modules MUST load for organizer.
 // Do not invert the allow/deny lists.
 // ---------------------------------------------------------------------------
 
@@ -522,7 +522,7 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
   installErrorCapture(page, testInfo);
 
   // Scenario 5 navigates shared admin surfaces (/admin/users,
-  // /admin/templates, /admin/audit-logs, /admin/exports). Force desktop
+  // /admin/modules, /admin/audit-logs, /admin/exports). Force desktop
   // viewport so AdminLayout renders its actual content and the Forbidden
   // panel (for admin-only routes) rather than the DesktopOnlyBanner.
   await ensureAdminViewport(page);
@@ -540,7 +540,7 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
   }
 
   // Shared routes (positive checks — organizer MUST be able to reach these).
-  // /admin/templates is the Phase 17 surface.
+  // /admin/modules is the Phase 17 surface.
   // /organizer is the Phase 19 dashboard entry point; App.jsx client-side
   // redirects it to /admin/operations (the console that folded in the former
   // Preview tab), so that is the landing URL to assert.
@@ -552,7 +552,7 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
   // and surfaces the API denial as a retryable in-page error. That is the
   // correct UX, not a routing problem.
   const sharedRoutes = [
-    ['/admin/templates', /\/admin\/templates$/],
+    ['/admin/modules', /\/admin\/modules$/],
     ['/organizer', /\/admin\/operations$/],
   ];
   for (const [path, landingUrl] of sharedRoutes) {

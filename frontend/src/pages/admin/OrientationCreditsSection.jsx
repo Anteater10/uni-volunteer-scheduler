@@ -86,10 +86,10 @@ export default function OrientationCreditsSection() {
   const [grantError, setGrantError] = useState("");
   const [revokeTarget, setRevokeTarget] = useState(null);
 
-  const templatesQ = useQuery({
-    queryKey: ["admin", "templates", "for-credit"],
-    queryFn: () => api.admin.templates.list(),
-    // Templates are small; fine to load once.
+  const modulesQ = useQuery({
+    queryKey: ["admin", "modules", "for-credit"],
+    queryFn: () => api.admin.modules.list(),
+    // Modules are small; fine to load once.
     staleTime: 5 * 60 * 1000,
   });
 
@@ -108,9 +108,9 @@ export default function OrientationCreditsSection() {
     return covering ? covering.id : "";
   }, [quarterOptions]);
 
-  // Derive the set of distinct family_key values from active templates.
+  // Derive the set of distinct family_key values from active modules.
   const familyOptions = useMemo(() => {
-    const raw = templatesQ.data;
+    const raw = modulesQ.data;
     const list = Array.isArray(raw) ? raw : raw?.items || [];
     const keys = new Set();
     for (const t of list) {
@@ -119,7 +119,7 @@ export default function OrientationCreditsSection() {
       if (key) keys.add(key);
     }
     return Array.from(keys).sort();
-  }, [templatesQ.data]);
+  }, [modulesQ.data]);
 
   const creditsQ = useQuery({
     queryKey: [

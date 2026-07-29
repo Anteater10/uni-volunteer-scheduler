@@ -25,8 +25,7 @@ import pytest
 
 from app.models import (
     Event,
-    ModuleTemplate,
-    ModuleType,
+    Module,
     OrientationCredit,
     OrientationCreditSource,
     Signup,
@@ -45,13 +44,12 @@ from app.services.orientation_service import (
 from tests.fixtures.helpers import auth_headers, make_user
 
 
-def _make_template(db, *, slug: str, family_key: str | None = None) -> ModuleTemplate:
-    tmpl = ModuleTemplate(
+def _make_template(db, *, slug: str, family_key: str | None = None) -> Module:
+    tmpl = Module(
         slug=slug,
         name=slug.title(),
         default_capacity=20,
         duration_minutes=120,
-        type=ModuleType.orientation,
         session_count=1,
         family_key=family_key if family_key is not None else slug,
     )

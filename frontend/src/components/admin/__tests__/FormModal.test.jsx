@@ -76,4 +76,31 @@ describe("FormModal", () => {
 
     expect(screen.queryByText("hidden body")).toBeNull();
   });
+
+  it("renders the subtitle under the title when provided", () => {
+    render(
+      <FormModal
+        open
+        title="New event"
+        subtitle="Schedule the visit and lay out the volunteer slots."
+        onClose={() => {}}
+      >
+        <p>body</p>
+      </FormModal>,
+    );
+
+    expect(
+      screen.getByText("Schedule the visit and lay out the volunteer slots."),
+    ).toBeInTheDocument();
+  });
+
+  it("omits the subtitle line when not provided", () => {
+    render(
+      <FormModal open title="New event" onClose={() => {}}>
+        <p>body</p>
+      </FormModal>,
+    );
+
+    expect(document.querySelector("[data-testid='form-modal-subtitle']")).toBeNull();
+  });
 });

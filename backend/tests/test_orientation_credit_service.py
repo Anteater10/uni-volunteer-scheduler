@@ -34,8 +34,7 @@ import pytest
 from app.models import (
     AcademicQuarter,
     Event,
-    ModuleTemplate,
-    ModuleType,
+    Module,
     OrientationCredit,
     Quarter,
     Signup,
@@ -90,13 +89,12 @@ def spring_q(db_session):
     )
 
 
-def _make_template(db, *, slug: str, family_key: str | None = None) -> ModuleTemplate:
-    tmpl = ModuleTemplate(
+def _make_template(db, *, slug: str, family_key: str | None = None) -> Module:
+    tmpl = Module(
         slug=slug,
         name=slug.title(),
         default_capacity=20,
         duration_minutes=120,
-        type=ModuleType.orientation,
         session_count=1,
         family_key=family_key if family_key is not None else slug,
     )

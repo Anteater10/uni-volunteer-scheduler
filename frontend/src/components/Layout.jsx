@@ -8,7 +8,7 @@ import BottomNav from "./ui/BottomNav";
 import CopilotFab from "../copilot/CopilotFab";
 
 // This is the *mobile* bottom nav. It used to point at /admin/events and
-// /admin/templates, both of which sit inside the admin shell and render the
+// /admin/modules, both of which sit inside the admin shell and render the
 // "please switch to a larger screen" banner — so an organizer on a phone had
 // no reachable destination at all. Today's schedule and the roster it links to
 // are the surfaces actually built for a phone, which is also the device an
@@ -52,7 +52,10 @@ export default function Layout() {
     pathname.startsWith("/event-check-in") ||
     pathname.startsWith("/signup");
   const navItems = isAuthed && !isParticipantRoute ? navItemsForRole(role) : null;
-  const wideRoute = isAdminRoute || isOrganizerRoute;
+  // /settings is a desktop staff surface too (PR #51) — the old
+  // max-w-screen-md fallback squeezed it into a phone column on a monitor.
+  const wideRoute =
+    isAdminRoute || isOrganizerRoute || pathname.startsWith("/settings");
   const containerWidth = wideRoute
     ? "max-w-none"
     : isParticipantRoute

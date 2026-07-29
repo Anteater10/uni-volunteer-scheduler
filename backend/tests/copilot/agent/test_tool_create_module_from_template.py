@@ -15,7 +15,7 @@ from app.copilot.agent.tools.base import invoke
 from app.copilot.agent.tools.create_module_from_template import (
     CREATE_MODULE_FROM_TEMPLATE_TOOL,
 )
-from app.models import Event, ModuleTemplate, ModuleType, Quarter, UserRole
+from app.models import Event, Module, Quarter, UserRole
 from tests.fixtures.factories import AcademicQuarterFactory
 from tests.fixtures.helpers import make_user
 
@@ -52,12 +52,11 @@ def _make_session(db_session, user_id):
 def _make_template(db_session, *, slug=None):
     if slug is None:
         slug = f"tpl-{uuid.uuid4().hex[:8]}"
-    tpl = ModuleTemplate(
+    tpl = Module(
         slug=slug,
         name="CRISPR Basics",
         default_capacity=20,
         duration_minutes=90,
-        type=ModuleType.module,
         session_count=1,
     )
     db_session.add(tpl)

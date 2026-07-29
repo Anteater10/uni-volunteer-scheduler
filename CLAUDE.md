@@ -69,8 +69,11 @@ Frontend tests run normally: `cd frontend && npm run test -- --run`.
 - `alembic/env.py` pre-widens `alembic_version.version_num` to `VARCHAR(128)` on every startup because the default 32-char column overflows our slug IDs. Do not remove.
 - **Known latent bug:** several `downgrade()` functions create enum types in `upgrade()` but don't `DROP TYPE` on the way down. Fresh upgrades work fine; downgrade→upgrade round-trips fail with `DuplicateObject`. Cleanup deferred.
 
-## CSV import cadence
-Module template CSV import (Phase 5) runs **once per quarter — every 11 weeks**. Not yearly. Any UI copy, email text, or doc that says "yearly" is wrong.
+## CSV import pipeline — removed
+The Phase 5/18 CSV module-import pipeline (frontend surface, `/admin/imports`
+endpoints, `csv_imports` table, Celery task) was deleted in PR #51. Modules are
+created and edited by hand in the admin UI. Events previously committed by an
+import are ordinary events and were untouched.
 
 ## Planning harness
 This project uses the **GSD (get-shit-done)** harness. Project state lives in

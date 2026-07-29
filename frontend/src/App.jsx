@@ -36,6 +36,7 @@ import EventsBrowsePage from "./pages/public/EventsBrowsePage";
 import EventDetailPage from "./pages/public/EventDetailPage";
 import LoginPage from "./pages/LoginPage";
 import SetPasswordPage from "./pages/SetPasswordPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import UserSettingsPage from "./pages/UserSettingsPage";
 
@@ -57,7 +58,7 @@ import AdminEventPage from "./pages/AdminEventPage";
 import UsersAdminPage from "./pages/UsersAdminPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
 import ExportsSection from "./pages/admin/ExportsSection";
-import TemplatesSection from "./pages/admin/TemplatesSection";
+import ModulesSection from "./pages/admin/ModulesSection";
 import OrientationCreditsSection from "./pages/admin/OrientationCreditsSection";
 import EventsSection from "./pages/admin/EventsSection";
 import HelpSection from "./pages/admin/HelpSection";
@@ -82,6 +83,7 @@ export default function App() {
         <Route index element={<RootRoute />} />
         <Route path="login" element={<LoginPage />} />
         <Route path="set-password" element={<SetPasswordPage />} />
+        <Route path="forgot-password" element={<ForgotPasswordPage />} />
 
         {/* Participant surfaces (no login button anywhere) */}
         <Route path="volunteer" element={<EventsBrowsePage />} />
@@ -138,7 +140,9 @@ export default function App() {
               path="events/:eventId/roster"
               element={<OrganizerRosterPage />}
             />
-            <Route path="templates" element={<TemplatesSection />} />
+            <Route path="modules" element={<ModulesSection />} />
+            {/* old bookmarks — the route was /admin/templates before PR #51 */}
+            <Route path="templates" element={<Navigate to="/admin/modules" replace />} />
             <Route
               path="reminders"
               element={<Navigate to="/admin/operations?tab=reminders" replace />}

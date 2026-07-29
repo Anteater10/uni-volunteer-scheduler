@@ -57,10 +57,8 @@ class Settings(BaseSettings):
     # --- Phase 6: Resend monitoring ---
     resend_daily_limit: int = 100  # free-tier limit; 80% warning threshold
 
-    # --- Phase 5 / Phase 18: LLM CSV Import (OpenRouter free tier) ---
+    # --- OpenRouter (used by the copilot LLM client) ---
     openrouter_api_key: str = ""  # Set in backend/.env: OPENROUTER_API_KEY=sk-or-...
-    llm_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
-    import_cost_ceiling: float = 5.0  # refuse imports estimated > $5
     # Legacy alias kept so old code referencing openai_model doesn't crash on import
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"

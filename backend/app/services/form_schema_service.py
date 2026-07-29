@@ -179,29 +179,28 @@ def _validate_schema(schema: Any) -> list[dict]:
 # Effective-schema resolution
 # ---------------------------------------------------------------------------
 
-def _template_default(db: Session, module_slug: Optional[str]) -> list[dict]:
+def _module_default(db: Session, module_slug: Optional[str]) -> list[dict]:
     if not module_slug:
         return []
-    # Event.module_slug may be a family_key (when a module + orientation
-    # import merges into one event). Prefer the module-type template in that
-    # family; fall back to any template whose slug/family_key matches.
+    # Event.module_slug is usually a template slug, but legacy events may
+    # carry a family_key. Prefer the exact slug match; fall back to the
+    # oldest template in the family so the pick stays deterministic.
     tpl = (
-        db.query(models.ModuleTemplate)
+        db.query(models.Module)
         .filter(
-            models.ModuleTemplate.family_key == module_slug,
-            models.ModuleTemplate.type == models.ModuleType.module,
-            models.ModuleTemplate.deleted_at.is_(None),
+            models.Module.slug == module_slug,
+            models.Module.deleted_at.is_(None),
         )
         .first()
     )
     if tpl is None:
         tpl = (
-            db.query(models.ModuleTemplate)
+            db.query(models.Module)
             .filter(
-                (models.ModuleTemplate.family_key == module_slug)
-                | (models.ModuleTemplate.slug == module_slug),
-                models.ModuleTemplate.deleted_at.is_(None),
+                models.Module.family_key == module_slug,
+                models.Module.deleted_at.is_(None),
             )
+            .order_by(models.Module.created_at)
             .first()
         )
     if tpl is None:
@@ -221,7 +220,7 @@ def get_effective_schema(
         raise HTTPException(status_code=404, detail="Event not found")
     if event.form_schema is not None:
         return list(event.form_schema)
-    return _template_default(db, event.module_slug)
+    return _module_default(db, event.module_slug)
 
 
 # ---------------------------------------------------------------------------
@@ -261,31 +260,31 @@ def set_event_schema(
     return normalised
 
 
-def set_template_default_schema(
+def set_module_default_schema(
     db: Session,
     slug: str,
     schema: Any,
     *,
     actor: Optional[models.User] = None,
 ) -> list[dict]:
-    """Replace the template's default schema."""
-    tpl = (
-        db.query(models.ModuleTemplate)
-        .filter(models.ModuleTemplate.slug == slug)
+    """Replace the module's default schema."""
+    mod = (
+        db.query(models.Module)
+        .filter(models.Module.slug == slug)
         .first()
     )
-    if tpl is None:
-        raise HTTPException(status_code=404, detail="Template not found")
+    if mod is None:
+        raise HTTPException(status_code=404, detail="Module not found")
 
     normalised = _validate_schema(schema)
-    tpl.default_form_schema = normalised
-    db.add(tpl)
+    mod.default_form_schema = normalised
+    db.add(mod)
     log_action(
         db,
         actor,
-        "form_schema_template_set",
-        "ModuleTemplate",
-        tpl.slug,
+        "form_schema_module_set",
+        "Module",
+        mod.slug,
         extra={"field_count": len(normalised)},
     )
     db.commit()
@@ -314,7 +313,7 @@ def append_event_field(
     if event.form_schema is not None:
         current = list(event.form_schema)
     else:
-        current = _template_default(db, event.module_slug)
+        current = _module_default(db, event.module_slug)
 
     new_field = _validate_field(field)
     if any(f["id"] == new_field["id"] for f in current):

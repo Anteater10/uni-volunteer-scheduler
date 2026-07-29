@@ -26,12 +26,11 @@ def organizer_headers(client, db_session):
 def module_template(db_session):
     # Unique slug: data migrations seed real template rows, and the alembic
     # round-trip tests leave that seeded state in the shared test DB.
-    tpl = models.ModuleTemplate(
+    tpl = models.Module(
         slug=f"gate-bio-{uuid.uuid4().hex[:8]}",
         name="Intro Bio",
         default_capacity=20,
         duration_minutes=90,
-        type=models.ModuleType.module,
         session_count=1,
     )
     db_session.add(tpl)

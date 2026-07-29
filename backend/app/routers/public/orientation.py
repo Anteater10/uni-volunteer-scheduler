@@ -56,7 +56,7 @@ def orientation_check(
 ):
     """Credit check keyed by (email, module_family) — permanent, any quarter.
     Family resolves from ``event_id`` via ``event.module_slug →
-    module_templates.slug → family_key or slug``. Fails closed when the
+    modules.slug → family_key or slug``. Fails closed when the
     family is unresolvable (issue #30).
 
     D-08: same shape for unknown / known emails.

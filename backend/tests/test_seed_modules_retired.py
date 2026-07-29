@@ -2,7 +2,7 @@
 
 conftest creates tables directly from Base.metadata so no seed rows exist in
 the test DB. This test checks that IF any of the retired slugs appear in
-module_templates, none of them are active (deleted_at IS NULL).
+modules, none of them are active (deleted_at IS NULL).
 """
 from app import models
 
@@ -18,9 +18,9 @@ RETIRED_SLUGS = [
 
 def test_seed_templates_have_no_active_rows(db_session):
     active = (
-        db_session.query(models.ModuleTemplate)
-        .filter(models.ModuleTemplate.slug.in_(RETIRED_SLUGS))
-        .filter(models.ModuleTemplate.deleted_at.is_(None))
+        db_session.query(models.Module)
+        .filter(models.Module.slug.in_(RETIRED_SLUGS))
+        .filter(models.Module.deleted_at.is_(None))
         .count()
     )
     assert active == 0, (

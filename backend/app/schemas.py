@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
-from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType, ModuleType
+from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType
 
 
 # -------------------------
@@ -540,14 +540,13 @@ class EventCheckInByEmailResponse(BaseModel):
 
 
 # =========================
-# MODULE TEMPLATE SCHEMAS (Phase 5)
+# MODULE SCHEMAS (Phase 5)
 # =========================
-class ModuleTemplateBase(BaseModel):
+class ModuleBase(BaseModel):
     name: str
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
-    type: ModuleType = ModuleType.module
     session_count: int = 1
     materials: List[str] = []
     description: Optional[str] = None
@@ -558,16 +557,15 @@ class ModuleTemplateBase(BaseModel):
     family_key: Optional[str] = None
 
 
-class ModuleTemplateCreate(ModuleTemplateBase):
+class ModuleCreate(ModuleBase):
     slug: str
 
 
-class ModuleTemplateUpdate(BaseModel):
+class ModuleUpdate(BaseModel):
     name: Optional[str] = None
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: Optional[int] = None
     duration_minutes: Optional[int] = None
-    type: Optional[ModuleType] = None
     session_count: Optional[int] = None
     materials: Optional[List[str]] = None
     description: Optional[str] = None
@@ -575,13 +573,12 @@ class ModuleTemplateUpdate(BaseModel):
     family_key: Optional[str] = None
 
 
-class ModuleTemplateRead(ORMBase):
+class ModuleRead(ORMBase):
     slug: str
     name: str
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
-    type: ModuleType = ModuleType.module
     session_count: int = 1
     materials: List[str] = []
     description: Optional[str] = None
@@ -595,9 +592,6 @@ class ModuleTemplateRead(ORMBase):
 
 
 # =========================
-# CSV IMPORT SCHEMAS (Phase 5)
-# =========================
-# =========================
 # SENT NOTIFICATION SCHEMAS (Phase 6)
 # =========================
 class SentNotificationRead(ORMBase):
@@ -606,17 +600,6 @@ class SentNotificationRead(ORMBase):
     kind: str
     sent_at: datetime
     provider_id: Optional[str] = None
-
-
-class CsvImportRead(ORMBase):
-    id: UUID
-    uploaded_by: UUID
-    filename: str
-    status: str
-    result_payload: Optional[dict] = None
-    error_message: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
 
 
 # =========================
@@ -886,7 +869,7 @@ class TokenedManageRead(BaseModel):
 # CUSTOM FORM FIELDS (Phase 22)
 # =========================
 # The form schema is a JSON array of field descriptors stored on
-# ``module_templates.default_form_schema`` and ``events.form_schema``.
+# ``modules.default_form_schema`` and ``events.form_schema``.
 # Responses land in the ``signup_responses`` table.
 
 FormFieldType = Literal[

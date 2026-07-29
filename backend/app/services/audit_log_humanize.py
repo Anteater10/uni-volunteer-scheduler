@@ -30,14 +30,17 @@ ACTION_LABELS: dict[str, str] = {
     "user_reactivate": "Reactivated a user",
     "user_update": "Updated a user",
     "user_login": "Logged in",
+    "user_set_password": "Set their password from an emailed link",
+    "user_change_password": "Changed their password",
     "ccpa_export": "Exported a user's personal data (CCPA)",
     "ccpa_delete": "Deleted a user's personal data (CCPA)",
     "event_create": "Created an event",
     "event_update": "Updated an event",
     "event_notify": "Sent a notification to event attendees",
-    "template_create": "Created a module template",
-    "template_update": "Updated a module template",
-    "template_delete": "Archived a module template",
+    # legacy action keys — kept so historical audit rows still render
+    "template_create": "Created a module",
+    "template_update": "Updated a module",
+    "template_delete": "Archived a module",
     "import_upload": "Uploaded a CSV import",
     "import_commit": "Committed a CSV import",
     # Phase 21 — orientation credit engine
@@ -45,7 +48,9 @@ ACTION_LABELS: dict[str, str] = {
     "orientation_credit_revoke": "Revoked orientation credit",
     # Phase 22 — custom form fields
     "form_schema_set": "Updated event form fields",
-    "form_schema_template_set": "Updated template default form fields",
+    "form_schema_module_set": "Updated module default form fields",
+    # legacy key for the same action, pre-PR #51 rows
+    "form_schema_template_set": "Updated module default form fields",
     "form_schema_field_append": "Added a form field to an event",
     # Phase 23 — recurring event duplication
     "event_duplicate": "Duplicated an event",
@@ -130,10 +135,11 @@ def _resolve_entity(
         ev_title = sl.event.title if sl.event else "an event"
         return f"{slot_type} in {ev_title}"
 
-    if et in ("template", "moduletemplate", "module_template"):
+    # "template"/"moduletemplate" appear on pre-PR #51 rows; "module" going forward
+    if et in ("module", "template", "moduletemplate", "module_template"):
         t = (
-            db.query(models.ModuleTemplate)
-            .filter(models.ModuleTemplate.slug == entity_id)
+            db.query(models.Module)
+            .filter(models.Module.slug == entity_id)
             .first()
         )
         if not t:

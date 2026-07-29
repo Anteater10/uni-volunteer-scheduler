@@ -1,6 +1,6 @@
-// src/pages/admin/TemplatesSection.jsx
+// src/pages/admin/ModulesSection.jsx
 //
-// Phase 17 Plan 02 — Templates CRUD with SideDrawer pattern.
+// Phase 17 Plan 02 — Modules CRUD with SideDrawer pattern.
 // ADMIN-08..11: list, create, edit (update), archive (soft-delete), restore.
 // D-18: plain-English labels. D-19: humanized names. D-52/53: breadcrumbs.
 
@@ -28,26 +28,9 @@ import { toast } from "../../state/toast";
 
 const PAGE_SIZE = 10;
 
-const TYPE_OPTIONS = [
-  { value: "module", label: "Module" },
-  { value: "seminar", label: "Seminar" },
-  { value: "orientation", label: "Orientation" },
-];
-
-const TYPE_BADGE = {
-  seminar: "bg-blue-100 text-blue-800",
-  orientation: "bg-green-100 text-green-800",
-  module: "bg-gray-100 text-gray-700",
-};
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function capitalize(str) {
-  if (!str) return "";
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
 
 function slugify(name) {
   return name
@@ -61,35 +44,31 @@ function emptyForm() {
   return {
     name: "",
     slug: "",
-    type: "module",
     duration_minutes: 90,
     session_count: 1,
     default_capacity: 30,
     description: "",
     materials: "",
-    family_key: "",
   };
 }
 
-function templateToForm(t) {
+function moduleToForm(m) {
   return {
-    name: t.name || "",
-    slug: t.slug || "",
-    type: t.type || "module",
-    duration_minutes: t.duration_minutes ?? 90,
-    session_count: t.session_count ?? 1,
-    default_capacity: t.default_capacity ?? 30,
-    description: t.description || "",
-    materials: Array.isArray(t.materials) ? t.materials.join(", ") : (t.materials || ""),
-    family_key: t.family_key || "",
+    name: m.name || "",
+    slug: m.slug || "",
+    duration_minutes: m.duration_minutes ?? 90,
+    session_count: m.session_count ?? 1,
+    default_capacity: m.default_capacity ?? 30,
+    description: m.description || "",
+    materials: Array.isArray(m.materials) ? m.materials.join(", ") : (m.materials || ""),
   };
 }
 
 // ---------------------------------------------------------------------------
-// TemplateForm — shared create/edit form rendered inside SideDrawer
+// ModuleForm — shared create/edit form rendered inside SideDrawer
 // ---------------------------------------------------------------------------
 
-function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
+function ModuleForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, onCancel, onEditFormFields, submitting }) {
   function handleNameChange(e) {
     const name = e.target.value;
     setForm((prev) => ({
@@ -137,50 +116,6 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
           </p>
         )}
       </div>
-
-      {/* Type */}
-      <div>
-        <Label htmlFor="tf-type">Type</Label>
-        <select
-          id="tf-type"
-          value={form.type}
-          onChange={(e) => setForm((p) => ({ ...p, type: e.target.value }))}
-          className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
-        >
-          {TYPE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Links to module (orientation only). Issue #30: an orientation must
-          name the module family it credits — a standalone orientation would
-          mint a credit family nothing ever checks against. */}
-      {form.type === "orientation" && (
-        <div>
-          <Label htmlFor="tf-family">Links to module</Label>
-          <select
-            id="tf-family"
-            required
-            value={form.family_key || ""}
-            onChange={(e) => setForm((p) => ({ ...p, family_key: e.target.value }))}
-            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
-          >
-            <option value="">Select the module this orientation credits…</option>
-            {moduleTemplates.map((m) => (
-              <option key={m.slug} value={m.family_key || m.slug}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-[var(--color-fg-muted)] mt-1">
-            Attending this orientation earns permanent credit for the linked
-            module — once oriented, always oriented.
-          </p>
-        </div>
-      )}
 
       {/* Duration */}
       <div>
@@ -245,7 +180,7 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
           </Button>
           <p className="text-xs text-[var(--color-fg-muted)] mt-1">
             Custom signup questions volunteers answer for every event created
-            from this template.
+            from this module.
           </p>
         </div>
       )}
@@ -289,38 +224,37 @@ function TemplateForm({ form, setForm, isCreate, moduleTemplates = [], onSubmit,
 }
 
 // ---------------------------------------------------------------------------
-// TemplatesSection
+// ModulesSection
 // ---------------------------------------------------------------------------
 
-export default function TemplatesSection() {
+export default function ModulesSection() {
   useAdminPageTitle("Modules");
   const qc = useQueryClient();
 
   // --- UI state ---
-  const [drawerTemplate, setDrawerTemplate] = useState(null); // template being edited
+  const [drawerModule, setDrawerModule] = useState(null); // module being edited
   const [createOpen, setCreateOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [archiveConfirm, setArchiveConfirm] = useState(null); // slug or null
-  const [formFieldsFor, setFormFieldsFor] = useState(null); // template (with slug + default_form_schema) being edited
+  const [formFieldsFor, setFormFieldsFor] = useState(null); // module (with slug + default_form_schema) being edited
 
   // --- Form state for create/edit ---
   const [form, setForm] = useState(emptyForm());
 
   // --- Query ---
   const listQ = useQuery({
-    queryKey: ["adminTemplates", { include_archived: showArchived }],
+    queryKey: ["adminModules", { include_archived: showArchived }],
     queryFn: () =>
-      api.admin.templates.list(showArchived ? { include_archived: true } : undefined),
+      api.admin.modules.list(showArchived ? { include_archived: true } : undefined),
   });
 
   // --- Mutations ---
   const createM = useMutation({
-    mutationFn: (payload) => api.admin.templates.create(payload),
+    mutationFn: (payload) => api.admin.modules.create(payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
       setCreateOpen(false);
       setForm(emptyForm());
       toast.success("Module created");
@@ -329,30 +263,30 @@ export default function TemplatesSection() {
   });
 
   const updateM = useMutation({
-    mutationFn: ({ slug, payload }) => api.admin.templates.update(slug, payload),
+    mutationFn: ({ slug, payload }) => api.admin.modules.update(slug, payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
-      setDrawerTemplate(null);
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
+      setDrawerModule(null);
       toast.success("Module updated");
     },
     onError: (e) => toast.error(e?.message || "Failed to update module"),
   });
 
   const archiveM = useMutation({
-    mutationFn: (slug) => api.admin.templates.delete(slug),
+    mutationFn: (slug) => api.admin.modules.delete(slug),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
       setArchiveConfirm(null);
-      setDrawerTemplate(null);
+      setDrawerModule(null);
       toast.success("Module archived");
     },
     onError: (e) => toast.error(e?.message || "Failed to archive module"),
   });
 
   const restoreM = useMutation({
-    mutationFn: (slug) => api.admin.templates.restore(slug),
+    mutationFn: (slug) => api.admin.modules.restore(slug),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
       toast.success("Module restored");
     },
     onError: (e) => toast.error(e?.message || "Failed to restore module"),
@@ -360,18 +294,18 @@ export default function TemplatesSection() {
 
   const cloneM = useMutation({
     mutationFn: ({ slug, new_slug, new_name }) =>
-      api.admin.templates.clone(slug, { new_slug, new_name }),
+      api.admin.modules.clone(slug, { new_slug, new_name }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
-      setDrawerTemplate(null);
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
+      setDrawerModule(null);
       toast.success("Module cloned");
     },
     onError: (e) => toast.error(e?.message || "Failed to clone module"),
   });
 
   function handleClone() {
-    if (!drawerTemplate) return;
-    const suggested = `${drawerTemplate.slug}-copy`;
+    if (!drawerModule) return;
+    const suggested = `${drawerModule.slug}-copy`;
     const new_slug = window.prompt(
       "Slug for the cloned module (lowercase, hyphens only):",
       suggested,
@@ -379,17 +313,17 @@ export default function TemplatesSection() {
     if (!new_slug) return;
     const new_name = window.prompt(
       "Name for the cloned module:",
-      `${drawerTemplate.name} (copy)`,
+      `${drawerModule.name} (copy)`,
     );
-    cloneM.mutate({ slug: drawerTemplate.slug, new_slug, new_name });
+    cloneM.mutate({ slug: drawerModule.slug, new_slug, new_name });
   }
 
   // Phase 22 — default form schema persistence
   const defaultSchemaM = useMutation({
     mutationFn: ({ slug, schema }) =>
-      api.admin.templates.setDefaultFormSchema(slug, schema),
+      api.admin.modules.setDefaultFormSchema(slug, schema),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["adminTemplates"] });
+      qc.invalidateQueries({ queryKey: ["adminModules"] });
       setFormFieldsFor(null);
       toast.success("Form fields saved");
     },
@@ -403,16 +337,8 @@ export default function TemplatesSection() {
       const q = search.toLowerCase();
       result = result.filter((t) => t.name.toLowerCase().includes(q));
     }
-    if (typeFilter !== "all") {
-      result = result.filter((t) => t.type === typeFilter);
-    }
     return result;
-  }, [listQ.data, search, typeFilter]);
-
-  const moduleTemplates = useMemo(
-    () => (listQ.data || []).filter((t) => t.type === "module" && !t.deleted_at),
-    [listQ.data],
-  );
+  }, [listQ.data, search]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -423,16 +349,15 @@ export default function TemplatesSection() {
     setCreateOpen(true);
   }
 
-  function openEdit(t) {
-    setForm(templateToForm(t));
-    setDrawerTemplate(t);
+  function openEdit(m) {
+    setForm(moduleToForm(m));
+    setDrawerModule(m);
   }
 
   function handleCreate(formData) {
     createM.mutate({
       slug: formData.slug,
       name: formData.name,
-      type: formData.type,
       duration_minutes: Number(formData.duration_minutes),
       session_count: Number(formData.session_count),
       default_capacity: Number(formData.default_capacity),
@@ -440,19 +365,15 @@ export default function TemplatesSection() {
       materials: formData.materials
         ? formData.materials.split(",").map((s) => s.trim()).filter(Boolean)
         : [],
-      ...(formData.type === "orientation" && formData.family_key
-        ? { family_key: formData.family_key }
-        : {}),
     });
   }
 
   function handleUpdate(formData) {
-    if (!drawerTemplate) return;
+    if (!drawerModule) return;
     updateM.mutate({
-      slug: drawerTemplate.slug,
+      slug: drawerModule.slug,
       payload: {
         name: formData.name,
-        type: formData.type,
         duration_minutes: Number(formData.duration_minutes),
         session_count: Number(formData.session_count),
         default_capacity: Number(formData.default_capacity),
@@ -460,9 +381,6 @@ export default function TemplatesSection() {
         materials: formData.materials
           ? formData.materials.split(",").map((s) => s.trim()).filter(Boolean)
           : [],
-        ...(formData.type === "orientation"
-          ? { family_key: formData.family_key || null }
-          : {}),
       },
     });
   }
@@ -473,17 +391,12 @@ export default function TemplatesSection() {
     setPage(1);
   }
 
-  function handleTypeFilterChange(e) {
-    setTypeFilter(e.target.value);
-    setPage(1);
-  }
-
   function handleShowArchivedChange(e) {
     setShowArchived(e.target.checked);
     setPage(1);
   }
 
-  // Name of template being confirmed for archive
+  // Name of module being confirmed for archive
   const archiveTargetName = archiveConfirm
     ? (listQ.data || []).find((t) => t.slug === archiveConfirm)?.name || archiveConfirm
     : null;
@@ -516,18 +429,6 @@ export default function TemplatesSection() {
           onChange={handleSearchChange}
           className="flex-1 min-w-[20rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
-        <select
-          id="tmpl-type"
-          aria-label="Filter by type"
-          value={typeFilter}
-          onChange={handleTypeFilterChange}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
-        >
-          <option value="all">All types</option>
-          <option value="module">Module</option>
-          <option value="seminar">Seminar</option>
-          <option value="orientation">Orientation</option>
-        </select>
         <label className="flex items-center gap-2 text-sm" htmlFor="tmpl-archived">
           <input
             id="tmpl-archived"
@@ -565,7 +466,6 @@ export default function TemplatesSection() {
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
                 <tr>
                   <th className="py-3 px-4">Name</th>
-                  <th className="py-3 px-4">Type</th>
                   <th className="py-3 px-4">Duration</th>
                   <th className="py-3 px-4">Sessions</th>
                   <th className="py-3 px-4">Capacity</th>
@@ -585,15 +485,6 @@ export default function TemplatesSection() {
                       onClick={() => !isArchived && openEdit(t)}
                     >
                       <td className="py-3 px-4 font-semibold">{t.name}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`inline-flex items-center rounded-full px-3 py-1 text-base font-medium ${
-                            TYPE_BADGE[t.type] || "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {capitalize(t.type)}
-                        </span>
-                      </td>
                       <td className="py-3 px-4 text-gray-800">{t.duration_minutes} min</td>
                       <td className="py-3 px-4 text-gray-800">
                         {t.session_count === 1
@@ -665,11 +556,10 @@ export default function TemplatesSection() {
         onClose={() => setCreateOpen(false)}
         title="New module"
       >
-        <TemplateForm
+        <ModuleForm
           form={form}
           setForm={setForm}
           isCreate
-          moduleTemplates={moduleTemplates}
           onSubmit={handleCreate}
           onCancel={() => setCreateOpen(false)}
           submitting={createM.isPending}
@@ -678,21 +568,20 @@ export default function TemplatesSection() {
 
       {/* Edit SideDrawer */}
       <SideDrawer
-        open={!!drawerTemplate}
-        onClose={() => setDrawerTemplate(null)}
+        open={!!drawerModule}
+        onClose={() => setDrawerModule(null)}
         title="Edit module"
       >
-        {drawerTemplate && (
-          <TemplateForm
+        {drawerModule && (
+          <ModuleForm
             form={form}
             setForm={setForm}
             isCreate={false}
-            moduleTemplates={moduleTemplates.filter((m) => m.slug !== drawerTemplate.slug)}
             onSubmit={handleUpdate}
-            onArchive={() => setArchiveConfirm(drawerTemplate.slug)}
+            onArchive={() => setArchiveConfirm(drawerModule.slug)}
             onClone={handleClone}
-            onCancel={() => setDrawerTemplate(null)}
-            onEditFormFields={() => setFormFieldsFor(drawerTemplate)}
+            onCancel={() => setDrawerModule(null)}
+            onEditFormFields={() => setFormFieldsFor(drawerModule)}
             submitting={updateM.isPending}
           />
         )}

@@ -88,7 +88,7 @@ class TestTemplateDefaultFormSchema:
             client, db_session, models.UserRole.admin, f"admin-{slug}@example.com"
         )
         resp = client.post(
-            "/api/v1/admin/module-templates",
+            "/api/v1/admin/modules",
             json={
                 "slug": slug,
                 "name": "Form schema module",
@@ -109,7 +109,7 @@ class TestTemplateDefaultFormSchema:
         )
 
         resp = client.put(
-            f"/api/v1/admin/templates/{slug}/default-form-schema",
+            f"/api/v1/admin/modules/{slug}/default-form-schema",
             json={"schema": SCHEMA},
             headers=headers,
         )
@@ -122,7 +122,7 @@ class TestTemplateDefaultFormSchema:
         )
 
         resp = client.put(
-            f"/api/v1/admin/templates/{slug}/default-form-schema",
+            f"/api/v1/admin/modules/{slug}/default-form-schema",
             json={"schema": SCHEMA},
             headers=headers,
         )

@@ -2,7 +2,7 @@
 //
 // Phase 22 — reusable form-schema CRUD drawer.
 // Used by:
-//  - TemplatesSection (bound to template.default_form_schema)
+//  - ModulesSection (bound to module.default_form_schema)
 //  - AdminEventPage (bound to event.form_schema effective)
 //
 // Keeps the whole schema in local state until "Save" — parent provides

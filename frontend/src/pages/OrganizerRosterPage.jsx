@@ -383,6 +383,51 @@ export default function OrganizerRosterPage() {
         </div>
       </div>
 
+      {/* PR #51 — once every slot is resolved the event is done; say so with
+          a little ceremony instead of just greying the buttons out. */}
+      {eventResolved ? (
+        <div
+          data-testid="event-complete-banner"
+          className="animate-fade-up mb-6 flex items-center gap-4 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-[var(--color-brand-soft)] p-4 shadow-sm"
+        >
+          <span className="animate-badge-pop flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-6 w-6"
+              aria-hidden="true"
+            >
+              <path
+                d="M4.5 12.5l5 5 10-11"
+                pathLength="1"
+                className="animate-draw-check"
+              />
+            </svg>
+          </span>
+          <div>
+            <p className="text-base font-semibold text-emerald-900">
+              Event complete 🎉
+            </p>
+            <p className="text-sm text-emerald-800/80">
+              Every session is resolved —{" "}
+              {slotGroups.reduce((n, g) => n + g.attended, 0)} attended,{" "}
+              {slotGroups.reduce((n, g) => n + g.noShow, 0)}{" "}
+              {slotGroups.reduce((n, g) => n + g.noShow, 0) === 1
+                ? "no-show"
+                : "no-shows"}{" "}
+              on the books.
+              {slotGroups.some((g) => g.slotType === "orientation")
+                ? " Orientation credit was granted with each ended session."
+                : ""}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         <RosterStat label="Checked in" value={checkedIn} tone="green" />
         <RosterStat label="Total signups" value={total} />

@@ -59,14 +59,6 @@ class MagicLinkPurpose(str, enum.Enum):
     SIGNUP_MANAGE = "signup_manage"    # NEW Phase 08
 
 
-class CsvImportStatus(str, enum.Enum):
-    pending = "pending"
-    processing = "processing"
-    ready = "ready"
-    committed = "committed"
-    failed = "failed"
-
-
 class NotificationType(str, enum.Enum):
     email = "email"
     sms = "sms"
@@ -88,12 +80,6 @@ class Quarter(str, enum.Enum):
 class SlotType(str, enum.Enum):
     ORIENTATION = "orientation"
     PERIOD = "period"
-
-
-class ModuleType(str, enum.Enum):
-    seminar = "seminar"
-    orientation = "orientation"
-    module = "module"
 
 
 class OrientationCreditSource(str, enum.Enum):
@@ -252,7 +238,7 @@ class Event(Base):
     signup_open_at = Column(DateTime(timezone=True), nullable=True)
     signup_close_at = Column(DateTime(timezone=True), nullable=True)
     venue_code = Column(String(4), nullable=True)
-    # Phase 08: module_slug FK to module_templates dropped (D-07); column stays as plain String
+    # Phase 08: module_slug FK to modules dropped (D-07); column stays as plain String
     module_slug = Column(String, nullable=True)
     reminder_1h_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
 
@@ -588,23 +574,21 @@ class MagicLinkToken(Base):
 
 
 # -------------------------
-# Module templates
+# Modules
 # -------------------------
 
 
-class ModuleTemplate(Base):
-    __tablename__ = "module_templates"
+class Module(Base):
+    __tablename__ = "modules"
 
     slug = Column(String, primary_key=True)
     name = Column(String(255), nullable=False)
     # Phase 08: prereq_slugs column dropped (D-05)
     default_capacity = Column(Integer, nullable=False, server_default="20")
     duration_minutes = Column(Integer, nullable=False, server_default="90")
-    type = Column(
-        SqlEnum(ModuleType, values_callable=lambda x: [e.value for e in x], name="moduletype", create_type=False),
-        nullable=False,
-        server_default="module",
-    )
+    # PR #51: the type column (module/seminar/orientation) is gone — every row
+    # is a plain module now. Orientation is a *slot* concept (SlotType), and
+    # credit grouping lives on family_key.
     session_count = Column(Integer, nullable=False, server_default="1")
     materials = Column(ARRAY(String), nullable=False, server_default="{}")
     description = Column(Text, nullable=True)
@@ -697,31 +681,6 @@ class OrientationCredit(Base):
 
 
 # -------------------------
-# CSV Import tracking
-# -------------------------
-
-
-class CsvImport(Base):
-    __tablename__ = "csv_imports"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    filename = Column(String(512), nullable=False)
-    raw_csv_hash = Column(String(64), nullable=False)
-    status = Column(
-        SqlEnum(CsvImportStatus, values_callable=lambda x: [e.value for e in x], name="csvimportstatus"),
-        default=CsvImportStatus.pending,
-        nullable=False,
-    )
-    result_payload = Column(JSONB, nullable=True)
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    uploader = relationship("User")
-
-
-# -------------------------
 # Sent Notifications (dedup table for exactly-once email delivery)
 # -------------------------
 
@@ -756,7 +715,7 @@ class SignupResponse(Base):
     """One per (signup, field_id). Free-text in ``value_text``; structured
     answers (multi-select, arrays) in ``value_json``. The effective schema
     lives on the event (``Event.form_schema``) or template
-    (``ModuleTemplate.default_form_schema``); responses are snapshotted by
+    (``Module.default_form_schema``); responses are snapshotted by
     ``field_id`` so schema edits don't retroactively break old signups.
     """
 

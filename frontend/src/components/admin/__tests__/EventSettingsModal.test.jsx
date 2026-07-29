@@ -16,7 +16,7 @@ vi.mock("../../../lib/api", () => {
       update: vi.fn(async () => ({})),
       delete: vi.fn(async () => ({})),
     },
-    admin: { templates: { list: vi.fn(async () => []) } },
+    admin: { modules: { list: vi.fn(async () => []) } },
     public: { getQuarters: vi.fn(async () => []) },
   };
   return { default: apiMock, api: apiMock };
