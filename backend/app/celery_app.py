@@ -24,6 +24,7 @@ from .database import SessionLocal
 from . import models
 from .emails import BUILDERS
 from .observability import init_sentry
+from .signup_service import promote_waitlist_fifo
 
 logger = logging.getLogger(__name__)
 
@@ -537,47 +538,109 @@ def send_waitlist_promotion_email(
 
 @celery.task(name="app.celery_app.expire_pending_signups")
 def expire_pending_signups() -> None:
-    """Daily cleanup: hard-delete pending signups whose SIGNUP_CONFIRM token has expired.
+    """Hourly sweep (2026-07-28 spec): reap unconfirmed pendings, chain-promote,
+    then clean up stale manage tokens.
 
-    Criteria:
-      - Signup.status == pending
-      - Has a MagicLinkToken with purpose == SIGNUP_CONFIRM
-      - That token's expires_at < now (UTC)
+    Reap criteria — a pending signup is deleted only when it has at least one
+    SIGNUP_CONFIRM token and NONE of them is still unexpired. A signup can
+    legitimately hold several tokens (original 14-day + promotion 3-day);
+    keying on "an expired token exists" would delete freshly promoted rows.
 
     Side effects:
-      - slot.current_count decremented for each deleted signup
-      - MagicLinkToken cascade-deleted with the signup (ondelete=CASCADE)
-
-    Logs: expired_pending_signups_cleaned count=N
+      - slot.current_count decremented per deleted signup
+      - freed seats chain-promote the slot's waitlist FIFO (pending + email,
+        their own 3-day clock — an unbroken chain across nightly runs)
+      - MagicLinkToken rows cascade-delete with their signup
+      - stale confirm tokens removed (see _cleanup_stale_confirm_tokens)
     """
     db: Session = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
 
-        # Find pending signups that have an expired SIGNUP_CONFIRM token
+        live_token_exists = (
+            db.query(models.MagicLinkToken.token_hash)
+            .filter(
+                models.MagicLinkToken.signup_id == models.Signup.id,
+                models.MagicLinkToken.purpose
+                == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+                models.MagicLinkToken.expires_at >= now,
+            )
+            .exists()
+        )
+        any_token_exists = (
+            db.query(models.MagicLinkToken.token_hash)
+            .filter(
+                models.MagicLinkToken.signup_id == models.Signup.id,
+                models.MagicLinkToken.purpose
+                == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+            )
+            .exists()
+        )
+
         rows = (
             db.query(models.Signup, models.Slot)
             .join(models.Slot, models.Signup.slot_id == models.Slot.id)
-            .join(
-                models.MagicLinkToken,
-                models.MagicLinkToken.signup_id == models.Signup.id,
-            )
             .filter(
                 models.Signup.status == models.SignupStatus.pending,
-                models.MagicLinkToken.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM,
-                models.MagicLinkToken.expires_at < now,
+                any_token_exists,
+                ~live_token_exists,
             )
             .all()
         )
 
+        tokenless = (
+            db.query(func.count(models.Signup.id))
+            .filter(
+                models.Signup.status == models.SignupStatus.pending,
+                ~any_token_exists,
+            )
+            .scalar()
+            or 0
+        )
+        if tokenless:
+            logger.warning(
+                "expire_pending_signups: %d tokenless pending signups skipped "
+                "(data problem — pending must always carry a confirm token)",
+                tokenless,
+            )
+
+        affected_slot_ids: list = []
         count = 0
         for signup, slot in rows:
             slot.current_count = max(0, slot.current_count - 1)
+            if slot.id not in affected_slot_ids:
+                affected_slot_ids.append(slot.id)
             db.delete(signup)
             count += 1
+        db.flush()
+
+        promotion_email_kwargs: list[dict] = []
+        for slot_id in affected_slot_ids:
+            slot = (
+                db.query(models.Slot)
+                .filter(models.Slot.id == slot_id)
+                .with_for_update()
+                .first()
+            )
+            if slot is None:
+                continue
+            while slot.current_count < slot.capacity:
+                promo = promote_waitlist_fifo(db, slot.id)
+                if promo is None:
+                    break
+                slot.current_count += 1
+                promotion_email_kwargs.append(promo.email_kwargs)
 
         db.commit()
-        logger.info("expired_pending_signups_cleaned count=%d", count)
+        for kwargs in promotion_email_kwargs:
+            send_waitlist_promotion_email.delay(**kwargs)
+        logger.info(
+            "expired_pending_signups_cleaned count=%d promoted=%d",
+            count,
+            len(promotion_email_kwargs),
+        )
+
+        # Second transaction: stale-token sweep (Task 8 adds the helper).
     finally:
         db.close()
 
@@ -630,9 +693,9 @@ celery.conf.beat_schedule = {
         "task": "app.celery_app.weekly_digest",
         "schedule": crontab(hour=8, minute=0, day_of_week="monday"),
     },
-    "expire-pending-signups-daily-3am": {
+    "expire-pending-signups-hourly": {
         "task": "app.celery_app.expire_pending_signups",
-        "schedule": crontab(hour=3, minute=0),
+        "schedule": crontab(minute=0),
     },
     # PR #51 — quarters move to the archive on their own once they end.
     "archive-ended-quarters-daily": {
