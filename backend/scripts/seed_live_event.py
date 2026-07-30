@@ -11,6 +11,7 @@ Test volunteer email: live-test@e2e.example.com
 """
 from __future__ import annotations
 
+import secrets
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone, date
@@ -27,7 +28,7 @@ from app.models import (
     UserRole,
     Volunteer,
 )
-from app.routers.public.events import derive_quarter_week
+from app.services.quarter_service import derive_quarter_week
 
 EVENT_TITLE = "LIVE Check-in Test Event"
 VOLUNTEER_EMAIL = "live-test@e2e.example.com"
@@ -41,18 +42,37 @@ def main() -> int:
             db.query(User).filter(User.email == ORGANIZER_EMAIL).one_or_none()
         )
         if organizer is None:
-            print(
-                f"ERROR: no user with email {ORGANIZER_EMAIL}. Run the "
-                f"normal seed first (seed_e2e.py or /login page bootstrap).",
-                file=sys.stderr,
+            # Fresh/reset databases only carry the bootstrap admin — any
+            # admin works as owner since admins see every event.
+            organizer = (
+                db.query(User)
+                .filter(User.role == UserRole.admin)
+                .order_by(User.email)
+                .first()
             )
-            return 1
+            if organizer is None:
+                print(
+                    f"ERROR: no user with email {ORGANIZER_EMAIL} and no "
+                    f"admin to fall back to. Run the normal seed first "
+                    f"(seed_e2e.py or /login page bootstrap).",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"Owner fallback: using admin {organizer.email}")
 
         now = datetime.now(timezone.utc)
         slot_start = now - timedelta(minutes=5)   # 5 min ago → inside window
         slot_end = now + timedelta(hours=1)
-        qstr, qyear, qweek = derive_quarter_week(now.date())
-        qenum = Quarter(qstr)
+        # feat/24-quarters: derivation needs an AcademicQuarter row covering
+        # today and returns None in a gap — the event then goes unlinked,
+        # which check-in doesn't care about.
+        derived = derive_quarter_week(db, now.date())
+        if derived is None:
+            qenum, qyear, qweek, qid = None, None, None, None
+            print("No quarter covers today — seeding without quarter linkage.")
+        else:
+            qstr, qyear, qweek, qid = derived
+            qenum = Quarter(qstr)
 
         event = (
             db.query(Event).filter(Event.title == EVENT_TITLE).one_or_none()
@@ -70,6 +90,7 @@ def main() -> int:
                 quarter=qenum,
                 year=qyear,
                 week_number=qweek,
+                quarter_id=qid,
                 school="Test High School",
             )
             db.add(event)
@@ -81,8 +102,16 @@ def main() -> int:
             event.quarter = qenum
             event.year = qyear
             event.week_number = qweek
+            event.quarter_id = qid
             event.school = event.school or "Test High School"
             print(f"Reusing event {event.id}")
+
+        # Issue #31 hardening: self check-in refuses without a matching venue
+        # code, so an event seeded without one can't be QR-checked-in at all.
+        # Same generator as roster.py's lazy auto-generation.
+        if event.venue_code is None:
+            event.venue_code = f"{secrets.randbelow(10000):04d}"
+            print(f"Assigned venue code {event.venue_code}")
 
         slot = (
             db.query(Slot).filter(Slot.event_id == event.id).first()
@@ -181,9 +210,10 @@ def main() -> int:
         print(f"Event title:      {event.title}")
         print(f"Slot window:      {slot_start.isoformat()} → {slot_end.isoformat()}")
         print(f"Volunteer email:  {VOLUNTEER_EMAIL}")
+        print(f"Venue code:       {event.venue_code}")
         print()
         print("Admin page: /admin/events/%s" % event.id)
-        print("QR target:  /event-check-in/%s" % event.id)
+        print("QR target:  /event-check-in/%s?v=%s" % (event.id, event.venue_code))
         return 0
     finally:
         db.close()
