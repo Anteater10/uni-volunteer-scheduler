@@ -15,27 +15,49 @@ date.
 **There is no single sign-on.** OIDC/SAML sign-in exists in the code but is not configured, so staff
 sign in with an email and password. Volunteers don't sign in at all.
 
-**There are no portals.** An earlier feature for grouping events into public tabs is no longer
-reachable in the app.
+**There are no portals in the app's screens.** An earlier feature grouped events into public tabs;
+it has no page and no menu entry any more, so from a user's point of view portals are gone. The
+plumbing underneath was never deleted, which is why the word still turns up in old notes — but there
+is nothing for staff to open and nothing for the public to see.
 
 **Volunteers have no accounts, no passwords, and no dashboard.** Everything a volunteer does after
 signing up goes through a magic link emailed to them, or the QR code at the door. There is nothing
 for a volunteer to log into.
 
-**There is no per-user timezone.** Everything is Pacific Time, matching the single venue.
+**There is no per-user timezone.** Every time a volunteer or a staff member sees is Pacific,
+matching the single venue, and nobody can choose a different one.
 
-**Attended, no-show, and cancelled cannot be undone.** Once a session is closed out those statuses
-are final. A mis-tapped check-in *can* be undone, but only before close-out.
+**Cancelling cannot be undone.** Once a signup is cancelled it stays cancelled — the volunteer signs
+up again if slots are still open. Attendance is different: closing out an event is reversible with
+**Reopen event**, which puts attended and no-show volunteers back on the live roster. The document on
+ending a slot covers what reopening restores and what it deliberately leaves alone.
 
-**No email announces an automatic waitlist promotion.** When a cancellation frees a seat and the
-next volunteer is auto-promoted, no message is sent — they see the change through their manage
-link. A promotion done by staff from the roster does send one.
+**There is no message centre inside the app.** Notifications reach volunteers and staff by email;
+there is no inbox in the app to check. A Notifications screen does exist at a URL, but it appears in
+no menu, nothing links to it, and nothing writes to it any more — so it is always empty. Treat it as
+unfinished rather than as a place to send anyone.
 
-**Calendar entries don't sync.** A volunteer can add a session to their calendar, but if the session
-later moves, their calendar entry won't update. Use a broadcast to tell them.
+**There is no per-event "notify participants" button.** Mass email to the volunteers on an event goes
+out as a **broadcast**, and that is the only working path. A second, unfinished one survives in the
+plumbing with no page and no button anywhere, and it errors out rather than completing — so if
+someone remembers being told an event page could email its own participants directly, the answer to
+give them is the broadcast.
+
+**Nothing tells a volunteer that a waitlist offer expired.** A promotion holds the seat for three
+days; if the volunteer doesn't confirm in time, the seat passes to the next person on the waitlist
+and the volunteer's own signup is removed outright — no email explains it, and no trace of it is left
+in their manage view. This is the honest answer to "why did this volunteer's signup disappear?"
+Promotions themselves are *not* silent: every path that promotes someone off the waitlist emails
+them a confirmation link. The waitlist document covers that flow.
+
+**Calendar entries don't sync.** A volunteer can add sessions to their calendar from the app or from
+the file attached to their confirmation email, but both produce a fixed entry. If the session later
+moves, nothing updates what's already in their calendar. Use a broadcast to tell them.
 
 **Quarters are never guessed.** The app ships with no quarters and derives nothing from an assumed
 11-week calendar. Until an admin enters a quarter, quarter-dependent features are blocked rather
 than estimated.
 
-**Nothing is seeded.** No sample quarters, events, modules, or volunteers.
+**No program data is seeded.** No sample quarters, events, modules, or volunteers. The only account
+that exists after setup is the first admin, created from the email and password chosen at install
+time.

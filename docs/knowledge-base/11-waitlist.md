@@ -1,38 +1,93 @@
-# Waitlist and auto-promotion
+# Waitlist and promotion
 
 When a slot is full, further signups for it become **waitlisted** rather than rejected. The
 volunteer has still given their details and consented; they're simply in line. Their position is
 shown to them, counting from 1.
 
 **The waitlist is first-come, first-served.** Order is by when the signup was created, and that
-ordering is used consistently everywhere — for the position a volunteer sees, for automatic
-promotion, and for the organizer's list.
+ordering drives the position a volunteer sees, automatic promotion, and the waitlist panel on the
+event page. The organizer's check-in roster is the exception: it's sorted alphabetically within
+each session and shows no waitlist positions at all, because at the door you're looking someone up
+by name rather than working down a queue.
 
-**Auto-promotion happens on cancellation.** When a confirmed volunteer gives up a seat, the
-longest-waiting person on that slot is promoted immediately and automatically. They go **straight
-to confirmed** — they are not asked to confirm again by email, because they already gave their
-details and consented when they first signed up. Nobody has to notice the cancellation for this to
-work.
+## Promotion offers the seat — it doesn't hand it over
 
-**Auto-promotion does not send an email today.** The promoted volunteer isn't asked to confirm
-again — but neither are they notified automatically; the change shows up when they open their
-manage link. If it matters that they know they're in, tell them: send the event a broadcast (a
-promoted volunteer is confirmed, so they receive it) or contact them directly.
+**A promoted volunteer goes to pending, not straight to confirmed.** They get an email with a link
+and have **three days** to click it and claim the spot. Until they do, the signup sits at pending.
 
-Because auto-promotion already claims any seat that frees up, a slot's waitlist normally only
-exists while the slot is genuinely full. That has a consequence for the manual override below.
+This is the part most likely to surprise someone who used the app earlier in the year, when a
+promotion flipped the signup to confirmed on the spot. The reason it changed: a promotion is
+something the system or a staff member does, not something the volunteer asked for at that moment.
+Weeks can pass between joining a waitlist and a seat opening up, and in that time people make other
+plans. Silently confirming them produced volunteers who were on the roster, counted as coming, and
+had no idea — and organizers who couldn't tell a real attendee from a stale one.
+
+**The pending seat is genuinely held.** It counts against the session's capacity, the volunteer
+appears on the roster, and they're listed on the public event page. Nobody else can take the seat
+while the three days run.
+
+## Every promotion sends the same email
+
+**However a seat comes free, the next person gets the same confirm-your-spot email.** There is one
+promotion email and every path uses it:
+
+- A volunteer cancels through their own link, or staff cancel for them.
+- A volunteer swaps to a different session, freeing the seat they came from.
+- An organizer promotes one specific waitlisted person by hand.
+- The automatic hourly check frees a seat (see below).
+
+The email's subject is "A spot opened up — confirm your SciTrek signup for *[event]*". It names the
+session with its date, time, and location, says to confirm within three days, and gives one button:
+**Confirm my spot**. It also tells them they can use the same link to cancel if they can't make it,
+and that the link keeps working as their manage page after they confirm.
+
+This uniformity is new. Earlier in the year several of these paths promoted people and sent them
+nothing at all, so if someone asks why a volunteer was never told about a promotion from a few months
+back, that's usually the answer.
+
+## If they don't confirm, the offer lapses
+
+**Three days after the email, an unclaimed offer is withdrawn and the seat moves down the line.**
+An automatic check runs every hour and cleans up promotions nobody claimed, so a seat is reclaimed
+within about an hour of the deadline passing.
+
+What happens then, stated plainly because it matters when someone asks:
+
+- The unconfirmed signup is **deleted**, not marked cancelled. There is no trace of it left in the
+  volunteer's own view of their signups.
+- The seat is freed and **the next person on the waitlist is promoted**, with their own fresh
+  three-day clock and their own email. That chain keeps going, one link per hour, until someone
+  claims the seat or the waitlist runs out.
+- **Nothing tells the lapsed volunteer.** No email says the spot was withdrawn.
+- Their old link no longer works. If they click it they're told the link has expired.
+
+So when a volunteer says "I got an email saying a spot opened up but the link doesn't work", the
+answer is almost always that more than three days passed and the spot went to the next person in
+line. They can sign up again — they'll take a seat if one is free, or rejoin the waitlist.
+
+**Sessions that have already ended don't promote anyone.** The hourly check skips them, because
+emailing someone a three-day offer for a session that already happened only wastes their time and
+delays the cleanup. A cancellation entered by hand after the fact can still send an offer for a
+past session, though, so it's worth being careful about cancelling signups on events that are over.
+
+## Manual promotion
 
 **Manual promotion lets an organizer jump the queue.** From the event roster an organizer can
 promote one specific waitlisted volunteer instead of taking the next in line. Since the slot is
 usually still full, this asks for confirmation to go **over capacity** — putting an extra person in
 a real room is a real decision, so it has to be made deliberately rather than happening by
 default. Without the over-capacity option the button would simply fail every time it was used.
-Unlike automatic promotion, a manual promotion **does email the volunteer** that they're off the
-waitlist and in.
+
+A manual promotion works exactly like an automatic one: the volunteer lands at pending and gets the
+same three-day confirm email. That's fine for someone standing in front of you, because **checking
+a volunteer in confirms them automatically** — a pending volunteer who shows up and gets checked in
+doesn't need to find the email first.
 
 **Admins can reorder a waitlist** from the event page, which rewrites the queue so the order you
-set becomes the order used for automatic promotion. You must submit the whole current waitlist for
-the slot — no additions, no omissions.
+set becomes the order used for promotion. You must submit the whole current waitlist for the slot —
+no additions, no omissions.
+
+## Other things to know
 
 A waitlisted signup can also just be **cancelled**, by the volunteer through their manage link or
 by staff.
@@ -44,4 +99,5 @@ retrospective's signup counts.
 
 **A waitlisted orientation slot still satisfies the orientation requirement.** A new volunteer who
 includes an orientation session in their signup meets the requirement even if that orientation
-lands on the waitlist.
+lands on the waitlist. The requirement is checked against what they selected, before any seat is
+assigned.

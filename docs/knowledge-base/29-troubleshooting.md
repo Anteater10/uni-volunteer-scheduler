@@ -2,11 +2,16 @@
 
 ## "New volunteers must include an orientation session in their signup"
 
-The volunteer has no orientation credit for this module's family, and the event offers an
-orientation slot, so they must add it. This is a hard rule with no bypass. Either they add the
-orientation session to the same signup, or a staff member grants them credit (one tap on the roster,
-or Admin → Orientation Credits). If they *have* done orientation but the app disagrees, see "credit
-is missing" below.
+The volunteer has no orientation credit for this module's family, so they must add the event's
+orientation session to the same signup. Either they add it themselves, or a staff member grants them
+credit (**Grant orientation** on their row in the event page's roster table, or Admin → Orientation
+Credits). If they *have* done orientation but the app disagrees, see "credit is missing" below.
+
+**The requirement is narrower than it looks.** It only bites when someone is signing up for a
+teaching session and hasn't included an orientation in the same submission. Signing up for an
+orientation on its own always passes, and so does any signup for an event that offers no orientation
+slot at all — on those events the requirement is advisory only, because there is nothing on the event
+that would satisfy it.
 
 ## "A signup covers one event at a time"
 
@@ -36,45 +41,97 @@ That's expected — the slot being full is the whole reason anyone is waitlisted
 promotion already claims any seat that frees up. To promote this specific person you have to
 deliberately confirm going **over capacity**.
 
+## A promoted volunteer says they're in, but the roster shows them as pending
+
+This is the promotion flow working, not a fault. A promotion — automatic or manual — moves the
+volunteer to **pending** and emails them a link with **3 days** to confirm. The seat is held for them
+the whole time and they appear on the roster, but the status stays pending until they click. If they
+tell you they're coming and you'd rather not wait, just **tap them in at the door** — a staff check-in
+confirms them on the way through.
+
+If they don't confirm in time, the signup is removed and the seat is offered to the next person on the
+waitlist — as long as the session hasn't happened yet. A seat freed after the session is over is
+simply released, with nobody promoted into it, because a "confirm your spot" email for a finished
+session would only cause confusion. Nothing tells the person who lapsed, and their signup disappears
+rather than showing as cancelled, so "I got an email saying a spot opened up and now I can't find it"
+means the 3 days ran out. They can sign up again if a seat is free.
+
+## An event stays "Ended — not closed out" after every session was ended
+
+Look for a **pending** volunteer on the roster. An event only counts as complete when nobody is still
+expected, and a pending signup counts as expected — but the close-out screen only lists confirmed and
+checked-in people, so there's no way to mark that row attended or no-show. Ending the slot again just
+opens a close-out screen with nobody on it.
+
+Three ways out: **tap the pending volunteer in** before ending the session (that confirms them, and
+then they appear on the close-out screen normally), **cancel their signup** if they aren't coming, or
+leave it — once their confirmation link lapses the automatic sweep removes the signup, and the event
+completes on its own.
+
 ## "Slots now full" when a volunteer submits
 
-Someone else took the last seat between the volunteer loading the page and submitting. The page
-returns them to the schedule with the current availability so they can pick again.
+Someone else took the last seat between the volunteer loading the page and submitting. They see
+"One or more selected slots are now full. Please pick different slots." and the page drops them back
+to the session picker with freshly loaded availability so they can choose again.
 
 ## The signup page says signups are closed
 
-The event's signup window has closed, or hasn't opened yet. The message names the window in Pacific
-Time. Adjust the signup open and close times on the event if that's wrong.
+The event has a signup window and it has closed, or hasn't opened yet. The message names the window
+in Pacific Time. **There's no field for that window in the event form**, so there's nothing to adjust
+from the UI — most events have no window at all, and one that does got it programmatically or carried
+it over from the event it was duplicated from.
 
 ## A volunteer's check-in link or QR doesn't work
 
-Three likely causes. **The window:** check-in only opens 30 minutes before a session and closes 30
-minutes after. **A missing venue code:** old printed or bookmarked QR links from before venue codes
-don't carry `?v=` and no longer work — re-show the QR from the roster screen. **An event with no
-generated venue code** fails closed on purpose; the QR from the roster screen is the fix.
+Three likely causes. **The window:** self check-in only opens 30 minutes before a session and closes
+30 minutes after. (Staff taps have no window — if the volunteer is standing there, just tap them in.)
+**A missing venue code:** old printed or bookmarked QR links from before venue codes don't carry
+`?v=` and no longer work — re-show the QR with the **Check-in QR** button on the event page. **An
+event with no generated venue code** fails closed on purpose; opening its roster generates one, and
+then the QR from the event page works.
 
 ## "Wrong venue code"
 
-The scanned or typed code doesn't match the event. Re-show the QR from the roster screen rather than
-reusing an old printout. The code is checked before anything else, so this error tells you nothing
-about whether the email is signed up — that's intentional.
+The scanned or typed code doesn't match the event. Re-show the QR from the **Check-in QR** button on
+the event page rather than reusing an old printout — the roster screen shows the numeric code but not
+the QR. The code is checked before anything else, so this error tells you nothing about whether the
+email is signed up — that's intentional.
 
 ## Broadcast says wait / rate limited
 
 You've hit 5 broadcasts in an hour for that event. The limit is per event even if you're targeting
 individual slots. Wait, then send.
 
-## A volunteer can't be deleted
+## The copilot says "Stream failed: HTTP 429"
 
-They have signups. That block is deliberate: signups are the record behind their hours and
-orientation credit. Cancel their signups first if you genuinely need to remove them.
+Two different ceilings produce that, and the message doesn't say which. **Your own pace:** each
+person can send 10 messages a minute; wait a minute and carry on. **The shared daily allowance:** the
+copilot has an installation-wide budget for the day, and once it's used up nobody can chat until the
+next day. Because it's shared, one person working the copilot hard can use up the day for everyone —
+so if a minute's wait doesn't help and colleagues see the same thing, that's what happened.
+
+## Something can't be deleted
+
+Two deletions are deliberately blocked. **A staff user who still owns events** — reassign or delete
+those events first; their signups are never the reason. **A slot that still has signups** — cancel or
+move them first, because signups are the record behind hours and orientation credit.
+
+Volunteers themselves have no delete button at all — Admin → Users lists staff accounts only, so a
+volunteer never appears there. The CCPA export and delete actions on that page act on a **staff**
+account: delete anonymizes the staff record and leaves the attendance history in place. There is no
+equivalent one-click erase for a volunteer record.
 
 ## Reports show fewer hours or lower attendance than expected
 
-Sessions that were never closed out leave volunteers at confirmed or checked-in rather than
-attended, and the Exports reports only count resolved attendance. Look for sessions with no
-close-out. The quarter retrospective counts checked-in people as attended, which is why the two can
-disagree.
+Sessions that were never closed out leave volunteers at confirmed or checked-in rather than attended.
+**Five of the eight Exports reports count only resolved attendance** and will read low because of it:
+Volunteer hours, Attendance rates, No-show rates, Hours by school, and Unique volunteers per quarter.
+Look for sessions with no close-out. **Event fill rate, Cancellation rates and Module popularity
+count held seats instead**, so a missing close-out is never the explanation for those three — don't
+go hunting for one.
+
+The quarter retrospective counts checked-in people as attended, which is why it and the Exports
+reports can disagree.
 
 ## A volunteer says they can't see their signups or their orientation credit
 
@@ -84,8 +141,17 @@ address they originally signed up with.
 
 ## The admin pages say they're desktop-only
 
-They are, below tablet width — rosters and event forms need the room. The exception is the roster
-page, which works properly on a phone because that's where it's used at the door.
+They are, below 768px — rosters and event forms need the room. **The exception is the day-of check-in
+pair:** a phone-sized "Today" schedule and the roster screen it links to both live outside the admin
+area on purpose, because day-of check-in is a phone job. Organizers get a **Today** button in the
+bottom bar on a phone that goes straight there.
+
+Two things trip people up. The same roster also has an address inside the admin area, and that copy
+*is* desktop-gated — so a roster that refuses to open on a phone means an admin link was followed
+rather than the Today one. And **an admin signed in on a phone gets a bottom bar of admin
+destinations, all of which are desktop-only** — there's no Today button for them. On a phone, an
+admin's practical options are to get the link from an organizer, bookmark the Today page, or use a
+laptop or tablet.
 
 ## No quarters are entered
 
@@ -94,7 +160,8 @@ the current quarter and the app comes to life. Nothing is seeded by default, on 
 
 ## The Audit Logs tab isn't there
 
-It's hidden by default. Turn on "show audit logs tab" from the settings card on the Overview page.
+It's hidden by default. Turn on **Show Audit Logs tab** from the site settings card on the Overview
+page.
 
 ## A staff member can't sign in
 
@@ -106,7 +173,9 @@ gets set, so someone who never used theirs has no password to reset.
 
 ## A volunteer's signup disappeared
 
-If it was never confirmed, it expired. A new signup sits at **pending** until the volunteer clicks
-the confirmation link, and that link lasts two weeks — a signup still pending after that is removed
-automatically overnight and its seat is freed. This is the one case where a signup vanishes rather
-than showing as cancelled. The volunteer can simply sign up again.
+If it was never confirmed, it expired. A signup sits at **pending** until the volunteer clicks their
+link: **two weeks** for a fresh signup, **3 days** for one that came from a waitlist promotion. A
+sweep runs **every hour** and removes pending signups whose links have all lapsed, freeing the seat
+and offering it to the next person on the waitlist. This is the one case where a signup vanishes
+rather than showing as cancelled, and nothing emails the volunteer to say so. They can simply sign up
+again.

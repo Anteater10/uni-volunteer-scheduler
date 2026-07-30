@@ -17,33 +17,89 @@ There are seven signup statuses: **pending**, **confirmed**, **waitlisted**, **c
 - **No-show** — they didn't turn up and the organizer has closed out the session.
 - **Cancelled** — the spot was given up, by the volunteer or by staff.
 
-**Attended, no-show, and cancelled are final.** Once a signup reaches one of those three it cannot
-be moved anywhere else. Everything before them can still change:
+**Attended, no-show, and cancelled are final.** Check-in, self check-in, and closing out a session
+will never move a signup back out of one of them. Attended and no-show have exactly one deliberate
+undo — **"Reopen event"**, for a session that was ended too early, which puts those volunteers back
+on the live roster. Cancelled has no undo at all.
+
+Everything before those three can still change:
 
 - Pending can become confirmed or cancelled.
 - Confirmed can become checked in, attended, no-show, or cancelled.
 - Checked in can go back to confirmed (the organizer's undo for a mis-tap), or forward to attended
   or no-show, or be cancelled.
-- Waitlisted can become confirmed (when promoted — automatically as a seat frees, or by staff) or
-  cancelled.
+- Waitlisted can become pending (when promoted — automatically as a seat frees, or by staff) or
+  cancelled. A promoted volunteer confirms from there; see the waitlist document.
 
 **Confirmed can go straight to attended** without a check-in. That's the walk-in case: the
 volunteer turned up but nobody tapped them in, and the organizer marks them attended while closing
 out the session. Without this the end-of-session screen would offer "attended" on every confirmed
 row and then refuse to save it.
 
-**Cancelling a confirmed signup frees the seat and auto-promotes the waitlist.** The longest-waiting
-volunteer on that slot moves straight to confirmed. See the waitlist document.
+**Cancelling a signup that held a seat frees it and promotes the waitlist.** This is true whether
+the signup was confirmed or still pending, since both hold capacity. The longest-waiting volunteer
+on that slot is promoted to pending and emailed a link to claim the seat within three days. See the
+waitlist document.
 
-**An unconfirmed signup expires.** The confirmation link a volunteer receives lasts two weeks. A
-signup still pending when its link expires is removed automatically overnight and its seat is
-freed — the one case where a signup disappears instead of being cancelled. The volunteer can sign
-up again at any time.
+When a volunteer cancels through their own link, the app emails them a cancellation notice. That's
+deliberate: their link keeps working for a long time, so if someone else ever got hold of it, the
+volunteer finds out immediately rather than discovering it at the door.
 
-Signups are attached to a **volunteer record keyed by email address**, and the link is protective:
-a volunteer with signups cannot be deleted. If you genuinely need to remove someone, their signups
-have to be cancelled first. This is deliberate — deleting a volunteer outright would destroy the
-attendance record behind their hours and their orientation credit.
+**Cancelling a session is one-way for that volunteer.** The cancelled signup stays on the books, and
+a volunteer can only ever hold one signup per session — so someone who cancels and then changes their
+mind cannot re-book that same session. They're turned away with "You've already signed up for this
+session with that email", which is confusing in this situation but is what the app says. They can
+still take a *different* session on the same event, and there's no staff action that reinstates the
+cancelled one. If a volunteer wants to move rather than drop out, the **swap** on their own manage
+link is the better tool — it keeps the one signup and changes which session it points at.
+
+## Confirming, and what happens when nobody does
+
+**A signup submission gets one confirmation link, good for two weeks.** Clicking it confirms every
+pending signup that volunteer has on that event, so a volunteer who took four sessions in one go
+confirms all four with one click.
+
+**Confirming is an RSVP, not a gate.** A pending volunteer who simply turns up is confirmed
+automatically as part of being checked in — at the door, whether they ever opened the email doesn't
+matter.
+
+**An unconfirmed signup eventually expires.** An automatic check runs every hour. When a pending
+signup's confirmation link has run out and it has no other live link, the signup is **deleted** and
+its seat is freed — the one case where a signup disappears instead of being cancelled. On an
+upcoming session the freed seat is then offered to the next person on that slot's waitlist; on a
+session that has already happened it just frees up. Nothing tells the volunteer their signup lapsed —
+but because the row is deleted rather than cancelled, they *can* sign up for that same session again,
+unlike someone who cancelled.
+
+**A multi-session submission only carries one link, and only that one signup is swept.** The other
+slots in the same submission have no link of their own, so if the volunteer never confirms, those
+signups stay pending and keep holding their seats until somebody cancels them by hand. It's worth
+checking for stale pending rows on a full session before concluding the seat count is wrong.
+
+**Confirmation links stop working for confirming, but keep working for everything else.** Once the
+two weeks are up the volunteer can no longer use the link to confirm, but they can still open it to
+view their signups, swap sessions, and cancel. That's on purpose: someone who confirmed on day one
+shouldn't lose access to their own signups two weeks later. The links are cleaned up quietly much
+later, once the volunteer has no upcoming sessions left.
+
+**A pending volunteer keeps an event from being marked complete.** Closing out a session only
+resolves confirmed and checked-in volunteers — a pending one isn't offered on the end-of-session
+screen at all — and an event counts as complete only once nobody is still expected. So an event
+that looks entirely finished but still shows **"Ended — not closed out"** on the admin events list
+usually has a pending signup sitting on it, most often a waitlist promotion nobody claimed.
+
+Waiting for the hourly check to clear the pending signup isn't enough on its own: the event's
+completed stamp is only recalculated when someone ends or reopens it. Once the pending row is gone,
+the organizer's roster page will show the "Event complete" banner — use **Reopen event** there and
+then **End event** once more, and the event files itself under Completed properly.
+
+## Volunteer records
+
+Signups are attached to a **volunteer record keyed by email address**, and that record can't be
+deleted. There's no delete-volunteer action anywhere in the app, and the database refuses it while
+any signup row exists — cancelled ones included, since cancelling leaves the row in place. This is
+deliberate: attendance history is the source of truth behind hours and orientation credit, and
+deleting a volunteer outright would destroy it.
 
 Every volunteer's answers to the event's signup form are stored per field against their signup, so
 you can see what each person actually submitted even after the event's form has changed.

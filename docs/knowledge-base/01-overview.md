@@ -22,12 +22,16 @@ Wednesday only" is completely normal.
 Before a volunteer can sign up for a module's regular sessions, they must have **orientation
 credit** for that module's family — and if they don't, they must include an orientation session in
 the same signup. This is a hard requirement enforced by the server, not a warning. See the
-orientation document for the one exception.
+orientation document for the cases that pass automatically.
 
 Volunteers never log in. Every action a volunteer takes after signing up — confirming, viewing,
 cancelling, swapping, checking in — happens through a **magic link** emailed to them, or through a
 QR code scanned at the door. Staff, by contrast, do log in with an email and password at `/login`.
 
 The staff side of the SciTrek scheduler lives under `/admin` and is built for desktop screens.
-Below tablet width the admin pages show a desktop-only banner. The one exception is the roster
-page, which is fully mobile-responsive because organizers use it on a phone at the classroom door.
+Below tablet width every page inside the admin shell shows a desktop-only banner instead of the
+page itself. The one staff surface that works on a phone is the **organizer roster** at
+`/organizer/events/{id}/roster`, which is deliberately mounted outside the admin shell because
+day-of check-in is a phone job done at a classroom door. The same roster reached through
+`/admin/events/{id}/roster` sits behind the desktop-only banner like everything else in the shell,
+so the `/organizer/...` link is the one to send someone who is out at a school.

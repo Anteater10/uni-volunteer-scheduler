@@ -19,6 +19,17 @@ Five things SciTrek asks of every mentor:
    anything personally.
 
 A mentor signs up **session by session** and may take as many sessions as they like — there's no
-requirement to commit to all five sessions of a module. There's no account and no password; signing
-up sends an email with a link for viewing, cancelling, or swapping later. A mentor who hasn't been
-oriented for the module must include an orientation session in the same signup.
+requirement to commit to all five sessions of a module. There's no account and no password: signing up
+sends an email, and the same link in it is what a mentor later uses to view, cancel, or swap their
+sessions, and to add them to a calendar.
+
+**Signing up is not finished until the mentor opens that email.** Filling in the form holds the seat
+but does not secure it — the emailed link has to be clicked to confirm, within two weeks, and a signup
+that is never confirmed eventually lapses and the seat goes to someone else. So the thing to tell a
+volunteer who isn't sure their signup went through is to check their inbox, including spam, and click
+the link. If a session was already full they'll have been waitlisted instead, which also means watching
+the inbox — the waitlist document covers how an opened spot is offered.
+
+A mentor who hasn't been oriented for the module must include an orientation session in the same
+signup — unless the event posts no orientation session at all, in which case the signup goes through
+and an organizer vouches for them at the door.

@@ -17,4 +17,17 @@ matters: a session that was never closed leaves its volunteers sitting at confir
 rather than attended, so their hours don't count. A volunteer asking why their hours look low is
 usually asking about a session nobody closed out.
 
-Hours totals per volunteer come from the **Volunteer hours** report in Admin → Exports.
+**Only attended counts, and each session contributes its scheduled length.** Hours come from the
+session's published start and end times, not from when the volunteer actually arrived or left — so
+checking in twenty minutes late doesn't reduce the total, and staying to help pack up doesn't add to
+it. Checked-in-but-never-closed-out counts as nothing at all. **Orientation sessions count toward
+hours** like any other session; they aren't filtered out.
+
+**Hours are totalled per volunteer record, which means per email address.** Someone who signed up
+once with their UCSB address and once with a personal one appears as two rows with two separate
+totals, and there's no way to merge them in the app — whoever compiles the report has to add the two
+together. It's worth telling volunteers to stick to one address for this reason.
+
+Hours totals per volunteer come from the **Volunteer hours** report in Admin → Exports, which is
+admin-only; organizers don't have that page. It's generated live from current attendance every time
+it's opened, so re-closing or reopening a session is reflected immediately.
