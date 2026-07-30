@@ -283,10 +283,6 @@ async function deleteEvent(eventId) {
   return request(`/events/${eventId}`, { method: "DELETE" });
 }
 
-async function cloneEvent(eventId) {
-  return request(`/events/${eventId}/clone`, { method: "POST" });
-}
-
 // --------------------
 // SLOTS
 // --------------------
@@ -549,7 +545,6 @@ export const api = {
   createEvent,
   updateEvent,
   deleteEvent,
-  cloneEvent,
 
   // slots
   listSlots,
@@ -585,7 +580,6 @@ export const api = {
     create: (payload) => createEvent(payload),
     update: (id, payload) => updateEvent(id, payload),
     delete: (id) => deleteEvent(id),
-    clone: (id) => cloneEvent(id),
   },
   notifications: {
     my: (params) => listMyNotifications(params),
@@ -784,20 +778,6 @@ export const api = {
       request(`/admin/events/${eventId}/form-schema`, {
         method: "PUT",
         body: { schema },
-      }),
-    // Phase 23 — recurring event duplication
-    duplicateEvent: (
-      eventId,
-      { target_weeks, target_year, target_quarter, skip_conflicts },
-    ) =>
-      request(`/admin/events/${eventId}/duplicate`, {
-        method: "POST",
-        body: {
-          target_weeks,
-          target_year,
-          ...(target_quarter ? { target_quarter } : {}),
-          skip_conflicts,
-        },
       }),
     // Phase 25 — admin reorder waitlist (WAIT-05)
     reorderWaitlist: (eventId, slotId, orderedIds) =>
