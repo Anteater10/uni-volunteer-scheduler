@@ -18,7 +18,12 @@ from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
-from ..signup_service import PromotionResult, promote_waitlist_fifo
+from ..signup_service import (
+    PromotionResult,
+    mark_promoted_pending,
+    promote_waitlist_fifo,
+)
+from ..services.waitlist_service import SlotEndedError
 from ..services import module_service, quarter_service
 from ..services.audit_log_humanize import humanize as humanize_audit_log
 from ..schemas import ModuleRead, ModuleCreate, ModuleUpdate, SentNotificationRead
@@ -750,6 +755,10 @@ def admin_promote_signup(
 
     try:
         promo = manual_promote(db, signup, slot, allow_overfill=False)
+    except SlotEndedError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
     except ValueError as exc:  # belt-and-braces; pre-checks above match
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -896,18 +905,31 @@ def admin_move_signup(
         models.SignupStatus.confirmed,
         models.SignupStatus.pending,
     )
+
+    # 2026-07-29: moving a waitlisted signup into an open seat IS a promotion,
+    # so it takes the one promotion path (pending + its own confirm email) and
+    # inherits the promotion guard. Other statuses keep their existing
+    # behaviour, including a confirmed move between ended slots — staff still
+    # need to fix records after an event.
+    target_has_room = target_slot.current_count < target_slot.capacity
+    promoting = (
+        previous_status == models.SignupStatus.waitlisted and target_has_room
+    )
+
     if held_source_capacity and source_slot.current_count > 0:
         source_slot.current_count -= 1
 
-    if target_slot.current_count < target_slot.capacity:
+    if target_has_room:
         # Preserve pending/confirmed on move — a staff move must not
         # silently confirm a signup the volunteer never confirmed.
-        # Waitlisted → open seat still confirms (spec: same as swap).
-        new_status = (
-            previous_status
-            if held_source_capacity
-            else models.SignupStatus.confirmed
-        )
+        if promoting:
+            new_status = models.SignupStatus.pending
+        else:
+            new_status = (
+                previous_status
+                if held_source_capacity
+                else models.SignupStatus.confirmed
+            )
         target_slot.current_count += 1
     else:
         new_status = models.SignupStatus.waitlisted
@@ -915,16 +937,37 @@ def admin_move_signup(
     signup.slot_id = target_slot.id
     signup.status = new_status
 
+    # After the slot_id repoint, so both the confirm email and the ended-slot
+    # guard inside mark_promoted_pending judge the seat actually being offered.
+    # Nothing is committed on the raise, so the counts nudged above are dropped.
+    move_promotion = None
+    if promoting:
+        try:
+            move_promotion = mark_promoted_pending(db, signup)
+        except SlotEndedError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
+
     promotions = (
         _promote_waitlist_fifo(db, source_slot) if held_source_capacity else []
     )
 
     log_action(db, actor, "admin_signup_move", "Signup", str(signup.id))
     promotion_email_kwargs = [p.email_kwargs for p in promotions]
+    if move_promotion is not None:
+        promotion_email_kwargs.append(move_promotion.email_kwargs)
     db.commit()
     db.refresh(signup)
 
-    send_email_notification.delay(signup_id=str(signup.id), kind="reschedule")
+    if move_promotion is None:
+        # A promoted seat gets the promotion confirm email instead. The
+        # reschedule copy ("the time for your slot has changed… cancel if you
+        # can no longer attend") tells a merely-pending volunteer the seat is
+        # already theirs — the inverse of confirm-in-3-days-or-lose-it, and a
+        # volunteer who trusts it gets reaped. The promotion email already
+        # names the new slot.
+        send_email_notification.delay(signup_id=str(signup.id), kind="reschedule")
     # Fixes the silent-promotion bug: move previously promoted with no email.
     for kwargs in promotion_email_kwargs:
         send_waitlist_promotion_email.delay(**kwargs)

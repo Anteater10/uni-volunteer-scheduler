@@ -1,7 +1,7 @@
 """Waitlist promotion → pending + confirm token (2026-07-28 spec).
 
 Covers the promotion core: mark_promoted_pending flips a waitlisted signup
-to pending, issues a 3-day SIGNUP_CONFIRM token, and returns the raw token
+to pending, issues a 3-day PROMOTION_CONFIRM token, and returns the raw token
 + email kwargs for the post-commit enqueue.
 """
 import uuid
@@ -76,7 +76,7 @@ class TestMarkPromotedPending:
             .filter(models.MagicLinkToken.signup_id == signup.id)
             .one()
         )
-        assert token_row.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM
+        assert token_row.purpose == models.MagicLinkPurpose.PROMOTION_CONFIRM
         assert token_row.volunteer_id == signup.volunteer_id
         expected = datetime.now(timezone.utc) + timedelta(
             minutes=PROMOTION_CONFIRM_TTL_MINUTES
@@ -118,7 +118,7 @@ class TestPromoteWaitlistFifo:
             .filter(models.MagicLinkToken.signup_id == signup.id)
             .one()
         )
-        assert token_row.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM
+        assert token_row.purpose == models.MagicLinkPurpose.PROMOTION_CONFIRM
 
     def test_empty_waitlist_returns_none(self, db_session):
         owner, event, slot = _make_event_and_slot(db_session, capacity=1)

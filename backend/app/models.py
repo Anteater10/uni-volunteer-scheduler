@@ -57,6 +57,12 @@ class MagicLinkPurpose(str, enum.Enum):
     check_in = "check_in"             # legacy
     SIGNUP_CONFIRM = "signup_confirm"  # NEW Phase 08
     SIGNUP_MANAGE = "signup_manage"    # NEW Phase 08
+    # 2026-07-29: a waitlist promotion is a system/staff action, never
+    # volunteer intent, so its confirm link needs its own purpose — a batch
+    # SIGNUP_CONFIRM click must not confirm a promoted seat, and confirming a
+    # promoted seat must not sweep up the volunteer's other pending signups.
+    # Added to the Postgres enum by 0035_add_promotion_confirm_purpose.
+    PROMOTION_CONFIRM = "promotion_confirm"
 
 
 class NotificationType(str, enum.Enum):
