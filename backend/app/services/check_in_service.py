@@ -591,8 +591,7 @@ def reopen_event(db: Session, event_id: UUID, actor_id: UUID | None) -> list[Sig
                 "message": "Only an event that has been ended can be reopened.",
             },
         )
-    if event.academic_quarter is not None:
-        quarter_service.ensure_quarter_writable(event.academic_quarter)
+    quarter_service.ensure_event_quarter_writable(event)
 
     resolved = (
         db.execute(

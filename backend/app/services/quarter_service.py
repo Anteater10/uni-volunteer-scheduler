@@ -388,6 +388,18 @@ def ensure_quarter_writable(quarter: models.AcademicQuarter, today: date | None 
         )
 
 
+def ensure_event_quarter_writable(event: models.Event) -> None:
+    """Reject mutations on an event — or anything scoped to it (slots,
+    custom questions) — whose linked quarter has ended (sweep remediation
+    task 5, fix round 1: slot-level mutations were the gap). Events with no
+    quarter link — orphaned when an admin shrinks a quarter's dates — have
+    no history state to protect and stay mutable. Shared by events.py and
+    slots.py so there is exactly one place that decides "is this event's
+    history closed"."""
+    if event.academic_quarter is not None:
+        ensure_quarter_writable(event.academic_quarter)
+
+
 def archive_quarter(db: Session, quarter_id, actor: models.User | None) -> models.AcademicQuarter:
     """Archive a past quarter (issue #33). Only quarters that have already
     ended can be archived — the current/upcoming schedule stays navigable."""

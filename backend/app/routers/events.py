@@ -54,15 +54,6 @@ def _validate_module_slug(db: Session, module_slug: str | None) -> None:
         )
 
 
-def _ensure_event_quarter_writable(event: models.Event) -> None:
-    """Reject mutations on an event whose linked quarter has ended (sweep
-    remediation task 5). Events with no quarter link — orphaned when an
-    admin shrinks a quarter's dates — have no history state to protect and
-    stay mutable."""
-    if event.academic_quarter is not None:
-        quarter_service.ensure_quarter_writable(event.academic_quarter)
-
-
 def _validate_slot_range_within_event(
     event: models.Event,
     start_time: datetime,
@@ -247,7 +238,7 @@ def update_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
-    _ensure_event_quarter_writable(event)
+    quarter_service.ensure_event_quarter_writable(event)
 
     data = event_in.model_dump(exclude_unset=True)
     for key in ("start_date", "end_date", "signup_open_at", "signup_close_at"):
@@ -310,7 +301,7 @@ def delete_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
-    _ensure_event_quarter_writable(event)
+    quarter_service.ensure_event_quarter_writable(event)
 
     db.delete(event)
     db.commit()
@@ -336,6 +327,7 @@ def generate_slots(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     start_time = _normalize_dt(recurrence.start_time)
     end_time = _normalize_dt(recurrence.end_time)
@@ -439,6 +431,7 @@ def create_custom_question(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     question = models.CustomQuestion(
         event_id=event.id,
@@ -473,6 +466,7 @@ def update_custom_question(
 
     # Ensure caller owns the event or is admin
     ensure_event_staff_access(question.event, current_user)
+    quarter_service.ensure_event_quarter_writable(question.event)
 
     data = updates.model_dump(exclude_unset=True)
     for field, value in data.items():
@@ -501,6 +495,7 @@ def delete_custom_question(
         raise HTTPException(status_code=404, detail="Question not found")
 
     ensure_event_staff_access(question.event, current_user)
+    quarter_service.ensure_event_quarter_writable(question.event)
 
     db.delete(question)
     db.commit()

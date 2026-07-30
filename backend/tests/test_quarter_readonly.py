@@ -367,3 +367,231 @@ class TestAttendanceResolutionStaysAllowedInEndedQuarter:
             headers=organizer_headers,
         )
         assert resp.status_code == 200, resp.text
+
+
+# ---------- fix round 1: slot-level mutations were still ungated ----------
+# create_slot/update_slot/delete_slot (routers/slots.py) and generate_slots
+# (routers/events.py) bypassed the event-level gate entirely — an organizer
+# could still add/retime/delete slots on an event whose quarter had ended.
+# Gated via the same quarter_service.ensure_event_quarter_writable() the
+# event-mutation endpoints already use.
+
+
+def _slot_payload(day: str, start_h: int, end_h: int) -> dict:
+    return {
+        "start_time": f"{day}T{start_h:02d}:00:00Z",
+        "end_time": f"{day}T{end_h:02d}:00:00Z",
+        "capacity": 5,
+        "slot_type": "period",
+    }
+
+
+class TestCreateSlotQuarterReadonly:
+    def test_rejected_when_quarter_ended(self, client, db_session, organizer, organizer_headers):
+        q = _ended_quarter(db_session)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+        day = event.start_date.date().isoformat()
+
+        resp = client.post(
+            f"/api/v1/slots/?event_id={event.id}",
+            json=_slot_payload(day, 10, 11),
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    def test_rejected_when_quarter_archived(self, client, db_session, organizer, organizer_headers):
+        q = _ended_quarter(db_session, archived=True)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+        day = event.start_date.date().isoformat()
+
+        resp = client.post(
+            f"/api/v1/slots/?event_id={event.id}",
+            json=_slot_payload(day, 10, 11),
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    def test_allowed_in_active_quarter(self, client, db_session, organizer, organizer_headers):
+        q = _active_quarter(db_session)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+        day = event.start_date.date().isoformat()
+
+        resp = client.post(
+            f"/api/v1/slots/?event_id={event.id}",
+            json=_slot_payload(day, 10, 11),
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+
+class TestUpdateSlotQuarterReadonly:
+    def test_rejected_when_quarter_ended(self, client, db_session, organizer, organizer_headers):
+        q = _ended_quarter(db_session)
+        event, (slot,) = _event_in_quarter(db_session, q, owner=organizer)
+
+        resp = client.patch(
+            f"/api/v1/slots/{slot.id}",
+            json={"capacity": 9},
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    def test_rejected_when_quarter_archived(self, client, db_session, organizer, organizer_headers):
+        q = _ended_quarter(db_session, archived=True)
+        event, (slot,) = _event_in_quarter(db_session, q, owner=organizer)
+
+        resp = client.patch(
+            f"/api/v1/slots/{slot.id}",
+            json={"capacity": 9},
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    def test_allowed_in_active_quarter(self, client, db_session, organizer, organizer_headers):
+        q = _active_quarter(db_session)
+        event, (slot,) = _event_in_quarter(db_session, q, owner=organizer)
+
+        resp = client.patch(
+            f"/api/v1/slots/{slot.id}",
+            json={"capacity": 9},
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+
+class TestDeleteSlotQuarterReadonly:
+    def test_rejected_when_quarter_ended(self, client, db_session, organizer, organizer_headers):
+        q = _ended_quarter(db_session)
+        event, (slot,) = _event_in_quarter(db_session, q, owner=organizer)
+
+        resp = client.delete(f"/api/v1/slots/{slot.id}", headers=organizer_headers)
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+        assert db_session.get(models.Slot, slot.id) is not None
+
+    def test_rejected_when_quarter_archived(self, client, db_session, organizer, organizer_headers):
+        q = _ended_quarter(db_session, archived=True)
+        event, (slot,) = _event_in_quarter(db_session, q, owner=organizer)
+
+        resp = client.delete(f"/api/v1/slots/{slot.id}", headers=organizer_headers)
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    def test_allowed_in_active_quarter(self, client, db_session, organizer, organizer_headers):
+        q = _active_quarter(db_session)
+        event, (slot,) = _event_in_quarter(db_session, q, owner=organizer)
+
+        resp = client.delete(f"/api/v1/slots/{slot.id}", headers=organizer_headers)
+        assert resp.status_code == 204, resp.text
+
+
+class TestGenerateSlotsQuarterReadonly:
+    def _recurrence_payload(self, day: str) -> dict:
+        return {
+            "start_time": f"{day}T09:00:00Z",
+            "end_time": f"{day}T10:00:00Z",
+            "capacity": 5,
+            "frequency": "daily",
+            "count": 1,
+        }
+
+    def test_rejected_when_quarter_ended(self, client, db_session, organizer, organizer_headers):
+        q = _ended_quarter(db_session)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+        day = event.start_date.date().isoformat()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/generate_slots",
+            json=self._recurrence_payload(day),
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    def test_rejected_when_quarter_archived(self, client, db_session, organizer, organizer_headers):
+        q = _ended_quarter(db_session, archived=True)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+        day = event.start_date.date().isoformat()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/generate_slots",
+            json=self._recurrence_payload(day),
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    # No "allowed in active quarter" control case here: generate_slots
+    # (routers/events.py) constructs models.Slot(...) without slot_type,
+    # which is NOT NULL — it 500s for *every* caller regardless of quarter
+    # state, the same pre-existing bug the sweep-remediation plan already
+    # calls out for the (now-deleted) clone_event. Discovered incidentally
+    # while writing this control case; out of scope for this fix round
+    # (quarter-gating only) — reported as a concern instead of silently
+    # asserting a 200 this endpoint can never actually return.
+
+
+# ---------- optional/minor: custom-question mutations were ungated too ----------
+# One rejection test per endpoint (not the full ended/archived/allowed
+# matrix) — recorded as a follow-up by the reviewer as Minor; gating it is
+# a one-line addition of the same helper, already imported in this file.
+
+
+class TestCustomQuestionQuarterReadonly:
+    def test_create_question_rejected_when_quarter_ended(
+        self, client, db_session, organizer, organizer_headers
+    ):
+        q = _ended_quarter(db_session)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/questions",
+            json={"prompt": "T-shirt size?", "field_type": "text"},
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    def test_update_question_rejected_when_quarter_ended(
+        self, client, db_session, organizer, organizer_headers
+    ):
+        q = _active_quarter(db_session)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+        question = models.CustomQuestion(
+            event_id=event.id, prompt="Size?", field_type="text", required=False, sort_order=0,
+        )
+        db_session.add(question)
+        db_session.flush()
+        # Ended the quarter out from under an existing question.
+        ended = _ended_quarter(db_session)
+        event.quarter_id = ended.id
+        db_session.flush()
+
+        resp = client.put(
+            f"/api/v1/events/questions/{question.id}",
+            json={"prompt": "New size?"},
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+
+    def test_delete_question_rejected_when_quarter_ended(
+        self, client, db_session, organizer, organizer_headers
+    ):
+        q = _ended_quarter(db_session)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+        question = models.CustomQuestion(
+            event_id=event.id, prompt="Size?", field_type="text", required=False, sort_order=0,
+        )
+        db_session.add(question)
+        db_session.flush()
+
+        resp = client.delete(
+            f"/api/v1/events/questions/{question.id}", headers=organizer_headers
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
