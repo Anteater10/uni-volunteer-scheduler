@@ -54,6 +54,15 @@ def _validate_module_slug(db: Session, module_slug: str | None) -> None:
         )
 
 
+def _ensure_event_quarter_writable(event: models.Event) -> None:
+    """Reject mutations on an event whose linked quarter has ended (sweep
+    remediation task 5). Events with no quarter link — orphaned when an
+    admin shrinks a quarter's dates — have no history state to protect and
+    stay mutable."""
+    if event.academic_quarter is not None:
+        quarter_service.ensure_quarter_writable(event.academic_quarter)
+
+
 def _validate_slot_range_within_event(
     event: models.Event,
     start_time: datetime,
@@ -125,6 +134,8 @@ def create_event(
             ),
         )
     season_value, year, week_number, quarter_id = derived
+    quarter_row = db.get(models.AcademicQuarter, quarter_id)
+    quarter_service.ensure_quarter_writable(quarter_row)
     quarter = models.Quarter(season_value)
 
     event = models.Event(
@@ -236,6 +247,7 @@ def update_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    _ensure_event_quarter_writable(event)
 
     data = event_in.model_dump(exclude_unset=True)
     for key in ("start_date", "end_date", "signup_open_at", "signup_close_at"):
@@ -269,6 +281,10 @@ def update_event(
             )
         season_value, data["year"], data["week_number"], data["quarter_id"] = derived
         data["quarter"] = models.Quarter(season_value)
+        # Moving an event must not plant new history in an ended quarter —
+        # the target quarter is gated the same as create_event's.
+        target_quarter = db.get(models.AcademicQuarter, data["quarter_id"])
+        quarter_service.ensure_quarter_writable(target_quarter)
 
     for field, value in data.items():
         setattr(event, field, value)
@@ -294,6 +310,7 @@ def delete_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    _ensure_event_quarter_writable(event)
 
     db.delete(event)
     db.commit()

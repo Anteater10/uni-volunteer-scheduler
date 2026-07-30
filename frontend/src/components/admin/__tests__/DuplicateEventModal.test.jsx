@@ -30,6 +30,8 @@ vi.mock("../../../lib/api", () => {
 const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("../../../state/toast", () => ({ toast: toastMock }));
 
+import { within } from "@testing-library/react";
+
 import { api } from "../../../lib/api";
 import DuplicateEventModal from "../DuplicateEventModal";
 
@@ -52,6 +54,20 @@ const FALL = {
   end_date: "2026-12-13",
   weeks_in_quarter: 11,
   display_name: "Fall 2026",
+  archived_at: null,
+};
+
+// Ended but never archived — the gap activeQuarters() doesn't close. Picking
+// this as a target would now 422 QUARTER_READONLY server-side (create_event
+// gates the derived/target quarter), so the modal excludes it too.
+const WINTER_ENDED_UNARCHIVED = {
+  id: "q-winter-ended",
+  season: "winter",
+  year: 2020,
+  start_date: "2020-01-06",
+  end_date: "2020-03-15",
+  weeks_in_quarter: 10,
+  display_name: "Winter 2020",
   archived_at: null,
 };
 
@@ -180,5 +196,15 @@ describe("DuplicateEventModal", () => {
     });
     // The create button stays enabled — the admin decides.
     expect(screen.getByRole("button", { name: "Create event" })).toBeEnabled();
+  });
+
+  it("excludes ended (but not yet archived) quarters from the target picker", () => {
+    renderModal({ quarters: [SPRING, FALL, WINTER_ENDED_UNARCHIVED] });
+
+    const labels = within(screen.getByLabelText("Target quarter"))
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+    expect(labels).toContain("Fall 2026");
+    expect(labels).not.toContain("Winter 2020");
   });
 });

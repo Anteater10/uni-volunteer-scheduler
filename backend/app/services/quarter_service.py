@@ -365,6 +365,29 @@ def update_quarter(db: Session, quarter_id, payload: dict, actor: models.User) -
     return row, summary
 
 
+def is_quarter_read_only(quarter: models.AcademicQuarter, today: date | None = None) -> bool:
+    """A quarter becomes read-only history once it is archived or its
+    end_date has passed (UTC 'today') — sweep remediation task 5. Event
+    mutations reject against a read-only quarter; attendance resolution
+    does not (organizers legitimately close out attendance right after an
+    event ends)."""
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    return quarter.archived_at is not None or quarter.end_date < today
+
+
+def ensure_quarter_writable(quarter: models.AcademicQuarter, today: date | None = None) -> None:
+    """Raise 422 QUARTER_READONLY when ``quarter`` has ended or is archived."""
+    if is_quarter_read_only(quarter, today):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "QUARTER_READONLY",
+                "message": f"{quarter.display_name} has ended and is read-only.",
+            },
+        )
+
+
 def archive_quarter(db: Session, quarter_id, actor: models.User | None) -> models.AcademicQuarter:
     """Archive a past quarter (issue #33). Only quarters that have already
     ended can be archived — the current/upcoming schedule stays navigable."""
