@@ -25,7 +25,7 @@ that slot's waitlist. Cancelled is final. A volunteer who cancels through their 
 a cancellation notice.
 
 **Check-in** — marking a volunteer as present at the door. Check-in happens per slot, inside a
-window of 30 minutes before the slot starts to 30 minutes after. Check-in by itself does not grant
+window of 30 minutes before the slot starts to 30 minutes after it starts. Check-in by itself does not grant
 orientation credit.
 
 **Checked in** — a signup status meaning the volunteer has arrived but the session has not been

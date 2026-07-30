@@ -28,7 +28,8 @@ accepted. Don't go looking for these switches, and don't rely on them for privac
 Each event carries its own settings, edited from the event page in Admin → Events:
 
 - Title, description, location, **visibility** (Public or Private), the cap on how many slots one
-  volunteer may take, the module, and the slots themselves — all editable after creation.
+  volunteer may take (stored and shown, but not enforced — see the events document), the module,
+  and the slots themselves — all editable after creation.
 - **The signup form** — the event's own field list, which overrides the module's default.
 
 **Visibility gates every public surface, not just the browse listing.** Only an event set to Public
@@ -41,7 +42,8 @@ the school when the event is created; if an existing event has the wrong one, th
 is to recreate it (duplicating it into the same week is the fast way).
 
 **Signup open and close times are enforced, but there is no field for them.** When an event has a
-window set, public signups outside it are refused with a message naming the window in Pacific Time.
+window set, public signups outside it are refused with a message naming the boundary that was hit —
+"Signup opens at …" or "Signup closed at …" — in Pacific Time.
 Nothing in the event form sets that window, though — the only way one gets onto an event is
 programmatically, or by being carried over when the event was duplicated from another. Most events
 have no window at all, which means signups stay open until the event happens.
@@ -61,8 +63,9 @@ name and optional university ID), **Notifications** (one switch — "Email me ab
 stops event email to you and doesn't touch what volunteers receive), Save, then **Password**, then
 the copilot's memory of you, then a read-only **Account** block showing your email and role, and
 finally a **Log out** button. The password form asks for your current password first, and changing it
-signs out any other session using the account. Email and role are admin-changeable only, because
-they're what identify you in the audit log.
+signs out any other session using the account. Role is changed by an admin from the Users list;
+the email on an account can't be changed by anyone once it exists — it's what identifies you in
+the audit log.
 
 **The copilot memory card is on this page too**, under "What the copilot has learned about you" —
 including the button that clears it. It only appears when the copilot is switched on for the

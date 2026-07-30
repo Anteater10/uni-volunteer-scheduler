@@ -58,9 +58,10 @@ than the `/admin` copy of it: an organizer standing at a school opens the **Toda
 staff menu and taps through to the session. The operations console and roster documents describe
 that route.
 
-Staff accounts are **soft-deleted, never destroyed**. Deactivating a user stops them signing in
-but keeps their history and their ownership of past events. A deactivated user can be found again
-with "Show deactivated" in the Users list and reactivated.
+Staff accounts are **deactivated, not deleted** — the Users page offers no delete. Deactivating a
+user keeps their history and their ownership of past events, and they can be found again with "Show
+deactivated" in the Users list and reactivated. One gap to know about: deactivation does not
+currently end the account's ability to sign in — see the managing-staff-users document.
 
 **A fourth role exists in the stored data, and it is not the volunteer identity.** If the
 university's single sign-on is configured, a first-time SSO login creates an account with the role

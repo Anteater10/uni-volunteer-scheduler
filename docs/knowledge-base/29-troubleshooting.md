@@ -82,12 +82,6 @@ then they appear on the close-out screen normally), **cancel their signup** if t
 leave it — once their confirmation link lapses the automatic sweep removes the signup, and the event
 completes on its own.
 
-## "Slots now full" when a volunteer submits
-
-Someone else took the last seat between the volunteer loading the page and submitting. They see
-"One or more selected slots are now full. Please pick different slots." and the page drops them back
-to the session picker with freshly loaded availability so they can choose again.
-
 ## The signup page says signups are closed
 
 The event has a signup window and it has closed, or hasn't opened yet. The message names the window
@@ -97,8 +91,9 @@ it over from the event it was duplicated from.
 
 ## A volunteer's check-in link or QR doesn't work
 
-Three likely causes. **The window:** self check-in only opens 30 minutes before a session and closes
-30 minutes after. (Staff taps have no window — if the volunteer is standing there, just tap them in.)
+Three likely causes. **The window:** self check-in only opens 30 minutes before a session starts and
+closes 30 minutes after it starts. (Staff taps have no window — if the volunteer is standing there,
+just tap them in.)
 **A missing venue code:** old printed or bookmarked QR links from before venue codes don't carry
 `?v=` and no longer work — re-show the QR with the **Check-in QR** button on the event page. **An
 event with no generated venue code** fails closed on purpose; opening its roster generates one, and
@@ -201,5 +196,6 @@ If it was never confirmed, it expired. A signup sits at **pending** until the vo
 link: **two weeks** for a fresh signup, **3 days** for one that came from a waitlist promotion. A
 sweep runs **every hour** and removes pending signups whose links have all lapsed, freeing the seat
 and offering it to the next person on the waitlist. This is the one case where a signup vanishes
-rather than showing as cancelled, and nothing emails the volunteer to say so. They can simply sign up
-again.
+rather than showing as cancelled, and nothing emails the volunteer to say so. They can sign up
+again — the deletion leaves nothing behind to block it — as long as the event's signup window, if it
+has one, is still open. There is no staff-side way to add a signup for them by hand.

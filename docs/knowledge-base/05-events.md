@@ -16,19 +16,24 @@ against. If a module you need isn't in the list, create it there first.
 
 **Every event must fall inside an entered quarter.** If the event's dates are not covered by any
 quarter an admin has entered, creating or saving it is rejected with "No quarter covers {date} —
-add it in Admin → Quarters first." The event's quarter, year, and week number are then derived
+add it in Admin → Quarters first". The event's quarter, year, and week number are then derived
 from the quarter it links to, rather than typed in by hand.
 
-An event controls **when signups are allowed** through its signup-open and signup-close times.
-Public signups outside that window are rejected with a message naming the window in Pacific Time.
+An event can carry **signup-open and signup-close times**, and when they're set, public signups
+outside them are refused with a message naming the boundary that was hit — "Signup opens at …" or
+"Signup closed at …" — in Pacific Time. But no screen sets those times: the event form has no field
+for them, so a window only gets onto an event programmatically or by being carried over when the
+event was duplicated from one that had it. Most events have no window at all, which means signups
+stay open until the event happens.
 There is also a **max signups per volunteer** field on the event form, but **nothing enforces it
 today** — it is stored and displayed, and no signup is ever refused because of it. A volunteer can
 take every slot in an event regardless of what that field says. If a cap actually matters for an
 event, the practical lever is capacity per slot.
 
 **An event's visibility setting is enforced on every public surface.** The check allows exactly one
-value — **public** — and it is applied in all four places the public can reach an event: the
-volunteer browse listing, the event page, the signup form, and the act of signing up itself. Anything
+value — **public** — and it is applied in every place the public can reach an event: the
+volunteer browse listing, the event page, the signup form, the anonymous slot reads behind them,
+and the act of signing up itself. Anything
 that is not public is skipped by the browse listing, answers "not found" on both its event page and
 its signup form, and has a signup attempt refused as not found as well — the same answer a session
 that doesn't exist would give.

@@ -20,9 +20,10 @@ which events are coming, not which ones need people.
 days only.** It is a calculated preview rather than a stored queue — nothing on this tab has been
 written down in advance — so it shows the near term rather than the whole quarter, and it only
 covers volunteers who have confirmed their signup. Rows are grouped by kind rather than shown as
-one flat time-sorted list. There are three groups — **Kickoff**, **24h before**, and **2h before**
-— each with a count and a plain-language note explaining when it fires. See the reminders document
-for the exact timing rules.
+one flat time-sorted list. There are three groups — **Kickoff**, **24 hours before**, and **2 hours
+before** — each with a count and a plain-language note explaining when it fires. Only those three
+tracked kinds appear here: the older 24-hour and 1-hour reminder emails and the weekly digest are
+sent without ever showing on this tab. See the reminders document for the exact timing rules.
 
 **Rows that will not send are shown anyway, labelled.** A row reads *scheduled*, *already sent*, or
 *opted out*. Showing the last two is deliberate: an admin asking "why didn't this person get the

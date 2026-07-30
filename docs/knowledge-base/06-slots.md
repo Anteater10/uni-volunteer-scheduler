@@ -40,7 +40,8 @@ The server refuses with "*[quarter name]* has ended and is read-only," exactly a
 event itself and for its custom signup questions. Closing out attendance on such a session is the
 deliberate exception and still works.
 
-The **check-in window** for a slot runs from 30 minutes before its start time to 30 minutes after.
+The **check-in window** for a slot runs from 30 minutes before its start time to 30 minutes after
+it — both ends count from the start, not the end.
 Outside that window the door check-in page tells the volunteer when the shift opens or that it has
 closed, rather than letting them check in. Volunteers arrive early, which is exactly why the
 window opens half an hour ahead.
