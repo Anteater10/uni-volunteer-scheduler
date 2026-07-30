@@ -287,8 +287,11 @@ async function deleteEvent(eventId) {
 // SLOTS
 // --------------------
 async function listSlots(params) {
-  // commonly: { event_id }
-  return request("/slots/", { method: "GET", auth: false, params });
+  // commonly: { event_id }. Sends the auth token when one is stored (staff
+  // callers like BroadcastModal) so private events still resolve; anonymous
+  // callers (EventCheckInPage) simply have no token to send, and the
+  // backend restricts them to public events only.
+  return request("/slots/", { method: "GET", params });
 }
 
 // IMPORTANT: your backend likely uses POST /slots?event_id=...
