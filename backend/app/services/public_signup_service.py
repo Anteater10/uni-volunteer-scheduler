@@ -45,6 +45,14 @@ def _fmt_pt(dt: datetime) -> str:
     return dt.astimezone(_PT).strftime("%b %d %Y %I:%M %p PT")
 
 
+# Fix round 2 (Task 2 review) — the private-event guard and the unknown-slot
+# lookup below must be byte-identical 404s (same status AND same detail
+# body). Different wording would let a caller holding a slot_id distinguish
+# "this slot doesn't exist" from "this slot exists but its event is
+# private" — the same leak class as a differing status code.
+_NOT_FOUND_DETAIL = "not found"
+
+
 def _ensure_event_visible(db: Session, event_id) -> None:
     """Task 2 (sweep remediation) — reject public signups against a
     "private" event.
@@ -52,13 +60,15 @@ def _ensure_event_visible(db: Session, event_id) -> None:
     Signing up for an event you were never shown (e.g. via a leaked or
     guessed slot_id) is the same leak as the public list/detail endpoints
     exposing it directly. 404, not 403 — matches the detail endpoint and
-    does not confirm the event exists.
+    does not confirm the event exists. Uses the same detail text as the
+    unknown-slot 404 below (``_NOT_FOUND_DETAIL``) so the two are
+    indistinguishable.
     """
     event = db.query(Event).filter(Event.id == event_id).first()
     if event is None:
         return  # let the downstream slot lookup produce the 404
     if event.visibility == "private":
-        raise HTTPException(status_code=404, detail="event not found")
+        raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
 
 
 def _ensure_slots_visible(db: Session, slot_ids) -> None:
@@ -236,7 +246,10 @@ def create_public_signup(
             .first()
         )
         if slot is None:
-            raise HTTPException(status_code=404, detail=f"slot {slot_id} not found")
+            # Same detail text as _ensure_event_visible (fix round 2) — a
+            # nonexistent slot and a private event's slot must be
+            # byte-identical 404s.
+            raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
         # Phase 29 (LOCK-01) — enforce event signup window before capacity.
         # Public path always enforces; organizer/admin paths bypass via
         # other router endpoints that don't go through this service.

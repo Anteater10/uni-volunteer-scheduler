@@ -160,6 +160,37 @@ class TestCreatePublicSignup:
         resp = client.post("/api/v1/public/signups", json=_signup_payload(uuid.uuid4()))
         assert resp.status_code == 404, resp.text
 
+    def test_private_event_slot_404_matches_unknown_slot_404(
+        self, client, db_session, monkeypatch
+    ):
+        """Fix round 2 (Task 2 review): a slot on a private event and a
+        slot_id that doesn't exist at all must be byte-identical 404
+        responses — same status code AND same body. A caller holding a
+        slot_id must not be able to tell "this slot doesn't exist" apart
+        from "this slot exists but its event is private" by diffing the
+        response text."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        event = _make_event(db_session)
+        event.visibility = "private"
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        private_resp = client.post(
+            "/api/v1/public/signups",
+            json=_signup_payload(slot.id, email="private-slot@example.com"),
+        )
+        unknown_resp = client.post(
+            "/api/v1/public/signups", json=_signup_payload(uuid.uuid4())
+        )
+
+        assert private_resp.status_code == 404, private_resp.text
+        assert unknown_resp.status_code == 404, unknown_resp.text
+        assert private_resp.status_code == unknown_resp.status_code
+        assert private_resp.json() == unknown_resp.json()
+
     def test_full_slot_goes_to_waitlist(self, client, db_session, monkeypatch):
         """Phase 25 (WAIT-01): at-capacity signups are waitlisted, not rejected."""
         monkeypatch.setattr(

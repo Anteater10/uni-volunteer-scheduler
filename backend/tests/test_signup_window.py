@@ -154,7 +154,11 @@ def test_signup_rejected_for_private_event_before_orientation_check(db_session):
             db_session, _payload(period.id, email="no-credit@example.com")
         )
     assert exc.value.status_code == 404
-    assert exc.value.detail == "event not found"
+    # Fix round 2 (Task 2 review): must match the unknown-slot 404's detail
+    # text exactly — not just its status code — so the two are
+    # indistinguishable. See test_public_signups.py for the direct
+    # side-by-side comparison of both HTTP responses.
+    assert exc.value.detail == "not found"
 
 
 def test_signup_allowed_for_public_event(db_session):
