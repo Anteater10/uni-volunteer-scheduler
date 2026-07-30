@@ -412,3 +412,184 @@ def test_staff_swap_of_waitlisted_onto_ended_slot_is_rejected(db_session):
     refreshed = db_session.get(models.Signup, signup.id)
     assert refreshed.status == models.SignupStatus.waitlisted
     assert refreshed.slot_id == slot_a.id
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-29 sweep — swap must refuse a signup that is cancelled or no_show.
+# The final `else` branch used to confirm ANY non-capacity-holding status
+# "regardless of actor" — that included cancelled/no_show, so a still-live
+# manage token could resurrect a cancelled signup (skipping orientation,
+# one-event-per-batch, signup window, and visibility checks) or erase a
+# no_show attendance record. Guarded in the shared service, ahead of any
+# mutation, so neither router can reach the old behavior.
+# ---------------------------------------------------------------------------
+
+
+def _make_cancelled_signup(db_session, slot):
+    vol = VolunteerFactory()
+    return SignupFactory(
+        volunteer=vol, volunteer_id=vol.id,
+        slot=slot, slot_id=slot.id,
+        status=models.SignupStatus.cancelled,
+    )
+
+
+def _make_no_show_signup(db_session, slot):
+    vol = VolunteerFactory()
+    return SignupFactory(
+        volunteer=vol, volunteer_id=vol.id,
+        slot=slot, slot_id=slot.id,
+        status=models.SignupStatus.no_show,
+    )
+
+
+def test_participant_swap_of_cancelled_signup_is_refused(db_session):
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    signup = _make_cancelled_signup(db_session, slot_a)
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(
+            db_session, signup_id=signup.id, target_slot_id=slot_b.id,
+            actor_kind="participant",
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
+    # Nothing mutated: status/slot unchanged, no capacity moved either way.
+    refreshed = db_session.get(models.Signup, signup.id)
+    assert refreshed.status == models.SignupStatus.cancelled
+    assert refreshed.slot_id == slot_a.id
+    assert slot_a.current_count == 0
+    assert slot_b.current_count == 0
+
+
+def test_staff_swap_of_cancelled_signup_is_refused(db_session):
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    signup = _make_cancelled_signup(db_session, slot_a)
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(
+            db_session, signup_id=signup.id, target_slot_id=slot_b.id,
+            actor_kind="staff",
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
+    refreshed = db_session.get(models.Signup, signup.id)
+    assert refreshed.status == models.SignupStatus.cancelled
+    assert refreshed.slot_id == slot_a.id
+    assert slot_a.current_count == 0
+    assert slot_b.current_count == 0
+
+
+def test_participant_swap_of_no_show_signup_is_refused(db_session):
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    signup = _make_no_show_signup(db_session, slot_a)
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(
+            db_session, signup_id=signup.id, target_slot_id=slot_b.id,
+            actor_kind="participant",
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
+    refreshed = db_session.get(models.Signup, signup.id)
+    assert refreshed.status == models.SignupStatus.no_show
+    assert refreshed.slot_id == slot_a.id
+    assert slot_a.current_count == 0
+    assert slot_b.current_count == 0
+
+
+def test_staff_swap_of_no_show_signup_is_refused(db_session):
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    signup = _make_no_show_signup(db_session, slot_a)
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(
+            db_session, signup_id=signup.id, target_slot_id=slot_b.id,
+            actor_kind="staff",
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
+    refreshed = db_session.get(models.Signup, signup.id)
+    assert refreshed.status == models.SignupStatus.no_show
+    assert refreshed.slot_id == slot_a.id
+    assert slot_a.current_count == 0
+    assert slot_b.current_count == 0
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-29 sweep — participant swap of an ATTENDED signup must be refused
+# (self-serve hours inflation). Unlike cancelled/no_show, attended DOES hold
+# capacity, so the pre-fix code fell into the holds_capacity branch: status
+# is left untouched and only slot_id is repointed. Volunteer hours are
+# computed as sum(slot.end_time - slot.start_time) over attended signups,
+# joined on the signup's CURRENT slot_id (admin.py) — so a volunteer whose
+# session is over could swap themselves into a longer slot in the same
+# event and inflate their own credited hours, repeatedly, with zero staff
+# involvement. This contradicts ALLOWED_TRANSITIONS[attended] == set()
+# (terminal, check_in_service.py). Staff retain the ability to swap an
+# attended signup (e.g. to correct a mis-resolved slot) — deliberate
+# asymmetry, same pattern as the actor_kind split on the waitlisted branch
+# above.
+# ---------------------------------------------------------------------------
+
+
+def _make_attended_signup(db_session, slot):
+    vol = VolunteerFactory()
+    return SignupFactory(
+        volunteer=vol, volunteer_id=vol.id,
+        slot=slot, slot_id=slot.id,
+        status=models.SignupStatus.attended,
+    )
+
+
+def test_participant_swap_of_attended_signup_is_refused(db_session):
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    signup = _make_attended_signup(db_session, slot_a)
+    slot_a.current_count = 1
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(
+            db_session, signup_id=signup.id, target_slot_id=slot_b.id,
+            actor_kind="participant",
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
+    # Nothing mutated: status/slot unchanged, no capacity moved either way.
+    refreshed = db_session.get(models.Signup, signup.id)
+    assert refreshed.status == models.SignupStatus.attended
+    assert refreshed.slot_id == slot_a.id
+    assert slot_a.current_count == 1
+    assert slot_b.current_count == 0
+
+
+def test_staff_swap_of_attended_signup_succeeds(db_session):
+    """The deliberate asymmetry: staff may still swap an attended signup
+    (e.g. to correct a mis-resolved slot). This test is the one that stops
+    a future refactor from over-applying the participant-only guard above
+    to the staff path too."""
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    signup = _make_attended_signup(db_session, slot_a)
+    slot_a.current_count = 1
+    db_session.flush()
+
+    result = swap_signup(
+        db_session, signup_id=signup.id, target_slot_id=slot_b.id,
+        actor_kind="staff",
+    )
+    db_session.flush()
+
+    assert result.signup.slot_id == slot_b.id
+    assert result.signup.status == models.SignupStatus.attended
+    assert slot_a.current_count == 0
+    assert slot_b.current_count == 1
