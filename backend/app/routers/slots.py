@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..celery_app import send_email_notification
+from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
 from ..services import quarter_service
+from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
@@ -93,7 +94,15 @@ def update_slot(
     db: Session = Depends(get_db),
     actor: models.User = Depends(require_role(models.UserRole.organizer, models.UserRole.admin)),
 ):
-    slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
+    # Locked: a capacity raise below may chain-promote the waitlist, which
+    # mutates current_count and must serialize against concurrent cancels/
+    # signups on this same slot (matches every other promotion call site).
+    slot = (
+        db.query(models.Slot)
+        .filter(models.Slot.id == slot_id)
+        .with_for_update()
+        .first()
+    )
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
 
@@ -125,9 +134,24 @@ def update_slot(
         ("start_time" in data and data["start_time"] != slot.start_time)
         or ("end_time" in data and data["end_time"] != slot.end_time)
     )
+    old_capacity = slot.capacity
 
     for field, value in data.items():
         setattr(slot, field, value)
+
+    # Sweep remediation task 7 item 5: a capacity raise chain-promotes the
+    # waitlist via the canonical FIFO promotion (2026-07-28 spec: pending +
+    # confirm email, not straight to confirmed), inheriting the centralized
+    # ended-slot guard — an ended slot's promote_waitlist_fifo call returns
+    # None and is skipped silently, same as every other auto-promotion site.
+    promotions: list = []
+    if "capacity" in data and slot.capacity > old_capacity:
+        while slot.current_count < slot.capacity:
+            promo = promote_waitlist_fifo(db, slot.id)
+            if promo is None:
+                break
+            slot.current_count += 1
+            promotions.append(promo)
 
     # Collect confirmed signups before commit (needed for post-commit dispatch)
     confirmed_signups = []
@@ -157,6 +181,9 @@ def update_slot(
             models.Signup.status == models.SignupStatus.confirmed,
         ).all()
 
+    # Capture before commit — expire_on_commit would force refresh queries.
+    promotion_email_kwargs = [p.email_kwargs for p in promotions]
+
     db.add(slot)
     db.commit()
     db.refresh(slot)
@@ -167,6 +194,11 @@ def update_slot(
     if time_changed:
         for s in confirmed_signups:
             send_email_notification.delay(signup_id=str(s.id), kind="reschedule")
+
+    # Promoted volunteers get the confirm-your-spot email — pending status
+    # holds the seat until the volunteer clicks the emailed magic link.
+    for kwargs in promotion_email_kwargs:
+        send_waitlist_promotion_email.delay(**kwargs)
 
     return slot
 
