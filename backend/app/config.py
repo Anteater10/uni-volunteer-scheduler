@@ -49,8 +49,12 @@ class Settings(BaseSettings):
     magic_link_ttl_minutes: int = 15
     magic_link_max_per_email_per_hour: int = 5
     magic_link_max_per_ip_per_hour: int = 20
-    frontend_base_url: str = "http://localhost:5173"
-    frontend_url: str = "http://localhost:5173"  # alias for Phase 09 public signup emails
+    # Single source of truth for the frontend origin URL. frontend_base_url
+    # and frontend_url used to be independently-configurable settings that
+    # every .env (dev and prod) happened to set to the same value anyway —
+    # collapsed here so the two names can no longer drift apart; see the
+    # frontend_base_url property below.
+    frontend_url: str = "http://localhost:5173"
     backend_base_url: str = "http://localhost:8000"
     debug: bool = False  # Phase 09: if True, debug-logs raw signup tokens in Celery (dev only)
 
@@ -104,13 +108,13 @@ class Settings(BaseSettings):
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is
     # immutable without a full re-embed — see RESEARCH D3 / Pitfall 3.
-    # Default is 'local' because every chunk actually stored in this deployment
-    # was embedded by 'local-bge', and retrieval hard-filters on
-    # embedding_provider. Defaulting to 'jina' meant that losing the
-    # CORPUS_EMBEDDING_PRIMARY env var did not raise — it silently retrieved
-    # ZERO chunks, and the copilot answered ungrounded with no error anywhere.
-    # Changing this back requires a full re-embed of the corpus, not a flag flip.
-    corpus_embedding_primary: str = "local"            # 'jina' | 'local'
+    #
+    # Default must match the provider the shipped corpus was embedded with:
+    # both retrieval CTEs filter chunks on provider, so a deploy that leaves
+    # this unset with a 'jina' default read zero rows from BOTH halves of
+    # hybrid retrieval — no citations, no error. Every shipped chunk is
+    # local-bge, so 'local' is the only default that works out of the box.
+    corpus_embedding_primary: str = "local"           # 'jina' | 'local'
     corpus_embedding_fallback: str = "local"
     corpus_embedding_dimensions: int = 1024           # locked at 1024
     corpus_chunk_size: int = 1024
@@ -138,6 +142,12 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+    @property
+    def frontend_base_url(self) -> str:
+        """Read-only alias for frontend_url — kept so existing callers of
+        either name keep working after the collapse to one underlying value."""
+        return self.frontend_url
 
     # Pydantic v2 settings config
     model_config = SettingsConfigDict(

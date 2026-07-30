@@ -1322,27 +1322,37 @@ export default function EventsSection() {
                   <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.end_date)}</td>
                   <td className="py-3 px-4 text-gray-800">{e.location || "—"}</td>
                   <td className="py-3 px-4 text-right space-x-5 whitespace-nowrap">
-                    <button
-                      onClick={() => {
-                        setEditing(e);
-                        setDrawerMode("edit");
-                      }}
-                      className="text-blue-600 hover:underline font-medium"
-                    >
-                      Edit
-                    </button>
+                    {/* Sweep remediation task 5: the server now rejects
+                        update/delete against an ended quarter's events
+                        (422 QUARTER_READONLY), so those actions don't even
+                        render here. Duplicate stays — it always creates the
+                        copy in a target quarter, never the source's, so
+                        re-running a past event from history keeps working. */}
+                    {quarterEnded ? null : (
+                      <button
+                        onClick={() => {
+                          setEditing(e);
+                          setDrawerMode("edit");
+                        }}
+                        className="text-blue-600 hover:underline font-medium"
+                      >
+                        Edit
+                      </button>
+                    )}
                     <button
                       onClick={() => setDuplicating(e)}
                       className="text-gray-700 hover:underline font-medium"
                     >
                       Duplicate
                     </button>
-                    <button
-                      onClick={() => setDeleting(e)}
-                      className="text-red-600 hover:underline font-medium"
-                    >
-                      Delete
-                    </button>
+                    {quarterEnded ? null : (
+                      <button
+                        onClick={() => setDeleting(e)}
+                        className="text-red-600 hover:underline font-medium"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

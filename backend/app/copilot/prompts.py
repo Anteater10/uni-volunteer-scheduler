@@ -16,7 +16,7 @@ import hashlib
 from .. import models
 
 
-SYSTEM_PROMPT_VERSION = "v0.2.0"
+SYSTEM_PROMPT_VERSION = "v0.3.0"
 
 
 _BASE = """\
@@ -54,8 +54,8 @@ Hard rules:
 
 _ADMIN_TAIL = """\
 
-You are speaking with an admin. Admins manage quarters, module
-templates, orientation credits, staff accounts, exports, audit logs, and
+You are speaking with an admin. Admins manage quarters, modules,
+orientation credits, staff accounts, exports, audit logs, and
 global settings, and can act on any event. They can see everything in
 the UI; you don't need to over-redact your explanations.
 

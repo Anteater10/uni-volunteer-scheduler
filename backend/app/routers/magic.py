@@ -15,6 +15,7 @@ from ..magic_link_service import (
     check_rate_limit,
     consume_token,
     dispatch_email,
+    zero_confirm_reason,
 )
 from ..models import Event, Signup, SignupStatus
 
@@ -29,10 +30,29 @@ def _get_redis():
 
 @router.get("/{token}")
 def consume_magic_link(token: str, db: Session = Depends(get_db)):
-    result, signup = consume_token(db, token)
+    """
+    2026-07-29 sweep remediation, Finding #1: a token can be legitimately
+    burned (``ConsumeResult.ok``) while confirming zero signups — the
+    volunteer's only signup was promotion-pending and this is the ORIGINAL
+    batch link, not the promotion link, so consume_token's consent scoping
+    deliberately left it pending. The redirect must not claim success.
+
+    Follow-up: confirmed_count == 0 is also reachable with no promotion
+    anywhere (see zero_confirm_reason) — the reason must reflect the
+    anchor's actual status, not assume every zero-flip is a promotion.
+    """
+    result, signup, confirmed_count = consume_token(db, token)
     if result == ConsumeResult.ok:
         db.commit()
-        event_id = signup.slot.event_id if signup.slot else ""
+        event_id = signup.slot.event_id if signup and signup.slot else ""
+        if confirmed_count == 0:
+            return RedirectResponse(
+                url=(
+                    f"{settings.frontend_base_url}/signup/confirm-failed"
+                    f"?reason={zero_confirm_reason(signup)}&event={event_id}"
+                ),
+                status_code=302,
+            )
         return RedirectResponse(
             url=f"{settings.frontend_base_url}/signup/confirmed?event={event_id}",
             status_code=302,

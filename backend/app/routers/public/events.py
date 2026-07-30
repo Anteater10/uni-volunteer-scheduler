@@ -58,6 +58,28 @@ def list_quarters(db: Session = Depends(get_db)) -> list[schemas.PublicQuarterRe
     return quarter_service.list_quarters(db)
 
 
+def _get_visible_event_or_404(db: Session, event_id: UUID) -> models.Event:
+    """Fetch a public-visible event or raise 404.
+
+    Task 2 (sweep remediation): ``Event.visibility`` ("public"/"private", set
+    from the admin form) was never enforced here — private events were fully
+    exposed. A private event returns the same 404 as a nonexistent one so the
+    response never confirms it exists.
+
+    2026-07-29 sweep remediation, Finding #3: this used to deny-list
+    ``visibility == "private"``, which reads a NULL or any unrecognized
+    value (the column is nullable with no server default or backfill) as
+    visible — the opposite of the list endpoint below, which excludes NULL
+    by an accident of SQL three-valued logic. Allow-list on exactly
+    "public" instead so both sites agree and fail closed: NULL and any
+    value other than "public" are treated as not public.
+    """
+    event = db.get(models.Event, event_id)
+    if event is None or event.visibility != "public":
+        raise HTTPException(status_code=404, detail="event not found")
+    return event
+
+
 def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEventRead:
     """Build a PublicEventRead dict for the given event, with slots hydrated."""
     slots = db.query(models.Slot).filter(models.Slot.event_id == event.id).all()
@@ -161,6 +183,17 @@ def list_events(
         )
     if school:
         q = q.filter(models.Event.school == school)
+    # Task 2 (sweep remediation): never surface "private" events on the
+    # unauthenticated public list.
+    # 2026-07-29 sweep remediation, Finding #3: switched from a deny-list
+    # (`!= "private"`) to an allow-list (`== "public"`). The deny-list read
+    # a NULL visibility (the column is nullable with no server default or
+    # backfill) or any unrecognized value ("internal", a typo, ...) as
+    # visible — fail-open, and inconsistent with the detail guard above,
+    # which read NULL as visible in Python. Allow-listing "public" excludes
+    # NULL and anything else automatically (NULL == 'public' is NULL, i.e.
+    # not matched) and fails closed everywhere, matching the detail guard.
+    q = q.filter(models.Event.visibility == "public")
     events = q.order_by(models.Event.school, models.Event.start_date).all()
 
     # Phase 29 (HIDE-01): optionally hide events whose last slot end is in
@@ -188,9 +221,7 @@ def list_events(
 )
 def get_event(event_id: UUID, db: Session = Depends(get_db)):
     """Get a single event by ID with slots and current filled/capacity counts."""
-    event = db.get(models.Event, event_id)
-    if event is None:
-        raise HTTPException(status_code=404, detail="event not found")
+    event = _get_visible_event_or_404(db, event_id)
     return _build_event_response(db, event)
 
 
@@ -206,5 +237,9 @@ def get_event_form_schema(event_id: UUID, db: Session = Depends(get_db)):
     """
     from ...services import form_schema_service
 
+    # Task 2 (sweep remediation): this is a public read of an event, same
+    # leak class as list/detail — a private event's custom form fields must
+    # not be readable before the event itself is.
+    _get_visible_event_or_404(db, event_id)
     schema = form_schema_service.get_effective_schema(db, event_id)
     return {"event_id": str(event_id), "schema": schema}

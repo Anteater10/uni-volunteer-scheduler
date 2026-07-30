@@ -22,7 +22,20 @@ from datetime import datetime, timezone, timedelta, date as date_type
 
 import pytest
 
-from app.models import AuditLog, Event, MagicLinkToken, Quarter, Signup, SignupStatus, Slot, SlotType, Volunteer
+from app.magic_link_service import SIGNUP_CONFIRM_TTL_MINUTES, issue_token
+from app.models import (
+    AuditLog,
+    Event,
+    MagicLinkPurpose,
+    MagicLinkToken,
+    Quarter,
+    Signup,
+    SignupStatus,
+    Slot,
+    SlotType,
+    Volunteer,
+)
+from app.signup_service import mark_promoted_pending
 from tests.fixtures.helpers import make_user
 
 
@@ -160,6 +173,98 @@ class TestCreatePublicSignup:
         resp = client.post("/api/v1/public/signups", json=_signup_payload(uuid.uuid4()))
         assert resp.status_code == 404, resp.text
 
+    def test_private_event_slot_404_matches_unknown_slot_404(
+        self, client, db_session, monkeypatch
+    ):
+        """Fix round 2 (Task 2 review): a slot on a private event and a
+        slot_id that doesn't exist at all must be byte-identical 404
+        responses — same status code AND same body. A caller holding a
+        slot_id must not be able to tell "this slot doesn't exist" apart
+        from "this slot exists but its event is private" by diffing the
+        response text."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        event = _make_event(db_session)
+        event.visibility = "private"
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        private_resp = client.post(
+            "/api/v1/public/signups",
+            json=_signup_payload(slot.id, email="private-slot@example.com"),
+        )
+        unknown_resp = client.post(
+            "/api/v1/public/signups", json=_signup_payload(uuid.uuid4())
+        )
+
+        assert private_resp.status_code == 404, private_resp.text
+        assert unknown_resp.status_code == 404, unknown_resp.text
+        assert private_resp.status_code == unknown_resp.status_code
+        assert private_resp.json() == unknown_resp.json()
+
+    def test_null_visibility_event_signup_404_matches_unknown_slot_404(
+        self, client, db_session, monkeypatch
+    ):
+        """2026-07-29 sweep remediation, Finding #6: ``Event.visibility`` is
+        nullable with no server default or backfill (see
+        routers/public/events.py, Finding #3). The signup path deny-listed
+        only the literal string "private", so a NULL-visibility event —
+        hidden from the public list and 404ing on its detail page — could
+        still be signed up for. Must fail closed here too, and the refusal
+        must stay byte-identical to the unknown-slot 404."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        event = _make_event(db_session)
+        event.visibility = None
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        null_resp = client.post(
+            "/api/v1/public/signups",
+            json=_signup_payload(slot.id, email="null-vis-slot@example.com"),
+        )
+        unknown_resp = client.post(
+            "/api/v1/public/signups", json=_signup_payload(uuid.uuid4())
+        )
+
+        assert null_resp.status_code == 404, null_resp.text
+        assert unknown_resp.status_code == 404, unknown_resp.text
+        assert null_resp.status_code == unknown_resp.status_code
+        assert null_resp.json() == unknown_resp.json()
+
+    def test_unexpected_visibility_value_event_signup_404_matches_unknown_slot_404(
+        self, client, db_session, monkeypatch
+    ):
+        """2026-07-29 sweep remediation, Finding #6: a deny-list
+        (`== "private"`) fails open for any unrecognized value (e.g. a typo
+        or case mismatch like "Private"). Must be an allow-list on exactly
+        "public" instead, matching routers/public/events.py."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        event = _make_event(db_session)
+        event.visibility = "Private"
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        odd_resp = client.post(
+            "/api/v1/public/signups",
+            json=_signup_payload(slot.id, email="odd-vis-slot@example.com"),
+        )
+        unknown_resp = client.post(
+            "/api/v1/public/signups", json=_signup_payload(uuid.uuid4())
+        )
+
+        assert odd_resp.status_code == 404, odd_resp.text
+        assert unknown_resp.status_code == 404, unknown_resp.text
+        assert odd_resp.status_code == unknown_resp.status_code
+        assert odd_resp.json() == unknown_resp.json()
+
     def test_full_slot_goes_to_waitlist(self, client, db_session, monkeypatch):
         """Phase 25 (WAIT-01): at-capacity signups are waitlisted, not rejected."""
         monkeypatch.setattr(
@@ -290,6 +395,119 @@ class TestConfirmSignup:
         assert resp.status_code == 422, resp.text
 
 
+class TestConfirmSignupPromotionScoping:
+    """2026-07-29 sweep remediation, Finding #1: consume_token can legitimately
+    burn a token while confirming zero signups (a volunteer's only signup was
+    waitlisted then promoted, and they click the ORIGINAL batch confirm link
+    instead of the promotion link). The router must not report success."""
+
+    def test_original_batch_link_reports_not_confirmed_after_promotion(
+        self, client, db_session
+    ):
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
+        volunteer = Volunteer(
+            id=uuid.uuid4(),
+            email="promoted-scoping@example.com",
+            first_name="Prom",
+            last_name="Oted",
+        )
+        db_session.add(volunteer)
+        db_session.flush()
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=volunteer.id,
+            slot_id=slot.id,
+            status=SignupStatus.waitlisted,
+        )
+        db_session.add(signup)
+        db_session.flush()
+        # The original batch link the volunteer received before being
+        # promoted off the waitlist.
+        batch_raw = issue_token(
+            db_session,
+            signup=signup,
+            email=volunteer.email,
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=volunteer.id,
+            ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
+        )
+        mark_promoted_pending(db_session, signup)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups/confirm", params={"token": batch_raw}
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["confirmed"] is False, (
+            "the original batch link must never report success for a seat "
+            "that only a promotion link can confirm"
+        )
+        assert body["signup_count"] == 0
+        assert body["reason"] == "promotion_pending"
+        assert "promotion" in body["message"].lower()
+        assert body["idempotent"] is False, (
+            "this is a distinct zero-flip case, not a genuine used-token replay"
+        )
+        db_session.expire_all()
+        assert db_session.get(Signup, signup.id).status == SignupStatus.pending
+
+    def test_own_link_for_plain_waitlisted_signup_is_not_told_to_find_a_promotion(
+        self, client, db_session
+    ):
+        """Regression guard: confirmed_count == 0 is also reachable with NO
+        promotion anywhere — a volunteer signs up for a single slot that is
+        already full, lands waitlisted (public_signup_service.py), and clicks
+        their OWN emailed link. They must be told they're on the waitlist,
+        not sent looking for a promotion email that was never sent."""
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
+        volunteer = Volunteer(
+            id=uuid.uuid4(),
+            email="plain-waitlisted@example.com",
+            first_name="Plain",
+            last_name="Waiter",
+        )
+        db_session.add(volunteer)
+        db_session.flush()
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=volunteer.id,
+            slot_id=slot.id,
+            status=SignupStatus.waitlisted,
+        )
+        db_session.add(signup)
+        db_session.flush()
+        batch_raw = issue_token(
+            db_session,
+            signup=signup,
+            email=volunteer.email,
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=volunteer.id,
+            ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
+        )
+        db_session.commit()
+        # NOTE: no mark_promoted_pending — this signup was never promoted.
+
+        resp = client.post(
+            "/api/v1/public/signups/confirm", params={"token": batch_raw}
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["confirmed"] is False
+        assert body["reason"] == "waitlisted"
+        assert "promotion" not in body["message"].lower(), (
+            "a plain waitlisted signup was never promoted — telling the "
+            "volunteer to look for a promotion email is wrong"
+        )
+        assert "waitlist" in body["message"].lower()
+        db_session.expire_all()
+        assert db_session.get(Signup, signup.id).status == SignupStatus.waitlisted
+
+
 class TestManageSignups:
     def test_unknown_token_returns_400(self, client, db_session):
         resp = client.get("/api/v1/public/signups/manage", params={"token": "a" * 40})
@@ -353,6 +571,42 @@ class TestCancelSignup:
         resp = client.delete(f"/api/v1/public/signups/{signup_id}?token={raw_token}")
         assert resp.status_code == 200
         assert "cancellation" in kinds
+
+    def test_public_cancel_waitlisted_sends_waitlist_copy(self, client, db_session, monkeypatch):
+        """A signup that was only ever waitlisted (never held a seat) gets
+        waitlist-appropriate cancellation copy, not the standard 'your
+        signup has been cancelled' text."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        monkeypatch.setattr(
+            "app.celery_app.send_waitlist_promotion_email.delay", lambda **k: None
+        )
+        kinds = []
+        monkeypatch.setattr(
+            "app.celery_app.send_email_notification.delay",
+            lambda *a, **k: kinds.append(k.get("kind")),
+        )
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
+        db_session.commit()
+
+        with _TokenCapture(monkeypatch) as cap:
+            resp = client.post(
+                "/api/v1/public/signups",
+                json=_signup_payload(slot.id, email="wl_cancel_copy09@example.com"),
+            )
+        assert resp.status_code == 201
+        signup_id = resp.json()["signup_ids"][0]
+        raw_token = cap.last_token
+        if raw_token is None:
+            pytest.skip("Token capture failed")
+
+        resp = client.delete(f"/api/v1/public/signups/{signup_id}?token={raw_token}")
+        assert resp.status_code == 200, resp.text
+        assert "cancellation_waitlisted" in kinds
+        assert "cancellation" not in kinds
 
     def test_cancel_with_wrong_volunteer_token_returns_403(self, client, db_session, monkeypatch):
         """T-09-04: token belonging to different volunteer must return 403."""

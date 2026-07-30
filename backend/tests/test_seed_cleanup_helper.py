@@ -14,7 +14,6 @@ from app import models
 from app.routers.test_helpers import seed_cleanup
 from tests.fixtures.factories import (
     EventFactory,
-    PortalFactory,
     SignupFactory,
     SlotFactory,
     UserFactory,
@@ -23,7 +22,6 @@ from tests.fixtures.factories import (
 
 ALL_FACTORIES = (
     UserFactory,
-    PortalFactory,
     EventFactory,
     SlotFactory,
     VolunteerFactory,

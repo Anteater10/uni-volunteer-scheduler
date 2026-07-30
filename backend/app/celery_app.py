@@ -23,6 +23,7 @@ from .config import settings
 from .database import SessionLocal
 from . import models
 from .emails import BUILDERS
+from .magic_link_service import CONFIRM_PURPOSES
 from .observability import init_sentry
 from .signup_service import promote_waitlist_fifo
 
@@ -611,8 +612,8 @@ def send_waitlist_promotion_email(
 
 
 def _cleanup_stale_confirm_tokens(db: Session, now: datetime) -> int:
-    """Delete expired SIGNUP_CONFIRM tokens for volunteers with nothing left
-    to manage.
+    """Delete expired confirm tokens (signup + promotion) for volunteers with
+    nothing left to manage.
 
     2026-07-28 spec decision 5: manage links deliberately outlive expires_at,
     so token rows are garbage-collected by lifecycle instead — a token lives
@@ -621,12 +622,12 @@ def _cleanup_stale_confirm_tokens(db: Session, now: datetime) -> int:
     are covered by the signup-cascade (tokens die with their anchor signup).
 
     Liveness guard (fix round 1): the delete additionally requires the
-    token's OWN expires_at to already be in the past. No promotion path
-    (hourly chain, cancel/move/swap, manual staff promote) guards against
-    promoting on a slot whose event already ended, so a freshly-minted,
-    still-live 3-day confirm token can be issued to a volunteer whose
-    slot-history otherwise looks "stale" by the 30-day rule above. Without
-    this guard that live token would be deleted moments after being
+    token's OWN expires_at to already be in the past. Every promotion path
+    now refuses to promote onto an ended slot
+    (``waitlist_service.slot_has_ended``), but a live token can still belong
+    to a volunteer whose slot history reads "stale" by the 30-day rule above
+    (e.g. one upcoming slot, everything else long past, then a promotion).
+    Without this guard that live token would be deleted moments after being
     created, leaving a pending signup with zero tokens — unconfirmable,
     unmanageable, and skipped forever by the reap's tokenless-pending path.
     Gating on expiry means a live token is never touched, no matter how
@@ -642,7 +643,7 @@ def _cleanup_stale_confirm_tokens(db: Session, now: datetime) -> int:
     deleted = (
         db.query(models.MagicLinkToken)
         .filter(
-            models.MagicLinkToken.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+            models.MagicLinkToken.purpose.in_(CONFIRM_PURPOSES),
             models.MagicLinkToken.expires_at < now,
             models.MagicLinkToken.volunteer_id.in_(
                 select(stale_volunteers.c.volunteer_id)
@@ -653,21 +654,54 @@ def _cleanup_stale_confirm_tokens(db: Session, now: datetime) -> int:
     return deleted
 
 
+def _cancel_stale_waitlisted(db: Session, now: datetime) -> int:
+    """Cancel still-waitlisted signups on slots whose end_time has passed.
+
+    No capacity or email side effects: a waitlisted row never held a seat
+    (nothing to decrement), and an ended slot has nobody left to notify.
+    Without this, a waitlisted signup on a slot nobody ever chain-promotes
+    into (the slot ended before its waitlist drained) would sit as a
+    phantom row forever (2026-07-29, sweep remediation task 7 item 6).
+    """
+    ended_slot_ids = select(models.Slot.id).where(models.Slot.end_time <= now)
+    return (
+        db.query(models.Signup)
+        .filter(
+            models.Signup.status == models.SignupStatus.waitlisted,
+            models.Signup.slot_id.in_(ended_slot_ids),
+        )
+        .update(
+            {models.Signup.status: models.SignupStatus.cancelled},
+            synchronize_session=False,
+        )
+    )
+
+
 @celery.task(name="app.celery_app.expire_pending_signups")
 def expire_pending_signups() -> None:
     """Hourly sweep (2026-07-28 spec): reap unconfirmed pendings, chain-promote,
-    then clean up stale manage tokens.
+    cancel stale waitlisted rows, then clean up stale manage tokens.
 
     Reap criteria — a pending signup is deleted only when it has at least one
-    SIGNUP_CONFIRM token and NONE of them is still unexpired. A signup can
-    legitimately hold several tokens (original 14-day + promotion 3-day);
-    keying on "an expired token exists" would delete freshly promoted rows.
+    confirm token (SIGNUP_CONFIRM or PROMOTION_CONFIRM) and NONE of them is
+    still unexpired. A signup can legitimately hold several tokens (original
+    14-day + promotion 3-day); keying on "an expired token exists" would
+    delete freshly promoted rows, and keying on SIGNUP_CONFIRM alone would
+    make every promotion-pending row look tokenless and never reap it.
 
     Side effects:
-      - slot.current_count decremented per deleted signup
+      - slot.current_count decremented per deleted signup, committed as its
+        own transaction (row-locked FOR UPDATE, like the promotion phase)
       - freed seats chain-promote the slot's waitlist FIFO (pending + email,
-        their own 3-day clock — an unbroken chain across successive runs)
-      - MagicLinkToken rows cascade-delete with their signup
+        their own 3-day clock — an unbroken chain across successive runs).
+        2026-07-29 fix: each promotion commits and enqueues its email
+        immediately, one at a time, instead of one bulk commit across every
+        affected slot followed by one bulk enqueue loop — shrinks the crash
+        window where a promoted signup's confirm email is silently dropped
+        down to a single signup instead of the whole run's promotions.
+      - waitlisted signups on already-ended slots are cancelled, no email
+        (see _cancel_stale_waitlisted)
+      - MagicLinkToken rows cascade-delete with their reaped signup
       - stale confirm tokens removed (see _cleanup_stale_confirm_tokens)
     """
     db: Session = SessionLocal()
@@ -678,8 +712,7 @@ def expire_pending_signups() -> None:
             db.query(models.MagicLinkToken.token_hash)
             .filter(
                 models.MagicLinkToken.signup_id == models.Signup.id,
-                models.MagicLinkToken.purpose
-                == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+                models.MagicLinkToken.purpose.in_(CONFIRM_PURPOSES),
                 models.MagicLinkToken.expires_at >= now,
             )
             .exists()
@@ -688,8 +721,7 @@ def expire_pending_signups() -> None:
             db.query(models.MagicLinkToken.token_hash)
             .filter(
                 models.MagicLinkToken.signup_id == models.Signup.id,
-                models.MagicLinkToken.purpose
-                == models.MagicLinkPurpose.SIGNUP_CONFIRM,
+                models.MagicLinkToken.purpose.in_(CONFIRM_PURPOSES),
             )
             .exists()
         )
@@ -702,6 +734,7 @@ def expire_pending_signups() -> None:
                 any_token_exists,
                 ~live_token_exists,
             )
+            .with_for_update()
             .all()
         )
 
@@ -729,44 +762,49 @@ def expire_pending_signups() -> None:
                 affected_slot_ids.append(slot.id)
             db.delete(signup)
             count += 1
-        db.flush()
+        db.commit()
 
-        promotion_email_kwargs: list[dict] = []
+        stale_waitlisted = _cancel_stale_waitlisted(db, now)
+        db.commit()
+        if stale_waitlisted:
+            logger.info("stale_waitlisted_cancelled count=%d", stale_waitlisted)
+
+        # Re-locks the slot fresh each iteration: committing releases the
+        # previous iteration's FOR UPDATE lock, so the next promotion in the
+        # same slot must re-acquire it rather than trust a stale in-memory
+        # current_count.
+        promoted = 0
         for slot_id in affected_slot_ids:
-            slot = (
-                db.query(models.Slot)
-                .filter(models.Slot.id == slot_id)
-                .with_for_update()
-                .first()
-            )
-            if slot is None:
-                continue
-            if slot.end_time <= now:
-                # The event already ended — the seat was still reaped and
-                # decremented above, but don't chain-promote into a
-                # finished event. Otherwise a promotee gets a 3-day
-                # "confirm your spot" email for an event that already
-                # happened; the token lapses unconfirmed, and the next
-                # hourly run reaps it and repeats the cycle for the next
-                # waitlister.
-                continue
-            while slot.current_count < slot.capacity:
+            while True:
+                slot = (
+                    db.query(models.Slot)
+                    .filter(models.Slot.id == slot_id)
+                    .with_for_update()
+                    .first()
+                )
+                if slot is None or slot.current_count >= slot.capacity:
+                    break
+                # An ended slot is skipped by promote_waitlist_fifo itself
+                # (the guard is centralized in
+                # waitlist_service.slot_has_ended, shared with every
+                # interactive promotion path), so the seat is still reaped
+                # and decremented above but never chain-promoted into a
+                # finished event.
                 promo = promote_waitlist_fifo(db, slot.id)
                 if promo is None:
                     break
                 slot.current_count += 1
-                promotion_email_kwargs.append(promo.email_kwargs)
+                promoted += 1
+                db.commit()
+                send_waitlist_promotion_email.delay(**promo.email_kwargs)
 
-        db.commit()
         logger.info(
             "expired_pending_signups_cleaned count=%d promoted=%d",
             count,
-            len(promotion_email_kwargs),
+            promoted,
         )
-        for kwargs in promotion_email_kwargs:
-            send_waitlist_promotion_email.delay(**kwargs)
 
-        # Second transaction: stale-token sweep.
+        # Final transaction: stale-token sweep.
         stale = _cleanup_stale_confirm_tokens(db, now)
         db.commit()
         if stale:

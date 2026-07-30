@@ -146,6 +146,63 @@ def test_cancel_via_signups_heals_count_drift(client, db_session):
     assert refreshed.current_count == 0
 
 
+def test_cancel_via_signups_of_attended_signup_is_refused(client, db_session):
+    """2026-07-29 sweep — closes the cancel-side hole in this family of
+    guards (see swap_service.py's SIGNUP_NOT_SWAPPABLE guards). Deliberately
+    NO staff exception here: unlike swap's participant-only attended guard
+    (a lateral, status-preserving slot correction), cancelling would erase
+    the resolved status entirely, and nothing else in the app reverses
+    attended/no_show for staff either (undo_check_in explicitly refuses to;
+    the one sanctioned undo is reopen_event, which is event-wide and
+    audited). This test pins that choice so a later refactor cannot
+    silently add a staff carve-out here to mirror swap's."""
+    admin = _make_admin(db_session, email="adm_sf7@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_sf7@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.attended,
+    )
+    slot.current_count = 1
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert rc.status_code == 422, rc.text
+    assert rc.json()["code"] == "SIGNUP_NOT_CANCELLABLE"
+    db_session.expire_all()
+    untouched = db_session.get(models.Signup, signup.id)
+    assert untouched.status == models.SignupStatus.attended
+    refreshed = db_session.get(models.Slot, slot.id)
+    assert refreshed.current_count == 1
+
+
+def test_cancel_via_signups_of_no_show_signup_is_refused(client, db_session):
+    """no_show sibling of the attended guard above — same rationale."""
+    admin = _make_admin(db_session, email="adm_sf8@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_sf8@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.no_show,
+    )
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert rc.status_code == 422, rc.text
+    assert rc.json()["code"] == "SIGNUP_NOT_CANCELLABLE"
+    db_session.expire_all()
+    untouched = db_session.get(models.Signup, signup.id)
+    assert untouched.status == models.SignupStatus.no_show
+    refreshed = db_session.get(models.Slot, slot.id)
+    assert refreshed.current_count == 0
+
+
 # Slot/event missing 404 branches in cancel are FK-protected at the DB level
 # and marked # pragma: no cover.
 
@@ -350,3 +407,111 @@ def test_cancel_via_signups_sends_waitlist_promote_email(client, db_session, mon
     assert any(kw["signup_id"] == str(b.id) for kw in promoted_emails), (
         f"promoted volunteer got no waitlist promotion email (sent: {promoted_emails})"
     )
+
+
+def test_swap_admin_of_waitlisted_signup_lands_pending_with_email(
+    client, db_session, monkeypatch
+):
+    """2026-07-29 sweep, Task 8: a staff swap of a waitlisted signup is not
+    volunteer intent — it must land 'pending' with its own promotion confirm
+    email, same as the admin move path (Task 4), not silently 'confirmed'."""
+    promoted_emails = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: promoted_emails.append(kw),
+    )
+    admin = _make_admin(db_session, email="adm_sw4@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    slot_b = SlotFactory(
+        event=event,
+        start_time=slot_a.start_time + timedelta(hours=4),
+        end_time=slot_a.end_time + timedelta(hours=4),
+        capacity=2,
+        current_count=0,
+    )
+    vol = VolunteerFactory(email="v_sw4@example.com")
+    signup = SignupFactory(
+        volunteer=vol,
+        slot=slot_a,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/swap",
+        headers=auth_headers(client, admin),
+        json={"target_slot_id": str(slot_b.id)},
+    )
+    assert rc.status_code == 200, rc.text
+    assert rc.json()["status"] == "pending"
+    assert rc.json()["slot_id"] == str(slot_b.id)
+    assert any(kw["signup_id"] == str(signup.id) for kw in promoted_emails), (
+        f"promoted signup got no promotion confirm email (sent: {promoted_emails})"
+    )
+
+
+def test_swap_admin_of_cancelled_signup_is_refused(client, db_session):
+    """2026-07-29 sweep: staff correcting an attendance mistake use the
+    roster's attendance controls, not swap — a cancelled signup must not be
+    resurrected to 'confirmed' by moving it to a different slot."""
+    admin = _make_admin(db_session, email="adm_sw5@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    slot_b = SlotFactory(
+        event=event,
+        start_time=slot_a.start_time + timedelta(hours=4),
+        end_time=slot_a.end_time + timedelta(hours=4),
+        capacity=2,
+        current_count=0,
+    )
+    vol = VolunteerFactory(email="v_sw5@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot_a, status=models.SignupStatus.cancelled,
+    )
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/swap",
+        headers=auth_headers(client, admin),
+        json={"target_slot_id": str(slot_b.id)},
+    )
+    assert rc.status_code == 422, rc.text
+    assert rc.json()["code"] == "SIGNUP_NOT_SWAPPABLE"
+    db_session.expire_all()
+    untouched = db_session.get(models.Signup, signup.id)
+    assert untouched.status == models.SignupStatus.cancelled
+    assert untouched.slot_id == slot_a.id
+
+
+def test_swap_admin_of_attended_signup_succeeds(client, db_session):
+    """Deliberate asymmetry (2026-07-29 sweep, hours-inflation fix): a
+    participant swap of an attended signup is refused (self-serve credited-
+    hours inflation — see swap_service.py), but staff retain the ability to
+    swap one, e.g. to correct a mis-resolved slot."""
+    admin = _make_admin(db_session, email="adm_sw6@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    slot_b = SlotFactory(
+        event=event,
+        start_time=slot_a.start_time + timedelta(hours=4),
+        end_time=slot_a.end_time + timedelta(hours=4),
+        capacity=2,
+        current_count=0,
+    )
+    vol = VolunteerFactory(email="v_sw6@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot_a, status=models.SignupStatus.attended,
+    )
+    slot_a.current_count = 1
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/swap",
+        headers=auth_headers(client, admin),
+        json={"target_slot_id": str(slot_b.id)},
+    )
+    assert rc.status_code == 200, rc.text
+    assert rc.json()["status"] == "attended"
+    assert rc.json()["slot_id"] == str(slot_b.id)

@@ -18,7 +18,13 @@ from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
-from ..signup_service import PromotionResult, promote_waitlist_fifo
+from ..signup_service import (
+    PromotionResult,
+    mark_promoted_pending,
+    promote_waitlist_fifo,
+)
+from ..services.check_in_service import ensure_signup_cancellable
+from ..services.waitlist_service import SlotEndedError
 from ..services import module_service, quarter_service
 from ..services.audit_log_humanize import humanize as humanize_audit_log
 from ..schemas import ModuleRead, ModuleCreate, ModuleUpdate, SentNotificationRead
@@ -677,6 +683,10 @@ def admin_cancel_signup(
         db.refresh(signup)
         return signup
 
+    # 2026-07-29 sweep: attended/no_show are terminal, no staff exception —
+    # see check_in_service.ensure_signup_cancellable for the full rationale.
+    ensure_signup_cancellable(signup)
+
     previous_status = signup.status
     signup.status = models.SignupStatus.cancelled
 
@@ -693,8 +703,15 @@ def admin_cancel_signup(
     db.refresh(signup)
 
     # Emails only after commit — the worker reads rows from its own session.
-    # The cancellation email is dispatched via the deduped kind pipeline (volunteer-backed).
-    send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
+    # The cancellation email is dispatched via the deduped kind pipeline
+    # (volunteer-backed). A waitlisted signup never held a seat, so it gets
+    # waitlist-appropriate copy instead of "your signup has been cancelled".
+    cancellation_kind = (
+        "cancellation_waitlisted"
+        if previous_status == models.SignupStatus.waitlisted
+        else "cancellation"
+    )
+    send_email_notification.delay(signup_id=str(signup.id), kind=cancellation_kind)
 
     # Promoted volunteers get the confirm-your-spot email — pending status
     # holds the seat until the volunteer clicks the emailed magic link.
@@ -750,6 +767,10 @@ def admin_promote_signup(
 
     try:
         promo = manual_promote(db, signup, slot, allow_overfill=False)
+    except SlotEndedError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
     except ValueError as exc:  # belt-and-braces; pre-checks above match
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -896,24 +917,53 @@ def admin_move_signup(
         models.SignupStatus.confirmed,
         models.SignupStatus.pending,
     )
+
+    # 2026-07-29: moving a waitlisted signup into an open seat IS a promotion,
+    # so it takes the one promotion path (pending + its own confirm email) and
+    # inherits the promotion guard. Other statuses keep their existing
+    # behaviour, including a confirmed move between ended slots — staff still
+    # need to fix records after an event.
+    target_has_room = target_slot.current_count < target_slot.capacity
+    promoting = (
+        previous_status == models.SignupStatus.waitlisted and target_has_room
+    )
+
     if held_source_capacity and source_slot.current_count > 0:
         source_slot.current_count -= 1
 
-    if target_slot.current_count < target_slot.capacity:
+    if target_has_room:
         # Preserve pending/confirmed on move — a staff move must not
-        # silently confirm a signup the volunteer never confirmed.
-        # Waitlisted → open seat still confirms (spec: same as swap).
-        new_status = (
-            previous_status
-            if held_source_capacity
-            else models.SignupStatus.confirmed
-        )
+        # silently confirm a signup the volunteer never confirmed. When
+        # promoting, leave new_status unset: mark_promoted_pending below
+        # owns the waitlisted->pending flip, and it requires the signup
+        # still be waitlisted at the moment it is called.
+        if promoting:
+            new_status = None
+        else:
+            new_status = (
+                previous_status
+                if held_source_capacity
+                else models.SignupStatus.confirmed
+            )
         target_slot.current_count += 1
     else:
         new_status = models.SignupStatus.waitlisted
 
     signup.slot_id = target_slot.id
-    signup.status = new_status
+    if new_status is not None:
+        signup.status = new_status
+
+    # After the slot_id repoint, so both the confirm email and the ended-slot
+    # guard inside mark_promoted_pending judge the seat actually being offered.
+    # Nothing is committed on the raise, so the counts nudged above are dropped.
+    move_promotion = None
+    if promoting:
+        try:
+            move_promotion = mark_promoted_pending(db, signup)
+        except SlotEndedError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
 
     promotions = (
         _promote_waitlist_fifo(db, source_slot) if held_source_capacity else []
@@ -921,10 +971,19 @@ def admin_move_signup(
 
     log_action(db, actor, "admin_signup_move", "Signup", str(signup.id))
     promotion_email_kwargs = [p.email_kwargs for p in promotions]
+    if move_promotion is not None:
+        promotion_email_kwargs.append(move_promotion.email_kwargs)
     db.commit()
     db.refresh(signup)
 
-    send_email_notification.delay(signup_id=str(signup.id), kind="reschedule")
+    if move_promotion is None:
+        # A promoted seat gets the promotion confirm email instead. The
+        # reschedule copy ("the time for your slot has changed… cancel if you
+        # can no longer attend") tells a merely-pending volunteer the seat is
+        # already theirs — the inverse of confirm-in-3-days-or-lose-it, and a
+        # volunteer who trusts it gets reaped. The promotion email already
+        # names the new slot.
+        send_email_notification.delay(signup_id=str(signup.id), kind="reschedule")
     # Fixes the silent-promotion bug: move previously promoted with no email.
     for kwargs in promotion_email_kwargs:
         send_waitlist_promotion_email.delay(**kwargs)
@@ -2159,68 +2218,6 @@ def quarter_retrospective(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     return quarter_service.quarter_retrospective(db, quarter_id)
-
-
-# Phase 23 — recurring event duplication
-@router.post("/events/{event_id}/duplicate")
-def duplicate_event(
-    event_id: str,
-    body: dict,
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
-):
-    """Duplicate a source event into a list of target weeks.
-
-    Body shape::
-
-        {
-            "target_weeks": [5, 6, 7],
-            "target_year": 2026,
-            "skip_conflicts": true
-        }
-
-    Response::
-
-        {
-            "created": [{"id", "week_number", "start_date"}, ...],
-            "skipped_conflicts": [{"week", "existing_event_id"}, ...]
-        }
-
-    Copies event basics + all slots + ``events.form_schema`` verbatim.
-    Atomic: with ``skip_conflicts=false`` any conflict aborts the whole
-    batch with HTTP 409. Writes one audit row per call. See
-    ``services/event_duplication_service.py`` for the decisions.
-    """
-    from ..services import event_duplication_service
-
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=422, detail="body must be an object")
-    target_weeks = body.get("target_weeks") or []
-    target_year = body.get("target_year")
-    target_quarter = body.get("target_quarter")
-    target_quarter_id = body.get("target_quarter_id")
-    skip_conflicts = bool(body.get("skip_conflicts", True))
-    if not isinstance(target_weeks, list):
-        raise HTTPException(status_code=422, detail="target_weeks must be a list")
-    if not isinstance(target_year, int):
-        raise HTTPException(status_code=422, detail="target_year must be an int")
-    if target_quarter is not None and not isinstance(target_quarter, str):
-        raise HTTPException(status_code=422, detail="target_quarter must be a string")
-    if target_quarter_id is not None:
-        try:
-            target_quarter_id = uuid_mod.UUID(str(target_quarter_id))
-        except ValueError:
-            raise HTTPException(status_code=422, detail="target_quarter_id must be a UUID")
-    return event_duplication_service.duplicate_event(
-        db,
-        source_event_id=event_id,
-        target_weeks=[int(w) for w in target_weeks],
-        target_year=target_year,
-        target_quarter=target_quarter,
-        target_quarter_id=target_quarter_id,
-        skip_conflicts=skip_conflicts,
-        actor=admin_user,
-    )
 
 
 @router.put("/events/{event_id}/form-schema")

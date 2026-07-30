@@ -7,9 +7,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..celery_app import send_email_notification
+from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..database import get_db
-from ..deps import require_role, log_action, ensure_event_staff_access
+from ..deps import (
+    ensure_event_staff_access,
+    get_optional_user,
+    is_staff,
+    log_action,
+    require_role,
+)
+from ..services import quarter_service
+from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
@@ -21,23 +29,60 @@ def _normalize_dt(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _event_is_public(db: Session, event_id) -> bool:
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    return event is not None and event.visibility == "public"
+
+
 @router.get("", response_model=List[schemas.SlotRead], include_in_schema=False)
 @router.get("/", response_model=List[schemas.SlotRead])
 def list_slots(
     event_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_optional_user),
 ):
-    query = db.query(models.Slot)
-    if event_id:
-        query = query.filter(models.Slot.event_id == event_id)
-    return query.all()
+    """Sweep remediation: this had no auth dependency and no visibility
+    filter — omitting event_id dumped every slot in the database, and any
+    event_id (including a private event's) returned that event's full
+    schedule (times, location, capacity, fill count).
+
+    Staff (admin/organizer) may list any event's slots, matching
+    ensure_event_staff_access's "any staff, any event" rule used elsewhere
+    (BroadcastModal's slot picker needs this for private events). Anonymous
+    or non-staff callers must supply event_id for a public event, mirroring
+    public/events.py's visibility contract — the only legitimate anonymous
+    caller (EventCheckInPage's schedule banner) only ever asks for one
+    public event. 404, not 403/401, so a private event's existence is never
+    confirmed — same contract as the public event endpoints.
+    """
+    staff = is_staff(current_user)
+    if not event_id:
+        if not staff:
+            raise HTTPException(status_code=404, detail="Not found")
+        return db.query(models.Slot).all()
+
+    if not staff and not _event_is_public(db, event_id):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return db.query(models.Slot).filter(models.Slot.event_id == event_id).all()
 
 
 @router.get("/{slot_id}", response_model=schemas.SlotRead)
-def get_slot(slot_id: str, db: Session = Depends(get_db)):
+def get_slot(
+    slot_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_optional_user),
+):
     slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
+
+    # Sweep remediation: same visibility rule as list_slots, applied via the
+    # slot's parent event — a private event's slot must not be individually
+    # fetchable with no credentials either.
+    if not is_staff(current_user) and not _event_is_public(db, slot.event_id):
+        raise HTTPException(status_code=404, detail="Slot not found")
+
     return slot
 
 
@@ -55,6 +100,7 @@ def create_slot(
 
     # ✅ ownership check
     ensure_event_staff_access(event, actor)
+    quarter_service.ensure_event_quarter_writable(event)
 
     start_time = _normalize_dt(slot_in.start_time)
     end_time = _normalize_dt(slot_in.end_time)
@@ -91,7 +137,15 @@ def update_slot(
     db: Session = Depends(get_db),
     actor: models.User = Depends(require_role(models.UserRole.organizer, models.UserRole.admin)),
 ):
-    slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
+    # Locked: a capacity raise below may chain-promote the waitlist, which
+    # mutates current_count and must serialize against concurrent cancels/
+    # signups on this same slot (matches every other promotion call site).
+    slot = (
+        db.query(models.Slot)
+        .filter(models.Slot.id == slot_id)
+        .with_for_update()
+        .first()
+    )
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
 
@@ -99,6 +153,7 @@ def update_slot(
 
     # ✅ ownership check
     ensure_event_staff_access(event, actor)
+    quarter_service.ensure_event_quarter_writable(event)
 
     data = slot_in.model_dump(exclude_unset=True)
     if "start_time" in data and data["start_time"] is not None:
@@ -122,9 +177,24 @@ def update_slot(
         ("start_time" in data and data["start_time"] != slot.start_time)
         or ("end_time" in data and data["end_time"] != slot.end_time)
     )
+    old_capacity = slot.capacity
 
     for field, value in data.items():
         setattr(slot, field, value)
+
+    # Sweep remediation task 7 item 5: a capacity raise chain-promotes the
+    # waitlist via the canonical FIFO promotion (2026-07-28 spec: pending +
+    # confirm email, not straight to confirmed), inheriting the centralized
+    # ended-slot guard — an ended slot's promote_waitlist_fifo call returns
+    # None and is skipped silently, same as every other auto-promotion site.
+    promotions: list = []
+    if "capacity" in data and slot.capacity > old_capacity:
+        while slot.current_count < slot.capacity:
+            promo = promote_waitlist_fifo(db, slot.id)
+            if promo is None:
+                break
+            slot.current_count += 1
+            promotions.append(promo)
 
     # Collect confirmed signups before commit (needed for post-commit dispatch)
     confirmed_signups = []
@@ -154,6 +224,9 @@ def update_slot(
             models.Signup.status == models.SignupStatus.confirmed,
         ).all()
 
+    # Capture before commit — expire_on_commit would force refresh queries.
+    promotion_email_kwargs = [p.email_kwargs for p in promotions]
+
     db.add(slot)
     db.commit()
     db.refresh(slot)
@@ -164,6 +237,11 @@ def update_slot(
     if time_changed:
         for s in confirmed_signups:
             send_email_notification.delay(signup_id=str(s.id), kind="reschedule")
+
+    # Promoted volunteers get the confirm-your-spot email — pending status
+    # holds the seat until the volunteer clicks the emailed magic link.
+    for kwargs in promotion_email_kwargs:
+        send_waitlist_promotion_email.delay(**kwargs)
 
     return slot
 
@@ -182,6 +260,7 @@ def delete_slot(
 
     # ✅ ownership check
     ensure_event_staff_access(event, actor)
+    quarter_service.ensure_event_quarter_writable(event)
 
     existing_signups = (
         db.query(models.Signup)

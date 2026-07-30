@@ -45,6 +45,63 @@ def _fmt_pt(dt: datetime) -> str:
     return dt.astimezone(_PT).strftime("%b %d %Y %I:%M %p PT")
 
 
+# Fix round 2 (Task 2 review) — the private-event guard and the unknown-slot
+# lookup below must be byte-identical 404s (same status AND same detail
+# body). Different wording would let a caller holding a slot_id distinguish
+# "this slot doesn't exist" from "this slot exists but its event is
+# private" — the same leak class as a differing status code.
+_NOT_FOUND_DETAIL = "not found"
+
+
+def _ensure_event_visible(db: Session, event_id) -> None:
+    """Task 2 (sweep remediation) — reject public signups against a
+    non-public event.
+
+    Signing up for an event you were never shown (e.g. via a leaked or
+    guessed slot_id) is the same leak as the public list/detail endpoints
+    exposing it directly. 404, not 403 — matches the detail endpoint and
+    does not confirm the event exists. Uses the same detail text as the
+    unknown-slot 404 below (``_NOT_FOUND_DETAIL``) so the two are
+    indistinguishable.
+
+    2026-07-29 sweep remediation, Finding #6: this used to deny-list
+    ``visibility == "private"``, which reads a NULL or any unrecognized
+    value (the column is nullable with no server default or backfill) as
+    signup-eligible — the same fail-open bug already fixed in
+    ``routers/public/events.py`` (Finding #3), just missed here. Allow-list
+    on exactly "public" instead so this site agrees with the list/detail
+    endpoints: NULL and any value other than "public" are refused.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if event is None:
+        return  # let the downstream slot lookup produce the 404
+    if event.visibility != "public":
+        raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
+
+
+def _ensure_slots_visible(db: Session, slot_ids) -> None:
+    """Fix round 1 (Task 2 review) — resolve every event referenced by
+    ``slot_ids`` and enforce visibility on all of them BEFORE any other
+    per-event validation runs (esp. ``_ensure_orientation_requirement``,
+    which can raise a distinguishable 422 ORIENTATION_REQUIRED for a
+    private event). Must run first so a private event 404s the same way
+    on every branch of the signup path, not just the per-slot loop's own
+    (redundant, still-kept) check.
+
+    Unknown slot ids resolve to no events and are silently skipped — the
+    per-slot loop later produces the existing "slot not found" 404.
+    """
+    event_ids = (
+        db.execute(
+            select(Slot.event_id).where(Slot.id.in_(set(slot_ids))).distinct()
+        )
+        .scalars()
+        .all()
+    )
+    for event_id in event_ids:
+        _ensure_event_visible(db, event_id)
+
+
 def _ensure_signup_window(db: Session, event_id, bypass: bool = False) -> None:
     """Phase 29 (LOCK-01) — reject public signups outside the event window.
 
@@ -168,6 +225,11 @@ def create_public_signup(
     except InvalidPhoneError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # 1a. Visibility guard — must run before ANY other per-event validation
+    # (esp. 1b below) so a private event 404s identically to a nonexistent
+    # one on every branch, not just the per-slot loop further down.
+    _ensure_slots_visible(db, payload.slot_ids)
+
     # 1b. Orientation requirement — enforced before any write so a rejected
     # signup leaves no volunteer/signup rows behind.
     _ensure_orientation_requirement(db, str(payload.email), payload.slot_ids)
@@ -192,11 +254,15 @@ def create_public_signup(
             .first()
         )
         if slot is None:
-            raise HTTPException(status_code=404, detail=f"slot {slot_id} not found")
+            # Same detail text as _ensure_event_visible (fix round 2) — a
+            # nonexistent slot and a private event's slot must be
+            # byte-identical 404s.
+            raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
         # Phase 29 (LOCK-01) — enforce event signup window before capacity.
         # Public path always enforces; organizer/admin paths bypass via
         # other router endpoints that don't go through this service.
         if slot.event_id not in checked_events:
+            _ensure_event_visible(db, slot.event_id)
             _ensure_signup_window(db, slot.event_id)
             checked_events.add(slot.event_id)
         # Phase 25 (WAIT-01): at-capacity signups go to waitlist instead of 409.

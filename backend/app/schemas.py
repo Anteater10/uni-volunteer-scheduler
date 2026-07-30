@@ -153,6 +153,8 @@ class SlotRecurrenceCreate(BaseModel):
     capacity: int
     frequency: Literal["daily", "weekly"]
     count: int
+    slot_type: SlotType = SlotType.PERIOD
+    location: Optional[str] = None
 
     @field_validator("start_time", "end_time")
     @classmethod
@@ -305,6 +307,24 @@ class SignupRead(ORMBase):
     waitlist_position: Optional[int] = None
 
 
+class SelfCheckInSignupRead(BaseModel):
+    """Narrow, no-auth-safe read for GET /signups/{id} (self-check-in flow).
+
+    Sweep remediation: this endpoint used to return the full SignupRead —
+    including volunteer_id and the volunteer's custom-form answers — to
+    anyone who knew the signup_id, with no other gate. It exists only so
+    the self-check-in page (frontend/src/pages/SelfCheckInPage.jsx) can
+    render a title/time and discover event_id before the venue code is
+    entered, so the response is limited to exactly that.
+    """
+    id: UUID
+    event_id: UUID
+    event_title: str
+    status: SignupStatus
+    checked_in_at: Optional[datetime] = None
+    slot_start_time: Optional[datetime] = None
+
+
 class SignupMoveRequest(BaseModel):
     target_slot_id: UUID
 
@@ -429,29 +449,6 @@ class SiteSettingsUpdate(BaseModel):
     # Phase 29 (HIDE-01) — optional so existing callers can PATCH other fields.
     hide_past_events_from_public: Optional[bool] = None
     show_audit_logs_tab: Optional[bool] = None
-
-
-# =========================
-# PORTALS
-# =========================
-class PortalBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-    visibility: str = "public"
-
-
-class PortalCreate(PortalBase):
-    pass
-
-
-class PortalRead(ORMBase, PortalBase):
-    id: UUID
-    slug: str
-
-
-# ✅ FIX: PortalRead already includes ORMBase, so DON'T inherit ORMBase again.
-class PortalDetail(PortalRead):
-    events: List[EventRead] = []
 
 
 # =========================

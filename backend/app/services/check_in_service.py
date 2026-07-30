@@ -9,6 +9,7 @@ Centralizes signup state transitions with:
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ from app.models import (
     SlotType,
     Volunteer,
 )
+from app.services import quarter_service
 
 # Window widened 15 -> 30 minutes before start (product decision, issue #31
 # UX rework): volunteers arrive early and shouldn't stare at a locked page.
@@ -64,6 +66,46 @@ class CheckInWindowError(Exception):
 
 class VenueCodeError(Exception):
     pass
+
+
+def ensure_signup_cancellable(signup: Signup) -> None:
+    """Raise HTTP 422 if ``signup`` is in a status cancel must never touch.
+
+    2026-07-29 sweep — closes the last hole in this family of fixes (see
+    swap_service.py's SIGNUP_NOT_SWAPPABLE guards for cancelled/no_show and
+    attended). attended and no_show map to an empty set in
+    ALLOWED_TRANSITIONS above: nothing may follow them. The one sanctioned
+    way out of either is reopen_event's event-wide "Undo End Event" — that
+    function's own docstring calls it "the one exception" — so cancel must
+    not become a second, narrower door out of a resolved status.
+
+    Deliberately actor-independent, unlike swap's participant-only attended
+    guard: swapping an attended signup preserves its status (only the slot
+    pointer moves — a lateral correction), but cancelling one erases the
+    resolved status entirely by turning it into 'cancelled'. Volunteer
+    hours (course credit) are summed over attended signups (admin.py), so
+    cancelling one destroys the basis for someone's credit; cancelling a
+    no_show erases the audit trail of it. A volunteer's manage link
+    deliberately outlives the confirm deadline, so the participant path is
+    reachable long after the fact — but staff get no carve-out either: the
+    app's own staff-facing undo (undo_check_in) already refuses to reverse
+    attended/no_show ("undo covers the tap-slip, not resolution"), so
+    cancel must not open a backdoor around that.
+
+    Called by every cancel entry point (participant token cancel, both
+    staff cancel routes) after the already-cancelled idempotency check and
+    before any mutation, so none of them can bypass it.
+    """
+    if signup.status in (SignupStatus.attended, SignupStatus.no_show):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "SIGNUP_NOT_CANCELLABLE",
+                "message": (
+                    f"Cannot cancel a signup with status '{signup.status.value}'."
+                ),
+            },
+        )
 
 
 def _transition(
@@ -571,7 +613,26 @@ def reopen_event(db: Session, event_id: UUID, actor_id: UUID | None) -> list[Sig
     is permanent per (email, family) by design (issue #30) and may predate
     this event, so a blanket revoke could destroy legitimate credit.
     Corrections go through Admin → Orientation Credits.
+
+    Sweep remediation task 5: rejects with 409 EVENT_NOT_COMPLETED when the
+    event was never ended (nothing to undo — guards against un-resolving
+    individually-ended slots on an event that never completed), and with
+    422 QUARTER_READONLY when the event's linked quarter has ended —
+    reopening would mutate closed history.
     """
+    event = db.get(Event, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event.completed_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "EVENT_NOT_COMPLETED",
+                "message": "Only an event that has been ended can be reopened.",
+            },
+        )
+    quarter_service.ensure_event_quarter_writable(event)
+
     resolved = (
         db.execute(
             select(Signup)

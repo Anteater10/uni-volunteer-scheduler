@@ -531,6 +531,12 @@ class TestExpirePendingSignups:
         and the NEXT hourly run reaps that pending and repeats the cycle
         for the next waitlister — one nonsense email roughly every 3 days
         until the waitlist drains.
+
+        Task 7 item 6 (2026-07-29): the same run's stale-waitlisted sweep
+        now also cancels this waitlisted signup outright, since its slot has
+        already ended — the assertion below checks "not chain-promoted, no
+        email" (this test's original point), which cancelled satisfies just
+        as much as the old "stays waitlisted" terminal state did.
         """
         sent = []
         monkeypatch.setattr(
@@ -577,9 +583,10 @@ class TestExpirePendingSignups:
         assert db_session.get(Signup, expired_id) is None
         slot_reloaded = db_session.get(Slot, slot_id)
         assert slot_reloaded.current_count == 0
-        # NOT chain-promoted: waitlisted signup stays waitlisted, no email.
-        still_waitlisted = db_session.get(Signup, waitlisted_id)
-        assert still_waitlisted.status == SignupStatus.waitlisted
+        # NOT chain-promoted (no email) — and now cancelled outright by the
+        # stale-waitlisted sweep (item 6), since its slot has already ended.
+        waitlisted_row = db_session.get(Signup, waitlisted_id)
+        assert waitlisted_row.status == SignupStatus.cancelled
         assert sent == []
 
     def test_reap_correlates_live_token_to_its_own_signup(
@@ -928,3 +935,182 @@ class TestStaleTokenCleanup:
             .all()
         }
         assert remaining_hashes == {live_token_hash}
+
+
+class TestPromotionsCommitAndEnqueuePerSignup:
+    """Task 7 item 2b: shrink the crash window that silently drops
+    promotion emails. Each promotion must commit and enqueue its email
+    immediately, interleaved — not one bulk commit across every affected
+    slot followed by one bulk enqueue loop.
+    """
+
+    def test_promotions_interleave_commit_and_enqueue_not_batched(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        events = []
+
+        real_promote = celery_mod.promote_waitlist_fifo
+
+        def recording_promote(db, slot_id):
+            result = real_promote(db, slot_id)
+            if result is not None:
+                events.append(("promote", result.signup.id))
+            return result
+
+        monkeypatch.setattr(celery_mod, "promote_waitlist_fifo", recording_promote)
+
+        def recording_delay(**kw):
+            events.append(("email", uuid.UUID(kw["signup_id"])))
+
+        monkeypatch.setattr(
+            celery_mod.send_waitlist_promotion_email, "delay", recording_delay
+        )
+
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 20, 3, 0, tzinfo=timezone.utc)
+        # capacity 3, current_count 2: two expired pendings free two seats,
+        # enough room to chain-promote both waitlisted signups below.
+        slot = _make_slot(
+            db_session, event.id, capacity=3, current_count=2,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol_a1 = _make_volunteer(db_session)
+        vol_a2 = _make_volunteer(db_session)
+        vol_b = _make_volunteer(db_session)
+        vol_c = _make_volunteer(db_session)
+
+        _make_pending_signup_with_token(
+            db_session, vol_a1, slot,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+        _make_pending_signup_with_token(
+            db_session, vol_a2, slot,
+            token_issued_at=now - timedelta(days=15),
+            token_expires_at=now - timedelta(days=1),
+        )
+        waitlisted_b = Signup(
+            id=uuid.uuid4(), volunteer_id=vol_b.id, slot_id=slot.id,
+            status=SignupStatus.waitlisted, timestamp=now - timedelta(days=3),
+        )
+        waitlisted_c = Signup(
+            id=uuid.uuid4(), volunteer_id=vol_c.id, slot_id=slot.id,
+            status=SignupStatus.waitlisted, timestamp=now - timedelta(days=2),
+        )
+        db_session.add_all([waitlisted_b, waitlisted_c])
+        db_session.commit()
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        # Interleaved order: promote(b), email(b), promote(c), email(c) —
+        # NOT promote(b), promote(c), email(b), email(c) (the old batched
+        # shape, where a crash after the bulk commit could drop every
+        # promotion's email in one go).
+        kinds = [e[0] for e in events]
+        assert kinds == ["promote", "email", "promote", "email"], events
+        assert events[0][1] == waitlisted_b.id
+        assert events[1][1] == waitlisted_b.id
+        assert events[2][1] == waitlisted_c.id
+        assert events[3][1] == waitlisted_c.id
+
+
+class TestStaleWaitlistedRowsCancelled:
+    """Task 7 item 6: the hourly job also cancels still-waitlisted signups
+    on slots whose end_time has passed, no email — otherwise phantom
+    waitlist rows accumulate forever once nobody ever chain-promotes into
+    a finished slot.
+    """
+
+    def test_stale_waitlisted_on_ended_slot_is_cancelled_no_email(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        sent = []
+        monkeypatch.setattr(
+            "app.celery_app.send_email_notification.delay",
+            lambda *a, **kw: sent.append(kw),
+        )
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 21, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id, capacity=2, current_count=0,
+            start_time=now - timedelta(days=1, hours=2),
+            end_time=now - timedelta(days=1),
+        )
+        vol = _make_volunteer(db_session)
+        signup = Signup(
+            id=uuid.uuid4(), volunteer_id=vol.id, slot_id=slot.id,
+            status=SignupStatus.waitlisted, timestamp=now - timedelta(days=2),
+        )
+        db_session.add(signup)
+        db_session.commit()
+
+        signup_id = signup.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        row = db_session.get(Signup, signup_id)
+        assert row.status == SignupStatus.cancelled
+        assert sent == []
+
+    def test_waitlisted_on_future_slot_is_untouched(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 22, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id, capacity=2, current_count=0,
+            start_time=now + timedelta(days=30),
+            end_time=now + timedelta(days=30, hours=2),
+        )
+        vol = _make_volunteer(db_session)
+        signup = Signup(
+            id=uuid.uuid4(), volunteer_id=vol.id, slot_id=slot.id,
+            status=SignupStatus.waitlisted, timestamp=now - timedelta(days=2),
+        )
+        db_session.add(signup)
+        db_session.commit()
+
+        signup_id = signup.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        row = db_session.get(Signup, signup_id)
+        assert row.status == SignupStatus.waitlisted
+
+    def test_stale_waitlisted_cancel_does_not_touch_current_count(
+        self, db_session, monkeypatch, patch_session_local
+    ):
+        """Waitlisted signups never held a seat, so cancelling one must not
+        change slot.current_count."""
+        owner = make_user(db_session)
+        event = _make_event(db_session, owner.id)
+        now = datetime(2030, 7, 23, 3, 0, tzinfo=timezone.utc)
+        slot = _make_slot(
+            db_session, event.id, capacity=2, current_count=1,
+            start_time=now - timedelta(days=1, hours=2),
+            end_time=now - timedelta(days=1),
+        )
+        vol = _make_volunteer(db_session)
+        signup = Signup(
+            id=uuid.uuid4(), volunteer_id=vol.id, slot_id=slot.id,
+            status=SignupStatus.waitlisted, timestamp=now - timedelta(days=2),
+        )
+        db_session.add(signup)
+        db_session.commit()
+
+        slot_id = slot.id
+
+        with freeze_time(now):
+            expire_pending_signups.apply().get()
+
+        db_session.expire_all()
+        assert db_session.get(Slot, slot_id).current_count == 1

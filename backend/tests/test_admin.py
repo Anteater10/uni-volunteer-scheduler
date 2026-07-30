@@ -104,6 +104,64 @@ def test_admin_cancel_signup_promotes_waitlist(client, db_session):
     assert b_row.status == models.SignupStatus.pending
 
 
+def test_admin_cancel_of_attended_signup_is_refused(client, db_session):
+    """2026-07-29 sweep — mirrors
+    test_cancel_via_signups_of_attended_signup_is_refused (test_signups_
+    router_full.py) for the admin router's own cancel endpoint. Same guard
+    (check_in_service.ensure_signup_cancellable), same no-staff-exception
+    rationale: cancelling an attended signup would erase a settled
+    attendance record that volunteer hours/course credit are computed from,
+    and nothing else in the app reverses attended/no_show for staff either
+    (the one sanctioned undo, reopen_event, is event-wide and audited)."""
+    admin = _make_admin(db_session, email="admin_ac1@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    from tests.fixtures.factories import VolunteerFactory
+    vol = VolunteerFactory(email="vol_ac1@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.attended,
+    )
+    slot.current_count = 1
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/admin/signups/{signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert rc.status_code == 422, rc.text
+    assert rc.json()["code"] == "SIGNUP_NOT_CANCELLABLE"
+    db_session.expire_all()
+    untouched = db_session.query(models.Signup).filter(models.Signup.id == signup.id).one()
+    assert untouched.status == models.SignupStatus.attended
+    refreshed_slot = db_session.query(models.Slot).filter(models.Slot.id == slot.id).one()
+    assert refreshed_slot.current_count == 1
+
+
+def test_admin_cancel_of_no_show_signup_is_refused(client, db_session):
+    """no_show sibling of the attended guard above."""
+    admin = _make_admin(db_session, email="admin_ac2@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    from tests.fixtures.factories import VolunteerFactory
+    vol = VolunteerFactory(email="vol_ac2@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.no_show,
+    )
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/admin/signups/{signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert rc.status_code == 422, rc.text
+    assert rc.json()["code"] == "SIGNUP_NOT_CANCELLABLE"
+    db_session.expire_all()
+    untouched = db_session.query(models.Signup).filter(models.Signup.id == signup.id).one()
+    assert untouched.status == models.SignupStatus.no_show
+    refreshed_slot = db_session.query(models.Slot).filter(models.Slot.id == slot.id).one()
+    assert refreshed_slot.current_count == 0
+
+
 def test_admin_summary_requires_admin(client, db_session):
     admin = _make_admin(db_session, email="admin_sum@example.com")
     db_session.commit()

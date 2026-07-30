@@ -9,6 +9,7 @@ from .. import models, schemas
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..database import get_db
 from ..deps import get_current_user, log_action
+from ..services.check_in_service import ensure_signup_cancellable
 from ..services.swap_service import swap_signup as _swap_signup
 from ..signup_service import PromotionResult, promote_waitlist_fifo
 
@@ -85,6 +86,10 @@ def cancel_signup(
         db.refresh(signup)
         return signup
 
+    # 2026-07-29 sweep: attended/no_show are terminal, no staff exception —
+    # see check_in_service.ensure_signup_cancellable for the full rationale.
+    ensure_signup_cancellable(signup)
+
     previous_status = signup.status
 
     # Mark cancelled
@@ -113,8 +118,15 @@ def cancel_signup(
     db.commit()
     db.refresh(signup)
 
-    # Emails after commit — dispatched via app.emails.BUILDERS by kind.
-    send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
+    # Emails after commit — dispatched via app.emails.BUILDERS by kind. A
+    # waitlisted signup never held a seat, so it gets waitlist-appropriate
+    # copy instead of "your signup has been cancelled".
+    cancellation_kind = (
+        "cancellation_waitlisted"
+        if previous_status == models.SignupStatus.waitlisted
+        else "cancellation"
+    )
+    send_email_notification.delay(signup_id=str(signup.id), kind=cancellation_kind)
 
     # Promoted volunteers get the confirm-your-spot email — pending status
     # holds the seat until the volunteer clicks the emailed magic link.
@@ -208,6 +220,7 @@ def swap_signup_authed(
         db,
         signup_id=signup_id,
         target_slot_id=payload.target_slot_id,
+        actor_kind="staff",
         actor=current_user,
         actor_label=current_user.role.value,
     )

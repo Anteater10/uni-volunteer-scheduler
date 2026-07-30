@@ -15,12 +15,14 @@ from ...celery_app import send_email_notification, send_waitlist_promotion_email
 from ...database import get_db
 from ...deps import log_action, rate_limit
 from ...magic_link_service import (
+    MANAGE_PURPOSES,
     ConsumeResult,
-    MagicLinkPurpose,
     _lookup_token,
     consume_token,
+    zero_confirm_reason,
 )
 from ...models import Signup, SignupStatus, Slot
+from ...services.check_in_service import ensure_signup_cancellable
 from ...services.public_signup_service import create_public_signup
 from ...services.phone_service import InvalidPhoneError
 from ...services.swap_service import swap_signup
@@ -56,12 +58,47 @@ def confirm_signup(
 
     Idempotent: second call with a used token returns confirmed=True with a note.
     Error cases (expired/unknown): return 400 with clear message.
+
+    2026-07-29 sweep remediation, Finding #1: a token can be legitimately
+    burned (``ConsumeResult.ok``) while confirming zero signups — the volunteer's
+    only signup was promotion-pending, and this is the ORIGINAL batch link,
+    not the promotion link, so consume_token's consent scoping deliberately
+    left it pending. That must not be reported as success.
+
+    Follow-up: confirmed_count == 0 is also reachable with no promotion
+    anywhere (a signup that landed straight on the waitlist because its slot
+    was already full — see zero_confirm_reason). The reason/message must
+    match what actually happened, not assume every zero-flip is a promotion.
     """
-    result, signup = consume_token(db, token)
+    result, signup, confirmed_count = consume_token(db, token)
     if result == ConsumeResult.ok:
-        # Count how many signups were confirmed (anchor + siblings)
         db.commit()
-        return {"confirmed": True, "signup_count": 1, "idempotent": False}
+        if confirmed_count == 0:
+            reason = zero_confirm_reason(signup)
+            messages = {
+                "waitlisted": (
+                    "You're on the waitlist for this slot — we'll email you "
+                    "if a spot opens up."
+                ),
+                "promotion_pending": (
+                    "This link didn't confirm a seat. Your spot came from a "
+                    "waitlist promotion — use the confirm link in that email "
+                    "instead."
+                ),
+                "already_resolved": (
+                    "There's nothing to confirm — this signup has already "
+                    "been resolved."
+                ),
+                "not_found": "There's nothing to confirm for this link.",
+            }
+            return {
+                "confirmed": False,
+                "signup_count": 0,
+                "idempotent": False,
+                "reason": reason,
+                "message": messages[reason],
+            }
+        return {"confirmed": True, "signup_count": confirmed_count, "idempotent": False}
     if result == ConsumeResult.used:
         return {"confirmed": True, "signup_count": 0, "idempotent": True}
     # expired | not_found → 400 with clear message
@@ -79,7 +116,8 @@ def manage_signups(
 ):
     """View upcoming signups for the token's volunteer+event scope.
 
-    Does NOT consume the token. Works with both signup_confirm and signup_manage purpose.
+    Does NOT consume the token. Works with any manage-capable purpose
+    (signup_confirm, signup_manage, promotion_confirm).
     """
     # 2026-07-28 spec: expires_at is the CONFIRMATION deadline only.
     # Manage/swap/cancel stay usable for as long as the token row exists
@@ -87,10 +125,7 @@ def manage_signups(
     token_row = _lookup_token(db, token)
     if token_row is None:
         raise HTTPException(status_code=400, detail="token invalid")
-    if token_row.purpose not in (
-        MagicLinkPurpose.SIGNUP_CONFIRM,
-        MagicLinkPurpose.SIGNUP_MANAGE,
-    ):
+    if token_row.purpose not in MANAGE_PURPOSES:
         raise HTTPException(status_code=400, detail="token not valid for manage")
 
     anchor = db.get(Signup, token_row.signup_id)
@@ -180,10 +215,7 @@ def swap_signup_public(
     token_row = _lookup_token(db, token)
     if token_row is None:
         raise HTTPException(status_code=400, detail="token invalid")
-    if token_row.purpose not in (
-        MagicLinkPurpose.SIGNUP_CONFIRM,
-        MagicLinkPurpose.SIGNUP_MANAGE,
-    ):
+    if token_row.purpose not in MANAGE_PURPOSES:
         raise HTTPException(status_code=400, detail="token not valid for manage")
 
     signup = db.query(Signup).filter(Signup.id == signup_id).first()
@@ -196,6 +228,7 @@ def swap_signup_public(
         db,
         signup_id=signup_id,
         target_slot_id=body.target_slot_id,
+        actor_kind="participant",
         actor=None,
         actor_label="participant",
     )
@@ -248,6 +281,10 @@ def cancel_signup(
     if signup.status == SignupStatus.cancelled:
         return {"cancelled": True, "signup_id": str(signup_id), "already_cancelled": True}
 
+    # 2026-07-29 sweep: attended/no_show are terminal — see
+    # check_in_service.ensure_signup_cancellable for the full rationale.
+    ensure_signup_cancellable(signup)
+
     slot = (
         db.query(Slot)
         .filter(Slot.id == signup.slot_id)
@@ -292,8 +329,15 @@ def cancel_signup(
 
     # Tamper-evidence for long-lived manage links (2026-07-28 spec decision 6):
     # the volunteer learns immediately if someone else cancels them. Deduped
-    # by (signup_id, "cancellation") — a signup cancels at most once.
-    send_email_notification.delay(signup_id=str(signup_id), kind="cancellation")
+    # by (signup_id, kind) — a signup cancels at most once. A waitlisted
+    # signup never held a seat, so it gets waitlist-appropriate copy instead
+    # of "your signup has been cancelled".
+    cancellation_kind = (
+        "cancellation_waitlisted"
+        if previous_status == SignupStatus.waitlisted
+        else "cancellation"
+    )
+    send_email_notification.delay(signup_id=str(signup_id), kind=cancellation_kind)
 
     # Emails only after commit — the worker reads rows from its own session.
     for kwargs in promotion_email_kwargs:

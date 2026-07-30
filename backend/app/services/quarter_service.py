@@ -365,6 +365,41 @@ def update_quarter(db: Session, quarter_id, payload: dict, actor: models.User) -
     return row, summary
 
 
+def is_quarter_read_only(quarter: models.AcademicQuarter, today: date | None = None) -> bool:
+    """A quarter becomes read-only history once it is archived or its
+    end_date has passed (UTC 'today') — sweep remediation task 5. Event
+    mutations reject against a read-only quarter; attendance resolution
+    does not (organizers legitimately close out attendance right after an
+    event ends)."""
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    return quarter.archived_at is not None or quarter.end_date < today
+
+
+def ensure_quarter_writable(quarter: models.AcademicQuarter, today: date | None = None) -> None:
+    """Raise 422 QUARTER_READONLY when ``quarter`` has ended or is archived."""
+    if is_quarter_read_only(quarter, today):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "QUARTER_READONLY",
+                "message": f"{quarter.display_name} has ended and is read-only.",
+            },
+        )
+
+
+def ensure_event_quarter_writable(event: models.Event) -> None:
+    """Reject mutations on an event — or anything scoped to it (slots,
+    custom questions) — whose linked quarter has ended (sweep remediation
+    task 5, fix round 1: slot-level mutations were the gap). Events with no
+    quarter link — orphaned when an admin shrinks a quarter's dates — have
+    no history state to protect and stay mutable. Shared by events.py and
+    slots.py so there is exactly one place that decides "is this event's
+    history closed"."""
+    if event.academic_quarter is not None:
+        ensure_quarter_writable(event.academic_quarter)
+
+
 def archive_quarter(db: Session, quarter_id, actor: models.User | None) -> models.AcademicQuarter:
     """Archive a past quarter (issue #33). Only quarters that have already
     ended can be archived — the current/upcoming schedule stays navigable."""

@@ -20,6 +20,11 @@ from . import models, schemas
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
+# auto_error=False: routes using this must work for anonymous callers too.
+oauth2_scheme_optional = OAuth2PasswordBearer(
+    tokenUrl="/api/v1/auth/token", auto_error=False
+)
+
 # Using PBKDF2 (good baseline). If you want Argon2 later, we can switch cleanly.
 pwd_context = CryptContext(
     schemes=["pbkdf2_sha256"],
@@ -140,6 +145,42 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def get_optional_user(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> Optional[models.User]:
+    """Best-effort caller identification for routes that serve both a public
+    surface and a staff surface from the same endpoint (e.g. GET /slots).
+
+    Missing, malformed, or invalid tokens all resolve to None (treat the
+    caller as anonymous) rather than raising — this must only be used where
+    anonymous access is an accepted outcome, never where authentication is
+    mandatory (use get_current_user / require_role for that).
+    """
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+    except JWTError:
+        return None
+    return db.query(models.User).filter(models.User.id == user_id).first()
+
+
+def is_staff(user: Optional[models.User]) -> bool:
+    """Admin/organizer check usable with get_optional_user's Optional result."""
+    return user is not None and user.role in (
+        models.UserRole.admin,
+        models.UserRole.organizer,
+    )
 
 
 # -------------------------

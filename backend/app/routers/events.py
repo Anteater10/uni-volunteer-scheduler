@@ -125,6 +125,8 @@ def create_event(
             ),
         )
     season_value, year, week_number, quarter_id = derived
+    quarter_row = db.get(models.AcademicQuarter, quarter_id)
+    quarter_service.ensure_quarter_writable(quarter_row)
     quarter = models.Quarter(season_value)
 
     event = models.Event(
@@ -236,6 +238,7 @@ def update_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     data = event_in.model_dump(exclude_unset=True)
     for key in ("start_date", "end_date", "signup_open_at", "signup_close_at"):
@@ -269,6 +272,10 @@ def update_event(
             )
         season_value, data["year"], data["week_number"], data["quarter_id"] = derived
         data["quarter"] = models.Quarter(season_value)
+        # Moving an event must not plant new history in an ended quarter —
+        # the target quarter is gated the same as create_event's.
+        target_quarter = db.get(models.AcademicQuarter, data["quarter_id"])
+        quarter_service.ensure_quarter_writable(target_quarter)
 
     for field, value in data.items():
         setattr(event, field, value)
@@ -294,6 +301,7 @@ def delete_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     db.delete(event)
     db.commit()
@@ -319,6 +327,7 @@ def generate_slots(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     start_time = _normalize_dt(recurrence.start_time)
     end_time = _normalize_dt(recurrence.end_time)
@@ -364,6 +373,12 @@ def generate_slots(
             start_time=start,
             end_time=end,
             capacity=recurrence.capacity,
+            slot_type=recurrence.slot_type,
+            # Each occurrence gets its own date, derived from its own
+            # start_time — a shared override would be wrong for every
+            # occurrence but (at most) one.
+            date=start.date(),
+            location=recurrence.location,
         )
         db.add(slot)
         created_slots.append(slot)
@@ -422,6 +437,7 @@ def create_custom_question(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     question = models.CustomQuestion(
         event_id=event.id,
@@ -456,6 +472,7 @@ def update_custom_question(
 
     # Ensure caller owns the event or is admin
     ensure_event_staff_access(question.event, current_user)
+    quarter_service.ensure_event_quarter_writable(question.event)
 
     data = updates.model_dump(exclude_unset=True)
     for field, value in data.items():
@@ -484,77 +501,8 @@ def delete_custom_question(
         raise HTTPException(status_code=404, detail="Question not found")
 
     ensure_event_staff_access(question.event, current_user)
+    quarter_service.ensure_event_quarter_writable(question.event)
 
     db.delete(question)
     db.commit()
     return
-
-
-# -------------------------
-# Clone event
-# -------------------------
-
-
-@router.post("/{event_id}/clone", response_model=schemas.EventRead)
-def clone_event(
-    event_id: str,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
-):
-    """
-    Duplicate an event (including its slots and custom questions).
-    """
-    original = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not original:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    ensure_event_staff_access(original, current_user)
-
-    # For simplicity, keep same dates; organizer can edit after cloning.
-    cloned = models.Event(
-        owner_id=current_user.id,
-        title=f"{original.title} (copy)",
-        description=original.description,
-        location=original.location,
-        visibility=original.visibility,
-        branding_id=original.branding_id,
-        start_date=original.start_date,
-        end_date=original.end_date,
-        max_signups_per_user=original.max_signups_per_user,
-        signup_open_at=original.signup_open_at,
-        signup_close_at=original.signup_close_at,
-    )
-    db.add(cloned)
-    db.flush()
-
-    # Clone slots
-    for slot in original.slots:
-        db.add(
-            models.Slot(
-                event_id=cloned.id,
-                start_time=slot.start_time,
-                end_time=slot.end_time,
-                capacity=slot.capacity,
-            )
-        )
-
-    # Clone custom questions
-    for q in original.questions:
-        db.add(
-            models.CustomQuestion(
-                event_id=cloned.id,
-                prompt=q.prompt,
-                field_type=q.field_type,
-                required=q.required,
-                options=q.options,
-                sort_order=q.sort_order,
-            )
-        )
-
-    db.commit()
-    db.refresh(cloned)
-
-    log_action(db, current_user, "event_clone", "Event", str(cloned.id))
-    return cloned
