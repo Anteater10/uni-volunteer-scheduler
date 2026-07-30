@@ -17,13 +17,20 @@ def tiny_markdown_corpus(tmp_path: Path) -> Path:
 
     Contains two real markdown documents and two deny-listed paths so the
     walker's filter is exercised end-to-end in the ingest integration tests.
+
+    Files live under ``docs/knowledge-base/`` because that is what the shipped
+    ``SOURCE_GLOBS_V1`` allow-lists — the corpus is the curated knowledge base,
+    not the codebase. Keeping the fixture on the real default globs means these
+    tests break if the allow-list is narrowed further.
     """
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "a.md").write_text("# A\n\nAlpha doc.\n")
-    (tmp_path / "docs" / "b.md").write_text("# B\n\nBeta doc.\n")
-    (tmp_path / "docs" / "node_modules").mkdir()
-    (tmp_path / "docs" / "node_modules" / "junk.md").write_text("excluded")
-    (tmp_path / "docs" / "test_fixture.py").write_text("# excluded by deny-list")
+    kb = tmp_path / "docs" / "knowledge-base"
+    kb.mkdir(parents=True)
+    (kb / "a.md").write_text("# A\n\nAlpha doc.\n")
+    (kb / "b.md").write_text("# B\n\nBeta doc.\n")
+    # Deny-listed even though it matches the allow-list glob.
+    (kb / "node_modules").mkdir()
+    (kb / "node_modules" / "junk.md").write_text("excluded")
+    (kb / "test_fixture.py").write_text("# excluded by deny-list")
     return tmp_path
 
 

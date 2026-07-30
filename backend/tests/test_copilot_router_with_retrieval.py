@@ -27,6 +27,11 @@ from app.config import settings
 from tests.fixtures.helpers import auth_headers, make_user
 
 
+# The admin prompt, verbatim, as of SYSTEM_PROMPT_VERSION v0.2.0. Editing the
+# prompt means regenerating this file AND bumping the version in prompts.py —
+# that pairing is the whole point of the check below. v0.1.0 told admins they
+# manage "quarterly imports", a surface that had been deleted, so the model
+# recommended a feature that no longer existed on every schedule question.
 PHASE_30_FIXTURE = (
     Path(__file__).parent / "fixtures" / "phase_30_system_prompt.txt"
 )
@@ -286,8 +291,9 @@ def test_system_prompt_preserves_phase_30_baseline(client, db_session, monkeypat
     sp = captured["system_prompt"]
     assert sp is not None
     assert baseline in sp, (
-        "Phase 30 baseline system prompt was modified — "
-        "load-bearing persona / refusal / role-differentiation must be preserved verbatim."
+        "Baseline system prompt was modified — load-bearing persona / refusal / "
+        "role-differentiation must be preserved verbatim. If the change is "
+        "intentional, bump SYSTEM_PROMPT_VERSION and regenerate the fixture."
     )
 
 

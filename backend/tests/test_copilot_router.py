@@ -430,11 +430,15 @@ def test_llm_falls_back_on_retryable_failure(monkeypatch):
 
 
 def test_llm_reraises_when_both_models_fail(monkeypatch):
-    fake = _FakeClient([
-        APIConnectionError(request=None),
-        APIConnectionError(request=None),
-    ])
+    # One failure per model per sweep: the candidate list is swept
+    # _MAX_SWEEPS times before the error surfaces, so a transient whole-list
+    # outage recovers instead of ending the turn. Only after every sweep has
+    # failed does the exception reach the caller.
+    fake = _FakeClient(
+        [APIConnectionError(request=None)] * (2 * copilot_llm._MAX_SWEEPS)
+    )
     monkeypatch.setattr(copilot_llm, "_client", lambda: fake)
+    monkeypatch.setattr(copilot_llm.time, "sleep", lambda _s: None)
     with pytest.raises(APIConnectionError):
         list(copilot_llm.stream_completion(messages=[{"role": "user", "content": "hi"}]))
 
