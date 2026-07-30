@@ -232,6 +232,61 @@ class TestGetPublicEvent:
         assert data["slots"] == []
 
 
+class TestVisibilityEnforcement:
+    """Task 2 (sweep remediation) — CRITICAL: the public API was returning
+    'private' events unfiltered on both the list and detail endpoints, and
+    the form-schema reader leaked the same way. Private events must never
+    surface to unauthenticated callers."""
+
+    def test_list_excludes_private_event(self, client, db_session):
+        public_event = _make_event(db_session, title="Open Event")
+        private_event = _make_event(db_session, title="Hidden Event")
+        private_event.visibility = "private"
+        db_session.commit()
+
+        resp = client.get("/api/v1/public/events", params={
+            "quarter": "fall",
+            "year": 2024,
+            "week_number": 1,
+        })
+        assert resp.status_code == 200, resp.text
+        ids = [e["id"] for e in resp.json()]
+        assert str(public_event.id) in ids, "public event still visible everywhere"
+        assert str(private_event.id) not in ids, "private event leaked into the public list"
+
+    def test_detail_404s_for_private_event(self, client, db_session):
+        event = _make_event(db_session)
+        event.visibility = "private"
+        db_session.commit()
+
+        resp = client.get(f"/api/v1/public/events/{event.id}")
+        # 404, not 403 — must not confirm the event exists.
+        assert resp.status_code == 404
+
+    def test_detail_still_returns_public_event(self, client, db_session):
+        event = _make_event(db_session)  # default visibility = "public"
+        db_session.commit()
+
+        resp = client.get(f"/api/v1/public/events/{event.id}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["id"] == str(event.id)
+
+    def test_form_schema_404s_for_private_event(self, client, db_session):
+        event = _make_event(db_session)
+        event.visibility = "private"
+        db_session.commit()
+
+        resp = client.get(f"/api/v1/public/events/{event.id}/form-schema")
+        assert resp.status_code == 404
+
+    def test_form_schema_still_returns_for_public_event(self, client, db_session):
+        event = _make_event(db_session)
+        db_session.commit()
+
+        resp = client.get(f"/api/v1/public/events/{event.id}/form-schema")
+        assert resp.status_code == 200, resp.text
+
+
 class TestCurrentWeek:
     """GET /api/v1/public/current-week — resolved from admin-entered quarters.
 

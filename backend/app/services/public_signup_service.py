@@ -45,6 +45,22 @@ def _fmt_pt(dt: datetime) -> str:
     return dt.astimezone(_PT).strftime("%b %d %Y %I:%M %p PT")
 
 
+def _ensure_event_visible(db: Session, event_id) -> None:
+    """Task 2 (sweep remediation) — reject public signups against a
+    "private" event.
+
+    Signing up for an event you were never shown (e.g. via a leaked or
+    guessed slot_id) is the same leak as the public list/detail endpoints
+    exposing it directly. 404, not 403 — matches the detail endpoint and
+    does not confirm the event exists.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if event is None:
+        return  # let the downstream slot lookup produce the 404
+    if event.visibility == "private":
+        raise HTTPException(status_code=404, detail="event not found")
+
+
 def _ensure_signup_window(db: Session, event_id, bypass: bool = False) -> None:
     """Phase 29 (LOCK-01) — reject public signups outside the event window.
 
@@ -197,6 +213,7 @@ def create_public_signup(
         # Public path always enforces; organizer/admin paths bypass via
         # other router endpoints that don't go through this service.
         if slot.event_id not in checked_events:
+            _ensure_event_visible(db, slot.event_id)
             _ensure_signup_window(db, slot.event_id)
             checked_events.add(slot.event_id)
         # Phase 25 (WAIT-01): at-capacity signups go to waitlist instead of 409.

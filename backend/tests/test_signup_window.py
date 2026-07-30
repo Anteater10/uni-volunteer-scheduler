@@ -107,6 +107,34 @@ def test_signup_allowed_within_window(db_session):
     assert len(resp.signup_ids) == 1
 
 
+def test_signup_rejected_for_private_event(db_session):
+    """Task 2 (sweep remediation) — signing up for a private event you were
+    never shown (e.g. via a leaked slot_id) must not succeed. 404, matching
+    the public detail endpoint's "don't confirm it exists" behavior."""
+    _bind_factories(db_session)
+    owner = UserFactory(role=models.UserRole.admin)
+    event = EventFactory(owner=owner, owner_id=owner.id, visibility="private")
+    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        create_public_signup(db_session, _payload(slot.id))
+    assert exc.value.status_code == 404
+
+
+def test_signup_allowed_for_public_event(db_session):
+    """Regression: the new visibility guard must not affect ordinary public
+    events (public events still signable everywhere)."""
+    _bind_factories(db_session)
+    owner = UserFactory(role=models.UserRole.admin)
+    event = EventFactory(owner=owner, owner_id=owner.id, visibility="public")
+    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    db_session.flush()
+
+    resp = create_public_signup(db_session, _payload(slot.id))
+    assert len(resp.signup_ids) == 1
+
+
 def test_organizer_admin_paths_bypass_window(db_session, client):
     """Organizer/admin signup-create paths do NOT go through
     ``create_public_signup`` — they hit ``/signups`` (auth) or
