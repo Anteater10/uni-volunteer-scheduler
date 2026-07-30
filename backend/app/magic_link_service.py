@@ -248,7 +248,14 @@ def check_rate_limit(redis_client, email: str, ip: str) -> bool:
 
 
 def dispatch_email(db: Session, signup: Signup, event, base_url: str) -> None:
-    """Issue a token and send the magic-link email. Idempotent within a 60s window."""
+    """Issue a token and send the magic-link email. Idempotent within a 60s window.
+
+    2026-07-29 sweep remediation, Finding #2: a promotion-pending signup (see
+    _is_promotion_pending) must get its own PROMOTION_CONFIRM token and the
+    promotion email — the plain SIGNUP_CONFIRM token this used to mint
+    unconditionally can never confirm such a signup (see consume_token's
+    scoping), so resending it just handed out a second broken link.
+    """
     # Phase 09: signup.user removed; use signup.volunteer
     email = signup.volunteer.email if signup.volunteer else None
     if not email:
@@ -269,7 +276,20 @@ def dispatch_email(db: Session, signup: Signup, event, base_url: str) -> None:
     if existing is not None:
         return  # A token was just issued; skip duplicate send
 
-    raw = issue_token(db, signup, email)
-    from .emails import send_magic_link
+    if _is_promotion_pending(db, signup):
+        raw = issue_token(
+            db,
+            signup,
+            email,
+            purpose=MagicLinkPurpose.PROMOTION_CONFIRM,
+            volunteer_id=signup.volunteer_id,
+            ttl_minutes=PROMOTION_CONFIRM_TTL_MINUTES,
+        )
+        from .emails import build_waitlist_promotion_email
 
-    send_magic_link(email, raw, event, base_url)
+        build_waitlist_promotion_email(signup.volunteer, signup, raw, event)
+    else:
+        raw = issue_token(db, signup, email)
+        from .emails import send_magic_link
+
+        send_magic_link(email, raw, event, base_url)
