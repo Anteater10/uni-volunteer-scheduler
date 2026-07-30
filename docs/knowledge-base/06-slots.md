@@ -24,11 +24,22 @@ confirmed: they get an emailed link and three days to claim the seat, and if the
 passes down the line on the next hourly sweep. Nobody is promoted into a session that has already
 finished. See the waitlist document.
 
+**Raising a session's capacity fills the new seats from the waitlist straight away.** Editing a slot
+to a higher capacity promotes the longest-waiting volunteers until the new capacity is reached or the
+waitlist runs out — each one moved to *pending* with their own three-day confirm email, exactly as if
+a seat had been cancelled. Lowering a capacity never removes anyone: the seats already held stay
+held, and the session simply sits over its new number until someone cancels.
+
 Slots are added, edited, and deleted **one at a time** from the event page. Because each slot
 carries its own date, time, and location, one event can span several days in different rooms. There
 is no working bulk generator today — the app has an unused recurrence facility behind the scenes,
 but no screen reaches it and it cannot produce orientation slots, so building a multi-session event
 means adding each session by hand.
+
+**Slots in an event whose quarter has ended or been archived cannot be added, edited, or deleted.**
+The server refuses with "*[quarter name]* has ended and is read-only," exactly as it does for the
+event itself and for its custom signup questions. Closing out attendance on such a session is the
+deliberate exception and still works.
 
 The **check-in window** for a slot runs from 30 minutes before its start time to 30 minutes after.
 Outside that window the door check-in page tells the volunteer when the shift opens or that it has

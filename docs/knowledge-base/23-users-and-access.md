@@ -30,6 +30,14 @@ reset link land on the same set-password page, and the reset path doesn't care w
 was ever set — so either route gets them in. Re-inviting is still the tidier answer, but a reset is
 not a dead end.
 
+**Both kinds of link are single-use, and setting a password invalidates every other one.** Once
+someone sets a password — by either route — every outstanding reset link and invite link for that
+account stops working, including the one they just used. A second click on the same link is refused
+with "This link has already been used or is no longer valid." So a staff member who asked for two
+resets must use the newest email, and someone who completes their invite will find a reset link they
+requested earlier now refused. Changing a password from the Settings page has the same effect on any
+outstanding links. The fix is always to request a fresh one, never to hunt for the older email.
+
 **Changing someone's role** is done from their row in the Users list. The role decides everything
 about what they can reach: organizers cannot open Users, Audit Logs, Exports, Orientation Credits,
 Quarters, or the quarter retrospective, and the server enforces that as well as the navigation

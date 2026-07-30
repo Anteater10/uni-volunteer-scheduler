@@ -34,7 +34,7 @@ which emails exist and when, rather than that they'll get exactly one nudge per 
 
 **Quiet hours apply to the three tracked reminders only.** Kickoff, 24-hour and 2-hour sends are
 held back between 21:00 and 07:00 Pacific so a reminder doesn't arrive in the middle of the night.
-The older pair described above and the weekly digest do not observe quiet hours.
+The older 24-hour and 1-hour reminder emails and the weekly digest do not observe quiet hours.
 
 **Turning reminders off stops the three tracked reminders.** Every volunteer gets reminders by
 default, and a volunteer can turn them off for their email address from their manage page without
@@ -46,7 +46,7 @@ so plainly rather than promising silence.
 **Volunteers also get a weekly digest.** Every Monday at 08:00 UTC — about 1:00 AM Pacific, which is
 inside the quiet-hours window and nowhere near the 07:00 kickoff — the app emails each volunteer a
 plain list of the confirmed sessions they have in the next seven days. It's a heads-up summary,
-separate from the per-session reminders above.
+separate from the per-session kickoff, 24-hour and 2-hour reminders.
 
 **Staff can hand-send a reminder outside its window.** Each row on the Reminders tab has a **Send
 now** action, available to organizers as well as admins, for the case where something urgent needs

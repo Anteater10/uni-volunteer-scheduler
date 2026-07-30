@@ -42,8 +42,9 @@ Nothing in the event form sets that window, though — the only way one gets ont
 programmatically, or by being carried over when the event was duplicated from another. Most events
 have no window at all, which means signups stay open until the event happens.
 
-**The short pre-session reminder is on for every event and can't be turned off from the UI.** The
-setting exists on the event record and defaults to on; there is no switch for it anywhere.
+**The older 1-hour pre-session reminder is on for every event and can't be turned off from the UI.**
+Each event carries its own on/off setting for that email and it defaults to on, but there is no
+switch for it anywhere in the app. The reminders document lists which reminder emails exist.
 
 ## User settings
 

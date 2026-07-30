@@ -35,8 +35,10 @@ deleting a volunteer outright would silently destroy it.
 
 Volunteers control their own **reminder preferences** by email address, from the same link that
 manages their signups. Reminders are opt-out — everyone gets them by default — and the toggle turns
-off the scheduled kickoff and pre-session reminders. Broadcasts ignore the setting by design,
-because broadcasts are operational instructions rather than promotional email.
+off the tracked kickoff, 24-hour, and 2-hour reminders. It does **not** stop the older 24-hour and
+1-hour reminder emails or the weekly digest, so a volunteer who opts out will still see some mail —
+see the reminders document. Broadcasts ignore the setting by design too, because broadcasts are
+operational instructions rather than promotional email.
 
 One rough edge worth knowing: unlike the rest of the manage page, the reminder toggle stops loading
 once the link's confirmation window has passed — the card shows an error while cancelling and swapping
