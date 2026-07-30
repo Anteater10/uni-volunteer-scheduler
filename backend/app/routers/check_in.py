@@ -17,6 +17,7 @@ from ..schemas import (
     ResolveEventRequest,
     RosterResponse,
     SelfCheckInRequest,
+    SelfCheckInSignupRead,
     SignupRead,
 )
 from ..services.check_in_service import (
@@ -486,24 +487,42 @@ def event_check_in_by_email_endpoint(
     )
 
 
-@router.get("/signups/{signup_id}")
+@router.get(
+    "/signups/{signup_id}",
+    response_model=SelfCheckInSignupRead,
+    dependencies=[Depends(rate_limit(30, 60))],
+)
 def get_signup(
     signup_id: UUID,
     db: Session = Depends(get_db),
 ):
-    """Minimal GET signup endpoint for self-check-in flow (discovers event_id)."""
+    """Minimal GET signup endpoint for the self-check-in flow (discovers
+    event_id and renders the page before the venue code is entered).
+
+    Sweep remediation: this used to return the full SignupRead — including
+    volunteer_id and the volunteer's custom-form answers — to anyone who
+    knew the signup_id, with no other gate. Kept intentionally no-auth,
+    matching the sibling POST self-check-in endpoint's trust model
+    (signup_id is the credential; no visibility check either, since
+    self-check-in also works for private-event signups, gated by
+    venue_code instead) — but the response is narrowed to exactly what
+    SelfCheckInPage.jsx renders.
+    """
     from ..models import Signup, Slot, Event
     signup = db.get(Signup, signup_id)
     if not signup:
         raise HTTPException(status_code=404, detail="Signup not found")
     slot = db.get(Slot, signup.slot_id)
     event = db.get(Event, slot.event_id) if slot else None
-    data = SignupRead.model_validate(signup).model_dump()
-    if slot:
-        data["slot_start_time"] = slot.start_time
-        data["slot_end_time"] = slot.end_time
-    if event:
-        data["event_title"] = event.title
-        data["event_location"] = event.location
-        data["event_id"] = str(event.id)
-    return data
+    if event is None:
+        # slot_id/event_id are both NOT NULL FKs — unreachable in practice,
+        # same defensive shape as signups.py's ICS export.
+        raise HTTPException(status_code=404, detail="Signup not found")
+    return SelfCheckInSignupRead(
+        id=signup.id,
+        event_id=event.id,
+        event_title=event.title,
+        status=signup.status,
+        checked_in_at=signup.checked_in_at,
+        slot_start_time=slot.start_time if slot else None,
+    )

@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..database import get_db
-from ..deps import require_role, log_action, ensure_event_staff_access
+from ..deps import (
+    ensure_event_staff_access,
+    get_optional_user,
+    is_staff,
+    log_action,
+    require_role,
+)
 from ..services import quarter_service
 from ..signup_service import promote_waitlist_fifo
 
@@ -23,23 +29,60 @@ def _normalize_dt(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _event_is_public(db: Session, event_id) -> bool:
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    return event is not None and event.visibility == "public"
+
+
 @router.get("", response_model=List[schemas.SlotRead], include_in_schema=False)
 @router.get("/", response_model=List[schemas.SlotRead])
 def list_slots(
     event_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_optional_user),
 ):
-    query = db.query(models.Slot)
-    if event_id:
-        query = query.filter(models.Slot.event_id == event_id)
-    return query.all()
+    """Sweep remediation: this had no auth dependency and no visibility
+    filter — omitting event_id dumped every slot in the database, and any
+    event_id (including a private event's) returned that event's full
+    schedule (times, location, capacity, fill count).
+
+    Staff (admin/organizer) may list any event's slots, matching
+    ensure_event_staff_access's "any staff, any event" rule used elsewhere
+    (BroadcastModal's slot picker needs this for private events). Anonymous
+    or non-staff callers must supply event_id for a public event, mirroring
+    public/events.py's visibility contract — the only legitimate anonymous
+    caller (EventCheckInPage's schedule banner) only ever asks for one
+    public event. 404, not 403/401, so a private event's existence is never
+    confirmed — same contract as the public event endpoints.
+    """
+    staff = is_staff(current_user)
+    if not event_id:
+        if not staff:
+            raise HTTPException(status_code=404, detail="Not found")
+        return db.query(models.Slot).all()
+
+    if not staff and not _event_is_public(db, event_id):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return db.query(models.Slot).filter(models.Slot.event_id == event_id).all()
 
 
 @router.get("/{slot_id}", response_model=schemas.SlotRead)
-def get_slot(slot_id: str, db: Session = Depends(get_db)):
+def get_slot(
+    slot_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_optional_user),
+):
     slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
+
+    # Sweep remediation: same visibility rule as list_slots, applied via the
+    # slot's parent event — a private event's slot must not be individually
+    # fetchable with no credentials either.
+    if not is_staff(current_user) and not _event_is_public(db, slot.event_id):
+        raise HTTPException(status_code=404, detail="Slot not found")
+
     return slot
 
 
