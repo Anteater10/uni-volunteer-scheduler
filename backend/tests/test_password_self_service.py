@@ -216,3 +216,131 @@ def test_set_password_rejects_wrong_purpose_token(client, db_session, staff_user
         json={"token": bogus, "password": "reset-into-this9"},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# single-use enforcement (Task 6): tokens bind to hashed_password at mint
+# time, so any successful password set invalidates every other outstanding
+# reset/invite token for that user, including the one just consumed.
+# ---------------------------------------------------------------------------
+
+
+def test_reset_token_cannot_be_replayed_after_use(client, db_session, staff_user):
+    from app.services.password_reset import create_reset_token
+
+    token = create_reset_token(staff_user)
+    first = client.post(
+        "/api/v1/auth/set-password",
+        json={"token": token, "password": "first-new-pass1"},
+    )
+    assert first.status_code == 200, first.text
+
+    replay = client.post(
+        "/api/v1/auth/set-password",
+        json={"token": token, "password": "second-new-pass2"},
+    )
+    assert replay.status_code == 400, replay.text
+
+    # the first change stuck; the replay did not overwrite it a second time
+    login = client.post(
+        "/api/v1/auth/token",
+        data={"username": staff_user.email, "password": "first-new-pass1"},
+    )
+    assert login.status_code == 200, login.text
+
+
+def test_older_reset_token_invalidated_by_a_later_password_change(
+    client, db_session, staff_user
+):
+    from app.services.password_reset import create_reset_token
+
+    old_token = create_reset_token(staff_user)
+
+    # a separate, successful password change happens before old_token is used
+    headers = auth_headers(client, staff_user, password="original-pass1")
+    changed = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "original-pass1", "new_password": "changed-pass99"},
+        headers=headers,
+    )
+    assert changed.status_code == 200, changed.text
+
+    stale = client.post(
+        "/api/v1/auth/set-password",
+        json={"token": old_token, "password": "stale-new-pass2"},
+    )
+    assert stale.status_code == 400, stale.text
+
+
+def test_invite_token_accepted_once(client, db_session):
+    from app.services.invite import create_invite_token
+
+    user = make_user(
+        db_session, email="invite-happy@example.com", role=models.UserRole.organizer
+    )
+    user.hashed_password = None
+    db_session.commit()
+
+    token = create_invite_token(user)
+    resp = client.post(
+        "/api/v1/auth/set-password",
+        json={"token": token, "password": "invite-first-pass1"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    login = client.post(
+        "/api/v1/auth/token",
+        data={"username": user.email, "password": "invite-first-pass1"},
+    )
+    assert login.status_code == 200, login.text
+
+
+def test_invite_token_cannot_be_replayed_after_use(client, db_session):
+    from app.services.invite import create_invite_token
+
+    user = make_user(
+        db_session, email="invite-once@example.com", role=models.UserRole.organizer
+    )
+    user.hashed_password = None
+    db_session.commit()
+
+    token = create_invite_token(user)
+    first = client.post(
+        "/api/v1/auth/set-password",
+        json={"token": token, "password": "invite-first-pass1"},
+    )
+    assert first.status_code == 200, first.text
+
+    replay = client.post(
+        "/api/v1/auth/set-password",
+        json={"token": token, "password": "invite-second-pass2"},
+    )
+    assert replay.status_code == 400, replay.text
+
+
+def test_older_invite_token_invalidated_once_password_is_set(client, db_session):
+    from app.services.invite import create_invite_token
+    from app.services.password_reset import create_reset_token
+
+    user = make_user(
+        db_session, email="invite-twice@example.com", role=models.UserRole.organizer
+    )
+    user.hashed_password = None
+    db_session.commit()
+
+    old_invite_token = create_invite_token(user)
+
+    # the user sets their first password through a *different* token
+    # (a reset token minted after the invite) — still invalidates the invite
+    other_token = create_reset_token(user)
+    resp = client.post(
+        "/api/v1/auth/set-password",
+        json={"token": other_token, "password": "first-set-pass1"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    stale = client.post(
+        "/api/v1/auth/set-password",
+        json={"token": old_invite_token, "password": "stale-invite-pass2"},
+    )
+    assert stale.status_code == 400, stale.text

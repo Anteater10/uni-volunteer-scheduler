@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..config import settings
+from .credential_fingerprint import credential_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,16 @@ RESET_MAX_PER_IP_PER_HOUR = 10
 
 
 def create_reset_token(user: models.User) -> str:
-    """Sign a JWT carrying user_id + reset purpose, valid for one hour."""
+    """Sign a JWT carrying user_id + reset purpose, valid for one hour.
+
+    Also binds an `fp` claim to the user's current hashed_password (see
+    credential_fingerprint.py) so the token is single-use: any successful
+    password set changes the hash and invalidates this token.
+    """
     payload = {
         "sub": str(user.id),
         "purpose": RESET_TOKEN_PURPOSE,
+        "fp": credential_fingerprint(user),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_TTL_MINUTES),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)

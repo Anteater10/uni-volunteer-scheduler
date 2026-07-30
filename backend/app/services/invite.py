@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..config import settings
+from .credential_fingerprint import credential_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,17 @@ INVITE_TOKEN_PURPOSE = "invite"
 
 
 def create_invite_token(user: models.User) -> str:
-    """Sign a JWT carrying user_id + invite purpose, valid for INVITE_TOKEN_TTL_DAYS."""
+    """Sign a JWT carrying user_id + invite purpose, valid for INVITE_TOKEN_TTL_DAYS.
+
+    Also binds an `fp` claim to the user's current hashed_password (see
+    credential_fingerprint.py — NULL/no-password uses a stable sentinel) so
+    the token is single-use: setting the first password invalidates this
+    and every other outstanding invite/reset token for the user.
+    """
     payload = {
         "sub": str(user.id),
         "purpose": INVITE_TOKEN_PURPOSE,
+        "fp": credential_fingerprint(user),
         "exp": datetime.now(timezone.utc) + timedelta(days=INVITE_TOKEN_TTL_DAYS),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
