@@ -26,9 +26,12 @@ themselves in by entering their email and tapping the shift they're here for.
 ## How do I close out a session once it's over?
 
 End the slot from the event page. The close-out screen lists everyone and pre-fills from check-in
-state; mark anyone who didn't turn up as no-show and save. It's all-or-nothing, and attended and
-no-show are final, so glance over the list first. **Do not skip this** — hours, attendance reports,
-and orientation credit all depend on it.
+state; mark anyone who didn't turn up as no-show and save. It's all-or-nothing, so glance over the
+list first. **Do not skip this** — hours, attendance reports, and orientation credit all depend on
+it. When every slot has been ended the event shows as **✓ Completed**.
+
+If you got it wrong, **Reopen event** on the roster undoes the close-out for the whole event. See the
+next question.
 
 ## How do I give someone orientation credit?
 
@@ -43,16 +46,28 @@ everyone marked attended.
 ## How do I fix a wrong no-show or a mis-tapped check-in?
 
 If you only checked someone in by mistake, tap them again on the roster to undo it — they go back to
-confirmed. If the session has already been closed out and they're marked attended or no-show, that's
-final and can't be changed. The practical fix in that case is to correct what depends on it: grant
-orientation credit manually if the wrong status cost them their credit.
+confirmed.
+
+If the event has already been closed out, use **Reopen event** on the roster. It puts the whole
+event's roster back on the live state so you can redo the close-out: no-shows return to confirmed,
+and attended people return to checked-in if a real check-in was recorded, or to confirmed if they
+were a walk-in marked attended at close-out. The event stops showing as ✓ Completed.
+
+Two things to know about it. It works **per event, not per person** — you cannot walk back one
+individual's status, so reopening and re-ending is the route. And **orientation credit already
+granted is not taken back**, because credit is permanent by design and may predate this event; if
+credit was granted wrongly, correct it in Admin → Orientation Credits.
 
 ## How do I promote someone off the waitlist?
 
-Usually you don't need to — when a confirmed volunteer cancels, the longest-waiting person is
+Usually you don't need to — when someone holding a seat cancels, the longest-waiting person is
 promoted automatically. To promote one specific person, use the promote action on their roster row.
 Since the slot is normally still full, this will ask you to confirm going over capacity — that's a
 real decision about a real room, so it's deliberate rather than automatic.
+
+Either way, **promoting does not put someone on the roster as confirmed.** They go to **pending** and
+are emailed a confirm link they have **3 days** to click. Promoting by hand does not skip that email,
+and if they never click, the hourly cleanup drops them and offers the seat onward.
 
 ## How do I email everyone coming to a session?
 
@@ -63,9 +78,9 @@ waitlisted and cancelled people don't. You can send 5 broadcasts per hour per ev
 
 ## How do I invite a new organizer or admin?
 
-Admin → Users → "Invite new user". Enter their name, email, and role. They get an email with a
-sign-in link — **it expires in 15 minutes**, so send it when they're ready. No password needed from
-you.
+Admin → Users → "Invite new user". Enter their name, email, and role. They get an email with a link
+to set their own password and sign in. The link is valid for **7 days**. You never see or set their
+password.
 
 ## How do I deactivate someone who has left?
 
@@ -85,8 +100,10 @@ Account" permanently anonymizes their data. Both are logged.
 
 ## How do I archive a finished quarter?
 
-Admin → Quarters → Archive on that quarter's row. Archiving is only allowed once the quarter has
-ended. An archived quarter still appears in the list, stays reachable by link, and volunteers can
+Usually you don't have to. A quarter archives itself overnight once its end date has passed — a job
+runs around 3:30am and flips any ended quarter to archived, with no staff member recorded as the
+actor. To do it by hand, use Admin → Quarters → Archive on that quarter's row. Archiving is only
+allowed once the quarter has ended. An archived quarter still appears in the list, stays reachable by link, and volunteers can
 still browse it under "Archived quarters" — it's just skipped when working out what week it
 currently is. Restore undoes it.
 

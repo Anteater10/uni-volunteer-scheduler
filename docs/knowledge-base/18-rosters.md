@@ -20,8 +20,11 @@ From the roster an organizer can:
 - **Check a volunteer in**, and **undo** a mis-tap.
 - **End a slot** or the whole event, marking people attended or no-show.
 - **Grant orientation credit** with one tap — the "vouched for at the door" case.
-- **Promote someone off the waitlist**, including deliberately over capacity.
-- **Cancel a signup**, which frees the seat and auto-promotes the next person waiting.
+- **Promote someone off the waitlist**, including deliberately over capacity. The person you promote
+  goes to **pending** and gets the same 3-day confirm email as an automatic promotion.
+- **Cancel a signup**, which frees the seat and auto-promotes the next person waiting — to pending,
+  with their own 3-day confirm link.
+- **Reopen an event** that has been closed out, if attendance was recorded wrongly.
 - **Send a broadcast** to everyone on the event, or to just one slot's volunteers.
 - **Show the check-in QR code** for the door.
 - **Reorder the waitlist** (admins).
@@ -29,6 +32,16 @@ From the roster an organizer can:
 There is a **mobile-responsive roster page** for use at the classroom door. The rest of the admin
 side is desktop-only, but this page works properly on a phone because that's where it's used.
 
-**Organizers can only open rosters for events they own.** The server checks ownership on the roster
-read itself, not just the link, so one organizer cannot see another's roster or their venue code.
-Admins can open any roster.
+**Any organizer can open any event's roster.** Access is checked by role, not by who created the
+event: every admin and every organizer can read a roster, its attendance summary, its check-in
+screen and its venue code. Only volunteers and the public are refused.
+
+This is deliberate. Organizers are a trusted staff role and the staff event list is global — every
+organizer already sees every event in the list. An ownership rule meant an organizer could open an
+event, read its details fine, and then hit a 403 on its roster. Nothing in the product could hand
+ownership over either, so an organizer could only ever run events they had personally created. The
+boundary that actually matters is the set of **admin-only** routes: user management, audit logs,
+quarter configuration, and exports.
+
+Every event still records who created it, and roster actions are written to the audit log with the
+staff member who took them, so shared access does not mean anonymous access.

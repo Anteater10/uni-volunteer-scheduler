@@ -10,10 +10,15 @@ slot is a mentor orientation. The distinction matters a great deal: orientation 
 satisfy the orientation requirement, and ending an orientation slot is what grants permanent
 orientation credit for the module family.
 
-Each slot has a **capacity** and a running **current count** of confirmed signups. When the count
-reaches capacity, further signups for that slot are **waitlisted** rather than rejected. When a
-confirmed volunteer cancels, the seat is handed to the longest-waiting person on that slot's
-waitlist automatically.
+Each slot has a **capacity** and a running **current count** of the signups holding seats. That
+count includes both **confirmed** and **pending** people, because a pending signup is holding the
+seat while its volunteer decides. So a slot can read as full while part of its roster still shows
+Pending. When the count reaches capacity, further signups for that slot are **waitlisted** rather
+than rejected.
+
+When someone holding a seat cancels, the seat is handed to the longest-waiting person on that slot's
+waitlist automatically — as a **pending** signup with a 3-day confirm link, not straight to
+confirmed. See [11-waitlist.md](11-waitlist.md).
 
 Slots can be **generated in bulk** from the event page, or added, edited, and deleted one at a
 time. Because each slot carries its own date, time, and location, one event can span several days
