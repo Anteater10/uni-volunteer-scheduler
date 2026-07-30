@@ -53,12 +53,13 @@ This uniformity is new. Earlier in the year several of these paths promoted peop
 nothing at all, so if someone asks why a volunteer was never told about a promotion from a few months
 back, that's usually the answer.
 
-**One thing deliberately does not park the volunteer at pending: a volunteer swapping their own
-session using their own link.** Clicking swap on their own manage page *is* their consent, so that
-lands confirmed straight away with no offer email. Every other path is somebody else deciding on
-their behalf, which is exactly why it becomes an offer instead. So if a volunteer moved themselves
-they are confirmed, and if staff moved them they are pending and waiting on an email — the same
-visible move on the roster, two different statuses, and the difference is who did it.
+**One path deliberately skips the offer: a waitlisted volunteer who swaps themselves onto a session
+that has room.** Clicking swap on their own manage page *is* their consent, so they land **confirmed**
+straight away and no confirm-your-spot email is sent. Every other path is somebody else deciding on
+their behalf, which is exactly why it becomes an offer instead. If staff make that same move for
+them, they land at pending and wait on the email — the same visible move on the roster, two different
+statuses, and the difference is who did it. (A volunteer who already holds a seat and swaps sessions
+keeps whatever status they had; it is the seat they *left* that gets offered down the waitlist.)
 
 ## If they don't confirm, the offer lapses
 
