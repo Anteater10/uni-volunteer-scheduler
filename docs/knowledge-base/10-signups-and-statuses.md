@@ -20,7 +20,8 @@ There are seven signup statuses: **pending**, **confirmed**, **waitlisted**, **c
 **Attended, no-show, and cancelled are final.** Check-in, self check-in, and closing out a session
 will never move a signup back out of one of them. Attended and no-show have exactly one deliberate
 undo — **"Reopen event"**, for a session that was ended too early, which puts those volunteers back
-on the live roster. Cancelled has no undo at all.
+on the live roster, and which only works while the event's quarter is still open. Cancelled has no
+undo at all.
 
 Everything before those three can still change:
 

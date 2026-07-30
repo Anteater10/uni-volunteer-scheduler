@@ -29,8 +29,9 @@ matching the single venue, and nobody can choose a different one.
 
 **Cancelling cannot be undone.** Once a signup is cancelled it stays cancelled — the volunteer signs
 up again if slots are still open. Attendance is different: closing out an event is reversible with
-**Reopen event**, which puts attended and no-show volunteers back on the live roster. The document on
-ending a slot covers what reopening restores and what it deliberately leaves alone.
+**Reopen event**, which puts attended and no-show volunteers back on the live roster, for as long as
+the event's quarter is still open. The document on ending a slot covers what reopening restores and
+what it deliberately leaves alone.
 
 **There is no message centre inside the app.** Notifications reach volunteers and staff by email;
 there is no inbox in the app to check. A Notifications screen does exist at a URL, but it appears in

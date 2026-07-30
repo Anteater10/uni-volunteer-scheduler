@@ -5,7 +5,7 @@ site settings, exports, audit logs, orientation credits, and quarters.
 
 **Attended** — a signup status meaning the volunteer was present and the organizer has closed out
 the session. It is settled: no per-volunteer action changes it, and the only way back is **Reopen
-event**, which undoes the whole event at once.
+event**, which undoes the whole event at once and only works while the event's quarter is still open.
 
 **Broadcast** — a one-off operational email sent to the volunteers on an event, or on just one of
 its slots. It reaches people holding or past a confirmed spot — confirmed, checked in, attended —
@@ -41,9 +41,10 @@ module's family key starts out as its own slug.
 
 **Magic link** — a link emailed to a volunteer that lets them confirm, view, cancel, or swap a
 signup without an account or password. Confirming is the one-time part, and it has a deadline. The
-same link keeps working for viewing, cancelling, and swapping after that deadline passes. A seat won
-from a **waitlist promotion** carries a second, separate confirm link in its own email, and only that
-one can claim it. See the magic-links document.
+same link keeps working for viewing, cancelling, and swapping after that deadline passes, for any
+session the volunteer is still due at — a session already closed out, or one they cancelled, is not
+theirs to move. A seat won from a **waitlist promotion** carries a second, separate confirm link in
+its own email, and only that one can claim it. See the magic-links document.
 
 **Module** — a multi-session science experience delivered to a class. SciTrek modules usually run
 five sessions, but the app stores a session count per module rather than assuming a number. In the
@@ -57,7 +58,8 @@ families and default signup forms. They are not used to import events. (Older no
 Orientation credit is earned and checked per module family, never per module.
 
 **No-show** — a signup status meaning the volunteer did not turn up and the organizer closed out
-the session. Like attended, it is settled once saved; only **Reopen event** undoes it.
+the session. Like attended, it is settled once saved; only **Reopen event** undoes it, and only while
+the event's quarter is still open.
 
 **Operations console** — the `/admin/operations` page, the day-of staff view. Four tabs: Today,
 Upcoming, Past, and Reminders.
