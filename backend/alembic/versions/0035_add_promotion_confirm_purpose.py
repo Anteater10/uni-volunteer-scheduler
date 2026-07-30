@@ -9,19 +9,14 @@ promotion token as a confirm token — the hourly reap, the stale-token GC, the
 token-gated manage/swap/preferences surfaces — key on the two purposes
 together via ``magic_link_service.CONFIRM_PURPOSES`` / ``MANAGE_PURPOSES``.
 
-NOTE FOR INTEGRATION: ``down_revision`` points at 0033 so this migration is
-runnable and testable in the branch worktree it was written in, where
-``0034_drop_portals`` does not exist yet. Re-point it to
-``0034_drop_portals`` when the sweep-remediation branches are integrated.
-
 Revision ID: 0035_add_promotion_confirm_purpose
-Revises: 0033_add_event_completed_at
+Revises: 0034_drop_portals
 """
 
 from alembic import op
 
 revision = "0035_add_promotion_confirm_purpose"
-down_revision = "0033_add_event_completed_at"
+down_revision = "0034_drop_portals"
 branch_labels = None
 depends_on = None
 
