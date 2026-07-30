@@ -20,6 +20,18 @@ Contract
   resurrected via a still-live manage token (bypassing orientation,
   one-event-per-batch, the signup window, and visibility), and a no_show
   attendance record would be silently erased.
+- Rejects a **participant** swap of an ``attended`` signup with the same
+  HTTP 422 ``SIGNUP_NOT_SWAPPABLE`` (2026-07-29 sweep, hours-inflation fix)
+  — ``attended`` holds capacity, so without this guard it took the
+  ``holds_capacity`` branch below (status untouched, only ``slot_id``
+  repointed). Hours are computed from attended signups joined on their
+  *current* ``slot_id``, so a volunteer could swap an already-attended
+  signup into a longer slot in the same event and inflate their own
+  credited hours with no staff involved. ``attended`` is terminal
+  (``ALLOWED_TRANSITIONS[attended] == set()`` in ``check_in_service.py``).
+  **Staff** keep the ability to swap an attended signup (e.g. to correct a
+  mis-resolved slot) — gated on ``actor_kind``, mirroring the
+  waitlisted-swap actor split below.
 - Updates ``signup.slot_id``, decrements source ``current_count``, and
   increments target ``current_count``.
 - Calls ``promote_waitlist_fifo(db, source_slot_id)`` on the freed source
@@ -141,6 +153,9 @@ def swap_signup(
         HTTPException(422, detail={"code": "SIGNUP_NOT_SWAPPABLE", ...}) if
             the signup is cancelled or no_show — checked first, before any
             other validation or mutation.
+        HTTPException(422, detail={"code": "SIGNUP_NOT_SWAPPABLE", ...}) if
+            actor_kind == "participant" and the signup is attended (staff
+            may still swap an attended signup).
         HTTPException(409) if target slot has no remaining capacity.
         HTTPException(422, detail={"code": "SLOT_ENDED", ...}) if a staff
             swap would promote a waitlisted signup onto a slot that has
@@ -168,6 +183,34 @@ def swap_signup(
                 "message": (
                     f"Cannot swap a signup with status '{signup.status.value}'."
                 ),
+            },
+        )
+
+    # 2026-07-29 sweep (hours-inflation fix): refuse a PARTICIPANT swap of an
+    # attended signup, before any lock or mutation. attended holds capacity,
+    # so without this guard it falls into the holds_capacity branch below,
+    # which only repoints slot_id and leaves status untouched. Volunteer
+    # hours are computed as sum(slot.end_time - slot.start_time) over
+    # attended signups, joined on the signup's CURRENT slot_id (admin.py) —
+    # so a volunteer could otherwise swap their own already-attended signup
+    # into a longer slot in the same event and inflate their own credited
+    # hours, repeatedly, with no staff involved at all. attended is
+    # explicitly terminal (ALLOWED_TRANSITIONS[attended] == set() in
+    # check_in_service.py); swap must not contradict that for a self-serve
+    # actor. Staff keep the ability to swap an attended signup (e.g. to
+    # correct a mis-resolved slot) — gated on actor_kind, never inferred
+    # from the caller, mirroring the waitlisted-swap actor split below. Do
+    # not collapse this into the cancelled/no_show guard above: that one is
+    # actor-independent, this one deliberately is not.
+    if (
+        signup.status == models.SignupStatus.attended
+        and actor_kind == "participant"
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "SIGNUP_NOT_SWAPPABLE",
+                "message": "Cannot swap a signup with status 'attended'.",
             },
         )
 
