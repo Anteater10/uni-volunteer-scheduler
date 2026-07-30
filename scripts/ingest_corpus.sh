@@ -25,8 +25,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-NETWORK="uni-volunteer-scheduler_default"
-IMAGE="uni-volunteer-scheduler-backend"
+# Compose derives its project name from the checkout directory, and the two
+# developers' checkouts are named differently (uni-volunteer-scheduler vs
+# uni-event-scheduler), so the network/image names differ per machine. Derive
+# the name the same way compose does; COMPOSE_PROJECT_NAME overrides both.
+PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$REPO_ROOT" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g')}"
+NETWORK="${PROJECT}_default"
+IMAGE="${PROJECT}-backend"
 ENV_FILE="backend/.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
