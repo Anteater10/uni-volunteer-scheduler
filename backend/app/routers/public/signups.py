@@ -22,6 +22,7 @@ from ...magic_link_service import (
     zero_confirm_reason,
 )
 from ...models import Signup, SignupStatus, Slot
+from ...services.check_in_service import ensure_signup_cancellable
 from ...services.public_signup_service import create_public_signup
 from ...services.phone_service import InvalidPhoneError
 from ...services.swap_service import swap_signup
@@ -279,6 +280,10 @@ def cancel_signup(
 
     if signup.status == SignupStatus.cancelled:
         return {"cancelled": True, "signup_id": str(signup_id), "already_cancelled": True}
+
+    # 2026-07-29 sweep: attended/no_show are terminal — see
+    # check_in_service.ensure_signup_cancellable for the full rationale.
+    ensure_signup_cancellable(signup)
 
     slot = (
         db.query(Slot)

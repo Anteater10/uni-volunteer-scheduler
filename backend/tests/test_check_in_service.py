@@ -7,6 +7,8 @@ import pytest
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from fastapi import HTTPException
+
 from app.models import (
     AuditLog,
     Event,
@@ -27,6 +29,7 @@ from app.services.check_in_service import (
     VenueCodeError,
     _transition,
     check_in_signup,
+    ensure_signup_cancellable,
     event_check_in_by_email,
     resolve_event,
     self_check_in,
@@ -560,3 +563,58 @@ class TestPendingWalkInCheckIn:
         )
 
         assert result.status == SignupStatus.checked_in
+
+
+class TestEnsureSignupCancellable:
+    """2026-07-29 sweep — closes the last hole in the cancelled/no_show/
+    attended status-guard family (see swap_service.py's SIGNUP_NOT_SWAPPABLE
+    guards). attended and no_show map to an empty set in ALLOWED_TRANSITIONS
+    above; the only sanctioned way out of either is reopen_event's
+    event-wide "Undo End Event" (its own docstring calls that "the one
+    exception"), so cancel must refuse both — for every actor, no staff
+    carve-out, unlike swap's participant-only attended guard. Router-level
+    coverage of the three cancel entry points lives in
+    test_manage_token_semantics.py (participant), test_signups_router_full.py
+    (staff /signups/{id}/cancel) and test_admin.py (staff
+    /admin/signups/{id}/cancel)."""
+
+    def test_attended_raises_422(self, db_session):
+        _vol, _owner, _event, _slot, signup = _make_event_slot_signup(
+            db_session, status=SignupStatus.attended
+        )
+        with pytest.raises(HTTPException) as exc:
+            ensure_signup_cancellable(signup)
+        assert exc.value.status_code == 422
+        assert exc.value.detail["code"] == "SIGNUP_NOT_CANCELLABLE"
+
+    def test_no_show_raises_422(self, db_session):
+        _vol, _owner, _event, _slot, signup = _make_event_slot_signup(
+            db_session, status=SignupStatus.no_show
+        )
+        with pytest.raises(HTTPException) as exc:
+            ensure_signup_cancellable(signup)
+        assert exc.value.status_code == 422
+        assert exc.value.detail["code"] == "SIGNUP_NOT_CANCELLABLE"
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            SignupStatus.pending,
+            SignupStatus.confirmed,
+            SignupStatus.checked_in,
+            SignupStatus.waitlisted,
+            # cancelled is included to document the function's actual
+            # contract: it only cares about attended/no_show. Every real
+            # cancel router short-circuits an already-cancelled signup on
+            # its own idempotent branch before ever reaching this guard.
+            SignupStatus.cancelled,
+        ],
+    )
+    def test_non_terminal_statuses_pass_silently(self, db_session, status):
+        """Regression guard: every status a cancel path must still allow
+        through (or idempotently short-circuit before reaching this guard)
+        must not raise here."""
+        _vol, _owner, _event, _slot, signup = _make_event_slot_signup(
+            db_session, status=status
+        )
+        ensure_signup_cancellable(signup)  # must not raise

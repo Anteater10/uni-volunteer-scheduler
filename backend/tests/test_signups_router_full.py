@@ -146,6 +146,63 @@ def test_cancel_via_signups_heals_count_drift(client, db_session):
     assert refreshed.current_count == 0
 
 
+def test_cancel_via_signups_of_attended_signup_is_refused(client, db_session):
+    """2026-07-29 sweep — closes the cancel-side hole in this family of
+    guards (see swap_service.py's SIGNUP_NOT_SWAPPABLE guards). Deliberately
+    NO staff exception here: unlike swap's participant-only attended guard
+    (a lateral, status-preserving slot correction), cancelling would erase
+    the resolved status entirely, and nothing else in the app reverses
+    attended/no_show for staff either (undo_check_in explicitly refuses to;
+    the one sanctioned undo is reopen_event, which is event-wide and
+    audited). This test pins that choice so a later refactor cannot
+    silently add a staff carve-out here to mirror swap's."""
+    admin = _make_admin(db_session, email="adm_sf7@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_sf7@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.attended,
+    )
+    slot.current_count = 1
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert rc.status_code == 422, rc.text
+    assert rc.json()["code"] == "SIGNUP_NOT_CANCELLABLE"
+    db_session.expire_all()
+    untouched = db_session.get(models.Signup, signup.id)
+    assert untouched.status == models.SignupStatus.attended
+    refreshed = db_session.get(models.Slot, slot.id)
+    assert refreshed.current_count == 1
+
+
+def test_cancel_via_signups_of_no_show_signup_is_refused(client, db_session):
+    """no_show sibling of the attended guard above — same rationale."""
+    admin = _make_admin(db_session, email="adm_sf8@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email="v_sf8@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.no_show,
+    )
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert rc.status_code == 422, rc.text
+    assert rc.json()["code"] == "SIGNUP_NOT_CANCELLABLE"
+    db_session.expire_all()
+    untouched = db_session.get(models.Signup, signup.id)
+    assert untouched.status == models.SignupStatus.no_show
+    refreshed = db_session.get(models.Slot, slot.id)
+    assert refreshed.current_count == 0
+
+
 # Slot/event missing 404 branches in cancel are FK-protected at the DB level
 # and marked # pragma: no cover.
 

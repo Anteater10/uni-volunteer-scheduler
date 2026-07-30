@@ -9,6 +9,7 @@ from .. import models, schemas
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..database import get_db
 from ..deps import get_current_user, log_action
+from ..services.check_in_service import ensure_signup_cancellable
 from ..services.swap_service import swap_signup as _swap_signup
 from ..signup_service import PromotionResult, promote_waitlist_fifo
 
@@ -84,6 +85,10 @@ def cancel_signup(
         db.commit()
         db.refresh(signup)
         return signup
+
+    # 2026-07-29 sweep: attended/no_show are terminal, no staff exception —
+    # see check_in_service.ensure_signup_cancellable for the full rationale.
+    ensure_signup_cancellable(signup)
 
     previous_status = signup.status
 
