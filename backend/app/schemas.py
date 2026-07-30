@@ -305,6 +305,24 @@ class SignupRead(ORMBase):
     waitlist_position: Optional[int] = None
 
 
+class SelfCheckInSignupRead(BaseModel):
+    """Narrow, no-auth-safe read for GET /signups/{id} (self-check-in flow).
+
+    Sweep remediation: this endpoint used to return the full SignupRead —
+    including volunteer_id and the volunteer's custom-form answers — to
+    anyone who knew the signup_id, with no other gate. It exists only so
+    the self-check-in page (frontend/src/pages/SelfCheckInPage.jsx) can
+    render a title/time and discover event_id before the venue code is
+    entered, so the response is limited to exactly that.
+    """
+    id: UUID
+    event_id: UUID
+    event_title: str
+    status: SignupStatus
+    checked_in_at: Optional[datetime] = None
+    slot_start_time: Optional[datetime] = None
+
+
 class SignupMoveRequest(BaseModel):
     target_slot_id: UUID
 
