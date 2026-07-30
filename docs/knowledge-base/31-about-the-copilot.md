@@ -25,7 +25,15 @@ say so rather than guess. Use the roster, the Operations console, or the Exports
 This is a switch that is currently off rather than a permanent limit: tools for reading live figures
 (signup counts for a week, a module's roster, understaffed modules, a volunteer's history) are
 written but turned off, and they are not finished enough to turn on. Until that changes, the answer to
-a live-data question is a page in the app rather than the copilot.
+a live-data question is a page in the app rather than the copilot. So "the copilot won't show me a
+colleague's roster" is not about permissions today — it will not show you your own either.
+
+**Those unfinished lookup tools are also written to be narrower than the app itself, which matters
+only once they are switched on.** As drafted, they show an organizer just the events that organizer
+created, whereas the app's own event and roster pages let any organizer open any event. Nobody can
+run into that difference while the tools are off, and it may not survive being finished, so treat the
+app's pages as the authority on what an organizer can see and ignore this until the copilot can
+actually look anything up.
 
 **Write actions are being built, not shipped.** Having the copilot actually do things — send a
 reminder, nudge an understaffed module, move a participant — is in development behind the same switch
