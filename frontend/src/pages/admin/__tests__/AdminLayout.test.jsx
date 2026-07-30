@@ -78,7 +78,7 @@ describe("AdminLayout", () => {
     api.admin.siteSettings.get.mockResolvedValue({ show_audit_logs_tab: false });
   });
 
-  it("renders the expected sidebar nav items (no Overrides, no Portals)", () => {
+  it("renders the expected sidebar nav items (no Overrides)", () => {
     renderAtDesktop();
     for (const label of [
       "Overview",
@@ -92,7 +92,6 @@ describe("AdminLayout", () => {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
     expect(screen.queryByRole("link", { name: /overrides/i })).toBeNull();
-    expect(screen.queryByRole("link", { name: /portals/i })).toBeNull();
     // Audit Logs is gated behind the show_audit_logs_tab site setting, which
     // the mock returns false — so it must not appear by default.
     expect(screen.queryByRole("link", { name: /audit logs/i })).toBeNull();

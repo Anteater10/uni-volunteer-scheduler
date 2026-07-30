@@ -16,8 +16,6 @@ from app.models import (
     Event,
     Notification,
     NotificationType,
-    Portal,
-    PortalEvent,
     Quarter,
     Signup,
     SignupStatus,
@@ -41,19 +39,6 @@ class UserFactory(SQLAlchemyModelFactory):
     role = UserRole.participant
     university_id = factory.Sequence(lambda n: f"STU{n:06d}")
     notify_email = True
-    created_at = factory.LazyFunction(datetime.utcnow)
-
-
-class PortalFactory(SQLAlchemyModelFactory):
-    class Meta:
-        model = Portal
-        sqlalchemy_session_persistence = "flush"
-
-    id = factory.LazyFunction(uuid.uuid4)
-    name = factory.Sequence(lambda n: f"Portal {n}")
-    slug = factory.Sequence(lambda n: f"portal-{n}")
-    description = factory.Sequence(lambda n: f"Description for portal {n}")
-    visibility = "public"
     created_at = factory.LazyFunction(datetime.utcnow)
 
 

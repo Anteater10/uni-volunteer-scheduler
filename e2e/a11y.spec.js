@@ -31,11 +31,6 @@ function dynamicRoutes() {
       needs: 'confirm_token',
     },
     {
-      path: `/portals/${seed.portal_slug || 'scitrek'}`,
-      name: 'portal landing',
-      needs: 'portal_slug',
-    },
-    {
       path: `/check-in/${seed.signup_id}`,
       name: 'self check-in',
       needs: 'signup_id',
@@ -59,9 +54,9 @@ test.describe('a11y — axe-core WCAG 2.1 AA sweep', () => {
   for (const r of dynamicRoutes()) {
     test(`no violations on ${r.name}`, async ({ page }) => {
       const seed = getSeed()
-      // signup_id and portal_slug are not yet in seed_e2e.py output (Phase 15
-      // deferred to backend per D-14 — tracked in PART-AUDIT.md). Skip cleanly
-      // so this spec still pins the routes that ARE seeded.
+      // signup_id is not yet in seed_e2e.py output (Phase 15 deferred to
+      // backend per D-14 — tracked in PART-AUDIT.md). Skip cleanly so this
+      // spec still pins the routes that ARE seeded.
       test.skip(
         !seed[r.needs],
         `seed missing ${r.needs} — backend seed_e2e.py update deferred (PART-AUDIT § Backend issues surfaced)`,

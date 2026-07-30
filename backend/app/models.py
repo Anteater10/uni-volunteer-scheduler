@@ -269,7 +269,6 @@ class Event(Base):
     academic_quarter = relationship("AcademicQuarter")
     slots = relationship("Slot", back_populates="event", cascade="all, delete-orphan")
     questions = relationship("CustomQuestion", back_populates="event", cascade="all, delete-orphan")
-    portal_links = relationship("PortalEvent", back_populates="event", cascade="all, delete-orphan")
 
 
 # -------------------------
@@ -503,43 +502,6 @@ class SiteSettings(Base):
     show_audit_logs_tab = Column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
-
-
-# -------------------------
-# Portals (tabbed / grouped signups)
-# -------------------------
-
-
-class Portal(Base):
-    """
-    A named collection of events, e.g. "SciTrek Volunteers" or "Orientation Week".
-    """
-
-    __tablename__ = "portals"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(255), nullable=False)
-    slug = Column(String(255), unique=True, index=True, nullable=False)
-    description = Column(Text, nullable=True)
-    visibility = Column(String(32), default="public")
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    events = relationship("PortalEvent", back_populates="portal", cascade="all, delete-orphan")
-
-
-class PortalEvent(Base):
-    """
-    Join table linking Portals to Events (many-to-many).
-    """
-
-    __tablename__ = "portal_events"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    portal_id = Column(UUID(as_uuid=True), ForeignKey("portals.id"), nullable=False)
-    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False)
-
-    portal = relationship("Portal", back_populates="events")
-    event = relationship("Event", back_populates="portal_links")
 
 
 # -------------------------
