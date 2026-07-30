@@ -44,12 +44,21 @@ upcoming one in the admin lists. Ending the event's final session is therefore a
 completing the event. An event that never had any signups never completes, and waitlisted or
 cancelled signups never hold completion up.
 
-**A completed event can be reopened.** Both the roster's "Event complete" banner and the event
-detail page's completed strip offer **Reopen event**, available to organizers and admins, which puts
-everyone back on the live roster: volunteers with a real arrival time return to checked in, everyone
-else returns to confirmed, and the completion date is cleared. An event whose dates have already
-passed then reads as ended but not closed out, which is the honest description of where it now
-stands. This is the fix for ending a session an hour too early, not a routine step.
+**A completed event can be reopened, while its quarter is still open.** Both the roster's "Event
+complete" banner and the event detail page's completed strip offer **Reopen event**, available to
+organizers and admins, which puts everyone back on the live roster: volunteers with a real arrival
+time return to checked in, everyone else returns to confirmed, and the completion date is cleared. An
+event whose dates have already passed then reads as ended but not closed out, which is the honest
+description of where it now stands. This is the fix for ending a session an hour too early, not a
+routine step.
+
+**Two things will refuse a reopen.** An event that was never ended has nothing to undo, and the app
+says so — "Only an event that has been ended can be reopened" — rather than pretending. And **once
+the event's quarter has ended or been archived, reopening is refused**: that history is closed, and
+the refusal reads "*[quarter name]* has ended and is read-only." Closing out attendance is
+deliberately still allowed in an ended quarter, so a session nobody ever finished can always be
+finished; it is only the undo that expires. In practice: correct a wrong no-show before the quarter
+is over, because ended quarters archive automatically overnight.
 
 **Reopening does not take orientation credit back.** Credit is permanent for a person and a module
 family by design and may well predate this event, so a blanket removal could destroy credit someone

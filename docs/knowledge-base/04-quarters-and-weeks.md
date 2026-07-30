@@ -75,8 +75,17 @@ top of the page over those headings.
 
 **A quarter that has ended becomes history rather than a workspace.** With an ended quarter
 selected, the Events page stops offering to create events in it and says so — new events belong in
-the current quarter. Everything already in it stays fully editable, which is what makes last term's
-events useful as the starting point for this term's. See the events document.
+the current quarter.
+
+**Once a quarter is archived or its end date has passed, the server refuses changes to anything
+inside it.** Creating, editing or deleting its events, adding or changing their sessions, editing
+their custom signup questions, and reopening a completed event are all rejected with "*[quarter
+name]* has ended and is read-only." Moving an event *into* an ended quarter is refused the same way.
+Two things deliberately stay open: closing out attendance, because an organizer legitimately
+finishes a roster the morning after, and duplicating one of its events into a current quarter, which
+is what makes last term's schedule useful as the starting point for this term's. Because ended
+quarters archive automatically at 03:30 UTC each night, this bites within a day of the quarter's
+last date rather than whenever someone remembers to archive it. See the events document.
 
 **Deleting a quarter is blocked while events still reference it.** The delete fails with a conflict
 rather than orphaning events. Move or delete the events first.
