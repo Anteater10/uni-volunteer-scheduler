@@ -24,13 +24,20 @@ server holds means the fp claim can only be produced or verified
 server-side, cannot be used to learn anything about the underlying password
 hash, and can't be forged without the same secret that already signs the
 enclosing JWT.
+
+`payload_fingerprint_matches` takes an already-decoded token payload (the
+dict returned by verify_reset_token/verify_invite_token) rather than the raw
+token string. Those functions already did one jwt.decode call to check
+signature/purpose/expiry; re-decoding a second time here would be redundant
+and, worse, could raise ExpiredSignatureError uncaught (a 500) if the token
+happened to expire in the gap between the two decodes. Passing the payload
+through removes that path entirely — there is only ever one decode per
+request.
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
-
-from jose import jwt
 
 from .. import models
 from ..config import settings
@@ -50,15 +57,18 @@ def credential_fingerprint(user: models.User) -> str:
     ).hexdigest()
 
 
-def token_fingerprint_matches(token: str, user: models.User) -> bool:
-    """True if `token`'s `fp` claim matches `user`'s current credential state.
+def payload_fingerprint_matches(payload: dict, user: models.User) -> bool:
+    """True if a decoded token payload's `fp` claim matches user's current
+    credential state.
 
-    Call this only after the token's signature/purpose/expiry have already
-    been validated (e.g. via verify_reset_token/verify_invite_token) and the
-    user row has been loaded — it re-decodes the token (still signature- and
-    expiry-checked) purely to compare the fp claim, so it works uniformly
-    for both reset and invite tokens.
+    `payload` must already be the result of a successful
+    verify_reset_token/verify_invite_token call (signature/purpose/expiry
+    validated) — this function only checks the `fp` claim, so it works
+    uniformly for both token purposes since both carry the same claim shape.
+    A missing `fp` claim (e.g. a token minted before this fix shipped)
+    compares against the empty string, which never matches a real
+    fingerprint — old-format tokens fail closed with a clean mismatch,
+    never a raised exception.
     """
-    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     claimed = payload.get("fp") or ""
     return hmac.compare_digest(claimed, credential_fingerprint(user))

@@ -50,15 +50,23 @@ def create_reset_token(user: models.User) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def verify_reset_token(token: str) -> str:
-    """Return user_id (str) for a valid reset token; raise JWTError otherwise."""
+def verify_reset_token(token: str) -> dict:
+    """Validate a reset token's signature, purpose, and expiry; return the
+    full decoded payload. Raise JWTError/ExpiredSignatureError otherwise.
+
+    Does NOT check the `fp` claim — the caller must separately confirm it
+    against the target user's current credential_fingerprint (see
+    credential_fingerprint.payload_fingerprint_matches) once the user row is
+    loaded, before trusting this token to authorize a password change.
+    Returning the full payload (rather than just user_id) lets the caller
+    reuse this single decode for that check instead of decoding again.
+    """
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     if payload.get("purpose") != RESET_TOKEN_PURPOSE:
         raise JWTError("Wrong token purpose")
-    sub = payload.get("sub")
-    if not sub:
+    if not payload.get("sub"):
         raise JWTError("Missing sub")
-    return sub
+    return payload
 
 
 def check_reset_rate_limit(redis_client, email: str, ip: str) -> bool:

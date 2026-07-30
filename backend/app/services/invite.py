@@ -40,15 +40,20 @@ def create_invite_token(user: models.User) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def verify_invite_token(token: str) -> str:
-    """Return user_id (str) for a valid invite token; raise JWTError otherwise."""
+def verify_invite_token(token: str) -> dict:
+    """Validate an invite token's signature, purpose, and expiry; return the
+    full decoded payload. Raise JWTError/ExpiredSignatureError otherwise.
+
+    Does NOT check the `fp` claim — see verify_reset_token's docstring in
+    password_reset.py for why, and why the full payload is returned rather
+    than just user_id.
+    """
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     if payload.get("purpose") != INVITE_TOKEN_PURPOSE:
         raise JWTError("Wrong token purpose")
-    sub = payload.get("sub")
-    if not sub:
+    if not payload.get("sub"):
         raise JWTError("Missing sub")
-    return sub
+    return payload
 
 
 def send_invite_email(user: models.User, db: Session) -> None:
