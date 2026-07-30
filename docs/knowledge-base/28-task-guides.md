@@ -38,8 +38,10 @@ A few things worth knowing:
   Pick where it's going first, then edit.
 - If that week already has an event for the same module you'll see a **"Heads up"** note. It's advice,
   not a block — sometimes two really is what you want.
-- The target list only offers quarters that haven't been archived. You can still duplicate *from* an
-  event in a finished or archived quarter, which is the usual way last year's schedule gets rebuilt.
+- The target list only offers quarters that are still open — neither archived nor past their end
+  date — because creating an event inside a closed quarter is refused by the server. You can still
+  duplicate *from* an event in a finished or archived quarter, which is the usual way last year's
+  schedule gets rebuilt.
 - **The title comes across verbatim**, with no "(copy)" added. Rename it in the form if two
   identically-named events would confuse people.
 - **Nothing about people comes across** — no signups, no waitlist, no check-ins, no attendance. The
@@ -85,10 +87,12 @@ on the event back on the live roster — real check-ins keep their timestamps an
 and anyone marked no-show goes back to confirmed — so you can re-tap and end the session again with
 the right outcome. There's no way to unresolve one person on their own.
 
-Two caveats. Reopening is only offered once the whole event reads as complete, so if some session is
-still showing as open you'll need to finish closing it out first. And **reopening does not take back
-orientation credit** — credit is permanent by design and may well have been earned before this event.
-Correct credit in Admin → Orientation Credits.
+Three caveats. Reopening is only offered once the whole event reads as complete, so if some session is
+still showing as open you'll need to finish closing it out first. **Reopening stops being possible
+once the event's quarter has ended or been archived** — closed history stays closed, so fix a wrong
+outcome during the quarter rather than after it. And **reopening does not take back orientation
+credit** — credit is permanent by design and may well have been earned before this event. Correct
+credit in Admin → Orientation Credits.
 
 ## How do I give someone orientation credit?
 
@@ -124,7 +128,8 @@ working, not a fault.
 Use **Message volunteers** on the event page. Leave the picker on **All slots** to email the
 whole event, or pick one slot to email just that session's volunteers. The preview shows the
 recipient count before you send. Confirmed, checked-in, and attended volunteers receive it;
-waitlisted and cancelled people don't. You can send 5 broadcasts per hour per event.
+waitlisted and cancelled people don't. You can send 5 broadcasts per event per clock hour — the count
+resets at the top of the hour rather than an hour after your first send.
 
 ## How do I invite a new organizer or admin?
 
@@ -139,6 +144,10 @@ and changing it signs out any other sessions. Locked out: use **"Forgot password
 page**, which emails a reset link (valid for one hour) if the address belongs to active staff. If
 you never set a password because your invite lapsed, ask an admin to re-invite you — the invite
 link is where the password gets set.
+
+**Reset and invite links are single-use.** Setting a password stops every outstanding link for that
+account from working, the one just used included, so always use the newest email and request a fresh
+link rather than digging out an older one.
 
 ## How do I deactivate someone who has left?
 

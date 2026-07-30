@@ -16,10 +16,10 @@ in, and attended. **Waitlisted, pending, cancelled, and no-show volunteers are e
 broadcast is instructions for people who are actually coming.
 
 **Someone freshly promoted off the waitlist will miss a broadcast until they confirm.** A promotion
-puts the volunteer in the waiting-to-confirm state and gives them three days to claim the spot, and
-that state is excluded from the recipient list above. So a broadcast sent during those three days
-does not reach them, even though they hold the seat. If a room change lands in that window, contact
-them directly.
+puts the volunteer in the waiting-to-confirm state and gives them three days to claim the spot, and a
+broadcast only goes to confirmed, checked-in and attended volunteers. So a broadcast sent during
+those three days does not reach them, even though they hold the seat. If a room change lands in that
+window, contact them directly.
 
 **Broadcasts ignore reminder preferences.** They're operational, not promotional, so a volunteer
 who has turned reminders off still gets told the room changed.

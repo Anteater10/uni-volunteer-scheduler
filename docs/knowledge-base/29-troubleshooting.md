@@ -56,6 +56,20 @@ session would only cause confusion. Nothing tells the person who lapsed, and the
 rather than showing as cancelled, so "I got an email saying a spot opened up and now I can't find it"
 means the 3 days ran out. They can sign up again if a seat is free.
 
+## A volunteer says the confirm link didn't confirm anything
+
+The app shows a **"Nothing to confirm"** page with a reason, and the three reasons need different
+answers. *"You're on the waitlist for this slot — we'll email you if a spot opens up"* means they were
+never promoted: their session was full when they signed up, nothing is wrong, and there is no email to
+hunt for. *"This link didn't confirm a seat. Your spot came from a waitlist promotion — use the
+confirm link in that email instead"* means they clicked their original signup email when the seat they
+hold came from a promotion; the promotion email is the one with the working button, and if they can't
+find it, tapping them in at the door confirms them anyway. *"There's nothing to confirm — this signup
+has already been resolved"* means staff already checked them in or closed the session out.
+
+Clicking a link that was already used still reports the signup as confirmed rather than failing, so
+"it says confirmed" on a second click is not a fault either.
+
 ## An event stays "Ended — not closed out" after every session was ended
 
 Look for a **pending** volunteer on the roster. An event only counts as complete when nobody is still
@@ -99,8 +113,9 @@ email is signed up — that's intentional.
 
 ## Broadcast says wait / rate limited
 
-You've hit 5 broadcasts in an hour for that event. The limit is per event even if you're targeting
-individual slots. Wait, then send.
+You've hit 5 broadcasts in a clock hour for that event. The limit is per event even if you're
+targeting individual slots, and the bucket is a fixed hour on the clock rather than a rolling window
+— so the count resets at the top of the hour, not an hour after the first send. Wait, then send.
 
 ## The copilot says "Stream failed: HTTP 429"
 
@@ -112,9 +127,13 @@ so if a minute's wait doesn't help and colleagues see the same thing, that's wha
 
 ## Something can't be deleted
 
-Two deletions are deliberately blocked. **A staff user who still owns events** — reassign or delete
+Three deletions are deliberately blocked. **A staff user who still owns events** — reassign or delete
 those events first; their signups are never the reason. **A slot that still has signups** — cancel or
-move them first, because signups are the record behind hours and orientation credit.
+move them first, because signups are the record behind hours and orientation credit. **Anything
+inside a quarter that has ended or been archived** — its events, their sessions, and their custom
+signup questions are read-only history, and the refusal reads "*[quarter name]* has ended and is
+read-only." There is no override; if the dates were genuinely wrong, fix the quarter's dates so the
+event falls inside an open one.
 
 Volunteers themselves have no delete button at all — Admin → Users lists staff accounts only, so a
 volunteer never appears there. The CCPA export and delete actions on that page act on a **staff**
@@ -170,6 +189,11 @@ reset link that lasts one hour — it only works for active staff, so a deactiva
 reactivated first. If they were recently invited and the link no longer works, the invite lasted
 7 days and has lapsed: re-invite them from Admin → Users. The invite link is also where the password
 gets set, so someone who never used theirs has no password to reset.
+
+**Reset and invite links are single-use.** Setting a password kills every outstanding link for that
+account, including the one just used — a second click is refused with "This link has already been
+used or is no longer valid." If someone asked for two resets, only the newest email works, and
+anyone who has already set a password needs a fresh link rather than an older email.
 
 ## A volunteer's signup disappeared
 

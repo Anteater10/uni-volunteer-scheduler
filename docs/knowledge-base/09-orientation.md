@@ -2,10 +2,9 @@
 
 **Orientation is a hard requirement, not a warning.** A volunteer who has never been oriented for a
 module's family must include an orientation session in the same signup, or the signup is rejected.
-The server refuses it before writing anything, returning the error code
-`ORIENTATION_REQUIRED` with the message "New volunteers must include an orientation session in
-their signup." There is no self-attested bypass — the volunteer cannot tick a box claiming they've
-done it.
+The server refuses it before writing anything, and the volunteer is told "New volunteers must
+include an orientation session in their signup." There is no self-attested bypass — the volunteer
+cannot tick a box claiming they've done it.
 
 On the volunteer's side this appears as a **steering modal**: instead of offering a way through, the
 only action takes them back to the schedule to add an orientation session. Their slot selection and
@@ -28,9 +27,9 @@ never claimed. Nothing blocks them at the door, so an organizer either runs them
 orientation or vouches for them from the roster.
 
 **A signup covers one event at a time.** Selecting slots across two different events in a single
-submission is rejected with `MULTIPLE_EVENTS`. The volunteer event page only ever submits its own
-slots, so this is invisible in normal use; the rule closes a hole where the public signup form could
-be used to probe many volunteers' orientation status at once.
+submission is refused with "A signup covers one event at a time." The volunteer event page only ever
+submits its own slots, so this is invisible in normal use; the rule closes a hole where the public
+signup form could be used to probe many volunteers' orientation status at once.
 
 ## Orientation credit
 

@@ -41,8 +41,8 @@ form answers are preserved** while they go back to add an orientation session �
 retype anything.
 
 **Form answers appear on the admin event page, not on the roster used at the door.** Each
-volunteer's answers show under their name at `/admin/events/{id}` and come through in the roster CSV
-export. The mobile organizer roster used for check-in does not show them. So a form field is the
+volunteer's answers show under their name on the event's own page in Admin → Events, and come through
+in the roster CSV export. The mobile organizer roster used for check-in does not show them. So a form field is the
 right place for things staff want on record and the wrong place for something someone needs to read
 off a phone at a classroom door — put that in the event description or send it to the organizer
 directly.
