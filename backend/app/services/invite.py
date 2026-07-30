@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..config import settings
+from .credential_fingerprint import credential_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +24,36 @@ INVITE_TOKEN_PURPOSE = "invite"
 
 
 def create_invite_token(user: models.User) -> str:
-    """Sign a JWT carrying user_id + invite purpose, valid for INVITE_TOKEN_TTL_DAYS."""
+    """Sign a JWT carrying user_id + invite purpose, valid for INVITE_TOKEN_TTL_DAYS.
+
+    Also binds an `fp` claim to the user's current hashed_password (see
+    credential_fingerprint.py — NULL/no-password uses a stable sentinel) so
+    the token is single-use: setting the first password invalidates this
+    and every other outstanding invite/reset token for the user.
+    """
     payload = {
         "sub": str(user.id),
         "purpose": INVITE_TOKEN_PURPOSE,
+        "fp": credential_fingerprint(user),
         "exp": datetime.now(timezone.utc) + timedelta(days=INVITE_TOKEN_TTL_DAYS),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def verify_invite_token(token: str) -> str:
-    """Return user_id (str) for a valid invite token; raise JWTError otherwise."""
+def verify_invite_token(token: str) -> dict:
+    """Validate an invite token's signature, purpose, and expiry; return the
+    full decoded payload. Raise JWTError/ExpiredSignatureError otherwise.
+
+    Does NOT check the `fp` claim — see verify_reset_token's docstring in
+    password_reset.py for why, and why the full payload is returned rather
+    than just user_id.
+    """
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     if payload.get("purpose") != INVITE_TOKEN_PURPOSE:
         raise JWTError("Wrong token purpose")
-    sub = payload.get("sub")
-    if not sub:
+    if not payload.get("sub"):
         raise JWTError("Missing sub")
-    return sub
+    return payload
 
 
 def send_invite_email(user: models.User, db: Session) -> None:
