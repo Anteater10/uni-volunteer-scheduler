@@ -204,6 +204,67 @@ class TestCreatePublicSignup:
         assert private_resp.status_code == unknown_resp.status_code
         assert private_resp.json() == unknown_resp.json()
 
+    def test_null_visibility_event_signup_404_matches_unknown_slot_404(
+        self, client, db_session, monkeypatch
+    ):
+        """2026-07-29 sweep remediation, Finding #6: ``Event.visibility`` is
+        nullable with no server default or backfill (see
+        routers/public/events.py, Finding #3). The signup path deny-listed
+        only the literal string "private", so a NULL-visibility event —
+        hidden from the public list and 404ing on its detail page — could
+        still be signed up for. Must fail closed here too, and the refusal
+        must stay byte-identical to the unknown-slot 404."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        event = _make_event(db_session)
+        event.visibility = None
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        null_resp = client.post(
+            "/api/v1/public/signups",
+            json=_signup_payload(slot.id, email="null-vis-slot@example.com"),
+        )
+        unknown_resp = client.post(
+            "/api/v1/public/signups", json=_signup_payload(uuid.uuid4())
+        )
+
+        assert null_resp.status_code == 404, null_resp.text
+        assert unknown_resp.status_code == 404, unknown_resp.text
+        assert null_resp.status_code == unknown_resp.status_code
+        assert null_resp.json() == unknown_resp.json()
+
+    def test_unexpected_visibility_value_event_signup_404_matches_unknown_slot_404(
+        self, client, db_session, monkeypatch
+    ):
+        """2026-07-29 sweep remediation, Finding #6: a deny-list
+        (`== "private"`) fails open for any unrecognized value (e.g. a typo
+        or case mismatch like "Private"). Must be an allow-list on exactly
+        "public" instead, matching routers/public/events.py."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        event = _make_event(db_session)
+        event.visibility = "Private"
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        odd_resp = client.post(
+            "/api/v1/public/signups",
+            json=_signup_payload(slot.id, email="odd-vis-slot@example.com"),
+        )
+        unknown_resp = client.post(
+            "/api/v1/public/signups", json=_signup_payload(uuid.uuid4())
+        )
+
+        assert odd_resp.status_code == 404, odd_resp.text
+        assert unknown_resp.status_code == 404, unknown_resp.text
+        assert odd_resp.status_code == unknown_resp.status_code
+        assert odd_resp.json() == unknown_resp.json()
+
     def test_full_slot_goes_to_waitlist(self, client, db_session, monkeypatch):
         """Phase 25 (WAIT-01): at-capacity signups are waitlisted, not rejected."""
         monkeypatch.setattr(

@@ -55,7 +55,7 @@ _NOT_FOUND_DETAIL = "not found"
 
 def _ensure_event_visible(db: Session, event_id) -> None:
     """Task 2 (sweep remediation) — reject public signups against a
-    "private" event.
+    non-public event.
 
     Signing up for an event you were never shown (e.g. via a leaked or
     guessed slot_id) is the same leak as the public list/detail endpoints
@@ -63,11 +63,19 @@ def _ensure_event_visible(db: Session, event_id) -> None:
     does not confirm the event exists. Uses the same detail text as the
     unknown-slot 404 below (``_NOT_FOUND_DETAIL``) so the two are
     indistinguishable.
+
+    2026-07-29 sweep remediation, Finding #6: this used to deny-list
+    ``visibility == "private"``, which reads a NULL or any unrecognized
+    value (the column is nullable with no server default or backfill) as
+    signup-eligible — the same fail-open bug already fixed in
+    ``routers/public/events.py`` (Finding #3), just missed here. Allow-list
+    on exactly "public" instead so this site agrees with the list/detail
+    endpoints: NULL and any value other than "public" are refused.
     """
     event = db.query(Event).filter(Event.id == event_id).first()
     if event is None:
         return  # let the downstream slot lookup produce the 404
-    if event.visibility == "private":
+    if event.visibility != "public":
         raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
 
 
