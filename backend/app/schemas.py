@@ -153,6 +153,8 @@ class SlotRecurrenceCreate(BaseModel):
     capacity: int
     frequency: Literal["daily", "weekly"]
     count: int
+    slot_type: SlotType = SlotType.PERIOD
+    location: Optional[str] = None
 
     @field_validator("start_time", "end_time")
     @classmethod

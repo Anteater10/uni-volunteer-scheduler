@@ -525,14 +525,17 @@ class TestGenerateSlotsQuarterReadonly:
         assert resp.status_code == 422, resp.text
         assert resp.json()["code"] == "QUARTER_READONLY"
 
-    # No "allowed in active quarter" control case here: generate_slots
-    # (routers/events.py) constructs models.Slot(...) without slot_type,
-    # which is NOT NULL — it 500s for *every* caller regardless of quarter
-    # state, the same pre-existing bug the sweep-remediation plan already
-    # calls out for the (now-deleted) clone_event. Discovered incidentally
-    # while writing this control case; out of scope for this fix round
-    # (quarter-gating only) — reported as a concern instead of silently
-    # asserting a 200 this endpoint can never actually return.
+    def test_allowed_in_active_quarter(self, client, db_session, organizer, organizer_headers):
+        q = _active_quarter(db_session)
+        event, _slots = _event_in_quarter(db_session, q, owner=organizer)
+        day = event.start_date.date().isoformat()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/generate_slots",
+            json=self._recurrence_payload(day),
+            headers=organizer_headers,
+        )
+        assert resp.status_code == 200, resp.text
 
 
 # ---------- optional/minor: custom-question mutations were ungated too ----------

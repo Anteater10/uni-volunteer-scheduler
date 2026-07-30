@@ -373,6 +373,12 @@ def generate_slots(
             start_time=start,
             end_time=end,
             capacity=recurrence.capacity,
+            slot_type=recurrence.slot_type,
+            # Each occurrence gets its own date, derived from its own
+            # start_time — a shared override would be wrong for every
+            # occurrence but (at most) one.
+            date=start.date(),
+            location=recurrence.location,
         )
         db.add(slot)
         created_slots.append(slot)
