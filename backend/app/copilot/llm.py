@@ -14,9 +14,10 @@ Two surfaces:
   stream and returns the full text + usage.
 
 Both surfaces try the primary model first and transparently fall back
-to the secondary on connection / 429 / 5xx failures. If both fail, the
-last exception is re-raised; the caller (the router) is responsible for
-writing the error row to ``copilot_messages``.
+to the secondary on connection / 429 / 5xx / upstream-provider failures,
+but only while no token has been emitted yet — see ``stream_completion``.
+If both fail, the last exception is re-raised; the caller (the router) is
+responsible for writing the error row to ``copilot_messages``.
 """
 from __future__ import annotations
 
@@ -42,14 +43,30 @@ logger = logging.getLogger(__name__)
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Errors we transparently retry against the fallback model. Any other
-# exception (auth, validation) is re-raised immediately so it surfaces
-# in the structured error log instead of silently swapping models.
+# exception (validation, programmer error) is re-raised immediately so it
+# surfaces in the structured error log instead of silently swapping models.
+#
+# ``APIError`` is the load-bearing one for free tiers. OpenRouter reports an
+# upstream provider failure *inside the SSE body* — the HTTP response was
+# already 200, so the SDK raises a bare ``APIError`` with no status code and
+# none of the other entries here match. Free-tier capacity errors arrive this
+# way ("Worker local total request limit reached"), which meant a transient
+# blip on the primary killed the turn outright instead of falling back.
 _RETRYABLE = (
     APIConnectionError,
     APITimeoutError,
     RateLimitError,
     APIStatusError,
+    APIError,
 )
+
+
+# How many times to sweep the whole primary→fallback list before giving up,
+# and the base backoff between sweeps (multiplied by the sweep index). Three
+# sweeps with a 2s base means a worst case of ~6s of added waiting before the
+# error surfaces, which is tolerable in front of a streaming UI.
+_MAX_SWEEPS = 3
+_SWEEP_BACKOFF_SECONDS = 2.0
 
 
 def _client() -> OpenAI:
@@ -84,23 +101,52 @@ def stream_completion(
     client = _client()
     last_exc: Exception | None = None
 
-    for model_id in _candidates():
-        try:
-            yield from _stream_one(
-                client=client,
-                model_id=model_id,
-                messages=messages,
-                max_tokens=max_tokens,
-            )
-            return
-        except _RETRYABLE as exc:
-            logger.warning(
-                "copilot_model_retryable_failure model=%s err=%s",
-                model_id,
-                exc.__class__.__name__,
-            )
-            last_exc = exc
-            continue
+    # Free tiers are rate-limited upstream by the provider, not by us, and they
+    # 429 readily — two staff members chatting at the same time is enough. One
+    # pass over primary→fallback therefore isn't sufficient: the whole candidate
+    # list can be briefly unavailable and then fine a second later. So sweep the
+    # list more than once with a short backoff between sweeps, which turns a
+    # "Stream failed" into a few seconds of extra latency. Bounded deliberately:
+    # a user waiting on a first token will abandon long before a long retry
+    # ladder pays off, and the caller's request timeout is the real ceiling.
+    for attempt in range(_MAX_SWEEPS):
+        if attempt:
+            time.sleep(_SWEEP_BACKOFF_SECONDS * attempt)
+        for model_id in _candidates():
+            # Falling back is only safe *before* the first token escapes. Once a
+            # chunk has been yielded the caller has already streamed it to the
+            # browser and rendered it, so restarting on another model would
+            # append a second, complete answer to the tail of a partial one —
+            # the user sees the reply spliced together twice. A mid-stream
+            # failure has to surface as a partial answer instead.
+            emitted = False
+            try:
+                for chunk, meta in _stream_one(
+                    client=client,
+                    model_id=model_id,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                ):
+                    if chunk:
+                        emitted = True
+                    yield chunk, meta
+                return
+            except _RETRYABLE as exc:
+                if emitted:
+                    logger.warning(
+                        "copilot_model_failed_mid_stream model=%s err=%s",
+                        model_id,
+                        exc.__class__.__name__,
+                    )
+                    raise
+                logger.warning(
+                    "copilot_model_retryable_failure model=%s err=%s sweep=%d",
+                    model_id,
+                    exc.__class__.__name__,
+                    attempt,
+                )
+                last_exc = exc
+                continue
 
     assert last_exc is not None  # pragma: no cover - defensive
     raise last_exc

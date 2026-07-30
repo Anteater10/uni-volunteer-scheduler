@@ -10,16 +10,15 @@ Public surface:
     SOURCE_GLOBS_V1, DENY_LIST
 
 Source kinds emitted:
-    * ``markdown`` — one document per ``*.md`` file. Title = first H1.
-    * ``alembic_migration`` — one document per ``backend/alembic/versions/*.py``
-      with just the module docstring as content (revision string as title).
-    * ``python_module`` — one document per ``backend/app/**/*.py`` module-level
-      docstring.
-    * ``python_function`` — one document per function / async-function /
-      class with a docstring inside ``backend/app/**/*.py``. Bodies are
-      **never** included (signal-only).
-    * ``frontend_component`` — leading block comment from ``frontend/src``
-      ``.jsx/.js/.ts/.tsx`` files only.
+    * ``markdown`` — one document per ``*.md`` file. Title = first H1. This is
+      the only kind ``SOURCE_GLOBS_V1`` can currently produce.
+
+The code-derived emitters below (``alembic_migration``, ``python_module``,
+``python_function``, ``frontend_component``) are retained and tested but are
+unreachable through the current globs — ingesting code as "knowledge" is what
+made the copilot answer domain questions out of developer docstrings. They stay
+so the capability is one glob away if a code-aware assistant is ever wanted,
+but read the note on ``SOURCE_GLOBS_V1`` before re-enabling one.
 
 Determinism:
     * Output is sorted lexicographically by ``source_path``.
@@ -34,21 +33,33 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+# The corpus is a CURATED knowledge base, not the codebase.
+#
+# It used to be the codebase: Python/JS docstrings, alembic migration
+# docstrings, .planning/phases/** plans, docs/learning/ + docs/copilot-journal/
+# dev notes, ROADMAP.md, README.md, CLAUDE.md. Retrieval and rerank were fine;
+# the *content* was the problem. Those are engineering and project-management
+# artifacts written for developers, so domain questions from admins and
+# organizers ("what is an event") were answered out of the wrong audience's
+# documents — including stale planning docs describing behavior that had since
+# been replaced.
+#
+# Fusion in ``retrieval/hybrid.py`` scores chunks purely on text similarity;
+# there is no notion of an authoritative source. So precedence is achieved by
+# *composition*: the knowledge base is the only thing in here that speaks about
+# the domain, which means nothing competes with it. Adding a wrong-audience
+# source back would silently re-create the original bug — if you need one, add
+# source weighting to the fusion SQL first.
+#
+# The two ops documents are kept deliberately: they answer deployment and
+# restore questions (Rafael's handoff) and overlap with nothing in the
+# knowledge base. The CCPA policy is kept because admins action CCPA requests
+# and the knowledge base only describes the buttons, not the policy.
 SOURCE_GLOBS_V1: list[str] = [
-    "docs/*.md",
-    "docs/learning/**/*.md",
-    "docs/documentation/**/*.md",
-    "docs/copilot-journal/**/*.md",
-    "backend/alembic/versions/*.py",
-    "backend/app/**/*.py",
-    "frontend/src/**/*.jsx",
-    "frontend/src/**/*.js",
-    "frontend/src/**/*.ts",
-    "frontend/src/**/*.tsx",
-    ".planning/REQUIREMENTS-*.md",
-    ".planning/ROADMAP.md",
-    ".planning/phases/**/*.md",
-    "*.md",  # repo-root markdown (README, CLAUDE, etc.)
+    "docs/knowledge-base/**/*.md",  # primary + authoritative (see its README)
+    "docs/deployment.md",
+    "docs/demo-runbook.md",
+    "docs/ccpa-policy.md",
 ]
 
 DENY_LIST: list[str] = [
@@ -65,6 +76,13 @@ DENY_LIST: list[str] = [
     "backend/.env*",
     "frontend/.env*",
     ".planning/notes/private-*",
+    # The knowledge base's README is authoring instructions for whoever writes
+    # the docs — style rules, a table of contents, a note about why one document
+    # got split. It is not domain content, and it retrieved as a source for a
+    # real question ("what does understaffed mean") purely because it names the
+    # topics it indexes. Meta-documentation about the corpus does not belong in
+    # the corpus.
+    "docs/knowledge-base/README.md",
 ]
 
 
@@ -295,12 +313,20 @@ def _classify(rel_path: str) -> str:
 # ---------- public entrypoint ----------
 
 
-def walk_sources(*, root: Path) -> list[SourceDocument]:
+def walk_sources(
+    *, root: Path, globs: list[str] | None = None
+) -> list[SourceDocument]:
     """Walk ``root`` and emit one ``SourceDocument`` per ingestible unit.
 
     Opens no DB connections; reads no JSON/CSV. Output is sorted by
     ``source_path`` for determinism.
+
+    ``globs`` defaults to :data:`SOURCE_GLOBS_V1`. It is a parameter only so the
+    code-derived emitters stay directly testable now that the default globs are
+    markdown-only; production callers pass nothing. ``DENY_LIST`` applies
+    regardless of what is passed.
     """
+    active_globs = SOURCE_GLOBS_V1 if globs is None else globs
     candidates: list[Path] = []
     for path in root.rglob("*"):
         if not path.is_file():
@@ -308,7 +334,7 @@ def walk_sources(*, root: Path) -> list[SourceDocument]:
         rel = path.relative_to(root).as_posix()
         if _matches_any(rel, DENY_LIST):
             continue
-        if not _matches_any(rel, SOURCE_GLOBS_V1):
+        if not _matches_any(rel, active_globs):
             continue
         candidates.append(path)
 

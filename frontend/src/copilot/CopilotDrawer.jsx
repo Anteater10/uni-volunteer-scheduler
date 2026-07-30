@@ -188,7 +188,15 @@ export default function CopilotDrawer({ open, onClose }) {
         <header className="flex items-center justify-between px-4 py-3 border-b">
           <div>
             <h2 className="font-semibold">SciTrek Copilot</h2>
-            <p className="text-xs text-gray-500">Beta — no live data access yet.</p>
+            {/* The old copy said "no live data access yet", which stopped being
+                true once grounded retrieval shipped — answers stream with
+                citations into the knowledge base. Says what it does and, just
+                as usefully, what it doesn't: it explains the app, it can't read
+                today's roster. */}
+            <p className="text-xs text-gray-500">
+              Answers from the SciTrek knowledge base, with sources. Can't see
+              live rosters or signups.
+            </p>
           </div>
           <button
             type="button"

@@ -69,14 +69,31 @@ class Settings(BaseSettings):
 
     # --- Phase 30 (v1.4): AI Onboarding Copilot ---
     copilot_enabled: bool = False  # admin feature flag; flip in DB or env to enable
-    # OpenRouter retired the ":free" tiers of both of these — every copilot
-    # message 404'd with "This model is unavailable for free", for the primary
-    # AND the fallback, so the panel only ever printed "Stream failed:
-    # NotFoundError". These are the paid slugs OpenRouter names in that error.
-    # Both are env-overridable (COPILOT_PRIMARY_MODEL / COPILOT_FALLBACK_MODEL)
-    # if you want to point at something cheaper.
-    copilot_primary_model: str = "openai/gpt-oss-120b"
-    copilot_fallback_model: str = "meta-llama/llama-3.3-70b-instruct"
+    # Free tiers only — this deployment runs on a free OpenRouter key, so a
+    # paid slug here doesn't degrade gracefully, it 403s ("Key limit exceeded")
+    # on every single message.
+    #
+    # OpenRouter retires individual ":free" tiers without notice, and when it
+    # does the failure is a 404 on BOTH primary and fallback, so the drawer only
+    # ever prints "Stream failed: NotFoundError". If that happens, re-check the
+    # live list rather than guessing a slug:
+    #
+    #     curl -s https://openrouter.ai/api/v1/models \
+    #       | jq -r '.data[] | select(.id|endswith(":free"))
+    #                | select(.supported_parameters|index("tools"))
+    #                | "\(.context_length)\t\(.id)"' | sort -rn
+    #
+    # The `tools` filter is not optional — Phase 33's agent loop needs function
+    # calling, so a free model without it silently breaks write tools while
+    # plain chat keeps working.
+    #
+    # Primary and fallback are deliberately different vendors so one provider
+    # outage doesn't take out both. Two free models that pass the smoke test but
+    # are NOT usable here: nemotron-3-super-120b leaks its reasoning trace into
+    # `content` (visible chain-of-thought in the drawer) and gpt-oss-20b returns
+    # empty `content`.
+    copilot_primary_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
+    copilot_fallback_model: str = "google/gemma-4-31b-it:free"
     copilot_request_timeout_seconds: int = 60
     copilot_max_completion_tokens: int = 1024
     # Phase 33-09: when True the chat endpoint streams ReAct-loop events
@@ -91,7 +108,13 @@ class Settings(BaseSettings):
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is
     # immutable without a full re-embed — see RESEARCH D3 / Pitfall 3.
-    corpus_embedding_primary: str = "jina"            # 'jina' | 'local'
+    #
+    # Default must match the provider the shipped corpus was embedded with:
+    # both retrieval CTEs filter chunks on provider, so a deploy that leaves
+    # this unset with a 'jina' default read zero rows from BOTH halves of
+    # hybrid retrieval — no citations, no error. Every shipped chunk is
+    # local-bge, so 'local' is the only default that works out of the box.
+    corpus_embedding_primary: str = "local"           # 'jina' | 'local'
     corpus_embedding_fallback: str = "local"
     corpus_embedding_dimensions: int = 1024           # locked at 1024
     corpus_chunk_size: int = 1024
