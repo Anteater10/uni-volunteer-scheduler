@@ -32,9 +32,8 @@ held, and the session simply sits over its new number until someone cancels.
 
 Slots are added, edited, and deleted **one at a time** from the event page. Because each slot
 carries its own date, time, and location, one event can span several days in different rooms. There
-is no working bulk generator today — the app has an unused recurrence facility behind the scenes,
-but no screen reaches it and it cannot produce orientation slots, so building a multi-session event
-means adding each session by hand.
+is no bulk generator in the UI — the app carries a recurrence facility behind the scenes, but no
+screen reaches it, so building a multi-session event means adding each session by hand.
 
 **Slots in an event whose quarter has ended or been archived cannot be added, edited, or deleted.**
 The server refuses with "*[quarter name]* has ended and is read-only," exactly as it does for the

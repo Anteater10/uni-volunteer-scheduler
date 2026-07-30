@@ -22,11 +22,18 @@ it in one go.
 downloaded file too. It isn't on the volunteer's schedule yet, so putting it on their calendar would
 be misleading. If every session was waitlisted, the calendar controls don't appear at all.
 
-**The in-app buttons live on the signup success screen and nowhere else.** The confirmation page a
-volunteer reaches from their magic link does not currently offer a calendar button — it shows the
-confirmation banner and their manage list, and neither carries one. A volunteer who dismissed the
-success screen and wants their sessions on a calendar has to use the file attached to their
-confirmation email.
+**The event page itself also offers calendar buttons, to anyone viewing it.** Below an event's
+details on the public browse side sit an **Add to Google Calendar** button and a **Download .ics**
+button. They aren't tied to any signup: they export whichever sessions are ticked in the signup form
+at that moment, and with nothing ticked they fall back to the event's orientation session or its
+first session. Handy for a volunteer who wants a session on their calendar before or after signing
+up — but it exports what's ticked, not what they booked.
+
+**The magic-link pages carry no calendar buttons.** The confirmation page a volunteer reaches from
+their emailed link shows the confirmation banner and their manage list, and neither offers a
+calendar control. A volunteer who dismissed the success screen and wants everything they booked on
+their calendar in one go has to use the file attached to their confirmation email, or re-tick their
+sessions on the event page and download from there.
 
 The calendar entry covers the **slot** the volunteer signed up for — the specific session with its
 own date, start and end time, and location. Where the session doesn't carry its own location, the

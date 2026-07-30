@@ -3,6 +3,13 @@
 **Admin** — a staff member with full access: everything an organizer can do, plus user management,
 site settings, exports, audit logs, orientation credits, and quarters.
 
+**Archived quarter** — a quarter tucked away after its end date, shown with an **Archived** chip. A
+nightly sweep archives any quarter whose end date has passed, and an admin can also archive one by
+hand once it has ended. Archiving is a tidy-up, not the moment anything locks: the quarter already
+turned read-only when its end date passed, hours earlier. **Restore** un-archives it, but an ended
+quarter will be re-archived by the next nightly sweep unless its dates change. See the quarters
+document.
+
 **Attended** — a signup status meaning the volunteer was present and the organizer has closed out
 the session. It is settled: no per-volunteer action changes it, and the only way back is **Reopen
 event**, which undoes the whole event at once and only works while the event's quarter is still open.
@@ -109,6 +116,12 @@ capacity, and a type (orientation or period). Slots are what volunteers actually
 **Venue code** — a four-digit code tied to an event, carried in the check-in QR link as `?v=CODE`.
 Required on every public check-in request so a stranger with a guessed email cannot read or alter
 someone's schedule.
+
+**Viewing quarter** — the quarter the admin Overview and Events list are currently scoped to, badged
+**Viewing** in the quarters table. Set it with **View this quarter** there or from the Quarter
+dropdown on the Events page; the choice is remembered in that browser. The Events page also offers
+**All quarters** to stop scoping. Operations never follows this selection — it always shows the live
+schedule.
 
 **Volunteer** — a UCSB student who mentors in classrooms. Identified only by email address; no
 account, no password.
