@@ -23,8 +23,13 @@ for a volunteer to log into.
 
 **There is no per-user timezone.** Everything is Pacific Time, matching the single venue.
 
-**Attended, no-show, and cancelled cannot be undone.** Once a session is closed out those statuses
-are final. A mis-tapped check-in *can* be undone, but only before close-out.
+**There is no per-person undo of attendance.** Cancelled is final, full stop. Attended and no-show
+can be reversed, but only by **reopening the whole event** — there is no way to walk back one
+individual's status, and no way to reopen a single slot. A mis-tapped check-in *can* be undone per
+person, but only before close-out.
+
+**There is no way to revoke orientation credit by reopening an event.** Credit is permanent by
+design; corrections go through Admin → Orientation Credits.
 
 **Calendar entries don't sync.** A volunteer can add a session to their calendar, but if the session
 later moves, their calendar entry won't update. Use a broadcast to tell them.

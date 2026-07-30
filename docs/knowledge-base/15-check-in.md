@@ -23,7 +23,9 @@ four-digit venue code — see the venue codes document for why that matters.
 **A mis-tap can be undone.** Tapping a checked-in volunteer on the roster reverts them to
 confirmed, and the arrival time is cleared so it can't linger and affect anything downstream. Undo
 only works on a checked-in signup: once a session has been closed out and someone is marked
-attended or no-show, that's final and undo won't move it.
+attended or no-show, undo won't move it. The way back from there is **Reopen event**, which undoes
+the close-out for the whole event rather than one person — see
+[17-ending-a-slot.md](17-ending-a-slot.md).
 
 **Check-in does not grant orientation credit.** Credit is granted when the orientation slot is
 *ended*, not when people are tapped in. If an orientation ran and nobody has credit for it, the
