@@ -64,17 +64,23 @@ def _event_payload(day: str, module_slug: str) -> dict:
 def test_event_on_last_day_of_quarter_gets_final_week(
     client, db_session, organizer_headers, module_template
 ):
+    # Sweep remediation task 5 (ended quarters are read-only): dates are
+    # relative to real today — end_date == today keeps the quarter writable
+    # (is_quarter_read_only only trips once end_date < today) regardless of
+    # when this suite runs. Span (76 days) preserves the original Mar 30 -
+    # Jun 14 2026 range so the week 11 assertion still holds.
+    today = date.today()
     spring = _seed_quarter(
         db_session,
         season=models.Quarter.SPRING,
         year=2026,
-        start_date=date(2026, 3, 30),
-        end_date=date(2026, 6, 14),
+        start_date=today - timedelta(days=76),
+        end_date=today,
     )
 
     resp = client.post(
         "/api/v1/events/",
-        json=_event_payload("2026-06-14", module_template.slug),
+        json=_event_payload(today.isoformat(), module_template.slug),
         headers=organizer_headers,
     )
     assert resp.status_code == 200, resp.text

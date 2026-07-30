@@ -125,6 +125,8 @@ def create_event(
             ),
         )
     season_value, year, week_number, quarter_id = derived
+    quarter_row = db.get(models.AcademicQuarter, quarter_id)
+    quarter_service.ensure_quarter_writable(quarter_row)
     quarter = models.Quarter(season_value)
 
     event = models.Event(
@@ -236,6 +238,7 @@ def update_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     data = event_in.model_dump(exclude_unset=True)
     for key in ("start_date", "end_date", "signup_open_at", "signup_close_at"):
@@ -269,6 +272,10 @@ def update_event(
             )
         season_value, data["year"], data["week_number"], data["quarter_id"] = derived
         data["quarter"] = models.Quarter(season_value)
+        # Moving an event must not plant new history in an ended quarter —
+        # the target quarter is gated the same as create_event's.
+        target_quarter = db.get(models.AcademicQuarter, data["quarter_id"])
+        quarter_service.ensure_quarter_writable(target_quarter)
 
     for field, value in data.items():
         setattr(event, field, value)
@@ -294,6 +301,7 @@ def delete_event(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     db.delete(event)
     db.commit()
@@ -319,6 +327,7 @@ def generate_slots(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     start_time = _normalize_dt(recurrence.start_time)
     end_time = _normalize_dt(recurrence.end_time)
@@ -422,6 +431,7 @@ def create_custom_question(
         raise HTTPException(status_code=404, detail="Event not found")
 
     ensure_event_staff_access(event, current_user)
+    quarter_service.ensure_event_quarter_writable(event)
 
     question = models.CustomQuestion(
         event_id=event.id,
@@ -456,6 +466,7 @@ def update_custom_question(
 
     # Ensure caller owns the event or is admin
     ensure_event_staff_access(question.event, current_user)
+    quarter_service.ensure_event_quarter_writable(question.event)
 
     data = updates.model_dump(exclude_unset=True)
     for field, value in data.items():
@@ -484,6 +495,7 @@ def delete_custom_question(
         raise HTTPException(status_code=404, detail="Question not found")
 
     ensure_event_staff_access(question.event, current_user)
+    quarter_service.ensure_event_quarter_writable(question.event)
 
     db.delete(question)
     db.commit()

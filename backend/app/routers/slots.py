@@ -10,6 +10,7 @@ from .. import models, schemas
 from ..celery_app import send_email_notification
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
+from ..services import quarter_service
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
@@ -55,6 +56,7 @@ def create_slot(
 
     # ✅ ownership check
     ensure_event_staff_access(event, actor)
+    quarter_service.ensure_event_quarter_writable(event)
 
     start_time = _normalize_dt(slot_in.start_time)
     end_time = _normalize_dt(slot_in.end_time)
@@ -99,6 +101,7 @@ def update_slot(
 
     # ✅ ownership check
     ensure_event_staff_access(event, actor)
+    quarter_service.ensure_event_quarter_writable(event)
 
     data = slot_in.model_dump(exclude_unset=True)
     if "start_time" in data and data["start_time"] is not None:
@@ -182,6 +185,7 @@ def delete_slot(
 
     # ✅ ownership check
     ensure_event_staff_access(event, actor)
+    quarter_service.ensure_event_quarter_writable(event)
 
     existing_signups = (
         db.query(models.Signup)

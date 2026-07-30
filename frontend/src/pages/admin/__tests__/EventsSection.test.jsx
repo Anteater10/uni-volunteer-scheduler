@@ -733,4 +733,32 @@ describe("EventsSection — ended quarter history mode", () => {
     expect(await screen.findByText("Old and completed")).toBeInTheDocument();
     expect(screen.queryByText("Old but never closed out")).not.toBeInTheDocument();
   });
+
+  // Sweep remediation task 5: ended quarters are read-only history — the
+  // server now rejects update/delete against them (422 QUARTER_READONLY),
+  // so the row actions that would trigger those must not even render.
+  // Duplicate is exempt: it always creates the copy in a *target* quarter
+  // (never the source's), so it stays available from history too.
+  it("hides Edit and Delete row actions but keeps Duplicate available", async () => {
+    renderInEndedQuarter();
+    // Await both rows: the quarter list itself loads async (Quarter select
+    // provider), so the events query briefly refetches under a new query
+    // key once the selected quarter resolves — settle past that first.
+    await screen.findByText("Old and completed");
+    await screen.findByText("Old but never closed out");
+
+    const rows = screen.getAllByRole("row").slice(1); // drop the header row
+    expect(rows.length).toBeGreaterThan(0);
+    rows.forEach((row) => {
+      expect(
+        within(row).queryByRole("button", { name: /^Edit$/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(row).queryByRole("button", { name: /^Delete$/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(row).getByRole("button", { name: /^Duplicate$/i }),
+      ).toBeInTheDocument();
+    });
+  });
 });
