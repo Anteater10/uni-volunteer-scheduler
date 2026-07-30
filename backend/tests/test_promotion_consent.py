@@ -180,10 +180,11 @@ class TestSiblingFlipScope:
     def test_batch_confirm_does_not_flip_promotion_pending_sibling(self, db_session):
         signup_a, signup_b, batch_raw, _promo = self._batch_with_promotion(db_session)
 
-        result, confirmed = consume_token(db_session, batch_raw)
+        result, confirmed, confirmed_count = consume_token(db_session, batch_raw)
 
         assert result == ConsumeResult.ok
         assert confirmed.id == signup_a.id
+        assert confirmed_count == 1
         assert signup_a.status == models.SignupStatus.confirmed
         assert signup_b.status == models.SignupStatus.pending, (
             "the batch link must never confirm a seat the volunteer was "
@@ -193,10 +194,11 @@ class TestSiblingFlipScope:
     def test_promotion_token_confirms_exactly_its_own_signup(self, db_session):
         signup_a, signup_b, _batch_raw, promo = self._batch_with_promotion(db_session)
 
-        result, confirmed = consume_token(db_session, promo.raw_token)
+        result, confirmed, confirmed_count = consume_token(db_session, promo.raw_token)
 
         assert result == ConsumeResult.ok
         assert confirmed.id == signup_b.id
+        assert confirmed_count == 1
         assert signup_b.status == models.SignupStatus.confirmed
         assert signup_a.status == models.SignupStatus.pending, (
             "confirming a promoted seat must not sweep up unrelated pending "
@@ -223,14 +225,20 @@ class TestSiblingFlipScope:
         promo = mark_promoted_pending(db_session, signup)
         db_session.flush()
 
-        result, _ = consume_token(db_session, batch_raw)
+        result, _, confirmed_count = consume_token(db_session, batch_raw)
 
         assert result == ConsumeResult.ok
+        assert confirmed_count == 0, (
+            "the batch token was scoped away from the anchor entirely — "
+            "nothing was actually confirmed, and callers must not report "
+            "success for this (2026-07-29 sweep remediation, Finding #1)"
+        )
         assert signup.status == models.SignupStatus.pending
         # ...and the promotion link still works afterwards.
-        result2, confirmed = consume_token(db_session, promo.raw_token)
+        result2, confirmed, confirmed_count2 = consume_token(db_session, promo.raw_token)
         assert result2 == ConsumeResult.ok
         assert confirmed.id == signup.id
+        assert confirmed_count2 == 1
         assert signup.status == models.SignupStatus.confirmed
 
     def test_batch_confirm_still_flips_ordinary_pending_siblings(self, db_session):
@@ -263,9 +271,10 @@ class TestSiblingFlipScope:
             ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
         )
 
-        result, _ = consume_token(db_session, batch_raw)
+        result, _, confirmed_count = consume_token(db_session, batch_raw)
 
         assert result == ConsumeResult.ok
+        assert confirmed_count == 2
         assert signup_a.status == models.SignupStatus.confirmed
         assert signup_b.status == models.SignupStatus.confirmed
 

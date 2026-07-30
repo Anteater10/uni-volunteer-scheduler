@@ -14,6 +14,13 @@
 //   the component itself, but the confirm response does not currently return
 //   event + slot, so the calendar button stays gated until the backend
 //   payload is extended (out of scope per D-14 — api.js read-only).
+//
+// 2026-07-29 sweep remediation, Finding #1: the confirm endpoint can resolve
+// (HTTP 200) with `confirmed: false` — the token was a volunteer's ORIGINAL
+// batch link, but their seat came from a waitlist promotion, so only the
+// promotion link's own token can confirm it. This used to be indistinguishable
+// from a real success (the resolved value was ignored entirely), so a
+// promoted volunteer was told their spot was confirmed when it was not.
 
 import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
@@ -21,12 +28,13 @@ import api from "../../lib/api";
 import { Button, Skeleton, ErrorState } from "../../components/ui";
 import ManageSignupsPage from "./ManageSignupsPage";
 
-// State machine: confirming | confirmed | error
+// State machine: confirming | confirmed | not_confirmed | error
 export default function ConfirmSignupPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = searchParams.get("token");
   const [state, setState] = useState("confirming");
+  const [notConfirmedMessage, setNotConfirmedMessage] = useState("");
 
   useEffect(() => {
     if (!token) {
@@ -35,7 +43,17 @@ export default function ConfirmSignupPage() {
     }
     api.public
       .confirmSignup(token)
-      .then(() => setState("confirmed"))
+      .then((result) => {
+        if (result && result.confirmed === false) {
+          setNotConfirmedMessage(
+            result.message ||
+              "This link didn't confirm a seat. Use the confirm link in your promotion email instead."
+          );
+          setState("not_confirmed");
+        } else {
+          setState("confirmed");
+        }
+      })
       .catch(() => setState("error"));
   }, [token]);
 
@@ -62,6 +80,24 @@ export default function ConfirmSignupPage() {
       <ErrorState
         title="This link has expired"
         body="Magic links are good for 14 days. Open the event again and re-submit your signup to get a new one."
+        action={
+          <Button variant="primary" onClick={() => navigate("/volunteer")}>
+            Back to events
+          </Button>
+        }
+      />
+    );
+  }
+
+  if (state === "not_confirmed") {
+    // The token was legitimately consumed but scoped away from confirming
+    // anything (promotion-pending seat, original batch link) — do not
+    // render the success banner or the manage view for a seat that isn't
+    // actually confirmed.
+    return (
+      <ErrorState
+        title="Nothing to confirm"
+        body={notConfirmedMessage}
         action={
           <Button variant="primary" onClick={() => navigate("/volunteer")}>
             Back to events

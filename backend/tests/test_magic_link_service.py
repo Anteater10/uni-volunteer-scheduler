@@ -48,8 +48,9 @@ def test_issue_token_returns_raw_stores_hash(db_session):
 def test_consume_token_ok_flips_to_confirmed(db_session):
     signup, event, slot = _make_pending_signup(db_session, "consume1@example.com")
     raw = issue_token(db_session, signup, signup.volunteer.email)
-    result, returned_signup = consume_token(db_session, raw)
+    result, returned_signup, confirmed_count = consume_token(db_session, raw)
     assert result == ConsumeResult.ok
+    assert confirmed_count == 1
     assert returned_signup.status == SignupStatus.confirmed
 
 
@@ -57,8 +58,9 @@ def test_consume_token_used_on_second_call(db_session):
     signup, event, slot = _make_pending_signup(db_session, "consume2@example.com")
     raw = issue_token(db_session, signup, signup.volunteer.email)
     consume_token(db_session, raw)
-    result, returned_signup = consume_token(db_session, raw)
+    result, returned_signup, confirmed_count = consume_token(db_session, raw)
     assert result == ConsumeResult.used
+    assert confirmed_count == 0
     assert returned_signup is None
 
 
@@ -69,14 +71,16 @@ def test_consume_token_expired(db_session):
     row = db_session.query(MagicLinkToken).first()
     row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     db_session.flush()
-    result, returned_signup = consume_token(db_session, raw)
+    result, returned_signup, confirmed_count = consume_token(db_session, raw)
     assert result == ConsumeResult.expired
+    assert confirmed_count == 0
     assert returned_signup is None
 
 
 def test_consume_token_not_found(db_session):
-    result, returned_signup = consume_token(db_session, "nonexistent_token")
+    result, returned_signup, confirmed_count = consume_token(db_session, "nonexistent_token")
     assert result == ConsumeResult.not_found
+    assert confirmed_count == 0
     assert returned_signup is None
 
 
@@ -85,8 +89,9 @@ def test_consume_token_cancelled_signup(db_session):
     raw = issue_token(db_session, signup, signup.volunteer.email)
     signup.status = SignupStatus.cancelled
     db_session.flush()
-    result, returned_signup = consume_token(db_session, raw)
+    result, returned_signup, confirmed_count = consume_token(db_session, raw)
     assert result == ConsumeResult.not_found
+    assert confirmed_count == 0
     assert returned_signup is None
 
 

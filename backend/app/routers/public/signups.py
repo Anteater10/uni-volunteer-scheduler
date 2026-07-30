@@ -56,12 +56,29 @@ def confirm_signup(
 
     Idempotent: second call with a used token returns confirmed=True with a note.
     Error cases (expired/unknown): return 400 with clear message.
+
+    2026-07-29 sweep remediation, Finding #1: a token can be legitimately
+    burned (``ConsumeResult.ok``) while confirming zero signups — the volunteer's
+    only signup was promotion-pending, and this is the ORIGINAL batch link,
+    not the promotion link, so consume_token's consent scoping deliberately
+    left it pending. That must not be reported as success.
     """
-    result, signup = consume_token(db, token)
+    result, signup, confirmed_count = consume_token(db, token)
     if result == ConsumeResult.ok:
-        # Count how many signups were confirmed (anchor + siblings)
         db.commit()
-        return {"confirmed": True, "signup_count": 1, "idempotent": False}
+        if confirmed_count == 0:
+            return {
+                "confirmed": False,
+                "signup_count": 0,
+                "idempotent": False,
+                "reason": "promotion_pending",
+                "message": (
+                    "This link didn't confirm a seat. Your spot came from a "
+                    "waitlist promotion — use the confirm link in that email "
+                    "instead."
+                ),
+            }
+        return {"confirmed": True, "signup_count": confirmed_count, "idempotent": False}
     if result == ConsumeResult.used:
         return {"confirmed": True, "signup_count": 0, "idempotent": True}
     # expired | not_found → 400 with clear message

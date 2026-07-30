@@ -7,8 +7,13 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from app.magic_link_service import issue_token, _hash_token
-from app.models import MagicLinkToken, SignupStatus
+from app.magic_link_service import (
+    SIGNUP_CONFIRM_TTL_MINUTES,
+    issue_token,
+    _hash_token,
+)
+from app.models import MagicLinkPurpose, MagicLinkToken, SignupStatus
+from app.signup_service import mark_promoted_pending
 from tests.fixtures.helpers import make_event_with_slot, make_user, _bind_factories
 from tests.fixtures.factories import SignupFactory, VolunteerFactory
 
@@ -77,6 +82,40 @@ def test_consume_unknown_token_redirects_not_found(client, db_session):
     resp = client.get("/api/v1/auth/magic/totally_unknown_token_value", follow_redirects=False)
     assert resp.status_code == 302
     assert "reason=not_found" in resp.headers["location"]
+
+
+def test_consume_original_batch_link_after_promotion_redirects_not_confirmed(
+    client, db_session
+):
+    """2026-07-29 sweep remediation, Finding #1: the GET redirect endpoint
+    must not send a volunteer to /signup/confirmed when their only signup is
+    promotion-pending and this is the ORIGINAL batch link, not the
+    promotion link — consume_token legitimately burns the token but
+    confirms nothing."""
+    signup, event, slot, volunteer = _make_pending_signup(
+        db_session, "promoted-router@example.com"
+    )
+    signup.status = SignupStatus.waitlisted
+    db_session.flush()
+    batch_raw = issue_token(
+        db_session,
+        signup=signup,
+        email=volunteer.email,
+        purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+        volunteer_id=volunteer.id,
+        ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
+    )
+    mark_promoted_pending(db_session, signup)
+    db_session.commit()
+
+    resp = client.get(f"/api/v1/auth/magic/{batch_raw}", follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert "reason=promotion_pending" in resp.headers["location"]
+    assert "/signup/confirmed" not in resp.headers["location"]
+    db_session.expire_all()
+    db_session.refresh(signup)
+    assert signup.status == SignupStatus.pending
 
 
 def test_resend_returns_200_on_valid_request(client, db_session, monkeypatch):

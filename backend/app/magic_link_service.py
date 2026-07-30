@@ -154,8 +154,8 @@ def _is_promotion_pending(db: Session, signup: Signup) -> bool:
     )
 
 
-def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup]]:
-    """Atomically consume a token, returning (result, signup).
+def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup], int]:
+    """Atomically consume a token, returning (result, signup, confirmed_count).
 
     For SIGNUP_CONFIRM purpose with volunteer_id set: batch-flips all pending
     signups for that volunteer in the same event as the anchor signup.
@@ -170,18 +170,28 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
     email is the only message that names the seat being offered, so silently
     confirming here would be exactly the consent violation this scoping
     exists to prevent.
+
+    ``confirmed_count`` (2026-07-29 sweep remediation, Finding #1) is how
+    many signups are in the `confirmed` status because of this call: 1 for
+    the anchor if it ends this call confirmed (whether flipped just now or
+    already confirmed by an earlier action), plus however many batch
+    siblings this call newly flipped. It is 0 on every non-ok result.
+    ``ConsumeResult.ok`` with ``confirmed_count == 0`` means the token was
+    legitimately burned but scoped away from confirming anything — callers
+    MUST NOT report success in that case; it is distinct from
+    ``ConsumeResult.used``, which means the token itself was already spent.
     """
     token_hash = _hash_token(raw)
     row = db.query(MagicLinkToken).filter_by(token_hash=token_hash).first()
     if row is None:
-        return ConsumeResult.not_found, None
+        return ConsumeResult.not_found, None, 0
     if row.consumed_at is not None:
-        return ConsumeResult.used, None
+        return ConsumeResult.used, None, 0
     if row.expires_at < datetime.now(timezone.utc):
-        return ConsumeResult.expired, None
+        return ConsumeResult.expired, None, 0
     signup = db.query(Signup).filter_by(id=row.signup_id).first()
     if signup is None or signup.status == SignupStatus.cancelled:
-        return ConsumeResult.not_found, None
+        return ConsumeResult.not_found, None, 0
     # Atomic update — if another request beat us, updated == 0
     updated = (
         db.query(MagicLinkToken)
@@ -189,7 +199,7 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
         .update({"consumed_at": datetime.now(timezone.utc)}, synchronize_session=False)
     )
     if updated != 1:
-        return ConsumeResult.used, None
+        return ConsumeResult.used, None, 0
     if signup.status == SignupStatus.pending and (
         row.purpose == MagicLinkPurpose.PROMOTION_CONFIRM
         or not _is_promotion_pending(db, signup)
@@ -220,7 +230,10 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
                 sibling_count += 1
             db.flush()
 
-    return ConsumeResult.ok, signup
+    confirmed_count = sibling_count + (
+        1 if signup.status == SignupStatus.confirmed else 0
+    )
+    return ConsumeResult.ok, signup, confirmed_count
 
 
 def _hour_epoch() -> int:

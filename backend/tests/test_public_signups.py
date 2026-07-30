@@ -22,7 +22,20 @@ from datetime import datetime, timezone, timedelta, date as date_type
 
 import pytest
 
-from app.models import AuditLog, Event, MagicLinkToken, Quarter, Signup, SignupStatus, Slot, SlotType, Volunteer
+from app.magic_link_service import SIGNUP_CONFIRM_TTL_MINUTES, issue_token
+from app.models import (
+    AuditLog,
+    Event,
+    MagicLinkPurpose,
+    MagicLinkToken,
+    Quarter,
+    Signup,
+    SignupStatus,
+    Slot,
+    SlotType,
+    Volunteer,
+)
+from app.signup_service import mark_promoted_pending
 from tests.fixtures.helpers import make_user
 
 
@@ -319,6 +332,64 @@ class TestConfirmSignup:
     def test_short_token_returns_422(self, client, db_session):
         resp = client.post("/api/v1/public/signups/confirm", params={"token": "short"})
         assert resp.status_code == 422, resp.text
+
+
+class TestConfirmSignupPromotionScoping:
+    """2026-07-29 sweep remediation, Finding #1: consume_token can legitimately
+    burn a token while confirming zero signups (a volunteer's only signup was
+    waitlisted then promoted, and they click the ORIGINAL batch confirm link
+    instead of the promotion link). The router must not report success."""
+
+    def test_original_batch_link_reports_not_confirmed_after_promotion(
+        self, client, db_session
+    ):
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
+        volunteer = Volunteer(
+            id=uuid.uuid4(),
+            email="promoted-scoping@example.com",
+            first_name="Prom",
+            last_name="Oted",
+        )
+        db_session.add(volunteer)
+        db_session.flush()
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=volunteer.id,
+            slot_id=slot.id,
+            status=SignupStatus.waitlisted,
+        )
+        db_session.add(signup)
+        db_session.flush()
+        # The original batch link the volunteer received before being
+        # promoted off the waitlist.
+        batch_raw = issue_token(
+            db_session,
+            signup=signup,
+            email=volunteer.email,
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=volunteer.id,
+            ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
+        )
+        mark_promoted_pending(db_session, signup)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups/confirm", params={"token": batch_raw}
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["confirmed"] is False, (
+            "the original batch link must never report success for a seat "
+            "that only a promotion link can confirm"
+        )
+        assert body["signup_count"] == 0
+        assert body["idempotent"] is False, (
+            "this is a distinct zero-flip case, not a genuine used-token replay"
+        )
+        db_session.expire_all()
+        assert db_session.get(Signup, signup.id).status == SignupStatus.pending
 
 
 class TestManageSignups:
