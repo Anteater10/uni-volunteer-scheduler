@@ -426,3 +426,35 @@ def test_swap_admin_of_cancelled_signup_is_refused(client, db_session):
     untouched = db_session.get(models.Signup, signup.id)
     assert untouched.status == models.SignupStatus.cancelled
     assert untouched.slot_id == slot_a.id
+
+
+def test_swap_admin_of_attended_signup_succeeds(client, db_session):
+    """Deliberate asymmetry (2026-07-29 sweep, hours-inflation fix): a
+    participant swap of an attended signup is refused (self-serve credited-
+    hours inflation — see swap_service.py), but staff retain the ability to
+    swap one, e.g. to correct a mis-resolved slot."""
+    admin = _make_admin(db_session, email="adm_sw6@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    slot_b = SlotFactory(
+        event=event,
+        start_time=slot_a.start_time + timedelta(hours=4),
+        end_time=slot_a.end_time + timedelta(hours=4),
+        capacity=2,
+        current_count=0,
+    )
+    vol = VolunteerFactory(email="v_sw6@example.com")
+    signup = SignupFactory(
+        volunteer=vol, slot=slot_a, status=models.SignupStatus.attended,
+    )
+    slot_a.current_count = 1
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/swap",
+        headers=auth_headers(client, admin),
+        json={"target_slot_id": str(slot_b.id)},
+    )
+    assert rc.status_code == 200, rc.text
+    assert rc.json()["status"] == "attended"
+    assert rc.json()["slot_id"] == str(slot_b.id)
