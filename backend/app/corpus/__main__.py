@@ -2,7 +2,27 @@
 
 Canonical invocation (inside the compose network)::
 
-    docker compose run --rm backend python -m app.corpus.ingest --source docs --commit
+    docker run --rm --network uni-event-scheduler_default --env-file backend/.env \
+      -v $PWD/backend:/app -v $PWD/docs:/repo/docs:ro -w /app \
+      uni-event-scheduler-backend \
+      python -m app.corpus.ingest --source /repo --commit --rebuild
+    # then, once, to (re)create the vector index:
+    #   ... python -m app.corpus.ingest --build-index
+
+``--source`` must be the **repo root**, not ``docs/``: :data:`SOURCE_GLOBS_V1`
+matches ``docs/knowledge-base/**/*.md`` relative to the root you pass, so a
+root of ``docs/`` matches nothing. The walker reports ``files_scanned: 0`` and
+``status: "succeeded"`` in that case, which reads as a successful no-op — so
+always check ``files_ingested`` rather than the exit code.
+
+``docker compose run --rm backend`` cannot ingest at all: the ``backend``
+service declares no volumes, so ``docs/`` is not present in the image. Hence
+the explicit ``docker run`` with the repo mounted above.
+
+Prefer ``--rebuild`` when re-ingesting changed files. Without it,
+``_persist_document`` inserts a fresh document/chunk set while the previous
+rows for that ``source_path`` remain, and retrieval has no latest-per-path
+filter — so stale and corrected text stay retrievable side by side.
 
 Two module paths reach the same ``main()`` function:
 
