@@ -15,6 +15,10 @@ RUN npm ci
 COPY . .
 ARG VITE_API_URL=http://localhost:8000
 ENV VITE_API_URL=$VITE_API_URL
+# Copilot surfaces (FAB, admin nav, feedback page) are hidden unless this is
+# baked in as "true" — mirrors the backend's COPILOT_ENABLED feature flag.
+ARG VITE_COPILOT_ENABLED=false
+ENV VITE_COPILOT_ENABLED=$VITE_COPILOT_ENABLED
 RUN npm run build
 
 # ---- serve stage ----

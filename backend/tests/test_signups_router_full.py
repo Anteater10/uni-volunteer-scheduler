@@ -350,3 +350,46 @@ def test_cancel_via_signups_sends_waitlist_promote_email(client, db_session, mon
     assert any(kw["signup_id"] == str(b.id) for kw in promoted_emails), (
         f"promoted volunteer got no waitlist promotion email (sent: {promoted_emails})"
     )
+
+
+def test_swap_admin_of_waitlisted_signup_lands_pending_with_email(
+    client, db_session, monkeypatch
+):
+    """2026-07-29 sweep, Task 8: a staff swap of a waitlisted signup is not
+    volunteer intent — it must land 'pending' with its own promotion confirm
+    email, same as the admin move path (Task 4), not silently 'confirmed'."""
+    promoted_emails = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: promoted_emails.append(kw),
+    )
+    admin = _make_admin(db_session, email="adm_sw4@example.com")
+    event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    slot_b = SlotFactory(
+        event=event,
+        start_time=slot_a.start_time + timedelta(hours=4),
+        end_time=slot_a.end_time + timedelta(hours=4),
+        capacity=2,
+        current_count=0,
+    )
+    vol = VolunteerFactory(email="v_sw4@example.com")
+    signup = SignupFactory(
+        volunteer=vol,
+        slot=slot_a,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    db_session.commit()
+
+    rc = client.post(
+        f"/api/v1/signups/{signup.id}/swap",
+        headers=auth_headers(client, admin),
+        json={"target_slot_id": str(slot_b.id)},
+    )
+    assert rc.status_code == 200, rc.text
+    assert rc.json()["status"] == "pending"
+    assert rc.json()["slot_id"] == str(slot_b.id)
+    assert any(kw["signup_id"] == str(signup.id) for kw in promoted_emails), (
+        f"promoted signup got no promotion confirm email (sent: {promoted_emails})"
+    )

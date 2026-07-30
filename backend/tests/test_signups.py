@@ -198,6 +198,61 @@ def test_admin_cancel_enqueues_cancellation_email(client, db_session, monkeypatc
     assert "cancellation" in kinds
 
 
+def test_admin_cancel_waitlisted_sends_waitlist_copy(client, db_session, monkeypatch):
+    """Cancelling a signup that was only ever waitlisted (never held a seat)
+    must send waitlist-appropriate copy, not the standard 'your signup has
+    been cancelled' text."""
+    admin = _make_admin(db_session, email="admin_s9@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    holder = VolunteerFactory(email="v_s9_holder@example.com")
+    _seed_confirmed(db_session, slot, holder)  # fills the only seat
+    vol = VolunteerFactory(email="v_s9@example.com")
+    signup = _seed_waitlisted(db_session, slot, vol)
+    db_session.commit()
+
+    calls = []
+    monkeypatch.setattr(
+        send_email_notification, "delay",
+        lambda *a, **k: calls.append(k),
+    )
+
+    headers = auth_headers(client, admin)
+    rc = client.post(f"/api/v1/admin/signups/{signup.id}/cancel", headers=headers)
+    assert rc.status_code == 200, rc.text
+
+    kinds = [c.get("kind") for c in calls]
+    assert "cancellation_waitlisted" in kinds
+    assert "cancellation" not in kinds
+
+
+def test_staff_cancel_waitlisted_sends_waitlist_copy(client, db_session, monkeypatch):
+    """Same fix, via the staff /signups/{id}/cancel route (routers/signups.py),
+    which has its own independent cancellation-email dispatch."""
+    admin = _make_admin(db_session, email="admin_s10@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    holder = VolunteerFactory(email="v_s10_holder@example.com")
+    _seed_confirmed(db_session, slot, holder)
+    vol = VolunteerFactory(email="v_s10@example.com")
+    signup = _seed_waitlisted(db_session, slot, vol)
+    db_session.commit()
+
+    calls = []
+    monkeypatch.setattr(
+        send_email_notification, "delay",
+        lambda *a, **k: calls.append(k),
+    )
+
+    headers = auth_headers(client, admin)
+    rc = client.post(f"/api/v1/signups/{signup.id}/cancel", headers=headers)
+    assert rc.status_code == 200, rc.text
+
+    kinds = [c.get("kind") for c in calls]
+    assert "cancellation_waitlisted" in kinds
+    assert "cancellation" not in kinds
+
+
 def test_cancel_via_signups_router_requires_admin_or_organizer(client, db_session):
     """POST /signups/{id}/cancel returns 403 for participant-role user."""
     participant = make_user(db_session, email="p_cancel@example.com")

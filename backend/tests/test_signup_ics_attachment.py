@@ -109,6 +109,24 @@ class TestBuildSignupIcs:
         with pytest.raises(ValueError):
             build_signup_ics(event, [])
 
+    def test_description_crlf_normalized_no_raw_cr_in_value(self, db_session):
+        """A description typed with CRLF or bare CR must not leak a raw CR
+        byte into the escaped DESCRIPTION value — mirrors the frontend's
+        calendar.js normalization (CRLF/bare-CR -> \\n) done before RFC 5545
+        escaping, so the exported .ics isn't corrupted by a stray CR that
+        isn't part of the file's own CRLF line terminators.
+        """
+        event, slots = _event_with_slots(db_session, n=1)
+        event.description = "Line one\r\nLine two\rLine three"
+        ics = build_signup_ics(event, slots)
+
+        unfolded = _unfold(ics)
+        desc_line = next(
+            line for line in unfolded.split("\r\n") if line.startswith("DESCRIPTION:")
+        )
+        assert "\r" not in desc_line
+        assert "Line one\\nLine two\\nLine three" in desc_line
+
 
 class TestConfirmationEmailAttachment:
     def _capture_send(self, monkeypatch):

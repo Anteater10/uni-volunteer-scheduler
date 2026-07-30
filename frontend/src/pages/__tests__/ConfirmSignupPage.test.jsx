@@ -158,6 +158,54 @@ describe("ConfirmSignupPage", () => {
     });
   });
 
+  it("5. zero-flip promotion-scoped token — shows 'nothing to confirm', not success", async () => {
+    // 2026-07-29 sweep remediation, Finding #1: the confirm endpoint
+    // resolves (200) with confirmed:false when the token was legitimately
+    // burned but scoped away from confirming anything (a promoted seat's
+    // ORIGINAL batch link). Must not show the success banner/manage view.
+    api.public.confirmSignup.mockResolvedValue({
+      confirmed: false,
+      signup_count: 0,
+      idempotent: false,
+      reason: "promotion_pending",
+      message: "This link didn't confirm a seat. Use the confirm link in your promotion email instead.",
+    });
+
+    renderWithToken("promotion_scoped_token");
+
+    await waitFor(() => {
+      expect(screen.getByText("Nothing to confirm")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/use the confirm link in your promotion email/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/your signup is confirmed/i)).not.toBeInTheDocument();
+    expect(api.public.getManageSignups).not.toHaveBeenCalled();
+  });
+
+  it("6. zero-flip plain-waitlisted token — shows waitlist copy, not promotion copy", async () => {
+    // Regression guard: confirmed_count == 0 is also reachable with no
+    // promotion anywhere (a signup that landed straight on the waitlist).
+    // The page must render whatever reason-specific message the backend
+    // sends, not fall back to hardcoded promotion wording.
+    api.public.confirmSignup.mockResolvedValue({
+      confirmed: false,
+      signup_count: 0,
+      idempotent: false,
+      reason: "waitlisted",
+      message: "You're on the waitlist for this slot — we'll email you if a spot opens up.",
+    });
+
+    renderWithToken("plain_waitlisted_token");
+
+    await waitFor(() => {
+      expect(screen.getByText("Nothing to confirm")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/you're on the waitlist/i)).toBeInTheDocument();
+    expect(screen.queryByText(/promotion/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/your signup is confirmed/i)).not.toBeInTheDocument();
+  });
+
   it("4. no token in URL — shows error card immediately", async () => {
     // No token — should go to error state without calling the API
     renderWithToken(null);

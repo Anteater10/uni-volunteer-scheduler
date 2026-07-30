@@ -432,29 +432,6 @@ class SiteSettingsUpdate(BaseModel):
 
 
 # =========================
-# PORTALS
-# =========================
-class PortalBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-    visibility: str = "public"
-
-
-class PortalCreate(PortalBase):
-    pass
-
-
-class PortalRead(ORMBase, PortalBase):
-    id: UUID
-    slug: str
-
-
-# ✅ FIX: PortalRead already includes ORMBase, so DON'T inherit ORMBase again.
-class PortalDetail(PortalRead):
-    events: List[EventRead] = []
-
-
-# =========================
 # ROSTER / CHECK-IN (Phase 3)
 # =========================
 class RosterRow(BaseModel):

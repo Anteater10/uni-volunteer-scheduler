@@ -49,8 +49,12 @@ class Settings(BaseSettings):
     magic_link_ttl_minutes: int = 15
     magic_link_max_per_email_per_hour: int = 5
     magic_link_max_per_ip_per_hour: int = 20
-    frontend_base_url: str = "http://localhost:5173"
-    frontend_url: str = "http://localhost:5173"  # alias for Phase 09 public signup emails
+    # Single source of truth for the frontend origin URL. frontend_base_url
+    # and frontend_url used to be independently-configurable settings that
+    # every .env (dev and prod) happened to set to the same value anyway —
+    # collapsed here so the two names can no longer drift apart; see the
+    # frontend_base_url property below.
+    frontend_url: str = "http://localhost:5173"
     backend_base_url: str = "http://localhost:8000"
     debug: bool = False  # Phase 09: if True, debug-logs raw signup tokens in Celery (dev only)
 
@@ -138,6 +142,12 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+    @property
+    def frontend_base_url(self) -> str:
+        """Read-only alias for frontend_url — kept so existing callers of
+        either name keep working after the collapse to one underlying value."""
+        return self.frontend_url
 
     # Pydantic v2 settings config
     model_config = SettingsConfigDict(

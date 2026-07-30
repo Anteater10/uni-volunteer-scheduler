@@ -21,7 +21,7 @@ from ..services.orientation_service import (
     family_for_event,
     grant_orientation_credit,
 )
-from ..services.waitlist_service import manual_promote
+from ..services.waitlist_service import SlotEndedError, manual_promote
 
 router = APIRouter(prefix="/organizer", tags=["organizer"])
 
@@ -213,6 +213,12 @@ def organizer_promote_signup(
 
     try:
         promo = manual_promote(db, signup, slot, allow_overfill=allow_overfill)
+    except SlotEndedError as exc:
+        # Machine-readable so the roster UI can explain it rather than showing
+        # a bare message (house style, cf. ORIENTATION_REQUIRED).
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
     except ValueError as exc:
         msg = str(exc)
         if "full" in msg:

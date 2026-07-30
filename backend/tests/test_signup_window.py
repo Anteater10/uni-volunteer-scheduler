@@ -107,6 +107,73 @@ def test_signup_allowed_within_window(db_session):
     assert len(resp.signup_ids) == 1
 
 
+def test_signup_rejected_for_private_event(db_session):
+    """Task 2 (sweep remediation) — signing up for a private event you were
+    never shown (e.g. via a leaked slot_id) must not succeed. 404, matching
+    the public detail endpoint's "don't confirm it exists" behavior."""
+    _bind_factories(db_session)
+    owner = UserFactory(role=models.UserRole.admin)
+    event = EventFactory(owner=owner, owner_id=owner.id, visibility="private")
+    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        create_public_signup(db_session, _payload(slot.id))
+    assert exc.value.status_code == 404
+
+
+def test_signup_rejected_for_private_event_before_orientation_check(db_session):
+    """Fix round 1 (Task 2 review) — visibility must be enforced before ANY
+    other per-event validation, not just inside the per-slot loop.
+    ``_ensure_orientation_requirement`` used to run first and could raise
+    422 ORIENTATION_REQUIRED for a private event's PERIOD-only batch when
+    the caller has no credit and the event separately offers an
+    orientation slot — distinguishable from the 404 a nonexistent event
+    would produce, which is exactly the leak this task closes. Must be
+    404 on every branch, reachable with just a slot_id."""
+    _bind_factories(db_session)
+    owner = UserFactory(role=models.UserRole.admin)
+    event = EventFactory(
+        owner=owner,
+        owner_id=owner.id,
+        visibility="private",
+        # Fallback family resolution (no Module row) uses the raw slug, so
+        # this alone is enough to make orientation "required" below.
+        module_slug="private-orientation-family",
+    )
+    period = SlotFactory(
+        event=event, event_id=event.id, slot_type=models.SlotType.PERIOD
+    )
+    SlotFactory(
+        event=event, event_id=event.id, slot_type=models.SlotType.ORIENTATION
+    )
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        create_public_signup(
+            db_session, _payload(period.id, email="no-credit@example.com")
+        )
+    assert exc.value.status_code == 404
+    # Fix round 2 (Task 2 review): must match the unknown-slot 404's detail
+    # text exactly — not just its status code — so the two are
+    # indistinguishable. See test_public_signups.py for the direct
+    # side-by-side comparison of both HTTP responses.
+    assert exc.value.detail == "not found"
+
+
+def test_signup_allowed_for_public_event(db_session):
+    """Regression: the new visibility guard must not affect ordinary public
+    events (public events still signable everywhere)."""
+    _bind_factories(db_session)
+    owner = UserFactory(role=models.UserRole.admin)
+    event = EventFactory(owner=owner, owner_id=owner.id, visibility="public")
+    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    db_session.flush()
+
+    resp = create_public_signup(db_session, _payload(slot.id))
+    assert len(resp.signup_ids) == 1
+
+
 def test_organizer_admin_paths_bypass_window(db_session, client):
     """Organizer/admin signup-create paths do NOT go through
     ``create_public_signup`` — they hit ``/signups`` (auth) or

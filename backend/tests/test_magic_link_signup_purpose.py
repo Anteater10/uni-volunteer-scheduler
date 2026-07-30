@@ -191,8 +191,9 @@ class TestConsumeSignupConfirmBatch:
         )
         db_session.flush()
 
-        result, anchor = consume_token(db_session, raw)
+        result, anchor, confirmed_count = consume_token(db_session, raw)
         assert result == ConsumeResult.ok
+        assert confirmed_count == 2
 
         db_session.refresh(signup1)
         db_session.refresh(signup2)
@@ -269,9 +270,9 @@ class TestConsumeSignupConfirmBatch:
         )
         db_session.flush()
 
-        result1, _ = consume_token(db_session, raw)
+        result1, _, _count1 = consume_token(db_session, raw)
         db_session.flush()
-        result2, _ = consume_token(db_session, raw)
+        result2, _, _count2 = consume_token(db_session, raw)
 
         assert result1 == ConsumeResult.ok
         assert result2 == ConsumeResult.used

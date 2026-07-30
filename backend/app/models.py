@@ -57,6 +57,12 @@ class MagicLinkPurpose(str, enum.Enum):
     check_in = "check_in"             # legacy
     SIGNUP_CONFIRM = "signup_confirm"  # NEW Phase 08
     SIGNUP_MANAGE = "signup_manage"    # NEW Phase 08
+    # 2026-07-29: a waitlist promotion is a system/staff action, never
+    # volunteer intent, so its confirm link needs its own purpose — a batch
+    # SIGNUP_CONFIRM click must not confirm a promoted seat, and confirming a
+    # promoted seat must not sweep up the volunteer's other pending signups.
+    # Added to the Postgres enum by 0035_add_promotion_confirm_purpose.
+    PROMOTION_CONFIRM = "promotion_confirm"
 
 
 class NotificationType(str, enum.Enum):
@@ -269,7 +275,6 @@ class Event(Base):
     academic_quarter = relationship("AcademicQuarter")
     slots = relationship("Slot", back_populates="event", cascade="all, delete-orphan")
     questions = relationship("CustomQuestion", back_populates="event", cascade="all, delete-orphan")
-    portal_links = relationship("PortalEvent", back_populates="event", cascade="all, delete-orphan")
 
 
 # -------------------------
@@ -503,43 +508,6 @@ class SiteSettings(Base):
     show_audit_logs_tab = Column(
         Boolean, nullable=False, server_default=text("false"), default=False
     )
-
-
-# -------------------------
-# Portals (tabbed / grouped signups)
-# -------------------------
-
-
-class Portal(Base):
-    """
-    A named collection of events, e.g. "SciTrek Volunteers" or "Orientation Week".
-    """
-
-    __tablename__ = "portals"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(255), nullable=False)
-    slug = Column(String(255), unique=True, index=True, nullable=False)
-    description = Column(Text, nullable=True)
-    visibility = Column(String(32), default="public")
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    events = relationship("PortalEvent", back_populates="portal", cascade="all, delete-orphan")
-
-
-class PortalEvent(Base):
-    """
-    Join table linking Portals to Events (many-to-many).
-    """
-
-    __tablename__ = "portal_events"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    portal_id = Column(UUID(as_uuid=True), ForeignKey("portals.id"), nullable=False)
-    event_id = Column(UUID(as_uuid=True), ForeignKey("events.id"), nullable=False)
-
-    portal = relationship("Portal", back_populates="events")
-    event = relationship("Event", back_populates="portal_links")
 
 
 # -------------------------

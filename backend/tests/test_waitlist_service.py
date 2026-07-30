@@ -360,7 +360,7 @@ def test_organizer_manual_promote_allow_overfill_seats_past_capacity(
 
 def test_manual_promote_returns_pending_promotion_result(db_session):
     """manual_promote (WAIT-03) now delegates to mark_promoted_pending: the
-    promoted signup goes to 'pending' with a fresh 3-day SIGNUP_CONFIRM
+    promoted signup goes to 'pending' with a fresh 3-day PROMOTION_CONFIRM
     token, matching every other promotion path (2026-07-28 spec)."""
     # Reuse the existing manual-promote setup in this file.
     _, _, slot = _make_event_and_slot(db_session, capacity=1)
@@ -378,7 +378,7 @@ def test_manual_promote_returns_pending_promotion_result(db_session):
         .filter(models.MagicLinkToken.signup_id == signup.id)
         .one()
     )
-    assert token_row.purpose == models.MagicLinkPurpose.SIGNUP_CONFIRM
+    assert token_row.purpose == models.MagicLinkPurpose.PROMOTION_CONFIRM
 
 
 # ------------------------------------------------------------------
