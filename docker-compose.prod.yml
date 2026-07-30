@@ -137,6 +137,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:?set VITE_API_URL e.g. https://scitrek.example.org}
+        VITE_COPILOT_ENABLED: ${VITE_COPILOT_ENABLED:-false}
     restart: unless-stopped
 
   caddy:
