@@ -28,7 +28,9 @@ but does not secure it — the emailed link has to be clicked to confirm, within
 that is never confirmed eventually lapses and the seat goes to someone else. So the thing to tell a
 volunteer who isn't sure their signup went through is to check their inbox, including spam, and click
 the link. If a session was already full they'll have been waitlisted instead, which also means watching
-the inbox — the waitlist document covers how an opened spot is offered.
+the inbox — the waitlist document covers how an opened spot is offered. A spot offered off the waitlist
+arrives in its own email with its own confirm link, and that is the only link that claims it; the
+original signup link won't.
 
 A mentor who hasn't been oriented for the module must include an orientation session in the same
 signup — unless the event posts no orientation session at all, in which case the signup goes through

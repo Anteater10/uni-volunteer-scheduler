@@ -15,6 +15,12 @@ by name rather than working down a queue.
 **A promoted volunteer goes to pending, not straight to confirmed.** They get an email with a link
 and have **three days** to click it and claim the spot. Until they do, the signup sits at pending.
 
+**The promotion email carries its own confirm link, and only that link can claim the seat.** The link
+from their original signup email will not do it: clicking that one reports that it confirmed nothing
+and tells them to use the confirm link in the promotion email instead. That is deliberate — the
+promotion email is the only message that told them a seat was being offered, so it is the only place
+they can accept it. If they can't find the email, a staff check-in at the door confirms them anyway.
+
 This is the part most likely to surprise someone who used the app earlier in the year, when a
 promotion flipped the signup to confirmed on the spot. The reason it changed: a promotion is
 something the system or a staff member does, not something the volunteer asked for at that moment.
@@ -33,8 +39,10 @@ promotion email and every path uses it:
 
 - A volunteer cancels through their own link, or staff cancel for them.
 - A volunteer swaps to a different session, freeing the seat they came from.
-- An organizer promotes one specific waitlisted person by hand.
-- The automatic hourly check frees a seat (see below).
+- An organizer or admin promotes one specific waitlisted person by hand.
+- Staff **move** or **swap** a waitlisted volunteer onto a session that has room.
+- An organizer **raises a session's capacity**, opening seats for the people already in line.
+- The automatic hourly check frees a seat by clearing a signup nobody confirmed.
 
 The email's subject is "A spot opened up — confirm your SciTrek signup for *[event]*". It names the
 session with its date, time, and location, says to confirm within three days, and gives one button:
@@ -44,6 +52,13 @@ and that the link keeps working as their manage page after they confirm.
 This uniformity is new. Earlier in the year several of these paths promoted people and sent them
 nothing at all, so if someone asks why a volunteer was never told about a promotion from a few months
 back, that's usually the answer.
+
+**One thing deliberately does not park the volunteer at pending: a volunteer swapping their own
+session using their own link.** Clicking swap on their own manage page *is* their consent, so that
+lands confirmed straight away with no offer email. Every other path is somebody else deciding on
+their behalf, which is exactly why it becomes an offer instead. So if a volunteer moved themselves
+they are confirmed, and if staff moved them they are pending and waiting on an email — the same
+visible move on the roster, two different statuses, and the difference is who did it.
 
 ## If they don't confirm, the offer lapses
 
@@ -65,10 +80,17 @@ So when a volunteer says "I got an email saying a spot opened up but the link do
 answer is almost always that more than three days passed and the spot went to the next person in
 line. They can sign up again — they'll take a seat if one is free, or rejoin the waitlist.
 
-**Sessions that have already ended don't promote anyone.** The hourly check skips them, because
-emailing someone a three-day offer for a session that already happened only wastes their time and
-delays the cleanup. A cancellation entered by hand after the fact can still send an offer for a
-past session, though, so it's worth being careful about cancelling signups on events that are over.
+**Sessions that have already ended don't promote anyone, on any path.** Automatic promotion skips an
+ended session silently — the seat simply stays free. A staff member who tries to promote, move, or
+swap someone onto a session whose end time has passed gets an error instead, rather than the
+volunteer getting a "confirm your spot" email for a session that already happened. This holds however
+the seat came free, including a cancellation entered by hand days later.
+
+**A waitlisted signup on a session that has come and gone is closed out automatically.** The hourly
+check marks any still-waitlisted signup as **cancelled** once its session's end time has passed. No
+email goes out — they never held a seat, and the session is over. Without this, a waitlist that never
+drained would leave people sitting in line for a session that already happened. Note the difference
+from an unconfirmed pending signup, which is **deleted** rather than cancelled.
 
 ## Manual promotion
 
@@ -90,7 +112,8 @@ no additions, no omissions.
 ## Other things to know
 
 A waitlisted signup can also just be **cancelled**, by the volunteer through their manage link or
-by staff.
+by staff. The email that goes out then says they've been **removed from the waitlist**, not that a
+signup was cancelled — they never held a seat, so the seat-holder wording would be misleading.
 
 **Waitlisted volunteers are excluded from broadcasts.** A broadcast goes to people holding or past
 a confirmed spot — confirmed, checked in, and attended — because broadcasts are operational

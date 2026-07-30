@@ -41,8 +41,9 @@ module's family key starts out as its own slug.
 
 **Magic link** — a link emailed to a volunteer that lets them confirm, view, cancel, or swap a
 signup without an account or password. Confirming is the one-time part, and it has a deadline. The
-same link keeps working for viewing, cancelling, and swapping after that deadline passes. See the
-magic-links document.
+same link keeps working for viewing, cancelling, and swapping after that deadline passes. A seat won
+from a **waitlist promotion** carries a second, separate confirm link in its own email, and only that
+one can claim it. See the magic-links document.
 
 **Module** — a multi-session science experience delivered to a class. SciTrek modules usually run
 five sessions, but the app stores a session count per module rather than assuming a number. In the
@@ -85,7 +86,8 @@ happened, and per-event signups, capacity, attended, and no-show counts.
 **Reopen** — the supervised undo of ending an event. Organizers and admins get a "Reopen event"
 button on a completed event, which puts its attended and no-show volunteers back on the live roster
 and clears the event's completed stamp. Orientation credits already granted are deliberately left
-alone.
+alone. Reopening is refused once the event's quarter has ended or been archived, so it is an undo
+that expires with the term.
 
 **Resolve** (also "ending a slot") — the organizer action that closes out a session, marking each
 volunteer attended or no-show. Ending an **orientation** slot is what actually grants orientation

@@ -24,10 +24,13 @@ passed — the two are separate. In practice a volunteer's link stays usable unt
 sessions are over, so "my link expired, I couldn't cancel" is not something to expect. If a volunteer
 genuinely can't use their link, staff can cancel for them from the roster.
 
-**Every cancellation emails the volunteer.** Whoever does it — the volunteer through their own
-link, or staff from the roster — the volunteer gets an email saying the signup was cancelled, with
-the event, the time, and the place. This exists because the link stays usable for a long time: the
-email is how a volunteer would find out if somebody else used their link to cancel them. One caution:
+**Every cancellation emails the volunteer, and the wording follows what they actually lost.** Whoever
+does it — the volunteer through their own link, or staff from the roster — an email goes out naming
+the event, the time, and the place. Someone who held a seat is told their signup was cancelled.
+Someone who was still on the **waitlist** is told they've been removed from the waitlist instead,
+because they never had a seat to lose and "your signup has been cancelled" would read as though they
+did. Either email exists because the link stays usable for a long time: it is how a volunteer would
+find out if somebody else used their link to cancel them. One caution:
 the email suggests signing up again, but the app refuses a new signup for the very session that was
 cancelled, and no staff action reinstates it — a different session on the event still works. The
 signups document covers this; a volunteer who wants to *move* rather than drop out should swap from

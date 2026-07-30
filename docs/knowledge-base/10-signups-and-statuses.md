@@ -29,7 +29,9 @@ Everything before those three can still change:
 - Checked in can go back to confirmed (the organizer's undo for a mis-tap), or forward to attended
   or no-show, or be cancelled.
 - Waitlisted can become pending (when promoted — automatically as a seat frees, or by staff) or
-  cancelled. A promoted volunteer confirms from there; see the waitlist document.
+  cancelled. A promoted volunteer confirms from there; see the waitlist document. Cancelled here can
+  come from the volunteer, from staff, or from the hourly check, which cancels anyone still
+  waitlisted once the session's end time has passed.
 
 **Confirmed can go straight to attended** without a check-in. That's the walk-in case: the
 volunteer turned up but nobody tapped them in, and the organizer marks them attended while closing
@@ -57,7 +59,10 @@ link is the better tool — it keeps the one signup and changes which session it
 
 **A signup submission gets one confirmation link, good for two weeks.** Clicking it confirms every
 pending signup that volunteer has on that event, so a volunteer who took four sessions in one go
-confirms all four with one click.
+confirms all four with one click. It will **not** confirm a seat that came from a **waitlist
+promotion** — that seat has its own link in its own promotion email. If a volunteer's only pending
+seat is a promoted one, their original signup link reports that it confirmed nothing and tells them
+to use the promotion email instead.
 
 **Confirming is an RSVP, not a gate.** A pending volunteer who simply turns up is confirmed
 automatically as part of being checked in — at the door, whether they ever opened the email doesn't
@@ -70,6 +75,12 @@ upcoming session the freed seat is then offered to the next person on that slot'
 session that has already happened it just frees up. Nothing tells the volunteer their signup lapsed —
 but because the row is deleted rather than cancelled, they *can* sign up for that same session again,
 unlike someone who cancelled.
+
+**A waitlisted signup on a session that has come and gone is closed out automatically.** The same
+hourly check marks any still-waitlisted signup as **cancelled** once its session's end time has
+passed. No email goes out — they never held a seat, and the session is over. Without this, a waitlist
+that never drained would leave people sitting in line for a session that already happened. Note the
+difference from an unconfirmed pending signup, which is **deleted** rather than cancelled.
 
 **A multi-session submission only carries one link, and only that one signup is swept.** The other
 slots in the same submission have no link of their own, so if the volunteer never confirms, those
@@ -91,7 +102,9 @@ usually has a pending signup sitting on it, most often a waitlist promotion nobo
 Waiting for the hourly check to clear the pending signup isn't enough on its own: the event's
 completed stamp is only recalculated when someone ends or reopens it. Once the pending row is gone,
 the organizer's roster page will show the "Event complete" banner — use **Reopen event** there and
-then **End event** once more, and the event files itself under Completed properly.
+then **End event** once more, and the event files itself under Completed properly. Do this while the
+event's quarter is still open: reopening is refused once the quarter has ended or been archived, and
+an event left in that state stays badged the way it is.
 
 ## Volunteer records
 
