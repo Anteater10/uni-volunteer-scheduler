@@ -36,7 +36,25 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
     The token carries PROMOTION_CONFIRM, not SIGNUP_CONFIRM: this seat is
     confirmable only by this link, and consuming it confirms only this signup
     (see magic_link_service.consume_token).
+
+    Raises SlotEndedError when the signup's slot has already ended. This is
+    the choke point every promotion path passes through, so the guard here is
+    unbypassable: promote_waitlist_fifo pre-checks and skips silently instead
+    (auto-promotion is not an error), and the staff paths let it propagate to
+    their 422.
     """
+    # Function-level import: services.waitlist_service imports this module, so
+    # module scope would be circular.
+    from .services.waitlist_service import SlotEndedError, slot_has_ended
+
+    # Read the slot by id rather than via signup.slot: a caller that just
+    # repointed slot_id (the admin move) still has the OLD slot on the
+    # relationship until the next flush/expire, and the guard has to judge the
+    # slot the volunteer is actually being offered.
+    slot = db.query(models.Slot).filter(models.Slot.id == signup.slot_id).first()
+    if slot is not None and slot_has_ended(slot):
+        raise SlotEndedError()
+
     signup.status = models.SignupStatus.pending
     volunteer = signup.volunteer
     raw_token = issue_token(

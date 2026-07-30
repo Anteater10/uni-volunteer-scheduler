@@ -475,12 +475,14 @@ class TestAdminMoveWaitlisted:
         self, client, db_session, monkeypatch
     ):
         sent = []
+        notified = []
         monkeypatch.setattr(
             "app.celery_app.send_waitlist_promotion_email.delay",
             lambda **kw: sent.append(kw),
         )
         monkeypatch.setattr(
-            "app.celery_app.send_email_notification.delay", lambda **kw: None
+            "app.celery_app.send_email_notification.delay",
+            lambda **kw: notified.append(kw),
         )
         admin = make_user(db_session, role=models.UserRole.admin)
         event = _make_event(db_session, admin)
@@ -505,10 +507,18 @@ class TestAdminMoveWaitlisted:
         (token,) = _token_rows(db_session, signup.id)
         assert token.purpose == models.MagicLinkPurpose.PROMOTION_CONFIRM
         assert len(sent) == 1 and sent[0]["signup_id"] == str(signup.id)
+        # Exactly one email, and it is the promotion one. The reschedule
+        # template says "the time changed… cancel if you can no longer attend",
+        # which tells a merely-pending volunteer the seat is already theirs —
+        # the inverse of confirm-in-3-days-or-lose-it. A volunteer who trusts
+        # it gets reaped.
+        assert notified == []
 
     def test_move_confirmed_keeps_confirmed(self, client, db_session, monkeypatch):
+        notified = []
         monkeypatch.setattr(
-            "app.celery_app.send_email_notification.delay", lambda **kw: None
+            "app.celery_app.send_email_notification.delay",
+            lambda **kw: notified.append(kw),
         )
         monkeypatch.setattr(
             "app.celery_app.send_waitlist_promotion_email.delay", lambda **kw: None
@@ -531,6 +541,8 @@ class TestAdminMoveWaitlisted:
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] == "confirmed"
         assert _token_rows(db_session, signup.id) == []
+        # An ordinary reschedule still tells the volunteer their slot moved.
+        assert [n["kind"] for n in notified] == ["reschedule"]
 
     def test_move_waitlisted_into_full_slot_stays_waitlisted(
         self, client, db_session, monkeypatch
@@ -569,6 +581,21 @@ class TestAdminMoveWaitlisted:
 
 
 class TestEndedSlotGuard:
+    def test_mark_promoted_pending_refuses_ended_slot(self, db_session):
+        """The guard lives at the choke point every promotion path passes
+        through, so no caller — present or future — can promote past it."""
+        owner = make_user(db_session, role=models.UserRole.admin)
+        event = _make_event(db_session, owner, days_out=-3)
+        slot = _make_slot(db_session, event, capacity=5, current_count=0, ended=True)
+        vol = _make_volunteer(db_session)
+        signup = _make_signup(db_session, vol, slot, models.SignupStatus.waitlisted)
+
+        with pytest.raises(SlotEndedError):
+            mark_promoted_pending(db_session, signup)
+
+        assert signup.status == models.SignupStatus.waitlisted
+        assert _token_rows(db_session, signup.id) == []
+
     def test_promote_waitlist_fifo_skips_ended_slot(self, db_session):
         owner = make_user(db_session, role=models.UserRole.admin)
         event = _make_event(db_session, owner, days_out=-3)

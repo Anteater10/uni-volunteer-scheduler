@@ -123,7 +123,25 @@ def _promotion_pending_exists(db: Session):
 
 
 def _is_promotion_pending(db: Session, signup: Signup) -> bool:
-    """True when this pending signup's seat came from a promotion."""
+    """True when this pending signup's seat came from a promotion.
+
+    INVARIANT this detection depends on: the marker is token *history*, not
+    token liveness — any PROMOTION_CONFIRM row counts, consumed or expired —
+    so once a signup has been promoted it is permanently promotion-scoped for
+    as long as it stays pending. That is safe only because:
+
+      1. nothing in the codebase returns a confirmed signup to pending (the
+         only writers of `pending` are the batch signup path and
+         mark_promoted_pending, which requires `waitlisted`), so a consumed
+         promotion token can never be shadowing a *fresh* pending seat; and
+      2. requiring liveness instead would be strictly worse — an expired
+         promotion token would hand the seat back to the batch link's flip,
+         i.e. auto-confirm exactly the seat this scoping protects.
+
+    If a future change ever lets a confirmed (or promotion-confirmed) signup
+    become pending again, this must switch to a real per-signup marker rather
+    than token history.
+    """
     if signup.status != SignupStatus.pending:
         return False
     return bool(
