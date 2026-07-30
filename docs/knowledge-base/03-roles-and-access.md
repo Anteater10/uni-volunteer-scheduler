@@ -33,9 +33,7 @@ reads and venue codes are all gated on being staff, not on who created the event
 can open any event's roster and run it. That is deliberate. The staff event list is global, nothing
 in the app can transfer ownership of an event, and the old ownership rule meant an organizer
 covering for a colleague could read an event's details and then be refused at its roster. The
-boundary that matters is the admin-only page list above, not per-event ownership. The single
-exception is attaching an event to a **portal**, which still requires the organizer to be the
-event's creator.
+boundary that matters is the admin-only page list above, not per-event ownership.
 
 Two places where the same action is gated differently in different corners of the app, worth
 knowing so an organizer isn't told the wrong thing: **duplicating an event** works for organizers

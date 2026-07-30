@@ -15,10 +15,10 @@ date.
 **There is no single sign-on.** OIDC/SAML sign-in exists in the code but is not configured, so staff
 sign in with an email and password. Volunteers don't sign in at all.
 
-**There are no portals in the app's screens.** An earlier feature grouped events into public tabs;
-it has no page and no menu entry any more, so from a user's point of view portals are gone. The
-plumbing underneath was never deleted, which is why the word still turns up in old notes — but there
-is nothing for staff to open and nothing for the public to see.
+**There are no portals.** An earlier feature grouped events into curated public tabs at their own
+links. It has been removed outright — no page, no menu entry, no stored data, nothing left behind.
+The word still turns up in old notes and old planning documents; there is nothing in the app it
+refers to any more.
 
 **Volunteers have no accounts, no passwords, and no dashboard.** Everything a volunteer does after
 signing up goes through a magic link emailed to them, or the QR code at the door. There is nothing
