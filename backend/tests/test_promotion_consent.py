@@ -466,6 +466,42 @@ class TestReapSemanticsUnchanged:
 
 
 # ===========================================================================
+# 2026-07-29 sweep remediation, Finding #5 — self-checking invariant
+# ===========================================================================
+
+
+class TestPromotionRequiresWaitlisted:
+    """mark_promoted_pending's own docstring (and _is_promotion_pending's
+    correctness argument in magic_link_service.py) rest on the invariant
+    that only a waitlisted signup can be promoted. Caller discipline alone
+    isn't enough — the function must refuse to run on anything else."""
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            models.SignupStatus.pending,
+            models.SignupStatus.confirmed,
+            models.SignupStatus.cancelled,
+            models.SignupStatus.checked_in,
+            models.SignupStatus.attended,
+            models.SignupStatus.no_show,
+        ],
+    )
+    def test_rejects_non_waitlisted_signup(self, db_session, status):
+        owner = make_user(db_session, role=models.UserRole.admin)
+        event = _make_event(db_session, owner)
+        slot = _make_slot(db_session, event)
+        vol = _make_volunteer(db_session)
+        signup = _make_signup(db_session, vol, slot, status)
+
+        with pytest.raises(ValueError):
+            mark_promoted_pending(db_session, signup)
+
+        assert signup.status == status
+        assert _token_rows(db_session, signup.id) == []
+
+
+# ===========================================================================
 # Finding #4 — admin move of a waitlisted signup
 # ===========================================================================
 

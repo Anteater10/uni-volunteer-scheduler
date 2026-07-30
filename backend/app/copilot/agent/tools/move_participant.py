@@ -103,8 +103,11 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         source_slot.current_count -= 1
 
     if target_has_room:
+        # When promoting, leave new_status unset: mark_promoted_pending below
+        # owns the waitlisted->pending flip, and it requires the signup
+        # still be waitlisted at the moment it is called.
         new_status = (
-            SignupStatus.pending
+            None
             if promoting
             else (previous_status if held_source_capacity else SignupStatus.confirmed)
         )
@@ -113,7 +116,8 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         new_status = SignupStatus.waitlisted
 
     signup.slot_id = dest_slot.id
-    signup.status = new_status
+    if new_status is not None:
+        signup.status = new_status
 
     promotion = None
     if promoting:

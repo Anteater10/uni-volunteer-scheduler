@@ -928,9 +928,12 @@ def admin_move_signup(
 
     if target_has_room:
         # Preserve pending/confirmed on move — a staff move must not
-        # silently confirm a signup the volunteer never confirmed.
+        # silently confirm a signup the volunteer never confirmed. When
+        # promoting, leave new_status unset: mark_promoted_pending below
+        # owns the waitlisted->pending flip, and it requires the signup
+        # still be waitlisted at the moment it is called.
         if promoting:
-            new_status = models.SignupStatus.pending
+            new_status = None
         else:
             new_status = (
                 previous_status
@@ -942,7 +945,8 @@ def admin_move_signup(
         new_status = models.SignupStatus.waitlisted
 
     signup.slot_id = target_slot.id
-    signup.status = new_status
+    if new_status is not None:
+        signup.status = new_status
 
     # After the slot_id repoint, so both the confirm email and the ended-slot
     # guard inside mark_promoted_pending judge the seat actually being offered.

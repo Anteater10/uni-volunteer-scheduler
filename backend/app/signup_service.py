@@ -42,10 +42,26 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
     unbypassable: promote_waitlist_fifo pre-checks and skips silently instead
     (auto-promotion is not an error), and the staff paths let it propagate to
     their 422.
+
+    Raises ValueError if ``signup`` is not currently waitlisted. This is a
+    self-checking invariant, not just documentation: magic_link_service's
+    _is_promotion_pending correctness argument depends on mark_promoted_pending
+    being the only writer of a PROMOTION_CONFIRM token, and on that writer
+    never firing on an already-pending/confirmed signup (see that function's
+    docstring). Every caller must therefore still hold `waitlisted` status at
+    the moment it calls this — callers that promote conditionally must not
+    pre-assign the resulting `pending` status themselves; let this function's
+    own flip below be the only writer.
     """
     # Function-level import: services.waitlist_service imports this module, so
     # module scope would be circular.
     from .services.waitlist_service import SlotEndedError, slot_has_ended
+
+    if signup.status != models.SignupStatus.waitlisted:
+        raise ValueError(
+            "mark_promoted_pending requires a waitlisted signup; "
+            f"got status={signup.status!r}"
+        )
 
     # Read the slot by id rather than via signup.slot: a caller that just
     # repointed slot_id (the admin move) still has the OLD slot on the
