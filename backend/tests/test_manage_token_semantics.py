@@ -369,3 +369,91 @@ def test_participant_swap_of_attended_signup_via_live_manage_link_is_refused(
     refreshed_target = db_session.get(models.Slot, target_slot.id)
     assert refreshed_source.current_count == 1
     assert refreshed_target.current_count == 0
+
+
+def _no_show_signup_with_manage_token(db_session):
+    """A no_show signup plus a live SIGNUP_MANAGE token — same shape as
+    _attended_signup_with_manage_token above, for the no_show sibling case.
+    no_show never held capacity, so current_count starts at 0."""
+    owner = make_user(db_session, role=models.UserRole.admin, email=f"owner-{uuid.uuid4().hex[:8]}@example.com")
+    event = models.Event(
+        id=uuid.uuid4(),
+        owner_id=owner.id,
+        title="No-show Manage Event",
+        start_date=datetime.now(timezone.utc) + timedelta(days=20),
+        end_date=datetime.now(timezone.utc) + timedelta(days=21),
+    )
+    db_session.add(event)
+    db_session.flush()
+    slot = models.Slot(
+        id=uuid.uuid4(),
+        event_id=event.id,
+        start_time=datetime.now(timezone.utc) + timedelta(days=20),
+        end_time=datetime.now(timezone.utc) + timedelta(days=20, hours=2),
+        capacity=1,
+        current_count=0,
+        slot_type=models.SlotType.PERIOD,
+        date=date_type.today(),
+    )
+    db_session.add(slot)
+    db_session.flush()
+    _bind_factories(db_session)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.no_show
+    )
+    db_session.flush()
+    raw = mls.issue_token(
+        db_session,
+        signup=signup,
+        email=vol.email,
+        purpose=models.MagicLinkPurpose.SIGNUP_MANAGE,
+        volunteer_id=vol.id,
+        ttl_minutes=60,
+    )
+    db_session.commit()
+    return signup, slot, raw
+
+
+def test_participant_cancel_of_attended_signup_via_live_manage_link_is_refused(
+    client, db_session
+):
+    """2026-07-29 sweep — the cancel-side sibling of the swap guards above.
+    A volunteer whose session is over (status='attended') must not be able
+    to erase that settled record with their still-live manage link (manage
+    links deliberately outlive the confirm deadline). Volunteer hours and
+    course credit are summed over attended signups (admin.py), so cancelling
+    one destroys the basis for someone's credit — and unlike swap's
+    attended carve-out, there is no staff exception for cancel either (see
+    check_in_service.ensure_signup_cancellable)."""
+    signup, slot, raw = _attended_signup_with_manage_token(db_session)
+
+    resp = client.delete(f"/api/v1/public/signups/{signup.id}?token={raw}")
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "SIGNUP_NOT_CANCELLABLE"
+    db_session.expire_all()
+    untouched = db_session.get(models.Signup, signup.id)
+    assert untouched.status == models.SignupStatus.attended
+    refreshed_slot = db_session.get(models.Slot, slot.id)
+    assert refreshed_slot.current_count == 1  # unchanged — no capacity freed
+
+
+def test_participant_cancel_of_no_show_signup_via_live_manage_link_is_refused(
+    client, db_session
+):
+    """no_show sibling of the attended case above: cancelling would erase
+    the audit trail of a no-show. no_show never held capacity, so the
+    regression check here is status + current_count staying at 0 (nothing
+    to free, no waitlist promotion should fire)."""
+    signup, slot, raw = _no_show_signup_with_manage_token(db_session)
+
+    resp = client.delete(f"/api/v1/public/signups/{signup.id}?token={raw}")
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "SIGNUP_NOT_CANCELLABLE"
+    db_session.expire_all()
+    untouched = db_session.get(models.Signup, signup.id)
+    assert untouched.status == models.SignupStatus.no_show
+    refreshed_slot = db_session.get(models.Slot, slot.id)
+    assert refreshed_slot.current_count == 0

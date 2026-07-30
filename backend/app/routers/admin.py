@@ -23,6 +23,7 @@ from ..signup_service import (
     mark_promoted_pending,
     promote_waitlist_fifo,
 )
+from ..services.check_in_service import ensure_signup_cancellable
 from ..services.waitlist_service import SlotEndedError
 from ..services import module_service, quarter_service
 from ..services.audit_log_humanize import humanize as humanize_audit_log
@@ -681,6 +682,10 @@ def admin_cancel_signup(
         db.commit()
         db.refresh(signup)
         return signup
+
+    # 2026-07-29 sweep: attended/no_show are terminal, no staff exception —
+    # see check_in_service.ensure_signup_cancellable for the full rationale.
+    ensure_signup_cancellable(signup)
 
     previous_status = signup.status
     signup.status = models.SignupStatus.cancelled
