@@ -16,11 +16,17 @@
 //   payload is extended (out of scope per D-14 — api.js read-only).
 //
 // 2026-07-29 sweep remediation, Finding #1: the confirm endpoint can resolve
-// (HTTP 200) with `confirmed: false` — the token was a volunteer's ORIGINAL
-// batch link, but their seat came from a waitlist promotion, so only the
-// promotion link's own token can confirm it. This used to be indistinguishable
-// from a real success (the resolved value was ignored entirely), so a
-// promoted volunteer was told their spot was confirmed when it was not.
+// (HTTP 200) with `confirmed: false` — the token was legitimately consumed
+// but didn't confirm anything. This used to be indistinguishable from a real
+// success (the resolved value was ignored entirely), so e.g. a promoted
+// volunteer clicking their original batch link was told their spot was
+// confirmed when it was not.
+//
+// Follow-up: `confirmed: false` is reachable for more than one reason (a
+// promoted seat needing its own promotion link, but also a signup that
+// landed straight on the waitlist because its slot was full) — the backend
+// always sends a `message` tailored to which one happened, so this page
+// must render that verbatim rather than assuming/hardcoding promotion copy.
 
 import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
@@ -45,9 +51,12 @@ export default function ConfirmSignupPage() {
       .confirmSignup(token)
       .then((result) => {
         if (result && result.confirmed === false) {
+          // Generic fallback only — the backend sends a reason-specific
+          // `message` for every zero-flip case (promotion_pending,
+          // waitlisted, already_resolved, ...), so this must not assume any
+          // one of them.
           setNotConfirmedMessage(
-            result.message ||
-              "This link didn't confirm a seat. Use the confirm link in your promotion email instead."
+            result.message || "There's nothing to confirm for this link."
           );
           setState("not_confirmed");
         } else {

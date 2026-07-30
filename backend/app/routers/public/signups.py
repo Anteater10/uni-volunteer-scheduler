@@ -19,6 +19,7 @@ from ...magic_link_service import (
     ConsumeResult,
     _lookup_token,
     consume_token,
+    zero_confirm_reason,
 )
 from ...models import Signup, SignupStatus, Slot
 from ...services.public_signup_service import create_public_signup
@@ -62,21 +63,39 @@ def confirm_signup(
     only signup was promotion-pending, and this is the ORIGINAL batch link,
     not the promotion link, so consume_token's consent scoping deliberately
     left it pending. That must not be reported as success.
+
+    Follow-up: confirmed_count == 0 is also reachable with no promotion
+    anywhere (a signup that landed straight on the waitlist because its slot
+    was already full — see zero_confirm_reason). The reason/message must
+    match what actually happened, not assume every zero-flip is a promotion.
     """
     result, signup, confirmed_count = consume_token(db, token)
     if result == ConsumeResult.ok:
         db.commit()
         if confirmed_count == 0:
-            return {
-                "confirmed": False,
-                "signup_count": 0,
-                "idempotent": False,
-                "reason": "promotion_pending",
-                "message": (
+            reason = zero_confirm_reason(signup)
+            messages = {
+                "waitlisted": (
+                    "You're on the waitlist for this slot — we'll email you "
+                    "if a spot opens up."
+                ),
+                "promotion_pending": (
                     "This link didn't confirm a seat. Your spot came from a "
                     "waitlist promotion — use the confirm link in that email "
                     "instead."
                 ),
+                "already_resolved": (
+                    "There's nothing to confirm — this signup has already "
+                    "been resolved."
+                ),
+                "not_found": "There's nothing to confirm for this link.",
+            }
+            return {
+                "confirmed": False,
+                "signup_count": 0,
+                "idempotent": False,
+                "reason": reason,
+                "message": messages[reason],
             }
         return {"confirmed": True, "signup_count": confirmed_count, "idempotent": False}
     if result == ConsumeResult.used:

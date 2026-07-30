@@ -236,6 +236,38 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
     return ConsumeResult.ok, signup, confirmed_count
 
 
+def zero_confirm_reason(signup: Optional[Signup]) -> str:
+    """Classify why a ``ConsumeResult.ok`` consume_token call confirmed
+    nothing (``confirmed_count == 0``), for router responses.
+
+    2026-07-29 sweep remediation, follow-up to Finding #1: the anchor
+    signup's final status tells you WHY nothing was confirmed, and the
+    reasons are not interchangeable:
+
+    - ``waitlisted``: the anchor was never promoted — e.g. a single-slot
+      signup that landed on the waitlist because the slot was already full
+      at signup time. There is no promotion email to point at; the seat
+      simply isn't open yet.
+    - ``promotion_pending``: the anchor genuinely IS promotion-pending (see
+      _is_promotion_pending) and this token isn't its PROMOTION_CONFIRM
+      link — the only case consume_token's scoping deliberately leaves a
+      `pending` anchor unconfirmed (see consume_token's flip condition: a
+      `pending` anchor that is NOT promotion-pending always gets flipped,
+      so `pending` reaching here implies promotion-pending).
+    - ``already_resolved``: the anchor is checked_in/attended/no_show —
+      further along than "confirmed" already, via a path that didn't go
+      through this token (e.g. staff check-in before the volunteer ever
+      clicked their link). Nothing to confirm; nothing wrong either.
+    """
+    if signup is None:
+        return "not_found"
+    if signup.status == SignupStatus.waitlisted:
+        return "waitlisted"
+    if signup.status == SignupStatus.pending:
+        return "promotion_pending"
+    return "already_resolved"
+
+
 def _hour_epoch() -> int:
     return int(time.time() // 3600)
 

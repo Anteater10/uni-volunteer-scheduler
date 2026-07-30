@@ -15,6 +15,7 @@ from ..magic_link_service import (
     check_rate_limit,
     consume_token,
     dispatch_email,
+    zero_confirm_reason,
 )
 from ..models import Event, Signup, SignupStatus
 
@@ -35,6 +36,10 @@ def consume_magic_link(token: str, db: Session = Depends(get_db)):
     volunteer's only signup was promotion-pending and this is the ORIGINAL
     batch link, not the promotion link, so consume_token's consent scoping
     deliberately left it pending. The redirect must not claim success.
+
+    Follow-up: confirmed_count == 0 is also reachable with no promotion
+    anywhere (see zero_confirm_reason) — the reason must reflect the
+    anchor's actual status, not assume every zero-flip is a promotion.
     """
     result, signup, confirmed_count = consume_token(db, token)
     if result == ConsumeResult.ok:
@@ -44,7 +49,7 @@ def consume_magic_link(token: str, db: Session = Depends(get_db)):
             return RedirectResponse(
                 url=(
                     f"{settings.frontend_base_url}/signup/confirm-failed"
-                    f"?reason=promotion_pending&event={event_id}"
+                    f"?reason={zero_confirm_reason(signup)}&event={event_id}"
                 ),
                 status_code=302,
             )

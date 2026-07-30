@@ -385,11 +385,66 @@ class TestConfirmSignupPromotionScoping:
             "that only a promotion link can confirm"
         )
         assert body["signup_count"] == 0
+        assert body["reason"] == "promotion_pending"
+        assert "promotion" in body["message"].lower()
         assert body["idempotent"] is False, (
             "this is a distinct zero-flip case, not a genuine used-token replay"
         )
         db_session.expire_all()
         assert db_session.get(Signup, signup.id).status == SignupStatus.pending
+
+    def test_own_link_for_plain_waitlisted_signup_is_not_told_to_find_a_promotion(
+        self, client, db_session
+    ):
+        """Regression guard: confirmed_count == 0 is also reachable with NO
+        promotion anywhere — a volunteer signs up for a single slot that is
+        already full, lands waitlisted (public_signup_service.py), and clicks
+        their OWN emailed link. They must be told they're on the waitlist,
+        not sent looking for a promotion email that was never sent."""
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
+        volunteer = Volunteer(
+            id=uuid.uuid4(),
+            email="plain-waitlisted@example.com",
+            first_name="Plain",
+            last_name="Waiter",
+        )
+        db_session.add(volunteer)
+        db_session.flush()
+        signup = Signup(
+            id=uuid.uuid4(),
+            volunteer_id=volunteer.id,
+            slot_id=slot.id,
+            status=SignupStatus.waitlisted,
+        )
+        db_session.add(signup)
+        db_session.flush()
+        batch_raw = issue_token(
+            db_session,
+            signup=signup,
+            email=volunteer.email,
+            purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+            volunteer_id=volunteer.id,
+            ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
+        )
+        db_session.commit()
+        # NOTE: no mark_promoted_pending — this signup was never promoted.
+
+        resp = client.post(
+            "/api/v1/public/signups/confirm", params={"token": batch_raw}
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["confirmed"] is False
+        assert body["reason"] == "waitlisted"
+        assert "promotion" not in body["message"].lower(), (
+            "a plain waitlisted signup was never promoted — telling the "
+            "volunteer to look for a promotion email is wrong"
+        )
+        assert "waitlist" in body["message"].lower()
+        db_session.expire_all()
+        assert db_session.get(Signup, signup.id).status == SignupStatus.waitlisted
 
 
 class TestManageSignups:

@@ -118,6 +118,40 @@ def test_consume_original_batch_link_after_promotion_redirects_not_confirmed(
     assert signup.status == SignupStatus.pending
 
 
+def test_consume_own_link_for_plain_waitlisted_signup_redirects_waitlisted(
+    client, db_session
+):
+    """Regression guard: confirmed_count == 0 is also reachable with no
+    promotion anywhere — a signup landed straight on the waitlist because
+    its slot was already full, and the volunteer clicks their OWN emailed
+    link. Must redirect with reason=waitlisted, not reason=promotion_pending."""
+    signup, event, slot, volunteer = _make_pending_signup(
+        db_session, "plain-waitlisted-router@example.com"
+    )
+    signup.status = SignupStatus.waitlisted
+    db_session.flush()
+    batch_raw = issue_token(
+        db_session,
+        signup=signup,
+        email=volunteer.email,
+        purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
+        volunteer_id=volunteer.id,
+        ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
+    )
+    db_session.commit()
+    # NOTE: no mark_promoted_pending — this signup was never promoted.
+
+    resp = client.get(f"/api/v1/auth/magic/{batch_raw}", follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert "reason=waitlisted" in resp.headers["location"]
+    assert "promotion_pending" not in resp.headers["location"]
+    assert "/signup/confirmed" not in resp.headers["location"]
+    db_session.expire_all()
+    db_session.refresh(signup)
+    assert signup.status == SignupStatus.waitlisted
+
+
 def test_resend_returns_200_on_valid_request(client, db_session, monkeypatch):
     signup, event, slot, volunteer = _make_pending_signup(db_session, "resend1@example.com")
     db_session.commit()
