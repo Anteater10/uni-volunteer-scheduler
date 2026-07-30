@@ -27,7 +27,6 @@ vi.mock("../../../lib/api", () => {
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
-    clone: vi.fn(),
   };
   const slots = {
     create: vi.fn(),
