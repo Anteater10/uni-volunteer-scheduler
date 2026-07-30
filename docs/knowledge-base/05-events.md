@@ -26,11 +26,14 @@ today** — it is stored and displayed, and no signup is ever refused because of
 take every slot in an event regardless of what that field says. If a cap actually matters for an
 event, the practical lever is capacity per slot.
 
-**Events carry a visibility setting, but the volunteer browse page does not filter on it.** Setting
-an event to something other than public changes what the admin form records; it does not hide the
-event from `/volunteer`. Every event in the selected week is listed there. The controls that really
-do limit public exposure are the signup window (which blocks signups outside it) and the site
-setting "hide past events from public" (which drops events whose last slot has ended).
+**An event's visibility setting is enforced on every public surface.** The event form offers
+**Public** or **Private**, and only a public event appears on `/volunteer`, opens by direct link, or
+accepts a signup. A private event is skipped by the browse listing, its event page and its signup
+form both answer "not found", and a signup attempt for one of its sessions is refused with the same
+"not found" as a session that doesn't exist — so a leaked link gives away nothing about whether the
+event is real. Two other controls narrow public exposure independently of visibility: the signup
+window (which blocks signups outside it) and the site setting "hide past events from public" (which
+drops events whose last slot has ended).
 
 **Duplicating an event is the normal way to build out a term, and it is a prefilled create form
 rather than a batch copy.** Reach it from the **Duplicate** button on a row in Admin → Events, or
@@ -87,6 +90,8 @@ Reopening puts the attended and no-show volunteers back on the live roster and c
 stamp, so the event returns to Upcoming if its dates are still ahead. Orientation credits already
 granted are deliberately **not** revoked — credit is permanent per volunteer and module family and
 may well predate this event, so corrections go through Admin → Orientation Credits instead.
+Reopening is refused once the event's quarter has ended or been archived, so a wrong outcome has to
+be corrected while the term is still open.
 
 **The events list is scoped to one quarter and shows everything in it by default.** The quarter
 selection is shared with the Overview page (see the quarters document), and within it the time
@@ -94,8 +99,15 @@ filter starts on "All" rather than "Upcoming" — the quarter is the scope, narr
 past is opt-in. Rows are always sorted by start date, whatever their status. With an ended quarter
 selected the page turns into history: no "+ New event" button, an amber strip naming when the
 quarter ended, and the time filter switches to "All events / Completed / Not closed out" so you can
-chase whatever was never closed out. Editing, duplicating, and deleting individual events in an
-ended quarter all still work.
+chase whatever was never closed out.
+
+**Events in an ended quarter are read-only.** Editing or deleting one is refused by the server with
+"*[quarter name]* has ended and is read-only" — it is genuinely blocked rather than just hidden in
+the UI, and there is no override. Duplicating still works, because the copy lands in a current
+quarter rather than the closed one. Closing out attendance still works too, so a session nobody ever
+finished can always be finished; the document on ending a slot covers that boundary. Ended quarters
+are archived automatically overnight, so this starts applying within a day of the quarter's last
+date.
 
 Everything about an event can be reconfigured after creation — title, location, dates, and its
 slots — from the event page itself, without going back to the events list.
