@@ -26,14 +26,24 @@ today** — it is stored and displayed, and no signup is ever refused because of
 take every slot in an event regardless of what that field says. If a cap actually matters for an
 event, the practical lever is capacity per slot.
 
-**An event's visibility setting is enforced on every public surface.** The event form offers
-**Public** or **Private**, and only a public event appears on `/volunteer`, opens by direct link, or
-accepts a signup. A private event is skipped by the browse listing, its event page and its signup
-form both answer "not found", and a signup attempt for one of its sessions is refused with the same
-"not found" as a session that doesn't exist — so a leaked link gives away nothing about whether the
-event is real. Two other controls narrow public exposure independently of visibility: the signup
-window (which blocks signups outside it) and the site setting "hide past events from public" (which
-drops events whose last slot has ended).
+**An event's visibility setting is enforced on every public surface.** The check allows exactly one
+value — **public** — and it is applied in all four places the public can reach an event: the
+volunteer browse listing, the event page, the signup form, and the act of signing up itself. Anything
+that is not public is skipped by the browse listing, answers "not found" on both its event page and
+its signup form, and has a signup attempt refused with the same "not found" as a session that
+doesn't exist — so a leaked link gives away nothing about whether the event is real.
+
+**"Not public" covers more than an event set to Private.** Because the rule allows only the value
+"public", an event whose visibility was never recorded at all is hidden everywhere too, rather than
+being treated as public. An event created in the event form always has a value — the form offers
+**Public** or **Private** and starts on Public — but an event that arrived some other way, such as
+data loaded in from outside the app, can have none. That case shows as a dash rather than a value in
+the Visibility row on the event's own page, which is the thing to check first if an event you expect
+volunteers to see is missing from the browse page and its link returns "not found".
+
+Two other controls narrow public exposure independently of visibility: the signup window (which
+blocks signups outside it) and the site setting "hide past events from public" (which drops events
+whose last slot has ended).
 
 **Duplicating an event is the normal way to build out a term, and it is a prefilled create form
 rather than a batch copy.** Reach it from the **Duplicate** button on a row in Admin → Events, or

@@ -27,9 +27,13 @@ accepted. Don't go looking for these switches, and don't rely on them for privac
 
 Each event carries its own settings, edited from the event page in Admin → Events:
 
-- Title, description, location, visibility on the public browse page, the cap on how many slots one
+- Title, description, location, **visibility** (Public or Private), the cap on how many slots one
   volunteer may take, the module, and the slots themselves — all editable after creation.
 - **The signup form** — the event's own field list, which overrides the module's default.
+
+**Visibility gates every public surface, not just the browse listing.** Only an event set to Public
+appears on the volunteer browse page, opens by direct link, shows its signup form, or accepts a
+signup; anything else answers "not found" on all of them. The events document covers the detail.
 
 **The school field does not save on an existing event.** It's in the form and it accepts what you
 type, but the change is dropped on the way to the server, so the event keeps its original school. Set
