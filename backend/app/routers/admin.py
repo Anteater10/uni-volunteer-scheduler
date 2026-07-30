@@ -18,7 +18,16 @@ from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
-from ..signup_service import PromotionResult, promote_waitlist_fifo
+from ..signup_service import (
+    PromotionResult,
+    mark_promoted_pending,
+    promote_waitlist_fifo,
+)
+from ..services.waitlist_service import (
+    SLOT_ENDED_CODE,
+    SlotEndedError,
+    slot_has_ended,
+)
 from ..services import module_service, quarter_service
 from ..services.audit_log_humanize import humanize as humanize_audit_log
 from ..schemas import ModuleRead, ModuleCreate, ModuleUpdate, SentNotificationRead
@@ -750,6 +759,10 @@ def admin_promote_signup(
 
     try:
         promo = manual_promote(db, signup, slot, allow_overfill=False)
+    except SlotEndedError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
     except ValueError as exc:  # belt-and-braces; pre-checks above match
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -896,18 +909,36 @@ def admin_move_signup(
         models.SignupStatus.confirmed,
         models.SignupStatus.pending,
     )
+
+    # 2026-07-29: moving a waitlisted signup into an open seat IS a promotion,
+    # so it takes the one promotion path (pending + its own confirm email) and
+    # inherits the promotion guard. Other statuses keep their existing
+    # behaviour, including a confirmed move between ended slots — staff still
+    # need to fix records after an event.
+    target_has_room = target_slot.current_count < target_slot.capacity
+    promoting = (
+        previous_status == models.SignupStatus.waitlisted and target_has_room
+    )
+    if promoting and slot_has_ended(target_slot):
+        raise HTTPException(
+            status_code=422,
+            detail={"code": SLOT_ENDED_CODE, "message": str(SlotEndedError())},
+        )
+
     if held_source_capacity and source_slot.current_count > 0:
         source_slot.current_count -= 1
 
-    if target_slot.current_count < target_slot.capacity:
+    if target_has_room:
         # Preserve pending/confirmed on move — a staff move must not
         # silently confirm a signup the volunteer never confirmed.
-        # Waitlisted → open seat still confirms (spec: same as swap).
-        new_status = (
-            previous_status
-            if held_source_capacity
-            else models.SignupStatus.confirmed
-        )
+        if promoting:
+            new_status = models.SignupStatus.pending
+        else:
+            new_status = (
+                previous_status
+                if held_source_capacity
+                else models.SignupStatus.confirmed
+            )
         target_slot.current_count += 1
     else:
         new_status = models.SignupStatus.waitlisted
@@ -915,12 +946,18 @@ def admin_move_signup(
     signup.slot_id = target_slot.id
     signup.status = new_status
 
+    # After the slot_id repoint, so the confirm email describes the seat the
+    # volunteer is actually being offered.
+    move_promotion = mark_promoted_pending(db, signup) if promoting else None
+
     promotions = (
         _promote_waitlist_fifo(db, source_slot) if held_source_capacity else []
     )
 
     log_action(db, actor, "admin_signup_move", "Signup", str(signup.id))
     promotion_email_kwargs = [p.email_kwargs for p in promotions]
+    if move_promotion is not None:
+        promotion_email_kwargs.append(move_promotion.email_kwargs)
     db.commit()
     db.refresh(signup)
 

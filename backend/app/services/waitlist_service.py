@@ -21,6 +21,44 @@ from .. import models
 from ..signup_service import PromotionResult, mark_promoted_pending
 
 
+SLOT_ENDED_CODE = "SLOT_ENDED"
+
+
+class SlotEndedError(ValueError):
+    """Promotion refused: the target slot's ``end_time`` is already past.
+
+    Subclasses ``ValueError`` so a promotion caller that has not been taught
+    about the code still degrades to that router's generic 4xx instead of a
+    500. Routers that surface staff-facing promotions translate it to a 422
+    carrying ``SLOT_ENDED`` (house style, cf. ``ORIENTATION_REQUIRED``).
+    """
+
+    code = SLOT_ENDED_CODE
+
+    def __init__(self, message: str | None = None):
+        super().__init__(
+            message
+            or "this session has already ended — nobody can be promoted into it"
+        )
+
+
+def slot_has_ended(slot: models.Slot, now: datetime | None = None) -> bool:
+    """True when ``slot.end_time`` is at or before ``now`` (UTC-aware).
+
+    Single source of truth for every promotion path: FIFO auto-promotion
+    skips an ended slot silently (the seat simply stays free), staff
+    promotion raises ``SlotEndedError``. Timestamps come back from Postgres
+    tz-aware; the naive fallback keeps the comparison from blowing up if a
+    caller hands over a hand-built slot.
+    """
+    end_time = slot.end_time
+    if end_time is None:
+        return False
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=timezone.utc)
+    return end_time <= (now or datetime.now(timezone.utc))
+
+
 def compute_waitlist_position(
     db: Session, slot_id, signup_id
 ) -> int | None:
@@ -107,10 +145,12 @@ def manual_promote(
 
     Caller must hold FOR UPDATE on both rows and must have verified the
     signup belongs to the slot. Raises ``ValueError`` on invalid state so
-    the router can translate to an HTTP status.
+    the router can translate to an HTTP status, and the ``SlotEndedError``
+    subclass when the slot has already ended (staff action, so it fails loudly
+    instead of skipping the way FIFO auto-promotion does).
 
     Delegates the status flip to ``mark_promoted_pending`` (waitlisted →
-    pending, issues a fresh 3-day SIGNUP_CONFIRM token) then increments
+    pending, issues a fresh 3-day PROMOTION_CONFIRM token) then increments
     ``slot.current_count`` itself, since ``mark_promoted_pending``
     deliberately leaves capacity accounting to the caller. 2026-07-28 spec:
     staff promotion is not volunteer intent — the volunteer confirms via the
@@ -127,6 +167,10 @@ def manual_promote(
     """
     if signup.status != models.SignupStatus.waitlisted:
         raise ValueError("only waitlisted signups can be promoted")
+    # Checked before capacity: on an ended slot "it's over" is the fact staff
+    # need, and allow_overfill must not be a way around it.
+    if slot_has_ended(slot):
+        raise SlotEndedError()
     if slot.current_count >= slot.capacity and not allow_overfill:
         raise ValueError("slot is full")
 

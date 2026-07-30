@@ -15,8 +15,8 @@ from ...celery_app import send_email_notification, send_waitlist_promotion_email
 from ...database import get_db
 from ...deps import log_action, rate_limit
 from ...magic_link_service import (
+    MANAGE_PURPOSES,
     ConsumeResult,
-    MagicLinkPurpose,
     _lookup_token,
     consume_token,
 )
@@ -79,7 +79,8 @@ def manage_signups(
 ):
     """View upcoming signups for the token's volunteer+event scope.
 
-    Does NOT consume the token. Works with both signup_confirm and signup_manage purpose.
+    Does NOT consume the token. Works with any manage-capable purpose
+    (signup_confirm, signup_manage, promotion_confirm).
     """
     # 2026-07-28 spec: expires_at is the CONFIRMATION deadline only.
     # Manage/swap/cancel stay usable for as long as the token row exists
@@ -87,10 +88,7 @@ def manage_signups(
     token_row = _lookup_token(db, token)
     if token_row is None:
         raise HTTPException(status_code=400, detail="token invalid")
-    if token_row.purpose not in (
-        MagicLinkPurpose.SIGNUP_CONFIRM,
-        MagicLinkPurpose.SIGNUP_MANAGE,
-    ):
+    if token_row.purpose not in MANAGE_PURPOSES:
         raise HTTPException(status_code=400, detail="token not valid for manage")
 
     anchor = db.get(Signup, token_row.signup_id)
@@ -180,10 +178,7 @@ def swap_signup_public(
     token_row = _lookup_token(db, token)
     if token_row is None:
         raise HTTPException(status_code=400, detail="token invalid")
-    if token_row.purpose not in (
-        MagicLinkPurpose.SIGNUP_CONFIRM,
-        MagicLinkPurpose.SIGNUP_MANAGE,
-    ):
+    if token_row.purpose not in MANAGE_PURPOSES:
         raise HTTPException(status_code=400, detail="token not valid for manage")
 
     signup = db.query(Signup).filter(Signup.id == signup_id).first()

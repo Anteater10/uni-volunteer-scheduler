@@ -29,9 +29,13 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
 
     Promotion is a system/staff action, not volunteer intent, so the
     volunteer confirms via the emailed magic link (3-day TTL) — the same
-    link is their manage/cancel page. Shared by promote_waitlist_fifo and
-    waitlist_service.manual_promote so no promotion path can forget the
-    token. Does NOT touch slot.current_count.
+    link is their manage/cancel page. Shared by promote_waitlist_fifo,
+    waitlist_service.manual_promote and the admin move so no promotion path
+    can forget the token. Does NOT touch slot.current_count.
+
+    The token carries PROMOTION_CONFIRM, not SIGNUP_CONFIRM: this seat is
+    confirmable only by this link, and consuming it confirms only this signup
+    (see magic_link_service.consume_token).
     """
     signup.status = models.SignupStatus.pending
     volunteer = signup.volunteer
@@ -39,7 +43,7 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
         db,
         signup=signup,
         email=volunteer.email,
-        purpose=models.MagicLinkPurpose.SIGNUP_CONFIRM,
+        purpose=models.MagicLinkPurpose.PROMOTION_CONFIRM,
         volunteer_id=volunteer.id,
         ttl_minutes=PROMOTION_CONFIRM_TTL_MINUTES,
     )
@@ -66,9 +70,15 @@ def promote_waitlist_fifo(db: Session, slot_id) -> PromotionResult | None:
     SKIP LOCKED on the waitlist row to serialize concurrent cancels.
 
     2026-07-28 spec: promoted signups go to 'pending' with a fresh 3-day
-    SIGNUP_CONFIRM token — promotion is a system/staff action, not
+    PROMOTION_CONFIRM token — promotion is a system/staff action, not
     volunteer intent, and the emailed link doubles as the volunteer's
     manage/cancel page (previously promotees had no link at all).
+
+    Returns None when the slot has already ended: auto-promotion is silent,
+    so the seat simply stays free. Promoting there would mail a "confirm your
+    spot" link for an event that already happened, the token would lapse
+    unconfirmed, and the next hourly reap would repeat the cycle for the next
+    waitlister.
 
     The caller is responsible for:
       - Already holding a FOR UPDATE lock on the parent Slot row
@@ -77,6 +87,15 @@ def promote_waitlist_fifo(db: Session, slot_id) -> PromotionResult | None:
       - Enqueuing send_waitlist_promotion_email(**result.email_kwargs)
         AFTER db.commit()
     """
+    # Function-level import: services.waitlist_service imports this module, so
+    # a module-level import would be circular. The guard lives there because
+    # manual_promote shares it.
+    from .services.waitlist_service import slot_has_ended
+
+    slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
+    if slot is None or slot_has_ended(slot):
+        return None
+
     next_up = (
         db.query(models.Signup)
         .filter(

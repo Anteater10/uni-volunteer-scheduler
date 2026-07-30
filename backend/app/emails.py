@@ -201,18 +201,18 @@ def send_reschedule(signup: models.Signup) -> dict:
 def _manage_url_for_signup(signup: "models.Signup") -> str | None:
     """Return a magic-link manage URL for the signup, if one exists.
 
-    Looks up the freshest un-consumed SIGNUP_MANAGE / SIGNUP_CONFIRM token
-    stored against this signup. Used in reminder emails so the unsubscribe
-    link is already authenticated and the manage page loads without
-    re-challenging the volunteer.
+    Looks up the freshest un-consumed manage-capable token stored against this
+    signup (signup_manage / signup_confirm / promotion_confirm). Used in
+    reminder emails so the unsubscribe link is already authenticated and the
+    manage page loads without re-challenging the volunteer.
     """
     from .config import settings
+    from .magic_link_service import MANAGE_PURPOSES
 
     tokens = getattr(signup, "magic_link_tokens", None) or []
     manage_tokens = [
         t for t in tokens
-        if t.consumed_at is None
-        and t.purpose in (models.MagicLinkPurpose.SIGNUP_MANAGE, models.MagicLinkPurpose.SIGNUP_CONFIRM)
+        if t.consumed_at is None and t.purpose in MANAGE_PURPOSES
     ]
     if not manage_tokens:
         return None

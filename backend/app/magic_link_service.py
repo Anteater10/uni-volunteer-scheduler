@@ -25,6 +25,26 @@ SIGNUP_CONFIRM_TTL_MINUTES = 20160  # 14 days * 24h * 60min
 # window than fresh signups — a ghost promotee must not block the seat.
 PROMOTION_CONFIRM_TTL_MINUTES = 4320  # 3 days * 24h * 60min
 
+# Purposes that make a pending signup confirmable. PROMOTION_CONFIRM is a
+# separate purpose so consent stays scoped (see consume_token), but for the
+# hourly reap and the stale-token GC a promotion token IS the signup's confirm
+# token — keying on SIGNUP_CONFIRM alone would make promotion-pending rows
+# invisible to the reap and leak their tokens past the GC. One tuple so no
+# consumer can drift.
+CONFIRM_PURPOSES = (
+    MagicLinkPurpose.SIGNUP_CONFIRM,
+    MagicLinkPurpose.PROMOTION_CONFIRM,
+)
+
+# Purposes that grant token-gated manage access (manage page, swap, cancel,
+# preferences, reminder manage links). Every confirm link doubles as the
+# volunteer's manage/cancel page — that is the promotion link's whole point.
+MANAGE_PURPOSES = (
+    MagicLinkPurpose.SIGNUP_CONFIRM,
+    MagicLinkPurpose.SIGNUP_MANAGE,
+    MagicLinkPurpose.PROMOTION_CONFIRM,
+)
+
 
 class ConsumeResult(str, Enum):
     ok = "ok"
@@ -82,11 +102,56 @@ def _lookup_token(db: Session, raw: str) -> Optional[MagicLinkToken]:
     return db.query(MagicLinkToken).filter_by(token_hash=token_hash).first()
 
 
+def _promotion_pending_exists(db: Session):
+    """Correlated EXISTS: does the outer ``Signup`` row carry a promotion
+    confirm token?
+
+    Such a signup is only pending because a promotion put it there, so it may
+    be confirmed by its own promotion link and by nothing else. Correlation is
+    pinned explicitly — a de-correlated subquery would silently degrade to
+    "does ANY promotion token exist", which would freeze every batch confirm.
+    """
+    return (
+        db.query(MagicLinkToken.id)
+        .filter(
+            MagicLinkToken.signup_id == Signup.id,
+            MagicLinkToken.purpose == MagicLinkPurpose.PROMOTION_CONFIRM,
+        )
+        .correlate(Signup)
+        .exists()
+    )
+
+
+def _is_promotion_pending(db: Session, signup: Signup) -> bool:
+    """True when this pending signup's seat came from a promotion."""
+    if signup.status != SignupStatus.pending:
+        return False
+    return bool(
+        db.query(MagicLinkToken.id)
+        .filter(
+            MagicLinkToken.signup_id == signup.id,
+            MagicLinkToken.purpose == MagicLinkPurpose.PROMOTION_CONFIRM,
+        )
+        .first()
+    )
+
+
 def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup]]:
     """Atomically consume a token, returning (result, signup).
 
     For SIGNUP_CONFIRM purpose with volunteer_id set: batch-flips all pending
     signups for that volunteer in the same event as the anchor signup.
+
+    2026-07-29 consent scoping: a promoted seat is only ever confirmed by its
+    own PROMOTION_CONFIRM link. So a batch SIGNUP_CONFIRM token skips every
+    promotion-pending signup (anchor included — the batch anchor can itself be
+    a signup that was waitlisted at signup time and promoted later), and a
+    PROMOTION_CONFIRM token confirms its own signup and nothing else. The
+    tradeoff: a volunteer whose only signup is promotion-pending can consume
+    their original batch link without confirming anything — the promotion
+    email is the only message that names the seat being offered, so silently
+    confirming here would be exactly the consent violation this scoping
+    exists to prevent.
     """
     token_hash = _hash_token(raw)
     row = db.query(MagicLinkToken).filter_by(token_hash=token_hash).first()
@@ -107,7 +172,10 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
     )
     if updated != 1:
         return ConsumeResult.used, None
-    if signup.status == SignupStatus.pending:
+    if signup.status == SignupStatus.pending and (
+        row.purpose == MagicLinkPurpose.PROMOTION_CONFIRM
+        or not _is_promotion_pending(db, signup)
+    ):
         signup.status = SignupStatus.confirmed
     db.flush()
 
@@ -125,6 +193,7 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
                     Signup.status == SignupStatus.pending,
                     Slot.event_id == anchor_event_id,
                     Signup.id != signup.id,
+                    ~_promotion_pending_exists(db),
                 )
                 .all()
             )

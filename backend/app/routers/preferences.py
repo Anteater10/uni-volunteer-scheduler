@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import rate_limit
-from ..magic_link_service import MagicLinkPurpose, _lookup_token
+from ..magic_link_service import MANAGE_PURPOSES, _lookup_token
 from ..services import reminder_service
 
 router = APIRouter(prefix="/public", tags=["public"])
@@ -27,10 +27,7 @@ def _resolve_volunteer_email(db: Session, manage_token: str) -> str:
     token_row = _lookup_token(db, manage_token)
     if token_row is None or token_row.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="token invalid or expired")
-    if token_row.purpose not in (
-        MagicLinkPurpose.SIGNUP_CONFIRM,
-        MagicLinkPurpose.SIGNUP_MANAGE,
-    ):
+    if token_row.purpose not in MANAGE_PURPOSES:
         raise HTTPException(status_code=400, detail="token not valid for manage")
     volunteer = token_row.volunteer
     if volunteer is None:
