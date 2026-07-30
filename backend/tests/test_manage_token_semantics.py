@@ -207,3 +207,82 @@ def test_participant_swap_of_waitlisted_signup_stays_confirmed(
     moved = db_session.get(models.Signup, signup.id)
     assert moved.status == models.SignupStatus.confirmed
     assert moved.slot_id == target_slot.id
+
+
+def _cancelled_signup_with_manage_token(db_session):
+    """A cancelled signup plus a live SIGNUP_MANAGE token — the shape a
+    volunteer holds after cancelling, since manage links deliberately
+    outlive the confirm deadline (docstring above)."""
+    owner = make_user(db_session, role=models.UserRole.admin, email=f"owner-{uuid.uuid4().hex[:8]}@example.com")
+    event = models.Event(
+        id=uuid.uuid4(),
+        owner_id=owner.id,
+        title="Cancelled Manage Event",
+        start_date=datetime.now(timezone.utc) + timedelta(days=20),
+        end_date=datetime.now(timezone.utc) + timedelta(days=21),
+    )
+    db_session.add(event)
+    db_session.flush()
+    slot = models.Slot(
+        id=uuid.uuid4(),
+        event_id=event.id,
+        start_time=datetime.now(timezone.utc) + timedelta(days=20),
+        end_time=datetime.now(timezone.utc) + timedelta(days=20, hours=2),
+        capacity=1,
+        current_count=0,
+        slot_type=models.SlotType.PERIOD,
+        date=date_type.today(),
+    )
+    db_session.add(slot)
+    db_session.flush()
+    _bind_factories(db_session)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, slot=slot, status=models.SignupStatus.cancelled
+    )
+    db_session.flush()
+    raw = mls.issue_token(
+        db_session,
+        signup=signup,
+        email=vol.email,
+        purpose=models.MagicLinkPurpose.SIGNUP_MANAGE,
+        volunteer_id=vol.id,
+        ttl_minutes=60,
+    )
+    db_session.commit()
+    return signup, slot, raw
+
+
+def test_participant_swap_of_cancelled_signup_via_live_manage_link_is_refused(
+    client, db_session
+):
+    """This is the exploit the 2026-07-29 sweep closed: a volunteer cancels,
+    then later uses their still-live manage link to swap. The signup must
+    NOT come back as 'confirmed' — that would grant a seat without going
+    through the validated signup path (orientation, one-event-per-batch,
+    signup window, visibility all skipped)."""
+    signup, source_slot, raw = _cancelled_signup_with_manage_token(db_session)
+    target_slot = models.Slot(
+        id=uuid.uuid4(),
+        event_id=source_slot.event_id,
+        start_time=source_slot.start_time,
+        end_time=source_slot.end_time,
+        capacity=2,
+        current_count=0,
+        slot_type=models.SlotType.PERIOD,
+        date=date_type.today(),
+    )
+    db_session.add(target_slot)
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/public/signups/{signup.id}/swap?token={raw}",
+        json={"target_slot_id": str(target_slot.id)},
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["code"] == "SIGNUP_NOT_SWAPPABLE"
+    db_session.expire_all()
+    untouched = db_session.get(models.Signup, signup.id)
+    assert untouched.status == models.SignupStatus.cancelled
+    assert untouched.slot_id == source_slot.id
