@@ -698,8 +698,15 @@ def admin_cancel_signup(
     db.refresh(signup)
 
     # Emails only after commit — the worker reads rows from its own session.
-    # The cancellation email is dispatched via the deduped kind pipeline (volunteer-backed).
-    send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
+    # The cancellation email is dispatched via the deduped kind pipeline
+    # (volunteer-backed). A waitlisted signup never held a seat, so it gets
+    # waitlist-appropriate copy instead of "your signup has been cancelled".
+    cancellation_kind = (
+        "cancellation_waitlisted"
+        if previous_status == models.SignupStatus.waitlisted
+        else "cancellation"
+    )
+    send_email_notification.delay(signup_id=str(signup.id), kind=cancellation_kind)
 
     # Promoted volunteers get the confirm-your-spot email — pending status
     # holds the seat until the volunteer clicks the emailed magic link.

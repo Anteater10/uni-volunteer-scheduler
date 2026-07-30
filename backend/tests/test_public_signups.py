@@ -385,6 +385,42 @@ class TestCancelSignup:
         assert resp.status_code == 200
         assert "cancellation" in kinds
 
+    def test_public_cancel_waitlisted_sends_waitlist_copy(self, client, db_session, monkeypatch):
+        """A signup that was only ever waitlisted (never held a seat) gets
+        waitlist-appropriate cancellation copy, not the standard 'your
+        signup has been cancelled' text."""
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        monkeypatch.setattr(
+            "app.celery_app.send_waitlist_promotion_email.delay", lambda **k: None
+        )
+        kinds = []
+        monkeypatch.setattr(
+            "app.celery_app.send_email_notification.delay",
+            lambda *a, **k: kinds.append(k.get("kind")),
+        )
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
+        db_session.commit()
+
+        with _TokenCapture(monkeypatch) as cap:
+            resp = client.post(
+                "/api/v1/public/signups",
+                json=_signup_payload(slot.id, email="wl_cancel_copy09@example.com"),
+            )
+        assert resp.status_code == 201
+        signup_id = resp.json()["signup_ids"][0]
+        raw_token = cap.last_token
+        if raw_token is None:
+            pytest.skip("Token capture failed")
+
+        resp = client.delete(f"/api/v1/public/signups/{signup_id}?token={raw_token}")
+        assert resp.status_code == 200, resp.text
+        assert "cancellation_waitlisted" in kinds
+        assert "cancellation" not in kinds
+
     def test_cancel_with_wrong_volunteer_token_returns_403(self, client, db_session, monkeypatch):
         """T-09-04: token belonging to different volunteer must return 403."""
         monkeypatch.setattr(

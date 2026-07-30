@@ -288,8 +288,15 @@ def cancel_signup(
 
     # Tamper-evidence for long-lived manage links (2026-07-28 spec decision 6):
     # the volunteer learns immediately if someone else cancels them. Deduped
-    # by (signup_id, "cancellation") — a signup cancels at most once.
-    send_email_notification.delay(signup_id=str(signup_id), kind="cancellation")
+    # by (signup_id, kind) — a signup cancels at most once. A waitlisted
+    # signup never held a seat, so it gets waitlist-appropriate copy instead
+    # of "your signup has been cancelled".
+    cancellation_kind = (
+        "cancellation_waitlisted"
+        if previous_status == SignupStatus.waitlisted
+        else "cancellation"
+    )
+    send_email_notification.delay(signup_id=str(signup_id), kind=cancellation_kind)
 
     # Emails only after commit — the worker reads rows from its own session.
     for kwargs in promotion_email_kwargs:

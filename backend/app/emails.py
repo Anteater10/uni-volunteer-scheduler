@@ -119,6 +119,40 @@ def send_cancellation(signup: models.Signup) -> dict:
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
+def send_waitlist_cancellation(signup: models.Signup) -> dict:
+    """Cancellation copy for a signup whose previous status was waitlisted.
+
+    A waitlisted signup never held a seat, so send_cancellation's "your
+    signup has been cancelled" is misleading — say the volunteer was
+    removed from the waitlist instead. Dispatched via the same
+    send_email_notification(kind=...) pipeline as send_cancellation, under
+    a distinct kind so a caller's previous_status check at cancel time
+    picks the right copy.
+    """
+    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
+    v = signup.volunteer
+    slot = signup.slot
+    event = slot.event
+    vol_name = f"{v.first_name} {v.last_name}"
+    subject = f"You've been removed from the waitlist for '{event.title}'"
+    text_body = (
+        f"Hi {vol_name},\n\n"
+        f"You have been removed from the waitlist for the following volunteer slot:\n"
+        f"- Event: {event.title}\n"
+        f"- When: {_fmt_when(slot)}\n"
+        f"- Where: {event.location or 'TBD'}\n\n"
+        "If this is a mistake, you can sign up again if slots are available."
+    )
+    html_body = _render_html(
+        "waitlist_cancellation.html",
+        user_name=vol_name,
+        event_title=event.title,
+        slot_when=_fmt_when(slot),
+        event_location=event.location or "TBD",
+    )
+    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+
+
 def send_reminder_24h(signup: models.Signup) -> dict:
     # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
     v = signup.volunteer
@@ -323,6 +357,7 @@ def send_reminder_pre_2h(signup: "models.Signup") -> dict:
 BUILDERS = {
     "confirmation": send_confirmation,
     "cancellation": send_cancellation,
+    "cancellation_waitlisted": send_waitlist_cancellation,
     "reminder_24h": send_reminder_24h,
     "reminder_1h": send_reminder_1h,
     "reschedule": send_reschedule,

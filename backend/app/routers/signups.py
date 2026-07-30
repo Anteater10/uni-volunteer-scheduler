@@ -113,8 +113,15 @@ def cancel_signup(
     db.commit()
     db.refresh(signup)
 
-    # Emails after commit — dispatched via app.emails.BUILDERS by kind.
-    send_email_notification.delay(signup_id=str(signup.id), kind="cancellation")
+    # Emails after commit — dispatched via app.emails.BUILDERS by kind. A
+    # waitlisted signup never held a seat, so it gets waitlist-appropriate
+    # copy instead of "your signup has been cancelled".
+    cancellation_kind = (
+        "cancellation_waitlisted"
+        if previous_status == models.SignupStatus.waitlisted
+        else "cancellation"
+    )
+    send_email_notification.delay(signup_id=str(signup.id), kind=cancellation_kind)
 
     # Promoted volunteers get the confirm-your-spot email — pending status
     # holds the seat until the volunteer clicks the emailed magic link.
