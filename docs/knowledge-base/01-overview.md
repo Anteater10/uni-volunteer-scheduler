@@ -31,8 +31,9 @@ QR code scanned at the door. Staff, by contrast, do log in with an email and pas
 The staff side of the SciTrek scheduler lives under `/admin` and is built for desktop screens.
 Below tablet width every page inside the admin shell shows a desktop-only banner instead of the
 page itself. The one staff surface that works on a phone is the **organizer's own roster**, reached
-through the **Today** page in the staff menu — it sits outside the admin shell on purpose, because
-day-of check-in is a phone job done at a classroom door. The same roster also has an address inside
-the admin area, and that copy is desktop-gated like everything else in the shell, so a roster link
-that refuses to open on a phone is the admin one rather than the Today one. See the roles-and-access
-document.
+from the **Today** button that organizers get in the bottom bar on a phone — it sits outside the admin
+shell on purpose, because day-of check-in is a phone job done at a classroom door. Admins do not get
+that button; their phone bottom bar holds admin destinations, all of which are desktop-only. The same
+roster also has an address inside the admin area, and that copy is desktop-gated like everything else
+in the shell, so a roster link that refuses to open on a phone is the admin one rather than the Today
+one. See the roles-and-access document.

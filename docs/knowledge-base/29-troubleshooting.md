@@ -59,13 +59,13 @@ means the 3 days ran out. They can sign up again if a seat is free.
 ## A volunteer says the confirm link didn't confirm anything
 
 The app shows a **"Nothing to confirm"** page with a reason, and the three reasons need different
-answers. *"You're on the waitlist for this slot — we'll email you if a spot opens up"* means they were
-never promoted: their session was full when they signed up, nothing is wrong, and there is no email to
-hunt for. *"This link didn't confirm a seat. Your spot came from a waitlist promotion — use the
-confirm link in that email instead"* means they clicked their original signup email when the seat they
-hold came from a promotion; the promotion email is the one with the working button, and if they can't
-find it, tapping them in at the door confirms them anyway. *"There's nothing to confirm — this signup
-has already been resolved"* means staff already checked them in or closed the session out.
+answers. *"You're on the waitlist for this slot — we'll email you if a spot opens up."* means they
+were never promoted: their session was full when they signed up, nothing is wrong, and there is no
+email to hunt for. *"This link didn't confirm a seat. Your spot came from a waitlist promotion — use
+the confirm link in that email instead."* means they clicked their original signup email when the seat
+they hold came from a promotion; the promotion email is the one with the working button, and if they
+can't find it, tapping them in at the door confirms them anyway. *"There's nothing to confirm — this
+signup has already been resolved."* means staff already checked them in or closed the session out.
 
 Clicking a link that was already used still reports the signup as confirmed rather than failing, so
 "it says confirmed" on a second click is not a fault either.

@@ -41,7 +41,7 @@ promotion email and every path uses it:
 - A volunteer swaps to a different session, freeing the seat they came from.
 - An organizer or admin promotes one specific waitlisted person by hand.
 - Staff **move** or **swap** a waitlisted volunteer onto a session that has room.
-- An organizer **raises a session's capacity**, opening seats for the people already in line.
+- Staff **raise a session's capacity**, opening seats for the people already in line.
 - The automatic hourly check frees a seat by clearing a signup nobody confirmed.
 
 The email's subject is "A spot opened up — confirm your SciTrek signup for *[event]*". It names the
@@ -58,8 +58,10 @@ that has room.** Clicking swap on their own manage page *is* their consent, so t
 straight away and no confirm-your-spot email is sent. Every other path is somebody else deciding on
 their behalf, which is exactly why it becomes an offer instead. If staff make that same move for
 them, they land at pending and wait on the email — the same visible move on the roster, two different
-statuses, and the difference is who did it. (A volunteer who already holds a seat and swaps sessions
-keeps whatever status they had; it is the seat they *left* that gets offered down the waitlist.)
+statuses, and the difference is who did it. (A volunteer swapping a seat they already hold — pending,
+confirmed, or checked in — keeps that status; it is the seat they *left* that gets offered down the
+waitlist. A session they were already marked attended for is not theirs to move: only staff can
+relocate that.)
 
 ## If they don't confirm, the offer lapses
 

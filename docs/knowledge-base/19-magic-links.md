@@ -25,18 +25,21 @@ decides and the next person in line is waiting on the answer.
 
 **Once a volunteer has confirmed, their link keeps working indefinitely.** The deadline governs the
 act of confirming and nothing else: a volunteer who confirmed on day one can still open that same
-link on day forty to see their signups, cancel one, or swap sessions. This is deliberate. The old
+link on day forty to see their signups, cancel one, or swap to another session they are still due at.
+A session that has already been closed out, or one they cancelled, is not theirs to move — staff
+handle those from the roster. This is deliberate. The old
 behaviour punished the wrong people — a confirmed volunteer lost control of their own signups on day
 fifteen, which meant seats going unfilled because nobody could release them.
 
 **A link whose deadline passed without ever being confirmed is refused.** Someone in that position
-sees an "this link has expired" page rather than their signup list, and there is nothing to rescue:
+sees a "This link has expired" page rather than their signup list, and there is nothing to rescue:
 an hourly sweep deletes the unconfirmed signup shortly afterwards anyway. So "expired link" in
 practice means "you never confirmed", not "you confirmed and then waited too long".
 
 **Only the confirmation step is single-use.** Clicking to confirm consumes that step; clicking it
 again reports the signup as already confirmed rather than failing. Viewing, cancelling and swapping
-are not consumed and can be repeated as often as the volunteer likes. The practical consequence is
+are not consumed and can be repeated as often as the volunteer likes, for any session they are still
+due at. The practical consequence is
 worth being straight about: a link that leaks stays usable by whoever holds it, so it should be
 treated like a password and never forwarded. As a safeguard, cancelling through a link emails the
 volunteer a cancellation notice, so a cancellation they didn't make lands in their inbox
@@ -48,9 +51,9 @@ session by session. A session whose seat came from a **waitlist promotion** is s
 confirm link from its own promotion email, because that email is the only message that told the
 volunteer the seat was being offered.
 
-**A link can be spent without confirming anything, and the app now says so.** Clicking a confirm
-link used to always report success. It now shows a "Nothing to confirm" page with a reason when there
-was nothing for that link to confirm, and the three reasons need different answers:
+**A link can be spent without confirming anything, and the app says so.** When there was nothing for
+a confirm link to confirm, clicking it shows a **"Nothing to confirm"** page naming the reason rather
+than reporting success, and the three reasons need different answers:
 
 - *"You're on the waitlist for this slot — we'll email you if a spot opens up."* The volunteer was
   never promoted; their session was already full when they signed up. Nothing is wrong and there is
@@ -62,8 +65,8 @@ was nothing for that link to confirm, and the three reasons need different answe
 - *"There's nothing to confirm — this signup has already been resolved."* Staff already checked them
   in or closed out the session. Nothing is wrong.
 
-Clicking a link that was already used still reports the signup as confirmed rather than failing —
-that case is unchanged. An expired or unrecognized link still shows the "this link has expired" page.
+Clicking a link that was already used is different again: it reports the signup as confirmed rather
+than failing. An expired or unrecognized link shows the "This link has expired" page instead.
 
 **A link stops existing in one of two ways.** It disappears with its signup, which is what happens
 when an unconfirmed signup is swept away or a signup is deleted; or an automatic cleanup removes an
