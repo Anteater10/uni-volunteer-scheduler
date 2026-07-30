@@ -61,6 +61,29 @@ def _ensure_event_visible(db: Session, event_id) -> None:
         raise HTTPException(status_code=404, detail="event not found")
 
 
+def _ensure_slots_visible(db: Session, slot_ids) -> None:
+    """Fix round 1 (Task 2 review) — resolve every event referenced by
+    ``slot_ids`` and enforce visibility on all of them BEFORE any other
+    per-event validation runs (esp. ``_ensure_orientation_requirement``,
+    which can raise a distinguishable 422 ORIENTATION_REQUIRED for a
+    private event). Must run first so a private event 404s the same way
+    on every branch of the signup path, not just the per-slot loop's own
+    (redundant, still-kept) check.
+
+    Unknown slot ids resolve to no events and are silently skipped — the
+    per-slot loop later produces the existing "slot not found" 404.
+    """
+    event_ids = (
+        db.execute(
+            select(Slot.event_id).where(Slot.id.in_(set(slot_ids))).distinct()
+        )
+        .scalars()
+        .all()
+    )
+    for event_id in event_ids:
+        _ensure_event_visible(db, event_id)
+
+
 def _ensure_signup_window(db: Session, event_id, bypass: bool = False) -> None:
     """Phase 29 (LOCK-01) — reject public signups outside the event window.
 
@@ -183,6 +206,11 @@ def create_public_signup(
         phone_e164 = normalize_us_phone(payload.phone)
     except InvalidPhoneError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # 1a. Visibility guard — must run before ANY other per-event validation
+    # (esp. 1b below) so a private event 404s identically to a nonexistent
+    # one on every branch, not just the per-slot loop further down.
+    _ensure_slots_visible(db, payload.slot_ids)
 
     # 1b. Orientation requirement — enforced before any write so a rejected
     # signup leaves no volunteer/signup rows behind.
