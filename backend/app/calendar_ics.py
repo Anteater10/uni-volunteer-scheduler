@@ -23,7 +23,14 @@ def _utc_stamp(dt: datetime) -> str:
 def _escape(text: str) -> str:
     """RFC 5545 §3.3.11 text escaping: backslash, newline, comma, semicolon."""
     return (
-        text.replace("\\", "\\\\")
+        text
+        # Normalize first: a description can arrive with CRLF or bare CR
+        # (browser textarea, pasted content), and a raw CR left inside a
+        # property value corrupts the file's line structure. Mirrors
+        # frontend/src/lib/calendar.js's escapeText().
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\\", "\\\\")
         .replace("\n", "\\n")
         .replace(",", "\\,")
         .replace(";", "\\;")

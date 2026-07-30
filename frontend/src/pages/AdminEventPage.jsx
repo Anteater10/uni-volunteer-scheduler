@@ -29,6 +29,7 @@ import CheckInQRModal from "../components/admin/CheckInQRModal";
 import { toast } from "../state/toast";
 import { reopenEvent } from "../api/roster";
 import { useQuarters } from "../lib/useQuarters";
+import { findQuarterById } from "../lib/weekUtils";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 import { useAuth } from "../state/useAuth";
 
@@ -242,6 +243,18 @@ export default function AdminEventPage() {
   // Duplicate modal targets (it probes target-week conflicts itself).
   const quartersQ = useQuarters();
 
+  // Sweep remediation task 5: ended quarters are read-only history — the
+  // server rejects update/reopen against one (422 QUARTER_READONLY), so
+  // surface that state here instead of offering controls that would just
+  // 422. Same derivation as EventsSection's quarterEnded, cross-referenced
+  // through the event's own quarter_id since this page has one event, not
+  // a quarter selector.
+  const eventQuarter = findQuarterById(quartersQ.data || [], eventQ.data?.quarter_id);
+  const todayIsoForQuarter = new Date().toISOString().slice(0, 10);
+  const quarterReadOnly = Boolean(
+    eventQuarter && (eventQuarter.archived_at || eventQuarter.end_date < todayIsoForQuarter),
+  );
+
   // Phase 22 — effective form schema + save
   const formSchemaQ = useQuery({
     queryKey: ["eventFormSchema", eventId],
@@ -312,14 +325,24 @@ export default function AdminEventPage() {
               <ClipboardCheck className="h-4 w-4" />
               Live roster (check-in)
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setSettingsOpen(true)}
-              className="whitespace-nowrap"
-            >
-              <Settings className="h-4 w-4" />
-              Event settings
-            </Button>
+            {quarterReadOnly ? (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-fg-muted)] whitespace-nowrap"
+                title={`${eventQuarter.display_name} has ended — this event is read-only history.`}
+              >
+                <Settings className="h-4 w-4" />
+                Read-only (quarter ended)
+              </span>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={() => setSettingsOpen(true)}
+                className="whitespace-nowrap"
+              >
+                <Settings className="h-4 w-4" />
+                Event settings
+              </Button>
+            )}
             <Button
               variant="secondary"
               onClick={() => setQrOpen(true)}
@@ -391,15 +414,24 @@ export default function AdminEventPage() {
               ). It's filed under Past events.
             </p>
           </div>
-          <Button
-            type="button"
-            variant="secondary"
-            className="shrink-0"
-            disabled={reopenMut.isPending}
-            onClick={() => reopenMut.mutate()}
-          >
-            {reopenMut.isPending ? "Reopening…" : "Reopen event"}
-          </Button>
+          {quarterReadOnly ? (
+            <span
+              data-testid="reopen-readonly-note"
+              className="shrink-0 text-sm font-medium text-emerald-900/70"
+            >
+              Read-only — {eventQuarter.display_name} has ended
+            </span>
+          ) : (
+            <Button
+              type="button"
+              variant="secondary"
+              className="shrink-0"
+              disabled={reopenMut.isPending}
+              onClick={() => reopenMut.mutate()}
+            >
+              {reopenMut.isPending ? "Reopening…" : "Reopen event"}
+            </Button>
+          )}
         </div>
       ) : null}
 

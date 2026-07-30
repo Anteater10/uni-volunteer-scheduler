@@ -283,10 +283,6 @@ async function deleteEvent(eventId) {
   return request(`/events/${eventId}`, { method: "DELETE" });
 }
 
-async function cloneEvent(eventId) {
-  return request(`/events/${eventId}/clone`, { method: "POST" });
-}
-
 // --------------------
 // SLOTS
 // --------------------
@@ -337,32 +333,6 @@ async function deleteEventQuestion(questionId) {
 // --------------------
 async function listMyNotifications(params) {
   return request("/notifications/my", { method: "GET", params });
-}
-
-// --------------------
-// PORTALS
-// --------------------
-// Public portal view by slug: GET /api/v1/portals/{slug}
-async function getPortalBySlug(slug) {
-  return request(`/portals/${encodeURIComponent(slug)}`, { method: "GET", auth: false });
-}
-
-// Admin/organizer list portals: GET /api/v1/portals
-async function listPortals(params) {
-  return request("/portals", { method: "GET", params });
-}
-
-async function createPortal(payload) {
-  return request("/portals", { method: "POST", body: payload });
-}
-
-// Attach/detach endpoints vary across backends.
-// This is a sane default; adjust if your backend differs.
-async function attachEventToPortal(portalId, eventId) {
-  return request(`/portals/${portalId}/events/${eventId}`, { method: "POST" });
-}
-async function detachEventFromPortal(portalId, eventId) {
-  return request(`/portals/${portalId}/events/${eventId}`, { method: "DELETE" });
 }
 
 // --------------------
@@ -575,7 +545,6 @@ export const api = {
   createEvent,
   updateEvent,
   deleteEvent,
-  cloneEvent,
 
   // slots
   listSlots,
@@ -596,13 +565,6 @@ export const api = {
   // notifications
   listMyNotifications,
 
-  // portals
-  listPortals,
-  getPortalBySlug,
-  createPortal,
-  attachEventToPortal,
-  detachEventFromPortal,
-
   // admin
   adminSummary,
   adminListUsers,
@@ -618,13 +580,9 @@ export const api = {
     create: (payload) => createEvent(payload),
     update: (id, payload) => updateEvent(id, payload),
     delete: (id) => deleteEvent(id),
-    clone: (id) => cloneEvent(id),
   },
   notifications: {
     my: (params) => listMyNotifications(params),
-  },
-  portals: {
-    getBySlug: (slug) => getPortalBySlug(slug),
   },
   // public (unauthenticated) — phase 10
   public: {
@@ -820,20 +778,6 @@ export const api = {
       request(`/admin/events/${eventId}/form-schema`, {
         method: "PUT",
         body: { schema },
-      }),
-    // Phase 23 — recurring event duplication
-    duplicateEvent: (
-      eventId,
-      { target_weeks, target_year, target_quarter, skip_conflicts },
-    ) =>
-      request(`/admin/events/${eventId}/duplicate`, {
-        method: "POST",
-        body: {
-          target_weeks,
-          target_year,
-          ...(target_quarter ? { target_quarter } : {}),
-          skip_conflicts,
-        },
       }),
     // Phase 25 — admin reorder waitlist (WAIT-05)
     reorderWaitlist: (eventId, slotId, orderedIds) =>

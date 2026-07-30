@@ -41,7 +41,14 @@ export default function DuplicateEventModal({ open, onClose, sourceEvent, quarte
   const qc = useQueryClient();
   const navigate = useNavigate();
 
-  const rows = activeQuarters(quarters || []);
+  // Sweep remediation task 5: ended quarters are read-only, so create_event
+  // now 422s (QUARTER_READONLY) against one — exclude them as a target here
+  // too. activeQuarters() only drops archived rows; an ended-but-unarchived
+  // quarter needs its own end_date check (same string-compare EventsSection
+  // uses for quarterEnded). Modal-local only — activeQuarters() elsewhere
+  // still means "not archived", unchanged.
+  const todayIsoForRows = new Date().toISOString().slice(0, 10);
+  const rows = activeQuarters(quarters || []).filter((q) => q.end_date >= todayIsoForRows);
   const sourceRow = findQuarterById(quarters || [], sourceEvent?.quarter_id);
 
   const [targetQuarterId, setTargetQuarterId] = useState(null);
@@ -53,9 +60,11 @@ export default function DuplicateEventModal({ open, onClose, sourceEvent, quarte
     const pad = (n) => String(n).padStart(2, "0");
     const now = new Date();
     const todayIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const qid = defaultTargetQuarterId(quarters || [], todayIso);
+    // rows (not the raw quarters list) so a never-ended-quarters deployment
+    // can't default to an ended one that the picker below won't offer.
+    const qid = defaultTargetQuarterId(rows, todayIso);
     setTargetQuarterId(qid);
-    const row = findQuarterById(quarters || [], qid);
+    const row = findQuarterById(rows, qid);
     setTargetWeek(
       row ? defaultTargetWeek({ sourceEvent, sourceRow, targetRow: row }) : 1,
     );

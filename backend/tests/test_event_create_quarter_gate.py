@@ -6,7 +6,7 @@ defined quarter is rejected with an actionable 422, and the cache columns
 stale values in the payload are overridden).
 """
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -39,12 +39,20 @@ def module_template(db_session):
 
 
 def _seed_spring(db_session):
+    # Sweep remediation task 5 (ended quarters are read-only): dates are
+    # relative to real today so this quarter never lapses into read-only
+    # history as wall-clock time passes. Span (76 days) and day offsets used
+    # by callers below (_payload day 16/51/gap+3) are preserved from the
+    # original fixed Spring 2026 range (Mar 30 - Jun 14) so the week_number
+    # assertions keep meaning; `year=2026` stays as the quarter's own label,
+    # independent of the actual start_date used here.
     AcademicQuarterFactory._meta.sqlalchemy_session = db_session
+    start = date.today() - timedelta(days=1)
     q = AcademicQuarterFactory(
         season=models.Quarter.SPRING,
         year=2026,
-        start_date=date(2026, 3, 30),
-        end_date=date(2026, 6, 14),
+        start_date=start,
+        end_date=start + timedelta(days=76),
     )
     db_session.flush()
     return q
@@ -63,8 +71,9 @@ def test_create_derives_quarter_from_entered_range(
     client, db_session, organizer_headers, module_template
 ):
     spring = _seed_spring(db_session)
+    day = (spring.start_date + timedelta(days=16)).isoformat()
 
-    resp = client.post("/api/v1/events/", json=_payload("2026-04-15", module_template.slug), headers=organizer_headers)
+    resp = client.post("/api/v1/events/", json=_payload(day, module_template.slug), headers=organizer_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["quarter"] == "spring"
@@ -77,10 +86,11 @@ def test_create_derives_quarter_from_entered_range(
 
 
 def test_create_rejected_on_gap_date(client, db_session, organizer_headers, module_template):
-    _seed_spring(db_session)
+    spring = _seed_spring(db_session)
 
-    # 2026-06-17 is after spring ends (Jun 14) with nothing entered after it
-    resp = client.post("/api/v1/events/", json=_payload("2026-06-17", module_template.slug), headers=organizer_headers)
+    # 3 days after spring ends, with nothing entered after it
+    gap_day = (spring.end_date + timedelta(days=3)).isoformat()
+    resp = client.post("/api/v1/events/", json=_payload(gap_day, module_template.slug), headers=organizer_headers)
     assert resp.status_code == 422, resp.text
     assert "No quarter covers" in str(resp.json()["detail"])
 
@@ -95,15 +105,17 @@ def test_create_rejected_when_no_quarters_entered(
 def test_update_rederives_quarter_when_date_moves(
     client, db_session, organizer_headers, module_template
 ):
-    _seed_spring(db_session)
+    spring = _seed_spring(db_session)
+    day = (spring.start_date + timedelta(days=16)).isoformat()
     created = client.post(
-        "/api/v1/events/", json=_payload("2026-04-15", module_template.slug), headers=organizer_headers
+        "/api/v1/events/", json=_payload(day, module_template.slug), headers=organizer_headers
     ).json()
     assert created["week_number"] == 3
 
+    moved_day = (spring.start_date + timedelta(days=51)).isoformat()
     resp = client.put(
         f"/api/v1/events/{created['id']}",
-        json={"start_date": "2026-05-20T16:00:00Z", "end_date": "2026-05-20T18:00:00Z"},
+        json={"start_date": f"{moved_day}T16:00:00Z", "end_date": f"{moved_day}T18:00:00Z"},
         headers=organizer_headers,
     )
     assert resp.status_code == 200, resp.text
@@ -113,14 +125,16 @@ def test_update_rederives_quarter_when_date_moves(
 def test_update_rejected_when_new_date_uncovered(
     client, db_session, organizer_headers, module_template
 ):
-    _seed_spring(db_session)
+    spring = _seed_spring(db_session)
+    day = (spring.start_date + timedelta(days=16)).isoformat()
     created = client.post(
-        "/api/v1/events/", json=_payload("2026-04-15", module_template.slug), headers=organizer_headers
+        "/api/v1/events/", json=_payload(day, module_template.slug), headers=organizer_headers
     ).json()
 
+    gap_day = (spring.end_date + timedelta(days=3)).isoformat()
     resp = client.put(
         f"/api/v1/events/{created['id']}",
-        json={"start_date": "2026-06-17T16:00:00Z", "end_date": "2026-06-17T18:00:00Z"},
+        json={"start_date": f"{gap_day}T16:00:00Z", "end_date": f"{gap_day}T18:00:00Z"},
         headers=organizer_headers,
     )
     assert resp.status_code == 422, resp.text
@@ -130,9 +144,10 @@ def test_update_rejected_when_new_date_uncovered(
 def test_explicit_stale_quarter_values_are_overridden(
     client, db_session, organizer_headers, module_template
 ):
-    _seed_spring(db_session)
+    spring = _seed_spring(db_session)
+    day = (spring.start_date + timedelta(days=16)).isoformat()
 
-    payload = {**_payload("2026-04-15", module_template.slug), "quarter": "fall", "year": 2031, "week_number": 11}
+    payload = {**_payload(day, module_template.slug), "quarter": "fall", "year": 2031, "week_number": 11}
     resp = client.post("/api/v1/events/", json=payload, headers=organizer_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()

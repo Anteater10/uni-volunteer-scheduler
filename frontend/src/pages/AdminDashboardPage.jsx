@@ -58,7 +58,7 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Card>
           <h3 className="font-semibold">
             {/* TODO(copy) */}
@@ -72,22 +72,6 @@ export default function AdminDashboardPage() {
             <Button variant="secondary" as={Link} to="/admin/users">
               {/* TODO(copy) */}
               Manage users
-            </Button>
-          </div>
-        </Card>
-        <Card>
-          <h3 className="font-semibold">
-            {/* TODO(copy) */}
-            Portals
-          </h3>
-          <p className="text-sm text-[var(--color-fg-muted)] mt-1">
-            {/* TODO(copy) */}
-            Branded landing pages.
-          </p>
-          <div className="mt-3">
-            <Button variant="secondary" as={Link} to="/admin/portals">
-              {/* TODO(copy) */}
-              Manage portals
             </Button>
           </div>
         </Card>

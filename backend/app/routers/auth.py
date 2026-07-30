@@ -160,25 +160,39 @@ def set_password_from_invite(
     from jose import JWTError, ExpiredSignatureError
     from ..services.invite import verify_invite_token
     from ..services.password_reset import verify_reset_token
+    from ..services.credential_fingerprint import payload_fingerprint_matches
 
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
     try:
-        user_id = verify_invite_token(payload.token)
+        token_payload = verify_invite_token(payload.token)
     except ExpiredSignatureError:
         raise HTTPException(status_code=400, detail="This link has expired. Request a new one.")
     except JWTError:
         try:
-            user_id = verify_reset_token(payload.token)
+            token_payload = verify_reset_token(payload.token)
         except ExpiredSignatureError:
             raise HTTPException(status_code=400, detail="This link has expired. Request a new one.")
         except JWTError:
             raise HTTPException(status_code=400, detail="Invalid invite link.")
 
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+    user = db.query(models.User).filter(models.User.id == token_payload["sub"]).first()
     if user is None or user.is_active is False:
         raise HTTPException(status_code=400, detail="Invalid invite link.")
+
+    # Single-use enforcement (Task 6): the token was minted with an `fp`
+    # claim bound to the credential state (hashed_password) at that time.
+    # If the password has since changed — including via this same token on
+    # an earlier request — the fingerprint no longer matches and the token
+    # is dead, even though its signature and expiry are still fine. Reuses
+    # the payload already decoded above instead of decoding the raw token
+    # again (avoids a second decode racing an expiry boundary).
+    if not payload_fingerprint_matches(token_payload, user):
+        raise HTTPException(
+            status_code=400,
+            detail="This link has already been used or is no longer valid.",
+        )
 
     user.hashed_password = hash_password(payload.password)
     user.last_login_at = datetime.now(timezone.utc)

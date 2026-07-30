@@ -20,7 +20,6 @@ import { ADMIN } from './fixtures.js';
 const ROUTES = [
   { label: 'Overview', path: '/admin' },
   { label: 'Users', path: '/admin/users' },
-  { label: 'Portals', path: '/admin/portals' },
   { label: 'Audit Logs', path: '/admin/audit-logs' },
   { label: 'Exports', path: '/admin/exports' },
   { label: 'Help', path: '/admin/help' },
