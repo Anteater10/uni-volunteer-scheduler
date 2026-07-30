@@ -49,7 +49,9 @@ the following quarter. Both are edge cases, but they explain a surprising week n
 
 **Ended quarters are archived automatically.** A daily sweep at 03:30 UTC — roughly 8:30 pm Pacific
 the evening before — archives every quarter whose end date has passed, so a quarter is normally in
-the archive the same night its last day ends. An admin can also archive it by hand once it has
+the archive the same night its last day ends. Archiving is a tidy-up rather than the moment anything
+changes: the quarter has already turned read-only by then, several hours earlier, as soon as its end
+date passed in UTC. An admin can also archive it by hand once it has
 ended. An archived quarter stays listed and stays reachable by deep link, and volunteers can still
 browse it under "Archived quarters" on the public page, but the app skips archived quarters when
 working out what week it currently is. Archiving can be undone with Restore — though a restored
@@ -83,9 +85,15 @@ their custom signup questions, and reopening a completed event are all rejected 
 name]* has ended and is read-only." Moving an event *into* an ended quarter is refused the same way.
 Two things deliberately stay open: closing out attendance, because an organizer legitimately
 finishes a roster the morning after, and duplicating one of its events into a current quarter, which
-is what makes last term's schedule useful as the starting point for this term's. Because ended
-quarters archive automatically at 03:30 UTC each night, this bites within a day of the quarter's
-last date rather than whenever someone remembers to archive it. See the events document.
+is what makes last term's schedule useful as the starting point for this term's. See the events
+document.
+
+**A quarter turns read-only as soon as its end date is past — which is late afternoon Pacific on the
+quarter's own last day, not the following morning.** The cutoff is worked out in UTC, so it falls
+around 5pm Pacific in summer and 4pm in winter, while it is still the last day locally. Being
+archived has the same effect, but archiving is a separate nightly tidy-up that runs several hours
+after the cutoff has already passed: the date alone is enough. Plan on losing write access to a
+quarter mid-afternoon on its final day.
 
 **Deleting a quarter is blocked while events still reference it.** The delete fails with a conflict
 rather than orphaning events. Move or delete the events first.

@@ -30,8 +30,8 @@ event, the practical lever is capacity per slot.
 value — **public** — and it is applied in all four places the public can reach an event: the
 volunteer browse listing, the event page, the signup form, and the act of signing up itself. Anything
 that is not public is skipped by the browse listing, answers "not found" on both its event page and
-its signup form, and has a signup attempt refused with the same "not found" as a session that
-doesn't exist — so a leaked link gives away nothing about whether the event is real.
+its signup form, and has a signup attempt refused as not found as well — the same answer a session
+that doesn't exist would give.
 
 **"Not public" covers more than an event set to Private.** Because the rule allows only the value
 "public", an event whose visibility was never recorded at all is hidden everywhere too, rather than
@@ -115,9 +115,10 @@ chase whatever was never closed out.
 "*[quarter name]* has ended and is read-only" — it is genuinely blocked rather than just hidden in
 the UI, and there is no override. Duplicating still works, because the copy lands in a current
 quarter rather than the closed one. Closing out attendance still works too, so a session nobody ever
-finished can always be finished; the document on ending a slot covers that boundary. Ended quarters
-are archived automatically overnight, so this starts applying within a day of the quarter's last
-date.
+finished can always be finished; the document on ending a slot covers that boundary. This starts the
+moment the quarter's end date is past, which is late afternoon Pacific on the last day itself —
+around 5pm in summer, 4pm in winter, because the cutoff is worked out in UTC. Archiving the quarter
+has the same effect but happens later that night, so the date alone is what closes the door.
 
 Everything about an event can be reconfigured after creation — title, location, dates, and its
 slots — from the event page itself, without going back to the events list.

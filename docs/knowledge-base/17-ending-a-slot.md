@@ -28,7 +28,7 @@ lost by forgetting to tap them in during the session.
 
 **Attended and no-show cannot be changed one person at a time.** There is no per-row undo once a
 slot is ended, so it's worth a glance at the list before saving. The one way back is reopening the
-whole event, described below.
+whole event, which works only while the event's quarter is still open.
 
 **Whether a slot has been ended is worked out from its volunteers, not stored on the slot.** The app
 calls a session ended when every volunteer it still expects has been resolved, which is why a single
@@ -57,8 +57,14 @@ says so — "Only an event that has been ended can be reopened" — rather than 
 the event's quarter has ended or been archived, reopening is refused**: that history is closed, and
 the refusal reads "*[quarter name]* has ended and is read-only." Closing out attendance is
 deliberately still allowed in an ended quarter, so a session nobody ever finished can always be
-finished; it is only the undo that expires. In practice: correct a wrong no-show before the quarter
-is over, because ended quarters archive automatically overnight.
+finished; it is only the undo that expires.
+
+**The undo expires earlier in the day than people expect.** Reopening stops working the moment the
+quarter's end date is past, and because that cutoff is worked out in UTC it lands in the late
+afternoon Pacific on the quarter's own last day — around 5pm in summer, 4pm in winter. Archiving the
+quarter has the same effect but runs hours later that night, so waiting for the archive is not the
+deadline to plan around. If a no-show needs correcting on the last day of a quarter, do it in the
+morning.
 
 **Reopening does not take orientation credit back.** Credit is permanent for a person and a module
 family by design and may well predate this event, so a blanket removal could destroy credit someone

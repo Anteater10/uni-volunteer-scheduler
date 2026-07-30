@@ -175,7 +175,9 @@ doesn't appear there, and there is no equivalent one-click tool for a volunteer 
 
 You usually don't have to — **a nightly sweep archives any quarter whose end date has passed**. It
 runs at 03:30 UTC, which is early evening Pacific, so a quarter that ended today is normally archived
-the same evening rather than literally overnight. To archive one immediately, use Archive on its row
+the same evening rather than literally overnight. Don't treat the sweep as the deadline for editing,
+though: a quarter turns read-only as soon as its end date is past, which is late afternoon Pacific on
+its last day — hours before the sweep runs. To archive one immediately, use Archive on its row
 in Admin → Quarters (allowed once the quarter has ended). An archived quarter still appears in the
 list, stays reachable by link, and volunteers can still browse it under "Archived quarters" — it's
 just skipped when working out what week it currently is. Restore undoes it, but an ended quarter will
