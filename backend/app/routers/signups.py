@@ -208,6 +208,7 @@ def swap_signup_authed(
         db,
         signup_id=signup_id,
         target_slot_id=payload.target_slot_id,
+        actor_kind="staff",
         actor=current_user,
         actor_label=current_user.role.value,
     )

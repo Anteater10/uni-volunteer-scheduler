@@ -191,6 +191,7 @@ def swap_signup_public(
         db,
         signup_id=signup_id,
         target_slot_id=body.target_slot_id,
+        actor_kind="participant",
         actor=None,
         actor_label="participant",
     )
