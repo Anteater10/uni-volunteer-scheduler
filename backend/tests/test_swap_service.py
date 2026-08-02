@@ -62,7 +62,7 @@ def test_swap_happy_path_moves_signup(db_session):
     slot_a.current_count = 1
     db_session.flush()
 
-    result = swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="participant")
+    result = swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="staff")
     db_session.flush()
 
     assert str(result.signup.slot_id) == str(slot_b.id)
@@ -217,7 +217,7 @@ def test_swap_writes_audit_row(db_session):
     slot_a.current_count = 1
     db_session.flush()
 
-    swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="participant")
+    swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="staff")
     db_session.flush()
 
     row = (
@@ -230,7 +230,7 @@ def test_swap_writes_audit_row(db_session):
     assert row.extra["from_slot_id"] == str(slot_a.id)
     assert row.extra["to_slot_id"] == str(slot_b.id)
     assert row.extra["signup_id"] == str(signup.id)
-    assert row.extra["actor"] == "participant"
+    assert row.extra["actor"] == "staff"
 
 
 def test_swap_preserves_orientation_credit_via_email(db_session):

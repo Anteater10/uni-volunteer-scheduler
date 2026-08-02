@@ -237,7 +237,7 @@ def swap_signup(
         "from_slot_id": str(source_slot.id),
         "to_slot_id": str(target_slot.id),
         "signup_id": str(signup.id),
-        "actor": (actor_label or "participant") if actor is None else "staff",
+        "actor": (actor_label or "staff") if actor is None else "staff",
     }
     audit = models.AuditLog(
         actor_id=actor.id if actor is not None else None,
