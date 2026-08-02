@@ -210,8 +210,8 @@ def swap_signup_authed(
 
     Admin/organizer move a signup between slots in the same event. Reuses
     the shared ``swap_service.swap_signup`` which hard-fails on target
-    full (409) and cross-event (400). Participant swap goes through the
-    token-gated ``/public/signups/{id}/swap`` endpoint instead.
+    full (409) and cross-event (400). Staff-only — the volunteer self-swap
+    endpoint was removed 2026-08-02 (read-only signups).
     """
     if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -220,7 +220,6 @@ def swap_signup_authed(
         db,
         signup_id=signup_id,
         target_slot_id=payload.target_slot_id,
-        actor_kind="staff",
         actor=current_user,
         actor_label=current_user.role.value,
     )

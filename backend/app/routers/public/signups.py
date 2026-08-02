@@ -26,7 +26,6 @@ from ...services.check_in_service import ensure_signup_cancellable
 from ...services.public_signup_service import create_public_signup
 from ...services.phone_service import InvalidPhoneError
 from ...services.settings_service import get_app_settings
-from ...services.swap_service import swap_signup
 from ...services.waitlist_service import compute_waitlist_position
 from ...signup_service import promote_waitlist_fifo
 
@@ -195,57 +194,6 @@ def manage_signups(
         signups=signup_reads,
         contact_email=(get_app_settings(db).contact_email or None),
     )
-
-
-@router.post(
-    "/signups/{signup_id}/swap",
-    dependencies=[Depends(rate_limit(max_requests=30, window_seconds=60))],
-)
-def swap_signup_public(
-    signup_id: UUID,
-    body: schemas.SignupMoveRequest,
-    token: str = Query(..., min_length=16),
-    db: Session = Depends(get_db),
-):
-    """Phase 29 (SWAP-01/02) — participant-initiated swap to a different slot.
-
-    Requires the owning volunteer's ``manage_token``. Delegates to the
-    shared ``swap_service.swap_signup`` which enforces same-event +
-    target-capacity and writes the audit row. Hard-fails on target full
-    (409) and cross-event (400).
-    """
-    token_row = _lookup_token(db, token)
-    if token_row is None:
-        raise HTTPException(status_code=400, detail="token invalid")
-    if token_row.purpose not in MANAGE_PURPOSES:
-        raise HTTPException(status_code=400, detail="token not valid for manage")
-
-    signup = db.query(Signup).filter(Signup.id == signup_id).first()
-    if signup is None:
-        raise HTTPException(status_code=404, detail="signup not found")
-    if signup.volunteer_id != token_row.volunteer_id:
-        raise HTTPException(status_code=403, detail="token does not own this signup")
-
-    result = swap_signup(
-        db,
-        signup_id=signup_id,
-        target_slot_id=body.target_slot_id,
-        actor_kind="participant",
-        actor=None,
-        actor_label="participant",
-    )
-    updated = result.signup
-    promo_kwargs = result.promotion.email_kwargs if result.promotion else None
-    db.commit()
-    db.refresh(updated)
-    if promo_kwargs:
-        # Fixes the silent-promotion bug: swaps previously promoted with no email.
-        send_waitlist_promotion_email.delay(**promo_kwargs)
-    return {
-        "signup_id": str(updated.id),
-        "slot_id": str(updated.slot_id),
-        "status": updated.status.value,
-    }
 
 
 @router.delete(
