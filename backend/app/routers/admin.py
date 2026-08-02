@@ -2530,6 +2530,9 @@ def update_site_settings(
     if payload.show_audit_logs_tab is not None:
         changes["show_audit_logs_tab"] = payload.show_audit_logs_tab
         row.show_audit_logs_tab = payload.show_audit_logs_tab
+    if payload.contact_email is not None:
+        changes["contact_email"] = payload.contact_email
+        row.contact_email = payload.contact_email
 
     log_action(
         db,

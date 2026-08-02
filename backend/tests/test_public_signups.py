@@ -537,6 +537,32 @@ class TestManageSignups:
         assert len(data["signups"]) == 1
         assert data["signups"][0]["status"] == "pending"
 
+    def test_manage_includes_contact_email(self, client, db_session, monkeypatch):
+        from app.services.settings_service import get_app_settings
+
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        with _TokenCapture(monkeypatch) as cap:
+            resp = client.post("/api/v1/public/signups", json=_signup_payload(slot.id, email="manage-contact@example.com"))
+        assert resp.status_code == 201
+
+        token = cap.last_token
+        if token is None:
+            pytest.skip("Token capture failed")
+
+        get_app_settings(db_session).contact_email = "scitrek@ucsb.edu"
+        db_session.commit()
+
+        resp2 = client.get("/api/v1/public/signups/manage", params={"token": token})
+        assert resp2.status_code == 200, resp2.text
+        assert resp2.json()["contact_email"] == "scitrek@ucsb.edu"
+
 
 class TestCancelSignup:
     def test_public_cancel_sends_cancellation_email(self, client, db_session, monkeypatch):

@@ -441,6 +441,7 @@ class SiteSettingsRead(ORMBase):
     hide_past_events_from_public: bool = True
     # Gate the standalone Audit Logs tab; off by default.
     show_audit_logs_tab: bool = False
+    contact_email: Optional[str] = None
 
 
 class SiteSettingsUpdate(BaseModel):
@@ -449,6 +450,7 @@ class SiteSettingsUpdate(BaseModel):
     # Phase 29 (HIDE-01) — optional so existing callers can PATCH other fields.
     hide_past_events_from_public: Optional[bool] = None
     show_audit_logs_tab: Optional[bool] = None
+    contact_email: Optional[str] = None
 
 
 # =========================
@@ -870,6 +872,7 @@ class TokenedManageRead(BaseModel):
     volunteer_last_name: str
     event_id: UUID
     signups: List[TokenedSignupRead]
+    contact_email: Optional[str] = None
 
 
 # =========================

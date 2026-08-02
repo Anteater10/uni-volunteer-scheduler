@@ -25,6 +25,7 @@ from ...models import Signup, SignupStatus, Slot
 from ...services.check_in_service import ensure_signup_cancellable
 from ...services.public_signup_service import create_public_signup
 from ...services.phone_service import InvalidPhoneError
+from ...services.settings_service import get_app_settings
 from ...services.swap_service import swap_signup
 from ...services.waitlist_service import compute_waitlist_position
 from ...signup_service import promote_waitlist_fifo
@@ -192,6 +193,7 @@ def manage_signups(
         volunteer_last_name=volunteer.last_name,
         event_id=event_id,
         signups=signup_reads,
+        contact_email=(get_app_settings(db).contact_email or None),
     )
 
 
