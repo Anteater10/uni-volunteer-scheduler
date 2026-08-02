@@ -2,7 +2,8 @@
 
 Covers:
 - WAIT-01: public signup at capacity → waitlisted with computed position.
-- WAIT-02: public cancel → oldest waitlisted auto-promoted.
+- WAIT-02: cancel → oldest waitlisted auto-promoted (via admin/staff cancel —
+  see test_signups.py; public self-cancel was removed 2026-08-02).
 - WAIT-03: organizer manual promote bypasses FIFO.
 - WAIT-04: compute_waitlist_position ordering (timestamp ASC, id ASC).
 - WAIT-05: admin reorder persists and flips FIFO order.
@@ -176,63 +177,10 @@ def test_public_signup_at_capacity_returns_waitlisted_with_position(
 
 
 # ------------------------------------------------------------------
-# WAIT-02 — public cancel auto-promotes oldest waitlister
+# WAIT-02 — auto-promote on cancel is covered via the admin/staff cancel
+# path now (test_signups.py) — public self-cancel was removed 2026-08-02
+# (read-only signups).
 # ------------------------------------------------------------------
-
-
-def test_public_cancel_promotes_oldest_waitlisted(
-    client, db_session, monkeypatch
-):
-    import os
-    os.environ["EXPOSE_TOKENS_FOR_TESTING"] = "1"
-    try:
-        _bypass_celery(monkeypatch)
-        _, _, slot = _make_event_and_slot(db_session, capacity=1)
-        _bind_factories(db_session)
-
-        # Confirmed volunteer; two waitlisters with deterministic timestamps.
-        vol_confirmed = VolunteerFactory(email="conf@example.com")
-        confirmed = _seed_confirmed(db_session, slot, vol_confirmed)
-
-        vol_wait_a = VolunteerFactory(email="wait_a@example.com")
-        vol_wait_b = VolunteerFactory(email="wait_b@example.com")
-        older = datetime.now(timezone.utc) - timedelta(minutes=20)
-        newer = datetime.now(timezone.utc) - timedelta(minutes=5)
-        wait_a = _seed_waitlisted(db_session, slot, vol_wait_a, when=older)
-        wait_b = _seed_waitlisted(db_session, slot, vol_wait_b, when=newer)
-
-        # Issue a manage token so we can hit the public cancel endpoint.
-        from app.magic_link_service import issue_token
-        raw = issue_token(
-            db_session,
-            signup=confirmed,
-            email=vol_confirmed.email,
-            purpose=models.MagicLinkPurpose.SIGNUP_CONFIRM,
-            volunteer_id=vol_confirmed.id,
-        )
-        db_session.commit()
-
-        r = client.delete(
-            f"/api/v1/public/signups/{confirmed.id}?token={raw}"
-        )
-        assert r.status_code == 200, r.text
-        body = r.json()
-        assert body["cancelled"] is True
-        assert body["promoted_from_waitlist"] == 1
-
-        db_session.expire_all()
-        a = db_session.query(models.Signup).filter_by(id=wait_a.id).one()
-        b = db_session.query(models.Signup).filter_by(id=wait_b.id).one()
-        # Older waitlister gets promoted to pending (2026-07-28 spec: FIFO
-        # promotion holds the seat pending the volunteer's confirm click).
-        assert a.status == models.SignupStatus.pending
-        assert b.status == models.SignupStatus.waitlisted
-
-        # Slot stays full via the promoted row.
-        s = db_session.query(models.Slot).filter_by(id=slot.id).one()
-        assert s.current_count == 1
-    finally:
-        os.environ.pop("EXPOSE_TOKENS_FOR_TESTING", None)
 
 
 # ------------------------------------------------------------------

@@ -280,8 +280,8 @@ class TestSiblingFlipScope:
 
 
 class TestPromotionTokenStillManages:
-    """The promotion link is also the promotee's manage/cancel page, so the
-    new purpose has to be accepted by every token-gated public surface."""
+    """The promotion link is also the promotee's manage page, so the new
+    purpose has to be accepted by every token-gated public surface."""
 
     def _promoted(self, db_session):
         owner = make_user(db_session, role=models.UserRole.admin)
@@ -305,16 +305,6 @@ class TestPromotionTokenStillManages:
         _signup, promo = self._promoted(db_session)
         resp = client.get(
             "/api/v1/public/preferences", params={"manage_token": promo.raw_token}
-        )
-        assert resp.status_code == 200, resp.text
-
-    def test_cancel_accepts_promotion_token(self, client, db_session, monkeypatch):
-        monkeypatch.setattr(
-            "app.celery_app.send_email_notification.delay", lambda **kw: None
-        )
-        signup, promo = self._promoted(db_session)
-        resp = client.delete(
-            f"/api/v1/public/signups/{signup.id}", params={"token": promo.raw_token}
         )
         assert resp.status_code == 200, resp.text
 
@@ -676,47 +666,6 @@ class TestEndedSlotGuard:
 
         assert signup.status == models.SignupStatus.waitlisted
         assert _token_rows(db_session, signup.id) == []
-
-    def test_public_cancel_does_not_promote_onto_ended_slot(
-        self, client, db_session, monkeypatch
-    ):
-        sent = []
-        monkeypatch.setattr(
-            "app.celery_app.send_waitlist_promotion_email.delay",
-            lambda **kw: sent.append(kw),
-        )
-        monkeypatch.setattr(
-            "app.celery_app.send_email_notification.delay", lambda **kw: None
-        )
-        owner = make_user(db_session, role=models.UserRole.admin)
-        event = _make_event(db_session, owner, days_out=-3)
-        slot = _make_slot(db_session, event, capacity=1, current_count=1, ended=True)
-        holder = _make_volunteer(db_session)
-        held = _make_signup(db_session, holder, slot, models.SignupStatus.confirmed)
-        waiter = _make_volunteer(db_session)
-        waiting = _make_signup(db_session, waiter, slot, models.SignupStatus.waitlisted)
-        raw = issue_token(
-            db_session,
-            signup=held,
-            email=holder.email,
-            purpose=models.MagicLinkPurpose.SIGNUP_CONFIRM,
-            volunteer_id=holder.id,
-            ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
-        )
-        db_session.commit()
-
-        resp = client.delete(
-            f"/api/v1/public/signups/{held.id}", params={"token": raw}
-        )
-
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["promoted_from_waitlist"] == 0
-        db_session.expire_all()
-        assert (
-            db_session.get(models.Signup, waiting.id).status
-            == models.SignupStatus.waitlisted
-        )
-        assert sent == []
 
     def test_organizer_manual_promote_ended_slot_is_rejected(
         self, client, db_session, monkeypatch
