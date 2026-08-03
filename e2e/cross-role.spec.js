@@ -287,11 +287,12 @@ test.describe.serial('cross-role Scenario 1: canonical admin -> participant -> o
 
     // NOTE (Scenario 1 INTEG-05 finding): public signup.created and organizer
     // check-in are NOT written to the audit log (see
-    // backend/app/services/audit_log_humanize.py ACTION_LABELS — only admin
-    // actions + public signup cancel are audited). We therefore assert the
-    // weaker property here: the admin surface is reachable cross-role and the
-    // audit log page renders with at least one row. Scenario 4 exercises the
-    // signup_cancelled audit path directly.
+    // backend/app/services/audit_log_humanize.py ACTION_LABELS — only
+    // ADMIN-initiated actions are audited, e.g. admin_signup_cancel,
+    // user_login, event_create). We therefore assert the weaker property
+    // here: the admin surface is reachable cross-role and the audit log page
+    // renders with at least one row. Scenario 4 exercises the
+    // `admin_signup_cancel` audit path directly.
 
     // Filter by admin email using the debounced (#al-search) input — 300ms
     // debounce + networkidle is sufficient, no submit button.
