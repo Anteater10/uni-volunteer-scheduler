@@ -22,21 +22,20 @@ Contract
   attendance record would be silently erased.
 - Updates ``signup.slot_id``, decrements source ``current_count``, and
   increments target ``current_count``.
-- Calls ``promote_waitlist_fifo(db, source_slot_id)`` on the freed source
-  to auto-promote the oldest waitlisted entry (Phase 25 integration).
-  2026-07-28 spec: the promoted signup goes to ``pending`` (not
-  ``confirmed``) with a fresh confirm token, returned as
-  ``SwapResult.promotion``. The **caller** — not this service — must
-  enqueue ``send_waitlist_promotion_email(**promotion.email_kwargs)``
-  AFTER ``db.commit()``.
+- The freed source seat stays open — 2026-08-02 read-only signups (Task 5):
+  the waitlist no longer auto-promotes when a staff swap frees capacity.
+  ``promote_waitlist_fifo`` is not called here; the waitlist only moves via
+  explicit staff promotion elsewhere.
 - The in-place flip — a waitlisted signup swapping directly into an open
   target slot — always routes through the same ``mark_promoted_pending``
   choke point as every other staff/system promotion (``pending`` + its own
   confirm email), since 2026-08-02: ``swap_signup`` is staff-only (the
   volunteer self-swap endpoint was removed), so there is no more
-  participant-intent case that would confirm immediately. This reuses
-  ``SwapResult.promotion`` for the email, since the two promotion shapes
-  (self vs. freed-seat) are mutually exclusive.
+  participant-intent case that would confirm immediately. This is the
+  **only** way ``SwapResult.promotion`` comes back non-``None``. The
+  **caller** — not this service — must enqueue
+  ``send_waitlist_promotion_email(**promotion.email_kwargs)`` AFTER
+  ``db.commit()``.
 - Writes an ``AuditLog`` row with
   ``action='signup_swap', extra={'from_slot_id', 'to_slot_id',
   'signup_id', 'actor'}``.
@@ -46,11 +45,12 @@ Contract
 
 Returns
 -------
-``SwapResult(signup, promotion)`` — ``promotion`` is ``None`` when the
-source waitlist was empty or no seat was freed.
+``SwapResult(signup, promotion)`` — ``promotion`` is ``None`` unless the
+swapped signup itself was the waitlisted source (the explicit staff
+self-promotion case above).
 
 The caller owns commit/rollback. This service calls ``db.flush()`` so
-the promotion helper sees up-to-date rows, but never commits.
+downstream reads see up-to-date rows, but never commits.
 """
 from __future__ import annotations
 
@@ -61,18 +61,18 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..signup_service import PromotionResult, mark_promoted_pending, promote_waitlist_fifo
+from ..signup_service import PromotionResult, mark_promoted_pending
 from .waitlist_service import SlotEndedError
 
 
 class SwapResult(NamedTuple):
     """swap_signup outcome: the moved signup + a promotion result (None when
-    nothing needed a confirm email). ``promotion`` covers two mutually
-    exclusive cases: the freed source seat's FIFO promotion (holds_capacity
-    branch), or the swapped signup's own promotion when a staff swap lands a
-    waitlisted signup on an open target (Task 8). Either way the caller must
-    enqueue send_waitlist_promotion_email(**promotion.email_kwargs) AFTER
-    commit."""
+    nothing needed a confirm email). ``promotion`` is non-None only when the
+    swapped signup was itself the waitlisted source — a staff swap landing a
+    waitlisted signup on an open target self-promotes it (Task 8). Freed
+    source seats no longer auto-promote (2026-08-02 read-only signups,
+    Task 5), so that is the only case left. The caller must enqueue
+    send_waitlist_promotion_email(**promotion.email_kwargs) AFTER commit."""
 
     signup: "models.Signup"
     promotion: Optional[PromotionResult]
@@ -122,8 +122,9 @@ def swap_signup(
     Returns:
         SwapResult(signup, promotion) — ``signup`` is the updated (and
         flushed) Signup row; ``promotion`` is the PromotionResult from
-        the freed source seat's FIFO promotion, or None if nothing was
-        promoted. The caller must enqueue
+        self-promoting a waitlisted-source signup onto the target seat, or
+        None otherwise (freed source seats stay open — no auto-promotion).
+        The caller must enqueue
         send_waitlist_promotion_email(**promotion.email_kwargs) AFTER
         db.commit() when promotion is not None.
 
@@ -218,18 +219,10 @@ def swap_signup(
 
     db.flush()
 
-    # Auto-promote source waitlist if we freed capacity. The promoted
-    # signup takes over the freed seat, so the source count goes back up —
-    # promote_waitlist_fifo leaves the increment to the caller. Promotion
-    # lands in 'pending' with a fresh confirm token; the caller must
-    # enqueue the confirm email post-commit (see SwapResult docstring).
-    # Mutually exclusive with self_promotion: that branch only runs when
-    # !holds_capacity, this one only when holds_capacity.
+    # 2026-08-02 read-only signups: a freed source seat stays open — the
+    # waitlist only moves by explicit staff promotion. The only promotion a
+    # swap can produce is the waitlisted-source self-promotion above.
     promotion: Optional[PromotionResult] = self_promotion
-    if holds_capacity:
-        promotion = promote_waitlist_fifo(db, source_slot.id)
-        if promotion is not None:
-            source_slot.current_count += 1
 
     # Audit row — reuse the AuditLog model directly so we can include
     # structured ``extra`` without the log_action helper's signature.
