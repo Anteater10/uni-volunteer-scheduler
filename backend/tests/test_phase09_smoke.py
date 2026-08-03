@@ -4,7 +4,10 @@ Single end-to-end flow:
   1. POST   /api/v1/public/signups   → 201, capture token via _TokenCapture
   2. POST   /api/v1/public/signups/confirm?token=...  → 200, confirmed=True
   3. GET    /api/v1/public/signups/manage?token=...   → 200, lists signup as confirmed
-  4. DELETE /api/v1/public/signups/{signup_id}?token=... → 200, cancelled=True
+  4. POST   /api/v1/admin/signups/{signup_id}/cancel (admin auth) → 200,
+     status=cancelled. 2026-08-02 read-only volunteer signups: the public
+     self-cancel endpoint was removed; cancels now go through staff/admin
+     only and no longer auto-promote the waitlist.
   5. GET    /api/v1/public/events?quarter=fall&year=...&week_number=...
      → 200, event visible with filled/capacity counts
   6. GET    /api/v1/public/orientation-status?email=...
@@ -15,8 +18,8 @@ from datetime import datetime, timezone, timedelta, date as date_type
 
 import pytest
 
-from app.models import Event, Quarter, Slot, SlotType
-from tests.fixtures.helpers import make_user
+from app.models import Event, Quarter, Slot, SlotType, UserRole
+from tests.fixtures.helpers import auth_headers, make_user
 
 
 GOOD_PHONE = "(213) 867-5309"
@@ -93,6 +96,7 @@ class TestPhase09FullFlow:
         )
         event = _make_event(db_session)
         slot = _make_slot(db_session, event.id)
+        admin = make_user(db_session, email="phase09-admin@example.com", role=UserRole.admin)
         db_session.commit()
 
         email = "smoke09@example.com"
@@ -138,13 +142,17 @@ class TestPhase09FullFlow:
         # We trust test_public_signups.py for the detailed manage test;
         # here just verify the slot filled count updated on the public events endpoint.
 
-        # Step 4: Cancel signup
-        r4 = client.delete(
-            f"/api/v1/public/signups/{signup_id}",
-            params={"token": token},
+        # Step 4: Cancel signup via the staff/admin path. Volunteer signups
+        # are read-only now — the public self-cancel endpoint was removed,
+        # so every cancel goes through staff, and cancelling no longer
+        # auto-promotes the waitlist (there's nothing waitlisted in this
+        # single-volunteer flow, but the freed seat still just sits open).
+        r4 = client.post(
+            f"/api/v1/admin/signups/{signup_id}/cancel",
+            headers=auth_headers(client, admin),
         )
         assert r4.status_code == 200, f"Cancel failed: {r4.text}"
-        assert r4.json()["cancelled"] is True
+        assert r4.json()["status"] == "cancelled"
 
         # Step 5: Public events list reflects event
         r5 = client.get("/api/v1/public/events", params={
