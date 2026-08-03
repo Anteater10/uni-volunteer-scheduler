@@ -694,11 +694,7 @@ def admin_cancel_signup(
     if previous_status in (models.SignupStatus.confirmed, models.SignupStatus.pending) and slot.current_count > 0:
         slot.current_count -= 1
 
-    promotions = _promote_waitlist_fifo(db, slot)
-
     log_action(db, actor, "admin_signup_cancel", "Signup", str(signup.id))
-    # Capture before commit — expire_on_commit would force refresh queries.
-    promotion_email_kwargs = [p.email_kwargs for p in promotions]
     db.commit()
     db.refresh(signup)
 
@@ -706,17 +702,14 @@ def admin_cancel_signup(
     # The cancellation email is dispatched via the deduped kind pipeline
     # (volunteer-backed). A waitlisted signup never held a seat, so it gets
     # waitlist-appropriate copy instead of "your signup has been cancelled".
+    # 2026-08-02: cancel never promotes — the waitlist only moves by
+    # explicit staff promotion (admin_promote_signup / admin_signup_move).
     cancellation_kind = (
         "cancellation_waitlisted"
         if previous_status == models.SignupStatus.waitlisted
         else "cancellation"
     )
     send_email_notification.delay(signup_id=str(signup.id), kind=cancellation_kind)
-
-    # Promoted volunteers get the confirm-your-spot email — pending status
-    # holds the seat until the volunteer clicks the emailed magic link.
-    for kwargs in promotion_email_kwargs:
-        send_waitlist_promotion_email.delay(**kwargs)
 
     return signup
 

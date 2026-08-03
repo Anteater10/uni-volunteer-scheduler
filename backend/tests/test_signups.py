@@ -1,10 +1,12 @@
-"""Signup cancel + waitlist promotion integration tests.
+"""Signup cancel + waitlist integration tests.
 
-Tests the admin cancel path (POST /api/v1/admin/signups/{id}/cancel) with
+Tests the admin cancel path (POST /api/v1/admin/signups/{id}/cancel) and the
+authed staff cancel path (POST /api/v1/signups/{id}/cancel) with
 volunteer-keyed signups created via VolunteerFactory + SignupFactory.
 
 Phase 12 rewrite: old tests exercised POST /api/v1/signups/ (deleted in Phase 09).
-New tests exercise the surviving admin cancel + promote_waitlist_fifo flow.
+2026-08-02 read-only signups (Task 4): neither surviving cancel endpoint
+auto-promotes the waitlist anymore — they free the seat and stop.
 """
 import pytest
 from datetime import datetime, timedelta, timezone
@@ -91,8 +93,10 @@ def test_admin_cancel_decrements_current_count(client, db_session):
     assert slot_row.current_count == count_before - 1
 
 
-def test_admin_cancel_promotes_oldest_waitlisted_fifo(client, db_session):
-    """Cancel confirmed signup promotes oldest waitlisted volunteer (FIFO)."""
+def test_admin_cancel_does_not_promote_oldest_waitlisted(client, db_session):
+    """2026-08-02 read-only signups (Task 4): cancelling a confirmed signup
+    frees the seat but leaves every waitlisted volunteer alone — no FIFO
+    promotion, regardless of how long they've been waiting."""
     admin = _make_admin(db_session, email="admin_s3@example.com")
     _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
     _bind_factories(db_session)
@@ -117,15 +121,16 @@ def test_admin_cancel_promotes_oldest_waitlisted_fifo(client, db_session):
     db_session.expire_all()
     b_row = db_session.query(models.Signup).filter(models.Signup.id == signup_b.id).one()
     c_row = db_session.query(models.Signup).filter(models.Signup.id == signup_c.id).one()
-    # B was older — gets promoted to pending (2026-07-28 spec: promotion
-    # holds the seat pending the volunteer's confirm click).
-    assert b_row.status == models.SignupStatus.pending
-    # C stays waitlisted
+    # Neither B (older) nor C (newer) gets promoted — cancel never promotes.
+    assert b_row.status == models.SignupStatus.waitlisted
     assert c_row.status == models.SignupStatus.waitlisted
+    slot_row = db_session.query(models.Slot).filter(models.Slot.id == slot.id).one()
+    assert slot_row.current_count == 0
 
 
-def test_admin_cancel_promotes_by_id_tiebreaker(client, db_session):
-    """With identical timestamps, lower signup.id gets promoted first."""
+def test_admin_cancel_does_not_promote_regardless_of_tiebreak(client, db_session):
+    """Identical-timestamp waitlisted volunteers both stay waitlisted — the
+    old id tiebreaker only mattered when cancel used to promote."""
     admin = _make_admin(db_session, email="admin_s4@example.com")
     _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
     _bind_factories(db_session)
@@ -140,16 +145,14 @@ def test_admin_cancel_promotes_by_id_tiebreaker(client, db_session):
     signup_c = _seed_waitlisted(db_session, slot, vol_c, when=same_ts)
     db_session.commit()
 
-    first, second = (signup_b, signup_c) if str(signup_b.id) < str(signup_c.id) else (signup_c, signup_b)
-
     headers = auth_headers(client, admin)
     client.post(f"/api/v1/admin/signups/{signup_a.id}/cancel", headers=headers)
 
     db_session.expire_all()
-    first_row = db_session.query(models.Signup).filter(models.Signup.id == first.id).one()
-    second_row = db_session.query(models.Signup).filter(models.Signup.id == second.id).one()
-    assert first_row.status == models.SignupStatus.pending
-    assert second_row.status == models.SignupStatus.waitlisted
+    b_row = db_session.query(models.Signup).filter(models.Signup.id == signup_b.id).one()
+    c_row = db_session.query(models.Signup).filter(models.Signup.id == signup_c.id).one()
+    assert b_row.status == models.SignupStatus.waitlisted
+    assert c_row.status == models.SignupStatus.waitlisted
 
 
 def test_admin_cancel_already_cancelled_is_idempotent(client, db_session):
@@ -277,3 +280,34 @@ def test_cancel_not_found_returns_404(client, db_session):
     headers = auth_headers(client, admin)
     rc = client.post(f"/api/v1/admin/signups/{uuid.uuid4()}/cancel", headers=headers)
     assert rc.status_code == 404
+
+
+def test_staff_cancel_leaves_waitlist_untouched(client, db_session, monkeypatch):
+    """Canonical Task 4 regression for the authed staff endpoint
+    (routers/signups.py cancel_signup): cancelling a confirmed signup frees
+    the seat and stops — no FIFO promotion, no promotion email,
+    current_count stays down."""
+    sent = []
+    monkeypatch.setattr(
+        "app.routers.signups.send_waitlist_promotion_email.delay",
+        lambda **kw: sent.append(kw),
+    )
+    admin = _make_admin(db_session, email="admin_s11@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+    _bind_factories(db_session)
+    vol_confirmed = VolunteerFactory(email="v_s11_confirmed@example.com")
+    vol_wait = VolunteerFactory(email="v_s11_wait@example.com")
+    confirmed_signup = _seed_confirmed(db_session, slot, vol_confirmed)
+    waitlisted_signup = _seed_waitlisted(db_session, slot, vol_wait)
+    db_session.commit()
+
+    headers = auth_headers(client, admin)
+    resp = client.post(f"/api/v1/signups/{confirmed_signup.id}/cancel", headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    waitlisted = db_session.get(models.Signup, waitlisted_signup.id)
+    assert waitlisted.status == models.SignupStatus.waitlisted
+    slot_row = db_session.get(models.Slot, slot.id)
+    assert slot_row.current_count == 0
+    assert sent == []

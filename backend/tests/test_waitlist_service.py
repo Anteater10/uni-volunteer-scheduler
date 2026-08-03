@@ -2,11 +2,14 @@
 
 Covers:
 - WAIT-01: public signup at capacity → waitlisted with computed position.
-- WAIT-02: cancel → oldest waitlisted auto-promoted (via admin/staff cancel —
-  see test_signups.py; public self-cancel was removed 2026-08-02).
+- WAIT-02: (2026-08-02) admin/staff cancel no longer auto-promotes — see
+  test_signups.py / test_admin.py / test_signups_router_full.py for the
+  cancel-frees-but-does-not-promote coverage. Public self-cancel was
+  removed the same date.
 - WAIT-03: organizer manual promote bypasses FIFO.
 - WAIT-04: compute_waitlist_position ordering (timestamp ASC, id ASC).
-- WAIT-05: admin reorder persists and flips FIFO order.
+- WAIT-05: admin reorder persists (promotion-order verification via cancel
+  is no longer possible now that cancel doesn't promote).
 """
 import uuid
 from datetime import date as date_type, datetime, timedelta, timezone
@@ -334,9 +337,14 @@ def test_manual_promote_returns_pending_promotion_result(db_session):
 # ------------------------------------------------------------------
 
 
-def test_admin_reorder_waitlist_persists_and_flips_fifo(
+def test_admin_reorder_waitlist_persists(
     client, db_session, monkeypatch
 ):
+    """2026-08-02 read-only signups (Task 4): this used to also prove reorder
+    flips FIFO promotion order by cancelling the confirmed signup and
+    checking who got promoted. Cancel no longer promotes anyone, so that
+    half is gone — this now only proves the reorder persists (position
+    values) and that the subsequent cancel still doesn't promote."""
     _bypass_celery(monkeypatch)
     owner, event, slot = _make_event_and_slot(db_session, capacity=1)
     admin = make_user(
@@ -378,8 +386,8 @@ def test_admin_reorder_waitlist_persists_and_flips_fifo(
     assert compute_waitlist_position(db_session, slot.id, wait_a.id) == 2
     assert compute_waitlist_position(db_session, slot.id, wait_b.id) == 3
 
-    # Now cancel the confirmed signup via admin endpoint and verify C gets
-    # promoted (not A — reorder took effect).
+    # Cancel the confirmed signup via admin endpoint — frees the seat but
+    # promotes no one (2026-08-02: cancel never auto-promotes).
     r2 = client.post(
         f"/api/v1/admin/signups/{confirmed.id}/cancel",
         headers=headers,
@@ -389,8 +397,10 @@ def test_admin_reorder_waitlist_persists_and_flips_fifo(
     db_session.expire_all()
     c_row = db_session.query(models.Signup).filter_by(id=wait_c.id).one()
     a_row = db_session.query(models.Signup).filter_by(id=wait_a.id).one()
-    assert c_row.status == models.SignupStatus.pending
+    assert c_row.status == models.SignupStatus.waitlisted
     assert a_row.status == models.SignupStatus.waitlisted
+    slot_row = db_session.query(models.Slot).filter_by(id=slot.id).one()
+    assert slot_row.current_count == 0
 
 
 def test_admin_reorder_rejects_mismatched_set(client, db_session, monkeypatch):
