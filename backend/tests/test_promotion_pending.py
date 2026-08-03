@@ -98,28 +98,3 @@ class TestMarkPromotedPending:
             "token": result.raw_token,
             "event_id": str(event.id),
         }
-
-
-from app.signup_service import promote_waitlist_fifo
-
-
-class TestPromoteWaitlistFifo:
-    def test_returns_promotion_result_with_pending_signup(self, db_session):
-        owner, event, slot = _make_event_and_slot(db_session, capacity=1)
-        signup = _make_waitlisted(db_session, slot)
-
-        result = promote_waitlist_fifo(db_session, slot.id)
-
-        assert isinstance(result, PromotionResult)
-        assert result.signup.id == signup.id
-        assert result.signup.status == models.SignupStatus.pending
-        token_row = (
-            db_session.query(models.MagicLinkToken)
-            .filter(models.MagicLinkToken.signup_id == signup.id)
-            .one()
-        )
-        assert token_row.purpose == models.MagicLinkPurpose.PROMOTION_CONFIRM
-
-    def test_empty_waitlist_returns_none(self, db_session):
-        owner, event, slot = _make_event_and_slot(db_session, capacity=1)
-        assert promote_waitlist_fifo(db_session, slot.id) is None

@@ -1,9 +1,12 @@
 """Admin router integration tests (Plan 06 / Task 2).
 
-Locks basic admin CRUD + audit-log filtering. 2026-08-02 read-only signups
-(Task 4): admin_cancel_signup no longer auto-promotes the waitlist — it
-frees the seat and stops. promote_waitlist_fifo is still exercised by the
-manual promote (admin_promote_signup) and move (admin_signup_move) paths.
+Locks basic admin CRUD + audit-log filtering. 2026-08-02 read-only signups:
+the waitlist is a pure holding list — nothing auto-promotes it anymore.
+admin_cancel_signup (Task 4) and admin_signup_move's freed-source-seat path
+(Task 7) both free a seat and stop; only the manual promote endpoint
+(admin_promote_signup, via waitlist_service.manual_promote) and a move that
+lands a waitlisted signup directly in an open target seat (via
+mark_promoted_pending, an explicit staff action) ever promote anyone.
 """
 import pytest
 from datetime import datetime, timedelta, timezone
@@ -391,9 +394,11 @@ def test_admin_move_pending_signup_frees_source_capacity(client, db_session):
     assert slot_b_row.current_count == 1
 
 
-def test_admin_move_pending_signup_promotes_source_waitlist(client, db_session):
-    """Freeing a seat by moving a pending signup must promote the source
-    waitlist, exactly as moving a confirmed signup does."""
+def test_admin_move_pending_signup_leaves_source_waitlist_untouched(client, db_session):
+    """2026-08-02 read-only signups: freeing a seat by moving a pending
+    signup away must NOT chain-promote the source slot's waitlist — the
+    freed seat stays open until an admin/organizer explicitly promotes
+    someone. Only the moved signup's own semantics change."""
     admin = _make_admin(db_session, email="admin_mv_wl@example.com")
     event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
 
@@ -426,10 +431,10 @@ def test_admin_move_pending_signup_promotes_source_waitlist(client, db_session):
     db_session.expire_all()
     w = db_session.get(models.Signup, waitlisted.id)
     slot_a_row = db_session.get(models.Slot, slot_a.id)
-    assert w.status == models.SignupStatus.pending, (
-        "source waitlist was not promoted after the pending move freed a seat"
+    assert w.status == models.SignupStatus.waitlisted, (
+        "moving a signup away must not auto-promote the source waitlist"
     )
-    assert slot_a_row.current_count == 1
+    assert slot_a_row.current_count == 0, "the freed source seat must stay open"
 
 
 def test_admin_move_pending_signup_stays_pending_when_target_has_room(client, db_session):
@@ -471,12 +476,16 @@ def test_admin_move_pending_signup_stays_pending_when_target_has_room(client, db
     assert slot_b_row.current_count == 1, "target slot should have incremented"
 
 
-def test_admin_move_sends_waitlist_promotion_email_for_source_promotion(
+def test_admin_move_sends_no_promotion_email_for_source_slot(
     client, db_session, monkeypatch
 ):
-    """Regression: the move path must enqueue send_waitlist_promotion_email
-    for anyone promoted off the source slot's waitlist when the move frees a
-    seat — the move previously promoted silently with no email at all."""
+    """2026-08-02 read-only signups: moving a signup away and freeing a
+    source seat must never enqueue a waitlist promotion email for that
+    source slot — nobody there was promoted. (A moved *waitlisted* signup
+    landing in an open target seat is a distinct, explicit self-promotion
+    and keeps its own email — see TestAdminMoveWaitlisted /
+    test_move_waitlisted_into_open_slot_goes_pending_with_email in
+    test_promotion_consent.py.)"""
     promoted_emails = []
     monkeypatch.setattr(
         "app.celery_app.send_waitlist_promotion_email.delay",
@@ -511,8 +520,12 @@ def test_admin_move_sends_waitlist_promotion_email_for_source_promotion(
     )
     assert resp.status_code == 200, resp.text
 
-    assert len(promoted_emails) == 1, (
-        f"expected exactly one promotion email, got: {promoted_emails}"
+    assert promoted_emails == [], (
+        f"move must never send a promotion email for the source slot's "
+        f"waitlist (sent: {promoted_emails})"
     )
-    assert promoted_emails[0]["signup_id"] == str(waitlisted.id)
-    assert promoted_emails[0]["token"], "raw token must travel to the email task"
+    db_session.expire_all()
+    assert (
+        db_session.get(models.Signup, waitlisted.id).status
+        == models.SignupStatus.waitlisted
+    )

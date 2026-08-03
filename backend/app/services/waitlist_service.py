@@ -64,8 +64,10 @@ def compute_waitlist_position(
 ) -> int | None:
     """Return 1-indexed position of ``signup_id`` inside the slot's waitlist.
 
-    Ordering matches ``promote_waitlist_fifo``: ``(timestamp ASC, id ASC)``.
-    Returns ``None`` if the signup is not waitlisted for this slot.
+    Ordering: ``(timestamp ASC, id ASC)``, the canonical FIFO order used to
+    display a volunteer's place in line. ``manual_promote`` itself bypasses
+    this ordering — staff pick who to promote explicitly. Returns ``None``
+    if the signup is not waitlisted for this slot.
     """
     waitlisted = (
         db.query(models.Signup.id)

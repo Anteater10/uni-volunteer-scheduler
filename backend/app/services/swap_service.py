@@ -24,7 +24,7 @@ Contract
   increments target ``current_count``.
 - The freed source seat stays open — 2026-08-02 read-only signups (Task 5):
   the waitlist no longer auto-promotes when a staff swap frees capacity.
-  ``promote_waitlist_fifo`` is not called here; the waitlist only moves via
+  Nothing here promotes off the freed seat; the waitlist only moves via
   explicit staff promotion elsewhere.
 - The in-place flip — a waitlisted signup swapping directly into an open
   target slot — always routes through the same ``mark_promoted_pending``

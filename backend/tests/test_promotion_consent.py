@@ -30,7 +30,7 @@ from app.magic_link_service import (
     issue_token,
 )
 from app.services.waitlist_service import SlotEndedError, manual_promote
-from app.signup_service import mark_promoted_pending, promote_waitlist_fifo
+from app.signup_service import mark_promoted_pending
 from tests.fixtures.helpers import auth_headers, make_user
 
 
@@ -315,11 +315,12 @@ class TestPromotionTokenStillManages:
 
 
 class TestReapSemanticsUnchanged:
-    def test_expired_promotion_pending_is_reaped_and_chain_promotes(
+    def test_expired_promotion_pending_is_reaped_seat_stays_open(
         self, db_session, monkeypatch, patch_session_local
     ):
-        """A promotion-pending signup whose 3-day promotion token lapsed is
-        still reaped, and its seat still chain-promotes the next waitlister."""
+        """2026-08-02 read-only signups: a promotion-pending signup whose
+        3-day promotion token lapsed is still reaped, but its freed seat
+        stays open — the reaper never promotes anyone anymore."""
         sent = []
         monkeypatch.setattr(
             "app.celery_app.send_waitlist_promotion_email.delay",
@@ -371,10 +372,10 @@ class TestReapSemanticsUnchanged:
         assert db_session.get(models.Signup, ghost_id) is None, (
             "an expired promotion-pending signup must still be reaped"
         )
-        promoted = db_session.get(models.Signup, next_id)
-        assert promoted.status == models.SignupStatus.pending
-        assert db_session.get(models.Slot, slot_id).current_count == 1
-        assert len(sent) == 1 and sent[0]["signup_id"] == str(next_id)
+        untouched = db_session.get(models.Signup, next_id)
+        assert untouched.status == models.SignupStatus.waitlisted
+        assert db_session.get(models.Slot, slot_id).current_count == 0
+        assert sent == []
 
     def test_live_promotion_token_protects_pending_from_reap(
         self, db_session, monkeypatch, patch_session_local
@@ -630,29 +631,6 @@ class TestEndedSlotGuard:
 
         assert signup.status == models.SignupStatus.waitlisted
         assert _token_rows(db_session, signup.id) == []
-
-    def test_promote_waitlist_fifo_skips_ended_slot(self, db_session):
-        owner = make_user(db_session, role=models.UserRole.admin)
-        event = _make_event(db_session, owner, days_out=-3)
-        slot = _make_slot(db_session, event, capacity=2, current_count=0, ended=True)
-        vol = _make_volunteer(db_session)
-        signup = _make_signup(db_session, vol, slot, models.SignupStatus.waitlisted)
-
-        assert promote_waitlist_fifo(db_session, slot.id) is None
-        assert signup.status == models.SignupStatus.waitlisted
-        assert _token_rows(db_session, signup.id) == []
-
-    def test_promote_waitlist_fifo_still_promotes_live_slot(self, db_session):
-        owner = make_user(db_session, role=models.UserRole.admin)
-        event = _make_event(db_session, owner)
-        slot = _make_slot(db_session, event, capacity=2, current_count=0)
-        vol = _make_volunteer(db_session)
-        signup = _make_signup(db_session, vol, slot, models.SignupStatus.waitlisted)
-
-        result = promote_waitlist_fifo(db_session, slot.id)
-
-        assert result is not None and result.signup.id == signup.id
-        assert signup.status == models.SignupStatus.pending
 
     def test_manual_promote_on_ended_slot_raises(self, db_session):
         owner = make_user(db_session, role=models.UserRole.admin)

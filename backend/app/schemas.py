@@ -648,7 +648,8 @@ class PublicSignupResultItem(BaseModel):
     slot_id: UUID
     status: SignupStatus
     # 1-indexed position within the waitlist when status == waitlisted. None
-    # otherwise. Ordering matches promote_waitlist_fifo (timestamp ASC, id ASC).
+    # otherwise. Ordering matches waitlist_service.compute_waitlist_position
+    # (timestamp ASC, id ASC).
     position: Optional[int] = None
 
 
