@@ -57,16 +57,18 @@ does.
 
 - **Show the check-in QR** for the door.
 - **Promote someone off the waitlist**, including deliberately over capacity.
-- **Cancel a signup**, which frees the seat and auto-promotes the next person waiting.
+- **Cancel a signup**, which frees the seat but does not promote anyone — the seat just stays open
+  until a staff member deliberately promotes someone off the waitlist.
 - **Grant orientation credit** to one volunteer directly — the "vouched for at the door" case.
 - **Reorder the waitlist** — admins only, and only on a slot with at least two people waiting.
 - **Download the roster as a CSV.**
 
-**A promotion off the waitlist is no longer instant.** Whether an organizer promotes someone by hand
-or a cancellation auto-promotes the next in line, the volunteer is moved to **pending** and emailed a
-link to confirm the spot, which holds their seat for three days. They are on the roster the whole
-time, but as pending rather than confirmed — and a pending row cannot be closed out, so tap them in
-if they turn up before they've clicked. The waitlist document covers the rest of that flow.
+**Promoting someone off the waitlist always goes through pending, never straight to confirmed.**
+Whether an organizer promotes the longest-waiting person or reaches further down the list, the
+volunteer is moved to **pending** and emailed a link to confirm the spot, which holds their seat for
+three days. They are on the roster the whole time, but as pending rather than confirmed — and a
+pending row cannot be closed out, so tap them in if they turn up before they've clicked. The waitlist
+document covers the rest of that flow.
 
 **Granting orientation credit by hand is done per volunteer from the event detail page**, and
 organizers can do it. What organizers cannot reach is **Admin → Orientation Credits**, the admin-only

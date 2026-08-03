@@ -25,7 +25,6 @@ from . import models
 from .emails import BUILDERS
 from .magic_link_service import CONFIRM_PURPOSES
 from .observability import init_sentry
-from .signup_service import promote_waitlist_fifo
 
 logger = logging.getLogger(__name__)
 
@@ -679,8 +678,10 @@ def _cancel_stale_waitlisted(db: Session, now: datetime) -> int:
 
 @celery.task(name="app.celery_app.expire_pending_signups")
 def expire_pending_signups() -> None:
-    """Hourly sweep (2026-07-28 spec): reap unconfirmed pendings, chain-promote,
-    cancel stale waitlisted rows, then clean up stale manage tokens.
+    """Hourly sweep (2026-08-02 read-only signups): reap unconfirmed
+    pendings, cancel stale waitlisted rows, then clean up stale manage
+    tokens. Promotes nobody — the waitlist is a pure holding list that only
+    moves via explicit staff/admin promotion (mark_promoted_pending).
 
     Reap criteria — a pending signup is deleted only when it has at least one
     confirm token (SIGNUP_CONFIRM or PROMOTION_CONFIRM) and NONE of them is
@@ -691,14 +692,8 @@ def expire_pending_signups() -> None:
 
     Side effects:
       - slot.current_count decremented per deleted signup, committed as its
-        own transaction (row-locked FOR UPDATE, like the promotion phase)
-      - freed seats chain-promote the slot's waitlist FIFO (pending + email,
-        their own 3-day clock — an unbroken chain across successive runs).
-        2026-07-29 fix: each promotion commits and enqueues its email
-        immediately, one at a time, instead of one bulk commit across every
-        affected slot followed by one bulk enqueue loop — shrinks the crash
-        window where a promoted signup's confirm email is silently dropped
-        down to a single signup instead of the whole run's promotions.
+        own transaction (row-locked FOR UPDATE). The freed seat stays open —
+        no chain-promotion.
       - waitlisted signups on already-ended slots are cancelled, no email
         (see _cancel_stale_waitlisted)
       - MagicLinkToken rows cascade-delete with their reaped signup
@@ -754,12 +749,9 @@ def expire_pending_signups() -> None:
                 tokenless,
             )
 
-        affected_slot_ids: list = []
         count = 0
         for signup, slot in rows:
             slot.current_count = max(0, slot.current_count - 1)
-            if slot.id not in affected_slot_ids:
-                affected_slot_ids.append(slot.id)
             db.delete(signup)
             count += 1
         db.commit()
@@ -769,40 +761,7 @@ def expire_pending_signups() -> None:
         if stale_waitlisted:
             logger.info("stale_waitlisted_cancelled count=%d", stale_waitlisted)
 
-        # Re-locks the slot fresh each iteration: committing releases the
-        # previous iteration's FOR UPDATE lock, so the next promotion in the
-        # same slot must re-acquire it rather than trust a stale in-memory
-        # current_count.
-        promoted = 0
-        for slot_id in affected_slot_ids:
-            while True:
-                slot = (
-                    db.query(models.Slot)
-                    .filter(models.Slot.id == slot_id)
-                    .with_for_update()
-                    .first()
-                )
-                if slot is None or slot.current_count >= slot.capacity:
-                    break
-                # An ended slot is skipped by promote_waitlist_fifo itself
-                # (the guard is centralized in
-                # waitlist_service.slot_has_ended, shared with every
-                # interactive promotion path), so the seat is still reaped
-                # and decremented above but never chain-promoted into a
-                # finished event.
-                promo = promote_waitlist_fifo(db, slot.id)
-                if promo is None:
-                    break
-                slot.current_count += 1
-                promoted += 1
-                db.commit()
-                send_waitlist_promotion_email.delay(**promo.email_kwargs)
-
-        logger.info(
-            "expired_pending_signups_cleaned count=%d promoted=%d",
-            count,
-            promoted,
-        )
+        logger.info("expired_pending_signups_cleaned count=%d", count)
 
         # Final transaction: stale-token sweep.
         stale = _cleanup_stale_confirm_tokens(db, now)

@@ -509,6 +509,11 @@ class SiteSettings(Base):
         Boolean, nullable=False, server_default=text("false"), default=False
     )
 
+    # 2026-08-02 read-only signups: the address volunteers are told to email
+    # for any schedule change. NULL/empty → copy falls back to "reply to
+    # this email".
+    contact_email = Column(String(255), nullable=True)
+
 
 # -------------------------
 # Magic link tokens

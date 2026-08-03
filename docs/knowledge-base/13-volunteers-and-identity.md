@@ -41,8 +41,8 @@ see the reminders document. Broadcasts ignore the setting by design too, because
 operational instructions rather than promotional email.
 
 One rough edge worth knowing: unlike the rest of the manage page, the reminder toggle stops loading
-once the link's confirmation window has passed — the card shows an error while cancelling and swapping
-on the same page still work. There is no staff-side version of this setting, so the only way back to
+once the link's confirmation window has passed — the card shows an error while viewing signups on the
+same page still works. There is no staff-side version of this setting, so the only way back to
 the toggle is a newer link, which the volunteer gets the next time they sign up for something.
 
 **Names are shown one way each side.** Staff see **full names** on rosters, because initials make

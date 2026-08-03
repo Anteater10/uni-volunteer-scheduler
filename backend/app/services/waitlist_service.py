@@ -1,9 +1,10 @@
 """Waitlist service — position computation + manual promotion + admin reorder.
 
-Pairs with the canonical FIFO promotion in ``app.signup_service``. The FIFO
-promote belongs to the cancel-triggered autopromote path; this module owns
-the read-side "what's my position?" question plus the two organizer/admin
-override operations (manual promote, admin reorder).
+The waitlist never moves on its own (2026-08-02 read-only signups): freed
+seats sit open until a staff member acts. This module owns the read-side
+"what's my position?" question plus the two organizer/admin override
+operations (manual promote, admin reorder) that are now the only way
+anyone leaves the waitlist.
 
 All write operations assume the caller has already acquired a FOR UPDATE
 lock on the slot row to serialize against concurrent cancels and public
@@ -45,9 +46,9 @@ class SlotEndedError(ValueError):
 def slot_has_ended(slot: models.Slot, now: datetime | None = None) -> bool:
     """True when ``slot.end_time`` is at or before ``now`` (UTC-aware).
 
-    Single source of truth for every promotion path: FIFO auto-promotion
-    skips an ended slot silently (the seat simply stays free), staff
-    promotion raises ``SlotEndedError``. Timestamps come back from Postgres
+    Single source of truth for every promotion path: staff promotion raises
+    ``SlotEndedError`` rather than letting anyone be offered a seat in a
+    session that's already over. Timestamps come back from Postgres
     tz-aware; the naive fallback keeps the comparison from blowing up if a
     caller hands over a hand-built slot.
     """
@@ -64,8 +65,10 @@ def compute_waitlist_position(
 ) -> int | None:
     """Return 1-indexed position of ``signup_id`` inside the slot's waitlist.
 
-    Ordering matches ``promote_waitlist_fifo``: ``(timestamp ASC, id ASC)``.
-    Returns ``None`` if the signup is not waitlisted for this slot.
+    Ordering: ``(timestamp ASC, id ASC)``, the canonical FIFO order used to
+    display a volunteer's place in line. ``manual_promote`` itself bypasses
+    this ordering — staff pick who to promote explicitly. Returns ``None``
+    if the signup is not waitlisted for this slot.
     """
     waitlisted = (
         db.query(models.Signup.id)
@@ -146,24 +149,25 @@ def manual_promote(
     Caller must hold FOR UPDATE on both rows and must have verified the
     signup belongs to the slot. Raises ``ValueError`` on invalid state so
     the router can translate to an HTTP status, and the ``SlotEndedError``
-    subclass when the slot has already ended (staff action, so it fails loudly
-    instead of skipping the way FIFO auto-promotion does).
+    subclass when the slot has already ended (staff action, so it fails
+    loudly rather than silently doing nothing).
 
     Delegates the status flip to ``mark_promoted_pending`` (waitlisted →
     pending, issues a fresh 3-day PROMOTION_CONFIRM token) then increments
     ``slot.current_count`` itself, since ``mark_promoted_pending``
     deliberately leaves capacity accounting to the caller. 2026-07-28 spec:
     staff promotion is not volunteer intent — the volunteer confirms via the
-    emailed magic link, which doubles as their manage/cancel page. Caller
+    emailed magic link, which doubles as their read-only manage page. Caller
     must enqueue ``send_waitlist_promotion_email(**result.email_kwargs)``
     AFTER commit.
 
-    ``allow_overfill`` exists because a full slot is normally the *only*
-    reason anyone is waitlisted, and auto-promote (WAIT-02) already claims any
-    seat that frees up. Refusing on capacity therefore made the manual
-    override (WAIT-03) unreachable in practice — the button 409'd every time.
-    Going over capacity is a real decision about a real room, so the caller
-    has to ask for it deliberately rather than get it by default.
+    ``allow_overfill`` exists because freed seats now sit open until staff
+    act (2026-08-02 read-only signups), so promoting into a seat that's
+    already free is the normal case. ``allow_overfill`` instead covers the
+    case where the slot is still at or over capacity and staff want to put
+    someone in anyway. Going over capacity is a real decision about a real
+    room, so the caller has to ask for it deliberately rather than get it
+    by default.
     """
     if signup.status != models.SignupStatus.waitlisted:
         raise ValueError("only waitlisted signups can be promoted")
@@ -176,7 +180,7 @@ def manual_promote(
 
     # 2026-07-28 spec: staff promotion is not volunteer intent — the
     # volunteer confirms via the emailed 3-day magic link, which is also
-    # their manage/cancel page. Caller enqueues the email after commit.
+    # their read-only manage page. Caller enqueues the email after commit.
     result = mark_promoted_pending(db, signup)
     slot.current_count += 1
     db.flush()

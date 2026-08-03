@@ -1,39 +1,42 @@
-# How much notice to give when cancelling
+# How cancelling works, and how much notice to give
+
+**A volunteer cannot cancel their own signup.** The link in their signup email is read-only — it lets
+them confirm, view their signups, and manage reminder preferences, but there is no cancel button on
+it. To drop a session, a volunteer emails the SciTrek organizers (the address configured in Site
+settings — the confirmation email points to it), and a staff member cancels the signup from the event
+roster.
 
 **SciTrek asks volunteers to give at least two days' notice** when they can't make a session they
-signed up for. Two days is the expectation staff should quote when a volunteer asks how much warning
-is needed to cancel.
+signed up for. Two days is the expectation staff should quote when a volunteer emails asking how much
+warning is needed to cancel — it gives staff time to see the email, cancel the signup, and, if the
+seat should be refilled, promote someone off the waitlist before the session runs.
 
-A volunteer cancels through the link in their signup email — there's no account to log into. Staff can
-also cancel a signup from the event roster.
-
-**Cancelling early matters because filling the seat is no longer instant.** When a volunteer cancels,
-the longest-waiting person on that slot is *offered* the seat rather than simply moved into it: the app
-emails them a link and holds the seat for **three days** while they decide. Only when they click it are
-they confirmed. So the more warning a cancellation carries, the more likely the replacement answers in
-time. A cancellation two days out leaves a real chance that the session arrives before the offer is
-answered, and a same-day cancellation almost certainly means the classroom is short a mentor.
+**Cancelling early matters because filling the seat is no longer automatic, and it isn't instant
+either way.** When staff cancel a signup, the seat is simply freed — nobody is promoted off the
+waitlist on its own. If the seat should be filled, a staff member has to deliberately promote the
+longest-waiting person from the event roster, which offers them the seat rather than handing it over:
+the app emails them a link and holds the seat for **three days** while they decide. Only when they
+click it are they confirmed. So the more warning a cancellation carries, the more time staff have to
+notice it, act on it, and give a replacement a real chance to answer before the session arrives.
 
 **Not showing up is different from cancelling.** A volunteer who simply doesn't arrive is recorded as a
 **no-show** when staff close out the session, and no-show rates are reported in Admin → Exports.
-Cancelling — even late — instead frees the seat and starts the offer to the waitlist.
+Cancelling — even late — instead frees the seat, which staff can then choose to fill from the waitlist.
 
-**The app does not enforce the two-day request.** Nothing blocks a late cancellation, and the link in
-the signup email keeps working for cancelling long after the fourteen-day window for *confirming* has
-passed — the two are separate. In practice a volunteer's link stays usable until well after all their
-sessions are over, so "my link expired, I couldn't cancel" is not something to expect. If a volunteer
-genuinely can't use their link, staff can cancel for them from the roster.
+**The app does not enforce the two-day request.** Nothing blocks a late cancellation entered by staff,
+and there's no self-service deadline to miss, since a volunteer was never able to cancel through the
+link in the first place. If a volunteer wants to drop a session, staff cancel it for them from the
+roster whenever the email arrives.
 
-**Every cancellation emails the volunteer, and the wording follows what they actually lost.** Whoever
-does it — the volunteer through their own link, or staff from the roster — an email goes out naming
-the event, the time, and the place. Someone who held a seat is told their signup was cancelled.
-Someone who was still on the **waitlist** is told they've been removed from the waitlist instead,
-because they never had a seat to lose and "your signup has been cancelled" would read as though they
-did. Either email exists because the link stays usable for a long time: it is how a volunteer would
-find out if somebody else used their link to cancel them. One caution:
-the email suggests signing up again, but the app refuses a new signup for the very session that was
-cancelled, and no staff action reinstates it — a different session on the event still works. The
-signups document covers this; a volunteer who wants to *move* rather than drop out should swap from
-their manage link instead of cancelling.
+**Every cancellation still emails the volunteer, and the wording follows what they actually lost.** An
+email goes out naming the event, the time, and the place. Someone who held a seat is told their signup
+was cancelled. Someone who was still on the **waitlist** is told they've been removed from the
+waitlist instead, because they never had a seat to lose and "your signup has been cancelled" would
+read as though they did. This email is the volunteer's confirmation that the change they asked for
+actually happened. One caution: the email suggests signing up again, but the app refuses a new signup
+for the very session that was cancelled, and no staff action reinstates it — a different session on
+the event still works. The signups document covers this. A volunteer who wants to *move* to a
+different session rather than drop out should say so in the same email — staff can move a signup to
+another session on the event rather than cancelling and re-signing them up.
 
-The document on the waitlist covers what happens to the offered seat if the replacement never answers.
+The document on the waitlist covers what happens to a promoted seat if the replacement never answers.

@@ -3,6 +3,7 @@
 **Date:** 2026-07-28
 **Branch:** `fix/waitlist-promotion-confirmation`
 **Status:** approved in brainstorming session (Hung)
+2026-08-02: superseded in part — self-cancel/swap and all automatic promotion removed (see 2026-08-02-read-only-volunteer-signups-design.md); the pending + 3-day confirm mechanics survive for manual staff promotion.
 
 ## Problem
 

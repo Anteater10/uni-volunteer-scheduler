@@ -212,6 +212,7 @@ def send_reschedule(signup: models.Signup) -> dict:
     slot = signup.slot
     event = slot.event
     vol_name = f"{v.first_name} {v.last_name}"
+    contact_instruction = _contact_instruction(signup)
     # TODO(copy): subject line
     subject = f"Schedule change: '{event.title}'"
     text_body = (
@@ -220,7 +221,8 @@ def send_reschedule(signup: models.Signup) -> dict:
         f"- Event: {event.title}\n"
         f"- New time: {_fmt_when(slot)}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
-        "If you can no longer attend, please cancel your signup."
+        f"If you can no longer attend, please {contact_instruction} "
+        "so the organizers can update the schedule."
     )
     html_body = _render_html(
         "reschedule.html",
@@ -228,8 +230,30 @@ def send_reschedule(signup: models.Signup) -> dict:
         event_title=event.title,
         slot_when=_fmt_when(slot),
         event_location=event.location or "TBD",
+        contact_instruction=contact_instruction,
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+
+
+def _contact_instruction(db_obj) -> str:
+    """How a volunteer reaches the organizers, from site settings.
+
+    2026-08-02 read-only signups: volunteers cannot change their own
+    schedule, so every email points changes at the organizers. ``db_obj``
+    is any session-attached ORM row (signup/volunteer); a detached row
+    falls back to the reply-to instruction.
+    """
+    from sqlalchemy.orm import object_session
+
+    db = object_session(db_obj)
+    contact = None
+    if db is not None:
+        from .services.settings_service import get_app_settings
+
+        contact = (get_app_settings(db).contact_email or "").strip() or None
+    return (
+        f"email the SciTrek organizers at {contact}" if contact else "reply to this email"
+    )
 
 
 def _manage_url_for_signup(signup: "models.Signup") -> str | None:
@@ -288,7 +312,7 @@ def send_reminder_kickoff(signup: "models.Signup") -> dict:
         f"- When: {ctx['slot_when']}\n"
         f"- Where: {ctx['event_location']}\n\n"
         "Thanks for saying yes. You'll get a 24-hour and 2-hour nudge as the event approaches.\n\n"
-        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}\n"
+        f"{'View your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}\n"
         "You can turn these reminders off from the manage page anytime."
     )
     html_body = _render_html(
@@ -315,8 +339,8 @@ def send_reminder_pre_24h(signup: "models.Signup") -> dict:
         f"- Event: {ctx['event_title']}\n"
         f"- When: {ctx['slot_when']}\n"
         f"- Where: {ctx['event_location']}\n\n"
-        "See you there! If you can no longer attend, please cancel so the spot opens up.\n\n"
-        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
+        f"See you there! If you can no longer attend, please {_contact_instruction(signup)}.\n\n"
+        f"{'View your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
     )
     html_body = _render_html(
         "reminder.html",
@@ -341,7 +365,7 @@ def send_reminder_pre_2h(signup: "models.Signup") -> dict:
         f"- When: {ctx['slot_when']}\n"
         f"- Where: {ctx['event_location']}\n\n"
         "See you there!\n\n"
-        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
+        f"{'View your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
     )
     html_body = _render_html(
         "reminder.html",
@@ -487,6 +511,7 @@ def build_signup_confirmation_email(
         confirm_url=confirm_url,
         slot_list="\n".join(slot_lines),
         calendar_note=calendar_note,
+        contact_instruction=_contact_instruction(volunteer),
     )
     subject = f"Confirm your SciTrek volunteer signup — {event.title}"
     return subject, html
@@ -502,7 +527,7 @@ def build_waitlist_promotion_email(
 
     Unlike the old link-less promotion notification, this carries
     the magic-link confirm URL: the promotee must confirm within 3 days,
-    and the same link is their manage/cancel page.
+    and the same link is their read-only manage page.
 
     Returns:
         (subject, html_body) — HTML only, same as the fresh-signup flow.
@@ -522,6 +547,7 @@ def build_waitlist_promotion_email(
         event_title=event.title,
         confirm_url=confirm_url,
         slot_line=slot_line,
+        contact_instruction=_contact_instruction(signup),
     )
     subject = f"A spot opened up — confirm your SciTrek signup for {event.title}"
     return subject, html

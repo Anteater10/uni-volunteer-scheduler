@@ -12,10 +12,10 @@ its slots. It reaches people holding or past a confirmed spot — confirmed, che
 and skips pending, waitlisted, no-show, and cancelled signups. Used for things like "parking moved
 to Lot 22."
 
-**Cancelled** — a signup status meaning the volunteer gave up the spot, or staff cancelled it.
-Cancelling a signup that was holding a seat frees it and offers it to the longest-waiting person on
-that slot's waitlist. Cancelled is final. A volunteer who cancels through their own link is emailed
-a cancellation notice.
+**Cancelled** — a signup status meaning staff cancelled it, at the volunteer's request by email or on
+their own. A volunteer cannot cancel a signup themselves. Cancelling a signup that was holding a seat
+frees it, but nobody is promoted off the waitlist automatically — a staff member has to do that
+separately. Cancelled is final. The volunteer is emailed a cancellation notice either way.
 
 **Check-in** — marking a volunteer as present at the door. Check-in happens per slot, inside a
 window of 30 minutes before the slot starts to 30 minutes after. Check-in by itself does not grant
@@ -39,12 +39,12 @@ carries the module reference, school, week number, and quarter.
 an intro module and an advanced module can share one orientation. Stored on the module; a new
 module's family key starts out as its own slug.
 
-**Magic link** — a link emailed to a volunteer that lets them confirm, view, cancel, or swap a
-signup without an account or password. Confirming is the one-time part, and it has a deadline. The
-same link keeps working for viewing, cancelling, and swapping after that deadline passes, for any
-session the volunteer is still due at — a session already closed out, or one they cancelled, is not
-theirs to move. A seat won from a **waitlist promotion** carries a second, separate confirm link in
-its own email, and only that one can claim it. See the magic-links document.
+**Magic link** — a link emailed to a volunteer that lets them confirm and view a signup, and manage
+reminder preferences, without an account or password. It does not let them cancel or move a signup —
+for that they email the SciTrek organizers and a staff member makes the change. Confirming is the
+one-time part, and it has a deadline; the same link keeps working for viewing afterward, for any
+session the volunteer is still due at. A seat won from a **waitlist promotion** carries a second,
+separate confirm link in its own email, and only that one can claim it. See the magic-links document.
 
 **Module** — a multi-session science experience delivered to a class. SciTrek modules usually run
 five sessions, but the app stores a session count per module rather than assuming a number. In the
@@ -113,9 +113,10 @@ someone's schedule.
 **Volunteer** — a UCSB student who mentors in classrooms. Identified only by email address; no
 account, no password.
 
-**Waitlisted** — a signup status meaning the slot was full when the volunteer signed up. When a
-seat frees up the longest-waiting person is promoted automatically, which moves them to **pending**
-and emails them a link to confirm within three days. A waitlisted signup does not hold a seat.
+**Waitlisted** — a signup status meaning the slot was full when the volunteer signed up. The waitlist
+never moves on its own: a freed seat stays open until an admin or organizer deliberately promotes
+someone, which moves them to **pending** and emails them a link to confirm within three days. A
+waitlisted signup does not hold a seat.
 
 **Week number** — which week of its quarter an event falls in, counted from the quarter's start
 date. Week 1 begins on the quarter's start date.

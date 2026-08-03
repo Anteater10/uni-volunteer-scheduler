@@ -16,19 +16,19 @@ confirmed one, because holding the seat is the whole point of the confirmation w
 signups do **not** count. When the count reaches capacity, further signups for that slot are
 waitlisted rather than rejected.
 
-**A freed seat is offered down the waitlist immediately.** When someone who was holding a seat
-cancels, or an unconfirmed signup lapses and is swept away, the longest-waiting person on that slot
-is promoted — and the loop keeps going until the slot is full or the waitlist is empty, so one
-cancellation can promote several people. A promoted volunteer moves to *pending*, not straight to
-confirmed: they get an emailed link and three days to claim the seat, and if they don't, the seat
-passes down the line on the next hourly sweep. Nobody is promoted into a session that has already
-finished. See the waitlist document.
+**A freed seat stays open until staff fill it.** When someone who was holding a seat is cancelled, or
+an unconfirmed signup lapses and is swept away, the seat is simply freed — nobody is promoted off the
+waitlist automatically. An admin or organizer has to deliberately promote someone from the event
+roster. A promoted volunteer moves to *pending*, not straight to confirmed: they get an emailed link
+and three days to claim the seat, and if they don't, the seat is freed again and stays open until
+staff promote someone else. Nobody can be promoted into a session that has already finished. See the
+waitlist document.
 
-**Raising a session's capacity fills the new seats from the waitlist straight away.** Editing a slot
-to a higher capacity promotes the longest-waiting volunteers until the new capacity is reached or the
-waitlist runs out — each one moved to *pending* with their own three-day confirm email, exactly as if
-a seat had been cancelled. Lowering a capacity never removes anyone: the seats already held stay
-held, and the session simply sits over its new number until someone cancels.
+**Raising a session's capacity opens new seats; it doesn't fill them.** Editing a slot to a higher
+capacity makes room for more signups, but the volunteers already on the waitlist stay waitlisted
+until a staff member promotes them, one at a time, from the event roster. Lowering a capacity never
+removes anyone: the seats already held stay held, and the session simply sits over its new number
+until someone is cancelled.
 
 Slots are added, edited, and deleted **one at a time** from the event page. Because each slot
 carries its own date, time, and location, one event can span several days in different rooms. There

@@ -18,11 +18,7 @@ from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
 from ..models import PrivacyMode
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
-from ..signup_service import (
-    PromotionResult,
-    mark_promoted_pending,
-    promote_waitlist_fifo,
-)
+from ..signup_service import mark_promoted_pending
 from ..services.check_in_service import ensure_signup_cancellable
 from ..services.waitlist_service import SlotEndedError
 from ..services import module_service, quarter_service
@@ -53,23 +49,6 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
         .scalar()
         or 0
     )
-
-
-def _promote_waitlist_fifo(db: Session, slot: models.Slot) -> List[PromotionResult]:
-    """Admin-side wrapper around the canonical promote_waitlist_fifo.
-
-    Loops until capacity is full. Caller must hold FOR UPDATE on the slot,
-    capture each result's email_kwargs BEFORE commit, and enqueue
-    send_waitlist_promotion_email AFTER commit.
-    """
-    results: List[PromotionResult] = []
-    while slot.current_count < slot.capacity:
-        promo = promote_waitlist_fifo(db, slot.id)
-        if promo is None:
-            break
-        slot.current_count += 1
-        results.append(promo)
-    return results
 
 
 def _participant_payload(user: models.User, privacy: PrivacyMode) -> dict:
@@ -409,8 +388,8 @@ def event_analytics(
     # Count anyone still holding a seat: pending + confirmed + checked_in
     # + attended. Pending holds capacity (just hasn't clicked the magic link
     # yet). Otherwise the "Confirmed" card drops when someone checks in or
-    # when a waitlisted person auto-promotes into pending — both misread
-    # the state (they're more present, not less).
+    # when staff manually promote a waitlisted person into pending — both
+    # misread the state (they're more present, not less).
     confirmed = (
         db.query(func.count(models.Signup.id))
         .join(models.Slot)
@@ -694,11 +673,7 @@ def admin_cancel_signup(
     if previous_status in (models.SignupStatus.confirmed, models.SignupStatus.pending) and slot.current_count > 0:
         slot.current_count -= 1
 
-    promotions = _promote_waitlist_fifo(db, slot)
-
     log_action(db, actor, "admin_signup_cancel", "Signup", str(signup.id))
-    # Capture before commit — expire_on_commit would force refresh queries.
-    promotion_email_kwargs = [p.email_kwargs for p in promotions]
     db.commit()
     db.refresh(signup)
 
@@ -706,17 +681,14 @@ def admin_cancel_signup(
     # The cancellation email is dispatched via the deduped kind pipeline
     # (volunteer-backed). A waitlisted signup never held a seat, so it gets
     # waitlist-appropriate copy instead of "your signup has been cancelled".
+    # 2026-08-02: cancel never promotes — the waitlist only moves by
+    # explicit staff promotion (admin_promote_signup / admin_signup_move).
     cancellation_kind = (
         "cancellation_waitlisted"
         if previous_status == models.SignupStatus.waitlisted
         else "cancellation"
     )
     send_email_notification.delay(signup_id=str(signup.id), kind=cancellation_kind)
-
-    # Promoted volunteers get the confirm-your-spot email — pending status
-    # holds the seat until the volunteer clicks the emailed magic link.
-    for kwargs in promotion_email_kwargs:
-        send_waitlist_promotion_email.delay(**kwargs)
 
     return signup
 
@@ -965,14 +937,14 @@ def admin_move_signup(
                 status_code=422, detail={"code": exc.code, "message": str(exc)}
             ) from exc
 
-    promotions = (
-        _promote_waitlist_fifo(db, source_slot) if held_source_capacity else []
-    )
-
+    # 2026-08-02 read-only signups: a freed source seat stays open — the
+    # waitlist only moves by explicit staff promotion. The only promotion a
+    # move can produce is the waitlisted-target self-promotion above
+    # (move_promotion).
     log_action(db, actor, "admin_signup_move", "Signup", str(signup.id))
-    promotion_email_kwargs = [p.email_kwargs for p in promotions]
-    if move_promotion is not None:
-        promotion_email_kwargs.append(move_promotion.email_kwargs)
+    move_promotion_kwargs = (
+        move_promotion.email_kwargs if move_promotion is not None else None
+    )
     db.commit()
     db.refresh(signup)
 
@@ -984,9 +956,9 @@ def admin_move_signup(
         # volunteer who trusts it gets reaped. The promotion email already
         # names the new slot.
         send_email_notification.delay(signup_id=str(signup.id), kind="reschedule")
-    # Fixes the silent-promotion bug: move previously promoted with no email.
-    for kwargs in promotion_email_kwargs:
-        send_waitlist_promotion_email.delay(**kwargs)
+    else:
+        # Fixes the silent-promotion bug: move previously promoted with no email.
+        send_waitlist_promotion_email.delay(**move_promotion_kwargs)
 
     return signup
 
@@ -2530,6 +2502,9 @@ def update_site_settings(
     if payload.show_audit_logs_tab is not None:
         changes["show_audit_logs_tab"] = payload.show_audit_logs_tab
         row.show_audit_logs_tab = payload.show_audit_logs_tab
+    if payload.contact_email is not None:
+        changes["contact_email"] = payload.contact_email
+        row.contact_email = payload.contact_email
 
     log_action(
         db,

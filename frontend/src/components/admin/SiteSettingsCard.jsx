@@ -42,6 +42,10 @@ export default function SiteSettingsCard() {
   const showAuditLogs = q.data?.show_audit_logs_tab ?? false;
   const disabled = !api_ok || q.isPending || m.isPending;
 
+  const [contactDraft, setContactDraft] = React.useState(null);
+  const contactValue =
+    contactDraft !== null ? contactDraft : q.data?.contact_email ?? "";
+
   return (
     <Card data-testid="site-settings-card">
       <h3 className="text-sm font-medium text-gray-700">Site settings</h3>
@@ -62,6 +66,38 @@ export default function SiteSettingsCard() {
           onChange={(v) => m.mutate({ show_audit_logs_tab: v })}
           testid="show-audit-logs-toggle"
         />
+        <div className="text-sm text-gray-700">
+          <label htmlFor="contact-email-input" className="font-medium">
+            Volunteer contact email
+          </label>
+          <div className="text-gray-500 text-xs mt-0.5">
+            Shown to volunteers as the address for schedule changes and
+            cancellations. Leave blank to tell them to reply to their
+            confirmation email.
+          </div>
+          <div className="mt-2 flex gap-2">
+            <input
+              id="contact-email-input"
+              type="email"
+              className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
+              value={contactValue}
+              disabled={disabled}
+              onChange={(e) => setContactDraft(e.target.value)}
+              data-testid="contact-email-input"
+            />
+            <button
+              type="button"
+              className="rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+              disabled={disabled || contactDraft === null}
+              onClick={() => {
+                m.mutate({ contact_email: contactDraft ?? "" });
+                setContactDraft(null);
+              }}
+            >
+              Save contact
+            </button>
+          </div>
+        </div>
       </div>
     </Card>
   );

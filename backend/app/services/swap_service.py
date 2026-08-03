@@ -20,35 +20,22 @@ Contract
   resurrected via a still-live manage token (bypassing orientation,
   one-event-per-batch, the signup window, and visibility), and a no_show
   attendance record would be silently erased.
-- Rejects a **participant** swap of an ``attended`` signup with the same
-  HTTP 422 ``SIGNUP_NOT_SWAPPABLE`` (2026-07-29 sweep, hours-inflation fix)
-  — ``attended`` holds capacity, so without this guard it took the
-  ``holds_capacity`` branch below (status untouched, only ``slot_id``
-  repointed). Hours are computed from attended signups joined on their
-  *current* ``slot_id``, so a volunteer could swap an already-attended
-  signup into a longer slot in the same event and inflate their own
-  credited hours with no staff involved. ``attended`` is terminal
-  (``ALLOWED_TRANSITIONS[attended] == set()`` in ``check_in_service.py``).
-  **Staff** keep the ability to swap an attended signup (e.g. to correct a
-  mis-resolved slot) — gated on ``actor_kind``, mirroring the
-  waitlisted-swap actor split below.
 - Updates ``signup.slot_id``, decrements source ``current_count``, and
   increments target ``current_count``.
-- Calls ``promote_waitlist_fifo(db, source_slot_id)`` on the freed source
-  to auto-promote the oldest waitlisted entry (Phase 25 integration).
-  2026-07-28 spec: the promoted signup goes to ``pending`` (not
-  ``confirmed``) with a fresh confirm token, returned as
-  ``SwapResult.promotion``. The **caller** — not this service — must
-  enqueue ``send_waitlist_promotion_email(**promotion.email_kwargs)``
-  AFTER ``db.commit()``.
+- The freed source seat stays open — 2026-08-02 read-only signups (Task 5):
+  the waitlist no longer auto-promotes when a staff swap frees capacity.
+  Nothing here promotes off the freed seat; the waitlist only moves via
+  explicit staff promotion elsewhere.
 - The in-place flip — a waitlisted signup swapping directly into an open
-  target slot — resolves by ``actor_kind`` (2026-07-29, Task 8): a
-  participant swapping with their own manage token IS their intent, so it
-  still goes straight to ``confirmed``. A staff-initiated swap is not
-  volunteer intent, so it goes through the same ``mark_promoted_pending``
+  target slot — always routes through the same ``mark_promoted_pending``
   choke point as every other staff/system promotion (``pending`` + its own
-  confirm email) — this reuses ``SwapResult.promotion`` for the email, since
-  the two promotion shapes (self vs. freed-seat) are mutually exclusive.
+  confirm email), since 2026-08-02: ``swap_signup`` is staff-only (the
+  volunteer self-swap endpoint was removed), so there is no more
+  participant-intent case that would confirm immediately. This is the
+  **only** way ``SwapResult.promotion`` comes back non-``None``. The
+  **caller** — not this service — must enqueue
+  ``send_waitlist_promotion_email(**promotion.email_kwargs)`` AFTER
+  ``db.commit()``.
 - Writes an ``AuditLog`` row with
   ``action='signup_swap', extra={'from_slot_id', 'to_slot_id',
   'signup_id', 'actor'}``.
@@ -58,11 +45,12 @@ Contract
 
 Returns
 -------
-``SwapResult(signup, promotion)`` — ``promotion`` is ``None`` when the
-source waitlist was empty or no seat was freed.
+``SwapResult(signup, promotion)`` — ``promotion`` is ``None`` unless the
+swapped signup itself was the waitlisted source (the explicit staff
+self-promotion case above).
 
 The caller owns commit/rollback. This service calls ``db.flush()`` so
-the promotion helper sees up-to-date rows, but never commits.
+downstream reads see up-to-date rows, but never commits.
 """
 from __future__ import annotations
 
@@ -73,18 +61,18 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..signup_service import PromotionResult, mark_promoted_pending, promote_waitlist_fifo
+from ..signup_service import PromotionResult, mark_promoted_pending
 from .waitlist_service import SlotEndedError
 
 
 class SwapResult(NamedTuple):
     """swap_signup outcome: the moved signup + a promotion result (None when
-    nothing needed a confirm email). ``promotion`` covers two mutually
-    exclusive cases: the freed source seat's FIFO promotion (holds_capacity
-    branch), or the swapped signup's own promotion when a staff swap lands a
-    waitlisted signup on an open target (Task 8). Either way the caller must
-    enqueue send_waitlist_promotion_email(**promotion.email_kwargs) AFTER
-    commit."""
+    nothing needed a confirm email). ``promotion`` is non-None only when the
+    swapped signup was itself the waitlisted source — a staff swap landing a
+    waitlisted signup on an open target self-promotes it (Task 8). Freed
+    source seats no longer auto-promote (2026-08-02 read-only signups,
+    Task 5), so that is the only case left. The caller must enqueue
+    send_waitlist_promotion_email(**promotion.email_kwargs) AFTER commit."""
 
     signup: "models.Signup"
     promotion: Optional[PromotionResult]
@@ -113,27 +101,20 @@ def swap_signup(
     signup_id,
     target_slot_id,
     *,
-    actor_kind: str,
     actor: Optional[models.User] = None,
     actor_label: Optional[str] = None,
     bypass_capacity: bool = False,
 ) -> SwapResult:
-    """Atomically move ``signup_id`` to ``target_slot_id``.
+    """Atomically move ``signup_id`` to ``target_slot_id``. Staff-only.
 
     Args:
         db: Active session; caller commits.
         signup_id: The signup to move.
         target_slot_id: Destination slot (must be in the same event).
-        actor_kind: ``"participant"`` or ``"staff"`` — explicit, passed by
-            the caller (never inferred from ``actor`` or other ambient
-            state). Governs how a waitlisted signup landing on an open
-            target resolves: participant intent confirms immediately, staff
-            action goes through the promotion-consent choke point
-            (2026-07-29, Task 8).
-        actor: Authenticated user (admin/organizer) for audit attribution.
-            ``None`` means participant acting via manage_token.
+        actor: Authenticated staff user (admin/organizer) for audit
+            attribution.
         actor_label: Optional human label written into the audit ``extra``
-            payload when ``actor`` is ``None`` (e.g. ``"participant"``).
+            payload when ``actor`` is ``None`` (e.g. a role name).
         bypass_capacity: Reserved for future admin override; current
             behavior is hard-fail on full regardless of this flag
             because Phase 29 scope explicitly forbids waitlist fallback.
@@ -141,8 +122,9 @@ def swap_signup(
     Returns:
         SwapResult(signup, promotion) — ``signup`` is the updated (and
         flushed) Signup row; ``promotion`` is the PromotionResult from
-        the freed source seat's FIFO promotion, or None if nothing was
-        promoted. The caller must enqueue
+        self-promoting a waitlisted-source signup onto the target seat, or
+        None otherwise (freed source seats stay open — no auto-promotion).
+        The caller must enqueue
         send_waitlist_promotion_email(**promotion.email_kwargs) AFTER
         db.commit() when promotion is not None.
 
@@ -153,17 +135,11 @@ def swap_signup(
         HTTPException(422, detail={"code": "SIGNUP_NOT_SWAPPABLE", ...}) if
             the signup is cancelled or no_show — checked first, before any
             other validation or mutation.
-        HTTPException(422, detail={"code": "SIGNUP_NOT_SWAPPABLE", ...}) if
-            actor_kind == "participant" and the signup is attended (staff
-            may still swap an attended signup).
         HTTPException(409) if target slot has no remaining capacity.
-        HTTPException(422, detail={"code": "SLOT_ENDED", ...}) if a staff
-            swap would promote a waitlisted signup onto a slot that has
-            already ended.
+        HTTPException(422, detail={"code": "SLOT_ENDED", ...}) if the swap
+            would promote a waitlisted signup onto a slot that has already
+            ended.
     """
-    if actor_kind not in ("participant", "staff"):
-        raise ValueError(f"actor_kind must be 'participant' or 'staff', got {actor_kind!r}")
-
     # Look up the signup (no lock yet — slots are the contention point).
     signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
     if signup is None:
@@ -183,34 +159,6 @@ def swap_signup(
                 "message": (
                     f"Cannot swap a signup with status '{signup.status.value}'."
                 ),
-            },
-        )
-
-    # 2026-07-29 sweep (hours-inflation fix): refuse a PARTICIPANT swap of an
-    # attended signup, before any lock or mutation. attended holds capacity,
-    # so without this guard it falls into the holds_capacity branch below,
-    # which only repoints slot_id and leaves status untouched. Volunteer
-    # hours are computed as sum(slot.end_time - slot.start_time) over
-    # attended signups, joined on the signup's CURRENT slot_id (admin.py) —
-    # so a volunteer could otherwise swap their own already-attended signup
-    # into a longer slot in the same event and inflate their own credited
-    # hours, repeatedly, with no staff involved at all. attended is
-    # explicitly terminal (ALLOWED_TRANSITIONS[attended] == set() in
-    # check_in_service.py); swap must not contradict that for a self-serve
-    # actor. Staff keep the ability to swap an attended signup (e.g. to
-    # correct a mis-resolved slot) — gated on actor_kind, never inferred
-    # from the caller, mirroring the waitlisted-swap actor split below. Do
-    # not collapse this into the cancelled/no_show guard above: that one is
-    # actor-independent, this one deliberately is not.
-    if (
-        signup.status == models.SignupStatus.attended
-        and actor_kind == "participant"
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "SIGNUP_NOT_SWAPPABLE",
-                "message": "Cannot swap a signup with status 'attended'.",
             },
         )
 
@@ -254,16 +202,13 @@ def swap_signup(
         if source_slot.current_count > 0:
             source_slot.current_count -= 1
         target_slot.current_count += 1
-    elif previous_status == models.SignupStatus.waitlisted and actor_kind == "staff":
-        # 2026-07-29 (Task 8): a STAFF-initiated swap of a waitlisted signup
-        # is not volunteer intent — route through the same promotion choke
-        # point as every other staff/system promotion (pending + its own
-        # confirm email) instead of landing straight on 'confirmed'. The
-        # slot_id repoint above happens first so mark_promoted_pending's
-        # ended-slot guard judges the seat actually being offered. Gated on
-        # previous_status specifically (not just "not holds_capacity") so a
-        # no_show/cancelled signup — never volunteer-intent-confirmable —
-        # cannot slip through this branch and get a promotion token/email.
+    else:
+        # Only reachable for a waitlisted source now (cancelled/no_show were
+        # refused above; holds_capacity covers the rest). A staff swap of a
+        # waitlisted signup is a promotion — route through the same choke
+        # point as every other staff promotion (pending + confirm email).
+        # The slot_id repoint above happens first so mark_promoted_pending's
+        # ended-slot guard judges the seat actually being offered.
         try:
             self_promotion = mark_promoted_pending(db, signup)
         except SlotEndedError as exc:
@@ -271,30 +216,13 @@ def swap_signup(
                 status_code=422, detail={"code": exc.code, "message": str(exc)}
             ) from exc
         target_slot.current_count += 1
-    else:
-        # Only reachable by a participant-initiated waitlisted swap now:
-        # the guard above already refused cancelled/no_show, holds_capacity
-        # covers pending/confirmed/checked_in/attended, and the elif above
-        # takes staff+waitlisted. The volunteer's own manage token = their
-        # intent, so it still goes straight to 'confirmed' (unchanged from
-        # before Task 8).
-        signup.status = models.SignupStatus.confirmed
-        target_slot.current_count += 1
 
     db.flush()
 
-    # Auto-promote source waitlist if we freed capacity. The promoted
-    # signup takes over the freed seat, so the source count goes back up —
-    # promote_waitlist_fifo leaves the increment to the caller. Promotion
-    # lands in 'pending' with a fresh confirm token; the caller must
-    # enqueue the confirm email post-commit (see SwapResult docstring).
-    # Mutually exclusive with self_promotion: that branch only runs when
-    # !holds_capacity, this one only when holds_capacity.
+    # 2026-08-02 read-only signups: a freed source seat stays open — the
+    # waitlist only moves by explicit staff promotion. The only promotion a
+    # swap can produce is the waitlisted-source self-promotion above.
     promotion: Optional[PromotionResult] = self_promotion
-    if holds_capacity:
-        promotion = promote_waitlist_fifo(db, source_slot.id)
-        if promotion is not None:
-            source_slot.current_count += 1
 
     # Audit row — reuse the AuditLog model directly so we can include
     # structured ``extra`` without the log_action helper's signature.
@@ -302,7 +230,7 @@ def swap_signup(
         "from_slot_id": str(source_slot.id),
         "to_slot_id": str(target_slot.id),
         "signup_id": str(signup.id),
-        "actor": (actor_label or "participant") if actor is None else "staff",
+        "actor": (actor_label or "staff") if actor is None else "staff",
     }
     audit = models.AuditLog(
         actor_id=actor.id if actor is not None else None,

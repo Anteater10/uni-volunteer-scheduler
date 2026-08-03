@@ -215,7 +215,7 @@ export default function AdminEventPage() {
     onError: (e) => toast.error(e?.message || "Couldn't reopen the event"),
   });
 
-  // Admin/organizer cancel signup (triggers Phase 25 FIFO auto-promote).
+  // Admin/organizer cancel signup — frees the seat; nobody is auto-promoted.
   const cancelMut = useMutation({
     mutationFn: (signupId) => api.admin.signups.cancel(signupId),
     onSuccess: () => {
@@ -763,7 +763,7 @@ export default function AdminEventPage() {
                                 onClick={() => {
                                   if (
                                     window.confirm(
-                                      `Cancel ${name}'s signup? If this was a confirmed seat, the next person on the waitlist will auto-promote.`
+                                      `Cancel ${name}'s signup? The seat will stay open until someone is promoted from the waitlist.`
                                     )
                                   ) {
                                     cancelMut.mutate(r.signup_id || r.id);
@@ -844,8 +844,8 @@ export default function AdminEventPage() {
         {reorderState && (
           <div className="space-y-3" data-testid="reorder-modal">
             <p className="text-sm text-[var(--color-fg-muted)]">
-              Rearrange the waitlist to decide who gets promoted next. The top
-              row is promoted first.
+              Rearrange the waitlist to set the order shown to staff and
+              volunteers. Promotion is always an explicit staff action.
             </p>
             <ol className="space-y-1">
               {reorderState.ids.map((row, idx) => (

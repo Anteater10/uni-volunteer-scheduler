@@ -441,6 +441,7 @@ class SiteSettingsRead(ORMBase):
     hide_past_events_from_public: bool = True
     # Gate the standalone Audit Logs tab; off by default.
     show_audit_logs_tab: bool = False
+    contact_email: Optional[str] = None
 
 
 class SiteSettingsUpdate(BaseModel):
@@ -449,6 +450,7 @@ class SiteSettingsUpdate(BaseModel):
     # Phase 29 (HIDE-01) — optional so existing callers can PATCH other fields.
     hide_past_events_from_public: Optional[bool] = None
     show_audit_logs_tab: Optional[bool] = None
+    contact_email: Optional[str] = None
 
 
 # =========================
@@ -646,7 +648,8 @@ class PublicSignupResultItem(BaseModel):
     slot_id: UUID
     status: SignupStatus
     # 1-indexed position within the waitlist when status == waitlisted. None
-    # otherwise. Ordering matches promote_waitlist_fifo (timestamp ASC, id ASC).
+    # otherwise. Ordering matches waitlist_service.compute_waitlist_position
+    # (timestamp ASC, id ASC).
     position: Optional[int] = None
 
 
@@ -870,6 +873,7 @@ class TokenedManageRead(BaseModel):
     volunteer_last_name: str
     event_id: UUID
     signups: List[TokenedSignupRead]
+    contact_email: Optional[str] = None
 
 
 # =========================

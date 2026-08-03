@@ -4,10 +4,12 @@ Tests for:
   POST   /api/v1/public/signups            (create)
   POST   /api/v1/public/signups/confirm    (consume token)
   GET    /api/v1/public/signups/manage     (view signups without consuming)
-  DELETE /api/v1/public/signups/{signup_id}  (cancel one signup with token)
+
+2026-08-02 read-only signups: DELETE /api/v1/public/signups/{signup_id} was
+removed — volunteers can no longer self-cancel. See TestCancelRouteRemoved.
 
 Covers:
-  - Happy path create → confirm → manage → cancel flow
+  - Happy path create → confirm → manage flow
   - Duplicate signup 409
   - Full slot 409
   - Invalid phone 422
@@ -24,7 +26,6 @@ import pytest
 
 from app.magic_link_service import SIGNUP_CONFIRM_TTL_MINUTES, issue_token
 from app.models import (
-    AuditLog,
     Event,
     MagicLinkPurpose,
     MagicLinkToken,
@@ -537,22 +538,41 @@ class TestManageSignups:
         assert len(data["signups"]) == 1
         assert data["signups"][0]["status"] == "pending"
 
+    def test_manage_includes_contact_email(self, client, db_session, monkeypatch):
+        from app.services.settings_service import get_app_settings
 
-class TestCancelSignup:
-    def test_public_cancel_sends_cancellation_email(self, client, db_session, monkeypatch):
-        """Task 9: Public self-cancel must send cancellation email for tamper-evidence."""
-        kinds = []
         monkeypatch.setattr(
-            "app.celery_app.send_email_notification.delay",
-            lambda *a, **k: kinds.append(k.get("kind")),
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
         )
+        event = _make_event(db_session)
+        slot = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        with _TokenCapture(monkeypatch) as cap:
+            resp = client.post("/api/v1/public/signups", json=_signup_payload(slot.id, email="manage-contact@example.com"))
+        assert resp.status_code == 201
+
+        token = cap.last_token
+        if token is None:
+            pytest.skip("Token capture failed")
+
+        get_app_settings(db_session).contact_email = "scitrek@ucsb.edu"
+        db_session.commit()
+
+        resp2 = client.get("/api/v1/public/signups/manage", params={"token": token})
+        assert resp2.status_code == 200, resp2.text
+        assert resp2.json()["contact_email"] == "scitrek@ucsb.edu"
+
+
+class TestCancelRouteRemoved:
+    """2026-08-02 read-only signups: volunteers cannot cancel themselves."""
+
+    def test_delete_route_is_gone(self, client, db_session, monkeypatch):
         monkeypatch.setattr(
-            "app.celery_app.send_waitlist_promotion_email.delay", lambda **k: None
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
         )
-        monkeypatch.setattr(
-            "app.celery_app.send_signup_confirmation_email.delay", lambda *a, **k: None
-        )
-        # Setup: create event, slot, and public signup
         event = _make_event(db_session)
         slot = _make_slot(db_session, event.id)
         db_session.commit()
@@ -560,7 +580,7 @@ class TestCancelSignup:
         with _TokenCapture(monkeypatch) as cap:
             resp = client.post(
                 "/api/v1/public/signups",
-                json=_signup_payload(slot.id, email="cancel_email09@example.com"),
+                json=_signup_payload(slot.id, email="cancel_gone09@example.com"),
             )
         assert resp.status_code == 201
         signup_id = resp.json()["signup_ids"][0]
@@ -568,164 +588,14 @@ class TestCancelSignup:
         if raw_token is None:
             pytest.skip("Token capture failed")
 
-        resp = client.delete(f"/api/v1/public/signups/{signup_id}?token={raw_token}")
-        assert resp.status_code == 200
-        assert "cancellation" in kinds
-
-    def test_public_cancel_waitlisted_sends_waitlist_copy(self, client, db_session, monkeypatch):
-        """A signup that was only ever waitlisted (never held a seat) gets
-        waitlist-appropriate cancellation copy, not the standard 'your
-        signup has been cancelled' text."""
-        monkeypatch.setattr(
-            "app.celery_app.send_signup_confirmation_email.delay",
-            lambda *a, **k: None,
-        )
-        monkeypatch.setattr(
-            "app.celery_app.send_waitlist_promotion_email.delay", lambda **k: None
-        )
-        kinds = []
-        monkeypatch.setattr(
-            "app.celery_app.send_email_notification.delay",
-            lambda *a, **k: kinds.append(k.get("kind")),
-        )
-        event = _make_event(db_session)
-        slot = _make_slot(db_session, event.id, capacity=1, current_count=1)
-        db_session.commit()
-
-        with _TokenCapture(monkeypatch) as cap:
-            resp = client.post(
-                "/api/v1/public/signups",
-                json=_signup_payload(slot.id, email="wl_cancel_copy09@example.com"),
-            )
-        assert resp.status_code == 201
-        signup_id = resp.json()["signup_ids"][0]
-        raw_token = cap.last_token
-        if raw_token is None:
-            pytest.skip("Token capture failed")
-
-        resp = client.delete(f"/api/v1/public/signups/{signup_id}?token={raw_token}")
-        assert resp.status_code == 200, resp.text
-        assert "cancellation_waitlisted" in kinds
-        assert "cancellation" not in kinds
-
-    def test_cancel_with_wrong_volunteer_token_returns_403(self, client, db_session, monkeypatch):
-        """T-09-04: token belonging to different volunteer must return 403."""
-        monkeypatch.setattr(
-            "app.celery_app.send_signup_confirmation_email.delay",
-            lambda *a, **k: None,
-        )
-        event = _make_event(db_session)
-        slot1 = _make_slot(db_session, event.id)
-        slot2 = _make_slot(db_session, event.id)
-        db_session.commit()
-
-        tokens = []
-        with _TokenCapture(monkeypatch) as cap:
-            r1 = client.post("/api/v1/public/signups", json=_signup_payload(slot1.id, email="vola09@example.com"))
-        assert r1.status_code == 201
-        token_a = cap.last_token
-
-        with _TokenCapture(monkeypatch) as cap2:
-            r2 = client.post("/api/v1/public/signups", json=_signup_payload(slot2.id, email="volb09@example.com"))
-        assert r2.status_code == 201
-        signup_b_id = r2.json()["signup_ids"][0]
-
-        if token_a is None:
-            pytest.skip("Token capture failed")
-
-        # Try to cancel vol B's signup using vol A's token → 403
         resp = client.delete(
-            f"/api/v1/public/signups/{signup_b_id}",
-            params={"token": token_a},
+            f"/api/v1/public/signups/{signup_id}", params={"token": raw_token}
         )
-        assert resp.status_code == 403, resp.text
-
-    def test_cancel_with_unknown_token_returns_400(self, client, db_session, monkeypatch):
-        monkeypatch.setattr(
-            "app.celery_app.send_signup_confirmation_email.delay",
-            lambda *a, **k: None,
+        assert resp.status_code == 404
+        db_session.expire_all()
+        assert (
+            db_session.get(Signup, signup_id).status != SignupStatus.cancelled
         )
-        event = _make_event(db_session)
-        slot = _make_slot(db_session, event.id)
-        db_session.commit()
-
-        r1 = client.post("/api/v1/public/signups", json=_signup_payload(slot.id, email="canc09@example.com"))
-        assert r1.status_code == 201
-        signup_id = r1.json()["signup_ids"][0]
-
-        resp = client.delete(
-            f"/api/v1/public/signups/{signup_id}",
-            params={"token": "x" * 40},
-        )
-        assert resp.status_code == 400, resp.text
-
-    def test_happy_path_cancel(self, client, db_session, monkeypatch):
-        monkeypatch.setattr(
-            "app.celery_app.send_signup_confirmation_email.delay",
-            lambda *a, **k: None,
-        )
-        event = _make_event(db_session)
-        slot = _make_slot(db_session, event.id)
-        db_session.commit()
-
-        with _TokenCapture(monkeypatch) as cap:
-            r1 = client.post("/api/v1/public/signups", json=_signup_payload(slot.id, email="cancel_hap09@example.com"))
-        assert r1.status_code == 201
-
-        if cap.last_token is None:
-            pytest.skip("Token capture failed")
-
-        signup_id = r1.json()["signup_ids"][0]
-        token = cap.last_token
-
-        resp = client.delete(
-            f"/api/v1/public/signups/{signup_id}",
-            params={"token": token},
-        )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["cancelled"] is True
-
-    def test_cancel_creates_audit_log_entry(self, client, db_session, monkeypatch):
-        """Cancelling a signup must create an AuditLog row with action='signup_cancelled'
-        and volunteer email in extra (T-11-02 mitigation / ROADMAP success criterion 5)."""
-        monkeypatch.setattr(
-            "app.celery_app.send_signup_confirmation_email.delay",
-            lambda *a, **k: None,
-        )
-        event = _make_event(db_session)
-        slot = _make_slot(db_session, event.id)
-        db_session.commit()
-
-        with _TokenCapture(monkeypatch) as cap:
-            r1 = client.post(
-                "/api/v1/public/signups",
-                json=_signup_payload(slot.id, email="audit_log11@example.com"),
-            )
-        assert r1.status_code == 201
-
-        if cap.last_token is None:
-            pytest.skip("Token capture failed")
-
-        signup_id = r1.json()["signup_ids"][0]
-        token = cap.last_token
-
-        resp = client.delete(
-            f"/api/v1/public/signups/{signup_id}",
-            params={"token": token},
-        )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["cancelled"] is True
-
-        # Verify AuditLog row was created
-        log_entry = (
-            db_session.query(AuditLog)
-            .filter(AuditLog.action == "signup_cancelled")
-            .filter(AuditLog.entity_id == signup_id)
-            .first()
-        )
-        assert log_entry is not None, "AuditLog entry for signup_cancelled not found"
-        assert log_entry.extra is not None
-        assert log_entry.extra.get("volunteer_email") == "audit_log11@example.com"
 
 
 def test_manage_response_includes_volunteer_name(client, db_session, monkeypatch):
@@ -789,104 +659,6 @@ def test_confirmation_email_enqueued_only_after_commit(client, db_session, monke
     assert calls.index("commit") < calls.index("enqueue"), (
         f"email enqueued before commit — worker race reintroduced (order: {calls})"
     )
-
-
-def test_public_cancel_sends_waitlist_promote_email(client, db_session, monkeypatch):
-    """Public (token) cancel also auto-promotes — the promoted volunteer must
-    get the confirm-your-spot email."""
-    monkeypatch.setattr(
-        "app.celery_app.send_signup_confirmation_email.delay",
-        lambda *a, **k: None,
-    )
-    sent = []
-    monkeypatch.setattr(
-        "app.celery_app.send_email_notification.delay",
-        lambda **kw: sent.append(kw),
-    )
-    promoted_emails = []
-    monkeypatch.setattr(
-        "app.celery_app.send_waitlist_promotion_email.delay",
-        lambda **kw: promoted_emails.append(kw),
-    )
-    event = _make_event(db_session)
-    slot = _make_slot(db_session, event.id, capacity=1)
-    db_session.commit()
-
-    with _TokenCapture(monkeypatch) as cap:
-        r1 = client.post(
-            "/api/v1/public/signups",
-            json=_signup_payload(slot.id, email="wl_promote_a@example.com"),
-        )
-    assert r1.status_code == 201
-    a_id = r1.json()["signup_ids"][0]
-    a_token = cap.last_token
-    if a_token is None:
-        pytest.skip("Token capture failed")
-
-    r2 = client.post(
-        "/api/v1/public/signups",
-        json=_signup_payload(slot.id, email="wl_promote_b@example.com"),
-    )
-    assert r2.status_code == 201
-    b_id = r2.json()["signup_ids"][0]
-
-    resp = client.delete(f"/api/v1/public/signups/{a_id}", params={"token": a_token})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["promoted_from_waitlist"] == 1
-
-    assert any(kw["signup_id"] == str(b_id) for kw in promoted_emails), (
-        f"promoted volunteer got no waitlist promotion email (sent: {promoted_emails})"
-    )
-
-
-def test_public_cancel_promotes_to_pending_with_confirm_email(
-    client, db_session, monkeypatch
-):
-    sent = []
-    monkeypatch.setattr(
-        "app.celery_app.send_waitlist_promotion_email.delay",
-        lambda **kw: sent.append(kw),
-    )
-    monkeypatch.setattr(
-        "app.celery_app.send_email_notification.delay", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
-        "app.celery_app.send_signup_confirmation_email.delay",
-        lambda *a, **k: None,
-    )
-    # Setup copied from test_public_cancel_sends_waitlist_promote_email:
-    # capacity-1 slot, pending signup with manage token, waitlisted second.
-    event = _make_event(db_session)
-    slot = _make_slot(db_session, event.id, capacity=1)
-    db_session.commit()
-
-    with _TokenCapture(monkeypatch) as cap:
-        r1 = client.post(
-            "/api/v1/public/signups",
-            json=_signup_payload(slot.id, email="wl_pending_a@example.com"),
-        )
-    assert r1.status_code == 201
-    confirmed_id = r1.json()["signup_ids"][0]
-    raw_token = cap.last_token
-    if raw_token is None:
-        pytest.skip("Token capture failed")
-
-    r2 = client.post(
-        "/api/v1/public/signups",
-        json=_signup_payload(slot.id, email="wl_pending_b@example.com"),
-    )
-    assert r2.status_code == 201
-    waitlisted_id = r2.json()["signup_ids"][0]
-
-    resp = client.delete(f"/api/v1/public/signups/{confirmed_id}?token={raw_token}")
-    assert resp.status_code == 200
-    assert resp.json()["promoted_from_waitlist"] == 1
-    db_session.expire_all()
-    promoted = db_session.query(Signup).filter(Signup.id == waitlisted_id).one()
-    assert promoted.status == SignupStatus.pending
-    assert len(sent) == 1
-    assert sent[0]["signup_id"] == str(waitlisted_id)
-    assert sent[0]["token"]  # raw token travels to the email task
 
 
 class TestOrientationRequirement:

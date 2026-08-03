@@ -37,24 +37,24 @@ counts for another.
 
 ## The waitlist promote button says the slot is full
 
-That's expected — the slot being full is the whole reason anyone is waitlisted, and automatic
-promotion already claims any seat that frees up. To promote this specific person you have to
+That's expected — the slot is full, which is why there's a waitlist in the first place. Cancels,
+capacity raises, and the hourly cleanup free seats but never promote anyone, so a freed seat is
+waiting for staff to act on it, not already claimed. To promote this specific person you have to
 deliberately confirm going **over capacity**.
 
 ## A promoted volunteer says they're in, but the roster shows them as pending
 
-This is the promotion flow working, not a fault. A promotion — automatic or manual — moves the
-volunteer to **pending** and emails them a link with **3 days** to confirm. The seat is held for them
-the whole time and they appear on the roster, but the status stays pending until they click. If they
-tell you they're coming and you'd rather not wait, just **tap them in at the door** — a staff check-in
-confirms them on the way through.
+This is the promotion flow working, not a fault. A staff promotion moves the volunteer to **pending**
+and emails them a link with **3 days** to confirm. The seat is held for them the whole time and they
+appear on the roster, but the status stays pending until they click. If they tell you they're coming
+and you'd rather not wait, just **tap them in at the door** — a staff check-in confirms them on the
+way through.
 
-If they don't confirm in time, the signup is removed and the seat is offered to the next person on the
-waitlist — as long as the session hasn't happened yet. A seat freed after the session is over is
-simply released, with nobody promoted into it, because a "confirm your spot" email for a finished
-session would only cause confusion. Nothing tells the person who lapsed, and their signup disappears
-rather than showing as cancelled, so "I got an email saying a spot opened up and now I can't find it"
-means the 3 days ran out. They can sign up again if a seat is free.
+If they don't confirm in time, the signup is removed and the seat is freed again — it does not go to
+anyone automatically. A staff member has to promote the next person on the waitlist by hand if the
+seat should be filled. Nothing tells the person who lapsed, and their signup disappears rather than
+showing as cancelled, so "I got an email saying a spot opened up and now I can't find it" means the 3
+days ran out. They can sign up again if a seat is free.
 
 ## A volunteer says the confirm link didn't confirm anything
 
@@ -199,7 +199,7 @@ anyone who has already set a password needs a fresh link rather than an older em
 
 If it was never confirmed, it expired. A signup sits at **pending** until the volunteer clicks their
 link: **two weeks** for a fresh signup, **3 days** for one that came from a waitlist promotion. A
-sweep runs **every hour** and removes pending signups whose links have all lapsed, freeing the seat
-and offering it to the next person on the waitlist. This is the one case where a signup vanishes
-rather than showing as cancelled, and nothing emails the volunteer to say so. They can simply sign up
-again.
+sweep runs **every hour** and removes pending signups whose links have all lapsed, freeing the seat.
+The seat isn't offered to anyone automatically — a staff member promotes the next person on the
+waitlist by hand if it should be filled. This is the one case where a signup vanishes rather than
+showing as cancelled, and nothing emails the volunteer to say so. They can simply sign up again.

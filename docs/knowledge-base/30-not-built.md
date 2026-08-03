@@ -24,6 +24,13 @@ refers to any more.
 signing up goes through a magic link emailed to them, or the QR code at the door. There is nothing
 for a volunteer to log into.
 
+**There is no volunteer self-service cancel or swap.** The link in a volunteer's email is read-only:
+it lets them confirm, view their signups, and manage reminder preferences, nothing more. A volunteer
+cannot cancel or move a signup themselves. To change or cancel anything, they email the SciTrek
+organizers (the address configured in Site settings), and an organizer applies the change. The
+waitlist works the same way — cancels, capacity raises, and the hourly cleanup free seats but promote
+nobody; only a staff promotion moves a volunteer off the waitlist.
+
 **There is no per-user timezone.** Every time a volunteer or a staff member sees is Pacific,
 matching the single venue, and nobody can choose a different one.
 
@@ -45,11 +52,12 @@ someone remembers being told an event page could email its own participants dire
 give them is the broadcast.
 
 **Nothing tells a volunteer that a waitlist offer expired.** A promotion holds the seat for three
-days; if the volunteer doesn't confirm in time, the seat passes to the next person on the waitlist
-and the volunteer's own signup is removed outright — no email explains it, and no trace of it is left
-in their manage view. This is the honest answer to "why did this volunteer's signup disappear?"
-Promotions themselves are *not* silent: every path that promotes someone off the waitlist emails
-them a confirmation link. The waitlist document covers that flow.
+days; if the volunteer doesn't confirm in time, the seat is freed and the volunteer's own signup is
+removed outright — no email explains it, no trace of it is left in their manage view, and the seat
+does not move to anyone automatically. A staff member has to promote someone else off the waitlist by
+hand. This is the honest answer to "why did this volunteer's signup disappear?" Promotions themselves
+are *not* silent: a staff promotion off the waitlist always emails a confirmation link. The waitlist
+document covers that flow.
 
 **Calendar entries don't sync.** A volunteer can add sessions to their calendar from the app or from
 the file attached to their confirmation email, but both produce a fixed entry. If the session later

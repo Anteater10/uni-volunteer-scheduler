@@ -4,7 +4,8 @@ Covers:
   - Happy path: slot A → slot B within same event, counts updated.
   - Cross-event swap rejected (400).
   - Target-full rejected (409) — hard fail, no waitlist fallback.
-  - Auto-promote of waitlisted signup on the source slot after swap.
+  - Freed source seats stay open — no auto-promotion (2026-08-02 read-only
+    signups, Task 5). The waitlist only moves via explicit staff promotion.
   - Audit row written with action='signup_swap'.
   - Orientation credit (Phase 21) is preserved by email+family_key.
 """
@@ -17,7 +18,7 @@ import pytest
 from fastapi import HTTPException
 
 from app import models
-from app.services.swap_service import SwapResult, swap_signup
+from app.services.swap_service import swap_signup
 from app.services.waitlist_service import SlotEndedError
 from tests.fixtures.factories import (
     EventFactory,
@@ -62,7 +63,7 @@ def test_swap_happy_path_moves_signup(db_session):
     slot_a.current_count = 1
     db_session.flush()
 
-    result = swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="participant", actor_kind="participant")
+    result = swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="staff")
     db_session.flush()
 
     assert str(result.signup.slot_id) == str(slot_b.id)
@@ -87,7 +88,7 @@ def test_swap_rejects_cross_event(db_session):
     db_session.flush()
 
     with pytest.raises(HTTPException) as exc:
-        swap_signup(db_session, signup.id, slot_b.id, actor_kind="participant")
+        swap_signup(db_session, signup.id, slot_b.id)
     assert exc.value.status_code == 400
     assert "same event" in exc.value.detail.lower()
 
@@ -114,7 +115,7 @@ def test_swap_rejects_target_full_hard_fail(db_session):
     db_session.flush()
 
     with pytest.raises(HTTPException) as exc:
-        swap_signup(db_session, signup.id, slot_b.id, actor_kind="participant")
+        swap_signup(db_session, signup.id, slot_b.id)
     assert exc.value.status_code == 409
     assert "full" in exc.value.detail.lower()
     # Hard-fail: signup stays where it was; counts unchanged.
@@ -124,7 +125,10 @@ def test_swap_rejects_target_full_hard_fail(db_session):
     assert slot_b.current_count == 1
 
 
-def test_swap_auto_promotes_source_waitlist(db_session):
+def test_swap_leaves_source_waitlist_untouched(db_session):
+    """2026-08-02 read-only signups (Task 5): freeing the source seat no
+    longer auto-promotes anyone. The waitlist is a pure holding list — it
+    only moves via explicit staff promotion."""
     _bind_factories(db_session)
     _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
     # slot_a: confirmed signup + one waitlisted signup.
@@ -144,20 +148,17 @@ def test_swap_auto_promotes_source_waitlist(db_session):
     )
     db_session.flush()
 
-    swap_signup(db_session, confirmed.id, slot_b.id, actor_kind="participant")
+    result = swap_signup(db_session, confirmed.id, slot_b.id)
     db_session.flush()
     db_session.refresh(waitlisted)
 
-    # Waitlisted gets promoted to pending (2026-07-28 spec: promote_waitlist_fifo
-    # now holds the seat pending the volunteer's confirm click; email plumbing
-    # for the swap path lands in Task 4).
-    assert waitlisted.status == models.SignupStatus.pending
+    assert waitlisted.status == models.SignupStatus.waitlisted
+    assert result.promotion is None
 
 
-def test_swap_auto_promote_restores_source_count(db_session):
-    """The promoted waitlister occupies the seat freed by the swap, so the
-    source slot's current_count must be re-incremented (promote_waitlist_fifo
-    contract: the caller owns the increment)."""
+def test_swap_frees_source_count_permanently(db_session):
+    """The freed source seat stays open for good — nothing backfills it
+    (2026-08-02 read-only signups, Task 5)."""
     _bind_factories(db_session)
     _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
     vol_conf = VolunteerFactory()
@@ -176,13 +177,13 @@ def test_swap_auto_promote_restores_source_count(db_session):
     )
     db_session.flush()
 
-    swap_signup(db_session, confirmed.id, slot_b.id, actor_kind="participant")
+    swap_signup(db_session, confirmed.id, slot_b.id)
     db_session.flush()
     db_session.refresh(waitlisted)
     db_session.refresh(slot_a)
 
-    assert waitlisted.status == models.SignupStatus.pending
-    assert slot_a.current_count == 1
+    assert waitlisted.status == models.SignupStatus.waitlisted
+    assert slot_a.current_count == 0
 
 
 def test_swap_no_waitlist_leaves_source_count_freed(db_session):
@@ -198,7 +199,7 @@ def test_swap_no_waitlist_leaves_source_count_freed(db_session):
     slot_a.current_count = 1
     db_session.flush()
 
-    swap_signup(db_session, signup.id, slot_b.id, actor_kind="participant")
+    swap_signup(db_session, signup.id, slot_b.id)
     db_session.flush()
     db_session.refresh(slot_a)
 
@@ -217,7 +218,7 @@ def test_swap_writes_audit_row(db_session):
     slot_a.current_count = 1
     db_session.flush()
 
-    swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="participant", actor_kind="participant")
+    swap_signup(db_session, signup.id, slot_b.id, actor=None, actor_label="staff")
     db_session.flush()
 
     row = (
@@ -230,7 +231,7 @@ def test_swap_writes_audit_row(db_session):
     assert row.extra["from_slot_id"] == str(slot_a.id)
     assert row.extra["to_slot_id"] == str(slot_b.id)
     assert row.extra["signup_id"] == str(signup.id)
-    assert row.extra["actor"] == "participant"
+    assert row.extra["actor"] == "staff"
 
 
 def test_swap_preserves_orientation_credit_via_email(db_session):
@@ -257,7 +258,7 @@ def test_swap_preserves_orientation_credit_via_email(db_session):
     db_session.flush()
     original_id = credit.id
 
-    swap_signup(db_session, signup.id, slot_b.id, actor_kind="participant")
+    swap_signup(db_session, signup.id, slot_b.id)
     db_session.flush()
 
     # Credit still exists with same id, same email, same family.
@@ -270,40 +271,6 @@ def test_swap_preserves_orientation_credit_via_email(db_session):
     assert post.volunteer_email == "preserved@example.com"
     assert post.family_key == "module-x"
     assert post.revoked_at is None
-
-
-def test_swap_returns_promotion_result_for_freed_seat(db_session):
-    # Reuse the exact setup of the existing "swap auto-promotes source
-    # waitlist" test (test_swap_service.py:126).
-    _bind_factories(db_session)
-    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
-    vol_conf = VolunteerFactory()
-    vol_wait = VolunteerFactory()
-    confirmed = SignupFactory(
-        volunteer=vol_conf, volunteer_id=vol_conf.id,
-        slot=slot_a, slot_id=slot_a.id,
-        status=models.SignupStatus.confirmed,
-    )
-    slot_a.current_count = 1
-    waitlisted = SignupFactory(
-        volunteer=vol_wait, volunteer_id=vol_wait.id,
-        slot=slot_a, slot_id=slot_a.id,
-        status=models.SignupStatus.waitlisted,
-        timestamp=datetime.now(timezone.utc) - timedelta(minutes=5),
-    )
-    db_session.flush()
-
-    result = swap_signup(db_session, signup_id=confirmed.id, target_slot_id=slot_b.id, actor_kind="participant")
-    db_session.flush()
-
-    assert isinstance(result, SwapResult)
-    assert result.signup.slot_id == slot_b.id
-    assert result.promotion is not None
-    assert result.promotion.signup.id == waitlisted.id
-    assert result.promotion.signup.status == models.SignupStatus.pending
-    assert result.promotion.email_kwargs["signup_id"] == str(
-        result.promotion.signup.id
-    )
 
 
 def test_swap_without_waitlist_has_no_promotion(db_session):
@@ -319,17 +286,18 @@ def test_swap_without_waitlist_has_no_promotion(db_session):
     slot_a.current_count = 1
     db_session.flush()
 
-    result = swap_signup(db_session, signup_id=signup.id, target_slot_id=slot_b.id, actor_kind="participant")
+    result = swap_signup(db_session, signup_id=signup.id, target_slot_id=slot_b.id)
     db_session.flush()
 
     assert result.promotion is None
 
 
 # ---------------------------------------------------------------------------
-# 2026-07-29 sweep, Task 8 — actor-kind split for a waitlisted signup landing
-# on an open target. Staff swapping a waitlisted volunteer is not volunteer
-# intent (same consent-bug class Task 4 fixed for admin move); participant
-# swapping their own signup with their manage token IS their intent.
+# A waitlisted signup landing on an open target: staff-initiated swap is not
+# volunteer intent (same consent-bug class Task 4 fixed for admin move), so
+# it always routes through mark_promoted_pending instead of confirming
+# directly (2026-08-02: swap_signup is staff-only now — the participant
+# direct-confirm path this used to split on no longer exists).
 # ---------------------------------------------------------------------------
 
 
@@ -349,7 +317,7 @@ def test_staff_swap_of_waitlisted_lands_pending_with_promotion(db_session):
     db_session.flush()
 
     result = swap_signup(
-        db_session, signup_id=signup.id, target_slot_id=slot_b.id, actor_kind="staff"
+        db_session, signup_id=signup.id, target_slot_id=slot_b.id
     )
     db_session.flush()
 
@@ -363,26 +331,6 @@ def test_staff_swap_of_waitlisted_lands_pending_with_promotion(db_session):
     assert result.promotion is not None
     assert result.promotion.signup.id == signup.id
     assert result.promotion.email_kwargs["signup_id"] == str(signup.id)
-
-
-def test_participant_swap_of_waitlisted_stays_confirmed(db_session):
-    _bind_factories(db_session)
-    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
-    signup = _make_waitlisted_signup(db_session, slot_a)
-    db_session.flush()
-
-    result = swap_signup(
-        db_session,
-        signup_id=signup.id,
-        target_slot_id=slot_b.id,
-        actor_kind="participant",
-    )
-    db_session.flush()
-
-    assert result.signup.slot_id == slot_b.id
-    assert result.signup.status == models.SignupStatus.confirmed
-    assert slot_b.current_count == 1
-    assert result.promotion is None
 
 
 def test_staff_swap_of_waitlisted_onto_ended_slot_is_rejected(db_session):
@@ -403,7 +351,7 @@ def test_staff_swap_of_waitlisted_onto_ended_slot_is_rejected(db_session):
 
     with pytest.raises(HTTPException) as exc:
         swap_signup(
-            db_session, signup_id=signup.id, target_slot_id=slot_b.id, actor_kind="staff"
+            db_session, signup_id=signup.id, target_slot_id=slot_b.id
         )
     assert exc.value.status_code == 422
     assert exc.value.detail["code"] == SlotEndedError.code
@@ -443,27 +391,6 @@ def _make_no_show_signup(db_session, slot):
     )
 
 
-def test_participant_swap_of_cancelled_signup_is_refused(db_session):
-    _bind_factories(db_session)
-    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
-    signup = _make_cancelled_signup(db_session, slot_a)
-    db_session.flush()
-
-    with pytest.raises(HTTPException) as exc:
-        swap_signup(
-            db_session, signup_id=signup.id, target_slot_id=slot_b.id,
-            actor_kind="participant",
-        )
-    assert exc.value.status_code == 422
-    assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
-    # Nothing mutated: status/slot unchanged, no capacity moved either way.
-    refreshed = db_session.get(models.Signup, signup.id)
-    assert refreshed.status == models.SignupStatus.cancelled
-    assert refreshed.slot_id == slot_a.id
-    assert slot_a.current_count == 0
-    assert slot_b.current_count == 0
-
-
 def test_staff_swap_of_cancelled_signup_is_refused(db_session):
     _bind_factories(db_session)
     _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
@@ -473,32 +400,11 @@ def test_staff_swap_of_cancelled_signup_is_refused(db_session):
     with pytest.raises(HTTPException) as exc:
         swap_signup(
             db_session, signup_id=signup.id, target_slot_id=slot_b.id,
-            actor_kind="staff",
         )
     assert exc.value.status_code == 422
     assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
     refreshed = db_session.get(models.Signup, signup.id)
     assert refreshed.status == models.SignupStatus.cancelled
-    assert refreshed.slot_id == slot_a.id
-    assert slot_a.current_count == 0
-    assert slot_b.current_count == 0
-
-
-def test_participant_swap_of_no_show_signup_is_refused(db_session):
-    _bind_factories(db_session)
-    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
-    signup = _make_no_show_signup(db_session, slot_a)
-    db_session.flush()
-
-    with pytest.raises(HTTPException) as exc:
-        swap_signup(
-            db_session, signup_id=signup.id, target_slot_id=slot_b.id,
-            actor_kind="participant",
-        )
-    assert exc.value.status_code == 422
-    assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
-    refreshed = db_session.get(models.Signup, signup.id)
-    assert refreshed.status == models.SignupStatus.no_show
     assert refreshed.slot_id == slot_a.id
     assert slot_a.current_count == 0
     assert slot_b.current_count == 0
@@ -513,7 +419,6 @@ def test_staff_swap_of_no_show_signup_is_refused(db_session):
     with pytest.raises(HTTPException) as exc:
         swap_signup(
             db_session, signup_id=signup.id, target_slot_id=slot_b.id,
-            actor_kind="staff",
         )
     assert exc.value.status_code == 422
     assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
@@ -525,19 +430,11 @@ def test_staff_swap_of_no_show_signup_is_refused(db_session):
 
 
 # ---------------------------------------------------------------------------
-# 2026-07-29 sweep — participant swap of an ATTENDED signup must be refused
-# (self-serve hours inflation). Unlike cancelled/no_show, attended DOES hold
-# capacity, so the pre-fix code fell into the holds_capacity branch: status
-# is left untouched and only slot_id is repointed. Volunteer hours are
-# computed as sum(slot.end_time - slot.start_time) over attended signups,
-# joined on the signup's CURRENT slot_id (admin.py) — so a volunteer whose
-# session is over could swap themselves into a longer slot in the same
-# event and inflate their own credited hours, repeatedly, with zero staff
-# involvement. This contradicts ALLOWED_TRANSITIONS[attended] == set()
-# (terminal, check_in_service.py). Staff retain the ability to swap an
-# attended signup (e.g. to correct a mis-resolved slot) — deliberate
-# asymmetry, same pattern as the actor_kind split on the waitlisted branch
-# above.
+# swap_signup is staff-only (2026-08-02: the volunteer self-swap endpoint
+# was removed, along with the participant-attended guard this section used
+# to test). Staff may still swap an attended signup (e.g. to correct a
+# mis-resolved slot) even though attended is otherwise terminal
+# (ALLOWED_TRANSITIONS[attended] == set(), check_in_service.py).
 # ---------------------------------------------------------------------------
 
 
@@ -550,33 +447,10 @@ def _make_attended_signup(db_session, slot):
     )
 
 
-def test_participant_swap_of_attended_signup_is_refused(db_session):
-    _bind_factories(db_session)
-    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
-    signup = _make_attended_signup(db_session, slot_a)
-    slot_a.current_count = 1
-    db_session.flush()
-
-    with pytest.raises(HTTPException) as exc:
-        swap_signup(
-            db_session, signup_id=signup.id, target_slot_id=slot_b.id,
-            actor_kind="participant",
-        )
-    assert exc.value.status_code == 422
-    assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
-    # Nothing mutated: status/slot unchanged, no capacity moved either way.
-    refreshed = db_session.get(models.Signup, signup.id)
-    assert refreshed.status == models.SignupStatus.attended
-    assert refreshed.slot_id == slot_a.id
-    assert slot_a.current_count == 1
-    assert slot_b.current_count == 0
-
-
 def test_staff_swap_of_attended_signup_succeeds(db_session):
-    """The deliberate asymmetry: staff may still swap an attended signup
-    (e.g. to correct a mis-resolved slot). This test is the one that stops
-    a future refactor from over-applying the participant-only guard above
-    to the staff path too."""
+    """staff may swap an attended signup (e.g. to correct a mis-resolved
+    slot); attended is otherwise terminal
+    (``ALLOWED_TRANSITIONS[attended] == set()`` in check_in_service.py)."""
     _bind_factories(db_session)
     _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
     signup = _make_attended_signup(db_session, slot_a)
@@ -585,7 +459,6 @@ def test_staff_swap_of_attended_signup_succeeds(db_session):
 
     result = swap_signup(
         db_session, signup_id=signup.id, target_slot_id=slot_b.id,
-        actor_kind="staff",
     )
     db_session.flush()
 

@@ -24,8 +24,14 @@
 // - Only ADMIN-initiated actions are audited (signup_cancelled, admin_signup_cancel,
 //   user_login, event_create, etc. — see backend/app/services/audit_log_humanize.py
 //   ACTION_LABELS). Public signup.created and organizer check-in are NOT audited.
-//   Scenarios that assert audit-log content use `signup_cancelled` (public cancel
-//   path writes synchronously via deps.log_action — see Scenario 4).
+//   Scenarios that assert audit-log content use `admin_signup_cancel` (staff-cancel
+//   path writes synchronously via deps.log_action — see Scenario 4). The public
+//   self-cancel endpoint (and its `signup_cancelled` action) was deleted 2026-08-02
+//   — signups are read-only for volunteers now; only staff can cancel/move them.
+// - The audit-log `q` search filters action/entity_type/entity_id/actor_id/extra
+//   at the DB level (see admin.py `_build_audit_log_query`) — it does NOT match
+//   humanised labels or volunteer email. Scenario 4 searches by signup_id
+//   (stored verbatim in `entity_id`) rather than by email for this reason.
 // - AuditLogsPage.jsx uses `#al-search` (not `#al-q`). The search input is
 //   debounced 300ms via useDebounced; no submit button is required.
 // - Audit writes are synchronous (backend/app/deps.py log_action — same transaction
@@ -281,11 +287,12 @@ test.describe.serial('cross-role Scenario 1: canonical admin -> participant -> o
 
     // NOTE (Scenario 1 INTEG-05 finding): public signup.created and organizer
     // check-in are NOT written to the audit log (see
-    // backend/app/services/audit_log_humanize.py ACTION_LABELS — only admin
-    // actions + public signup cancel are audited). We therefore assert the
-    // weaker property here: the admin surface is reachable cross-role and the
-    // audit log page renders with at least one row. Scenario 4 exercises the
-    // signup_cancelled audit path directly.
+    // backend/app/services/audit_log_humanize.py ACTION_LABELS — only
+    // ADMIN-initiated actions are audited, e.g. admin_signup_cancel,
+    // user_login, event_create). We therefore assert the weaker property
+    // here: the admin surface is reachable cross-role and the audit log page
+    // renders with at least one row. Scenario 4 exercises the
+    // `admin_signup_cancel` audit path directly.
 
     // Filter by admin email using the debounced (#al-search) input — 300ms
     // debounce + networkidle is sufficient, no submit button.
@@ -440,62 +447,102 @@ test('cross-role Scenario 3: organizer roster reflects a new signup within the 5
 });
 
 // ---------------------------------------------------------------------------
-// SCENARIO 4 — public cancel flow surfaces in the admin audit log
+// SCENARIO 4 — staff cancels a signup from the admin UI; the volunteer-facing
+// manage page stays read-only and the change surfaces in the admin audit log
+//
+// 2026-08-02 read-only signups: the public cancel/swap endpoints are gone.
+// Volunteers can no longer cancel their own signups from /signup/manage —
+// schedule changes are staff-only now, made from AdminEventPage's per-row
+// "Cancel" button (POST /admin/signups/:id/cancel, audited as
+// `admin_signup_cancel`). This scenario drives that staff path directly and
+// asserts the volunteer-facing manage page offers no self-service cancel/
+// move affordance — it shows the contact-notice card instead.
 // ---------------------------------------------------------------------------
 
-test('cross-role Scenario 4: public cancel via magic-link surfaces signup_cancelled in audit log', async ({
+test('cross-role Scenario 4: staff cancels a signup from the admin UI; volunteer manage page stays read-only', async ({
   page,
 }, testInfo) => {
   installErrorCapture(page, testInfo);
 
   const seed = getSeed();
+  expect(seed.event_id, 'event_id required in seed JSON').toBeTruthy();
   expect(seed.period_slot_id, 'period_slot_id required in seed JSON').toBeTruthy();
 
-  // Step 1 — direct-API signup + confirm. We need the confirm_token to drive
-  // /signup/manage in the UI.
-  const { confirmToken, email } = await apiSignupAndConfirm(
+  // Unique tag — this scenario runs across 6 browser projects against one
+  // shared backend, so the admin roster lookup (Step 3) must isolate THIS
+  // run's row from other parallel workers' XRole4 rows (same concern
+  // Scenario 1 handles with its own randomised lastNameTag).
+  const lastNameTag = `XRole4${Math.random().toString(36).slice(2, 8)}`;
+
+  // Step 1 — direct-API signup + confirm. confirm_token drives /signup/manage
+  // in the UI; signupId targets the audit-log row precisely (see below).
+  const { signupId, confirmToken } = await apiSignupAndConfirm(
     'xrole4',
     [seed.period_slot_id],
-    'XRole4',
+    lastNameTag,
   );
 
-  // Step 2 — open the magic-link manage page and cancel the signup via UI.
+  // Step 2 — volunteer opens the magic-link manage page. 2026-08-02: this
+  // page is read-only — no self-service cancel/move. Assert the signup list
+  // renders, the organizer contact-notice card is present, and there is no
+  // cancel/move button anywhere on the page.
   await page.goto(`/signup/manage?token=${confirmToken}`);
   await expect(page.getByText(/signups/i).first()).toBeVisible({
     timeout: 10000,
   });
+  await expect(page.getByTestId('contact-notice')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /cancel|move/i }),
+  ).toHaveCount(0);
 
-  // Click the per-row "Cancel" button, confirm via modal "Yes, cancel".
-  await page.getByRole('button', { name: /^cancel$/i }).first().click();
-  await expect(page.getByText('Cancel this signup?')).toBeVisible();
-  await page.getByRole('button', { name: /yes, cancel/i }).click();
-  // Toast copy normalised to American "canceled" (single L) per
-  // ManageSignupsPage.jsx.
-  await expect(page.getByText(/canceled/i)).toBeVisible({ timeout: 5000 });
-
-  // Step 3 — admin filters audit log by email; expect a "Cancelled a signup"
-  // row (humanised label for the `signup_cancelled` action — note double-L in
-  // the backend action literal but single-L in the humanised UI label).
-  // Clear public-session state first so the admin login is clean. Force
-  // desktop viewport for the admin shell.
-  await logout(page);
+  // Step 3 — staff (admin) cancels the signup from the event roster. Locate
+  // the row by our unique last-name tag, accept the native confirm() dialog
+  // AdminEventPage.jsx raises before it calls the cancel endpoint, and wait
+  // for the request to resolve. Force desktop viewport for the admin shell.
   await ensureAdminViewport(page);
   await loginAs(page, ADMIN);
+  await page.goto(`/admin/events/${seed.event_id}`);
+
+  const row = page
+    .locator('tbody tr')
+    .filter({ hasText: new RegExp(lastNameTag, 'i') })
+    .first();
+  await expect(row).toBeVisible({ timeout: 10000 });
+
+  page.once('dialog', (dialog) => dialog.accept());
+  const [cancelResp] = await Promise.all([
+    page.waitForResponse(
+      (resp) =>
+        /\/admin\/signups\/.+\/cancel$/.test(new URL(resp.url()).pathname) &&
+        resp.request().method() === 'POST',
+    ),
+    row.getByRole('button', { name: /^cancel$/i }).click(),
+  ]);
+  expect(cancelResp.ok(), `admin cancel failed: ${cancelResp.status()}`).toBeTruthy();
+  await expect(page.getByText(/signup cancelled/i)).toBeVisible({
+    timeout: 5000,
+  });
+
+  // Step 4 — admin filters the audit log by the signup's own id. The `q`
+  // search matches action/entity_type/entity_id/actor_id/extra at the DB
+  // level (see _build_audit_log_query in admin.py) — not the humanised
+  // label or the volunteer's email — so the signup UUID (stored verbatim in
+  // `entity_id`) is the reliable needle here. Expect an "Admin cancelled a
+  // signup" row (humanised label for `admin_signup_cancel`, the staff-cancel
+  // action — distinct from the now-deleted public self-cancel
+  // `signup_cancelled` action this scenario used to exercise).
   await page.goto('/admin/audit-logs');
   await page.waitForLoadState('networkidle');
 
   const search = page.locator('#al-search');
   await expect(search).toBeVisible({ timeout: 8000 });
-  await search.fill(email);
+  await search.fill(signupId);
   // Debounce is 300ms; wait for refetch to settle.
   await page.waitForLoadState('networkidle');
 
-  // Poll — audit write is synchronous (deps.log_action inside the same txn),
-  // but the admin list endpoint is a separate read; a short poll absorbs any
-  // read-after-write replica lag if a pool connection is cold.
   const cancelledRow = page
     .locator('table tbody tr')
-    .filter({ hasText: /cancelled a signup/i })
+    .filter({ hasText: /admin cancelled a signup/i })
     .first();
   await expect(cancelledRow).toBeVisible({ timeout: 10000 });
 

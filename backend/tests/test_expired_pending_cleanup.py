@@ -8,10 +8,8 @@ Tests:
 - test_expire_pending_signups_does_not_touch_signups_without_signup_confirm_token
 - test_notifications_xor_constraint (T-09-12)
 
-Task 7 (2026-07-28 spec) additions — reap-criteria fix + chained promotion:
+Task 7 (2026-07-28 spec) additions — reap-criteria fix:
 - test_pending_with_fresh_second_token_survives
-- test_reap_chains_promotion_with_email
-- test_chained_promotion_token_is_three_days
 - test_tokenless_pending_is_not_deleted
 
 Task 8 (2026-07-28 spec decision 5) additions — stale confirm-token GC:
@@ -23,10 +21,22 @@ Task 8 fix round 1 — token-level liveness guard (a stale volunteer's still-
 live token must survive; only its own-expired tokens are reaped):
 - test_stale_sweep_keeps_live_token_deletes_expired_one
 
-Final-review fixes (2026-07-28) — chain loop must not promote into an
-ended event; reap EXISTS correlation pinned against de-correlation regressions:
-- test_chain_does_not_promote_into_ended_event
+Final-review fixes (2026-07-28) — reap EXISTS correlation pinned against
+de-correlation regressions:
 - test_reap_correlates_live_token_to_its_own_signup
+
+2026-08-02 read-only signups (Task 7): the reaper never promotes anyone
+anymore — it deletes expired pendings, cancels stale waitlisted rows on
+ended slots, and sweeps stale tokens. `test_reap_chains_promotion_with_email`
+was renamed/inverted to `test_reap_frees_seat_without_promotion`;
+`test_chained_promotion_token_is_three_days`,
+`test_chain_does_not_promote_into_ended_event`, and
+`TestPromotionsCommitAndEnqueuePerSignup` (all chain-promotion-specific)
+were deleted — their non-promotion assertions (reap deletes the pending,
+decrements the count, stale-waitlisted-on-ended-slot gets cancelled) remain
+covered by `test_reap_frees_seat_without_promotion` and
+`TestStaleWaitlistedRowsCancelled`.
+- test_reap_frees_seat_without_promotion
 """
 import pytest
 import uuid
@@ -369,12 +379,13 @@ class TestExpirePendingSignups:
             "Signup with a live second token must survive the reap"
         )
 
-    def test_reap_chains_promotion_with_email(
+    def test_reap_frees_seat_without_promotion(
         self, db_session, monkeypatch, patch_session_local
     ):
-        """Freeing a seat via reap must chain-promote the slot's FIFO
-        waitlist and enqueue exactly one promotion email for the
-        newly-promoted signup.
+        """2026-08-02 read-only signups: freeing a seat via reap must NOT
+        promote anyone off the waitlist. The expired pending is deleted,
+        current_count drops and stays down, the waitlisted signup stays
+        waitlisted, and no promotion email is ever sent.
         """
         sent = []
         monkeypatch.setattr(
@@ -423,69 +434,13 @@ class TestExpirePendingSignups:
             expire_pending_signups.apply().get()
 
         db_session.expire_all()
-        # pending deleted, waitlisted promoted to pending, count still 1
+        # pending deleted, waitlisted stays waitlisted, freed seat stays open
         assert db_session.get(Signup, expired_id) is None
-        promoted = db_session.get(Signup, waitlisted_id)
-        assert promoted.status == SignupStatus.pending
+        untouched = db_session.get(Signup, waitlisted_id)
+        assert untouched.status == SignupStatus.waitlisted
         slot_reloaded = db_session.get(Slot, slot_id)
-        assert slot_reloaded.current_count == 1
-        assert len(sent) == 1 and sent[0]["signup_id"] == str(waitlisted_id)
-
-    def test_chained_promotion_token_is_three_days(
-        self, db_session, monkeypatch, patch_session_local
-    ):
-        """After the chain, the promoted signup's newest token expires
-        ~3 days (4320 minutes) out — the same TTL as any other promotion
-        path.
-        """
-        monkeypatch.setattr(
-            "app.celery_app.send_waitlist_promotion_email.delay",
-            lambda **kw: None,
-        )
-
-        owner = make_user(db_session)
-        event = _make_event(db_session, owner.id)
-        now = datetime(2030, 7, 8, 3, 0, tzinfo=timezone.utc)
-        # Explicit future timing — see test_reap_chains_promotion_with_email
-        # for why the fixture default isn't safe under Task 8's stale-token
-        # sweep, and for the fix-round-1 note on why the pin stays anyway.
-        slot = _make_slot(
-            db_session, event.id, capacity=1, current_count=1,
-            start_time=now + timedelta(days=30),
-            end_time=now + timedelta(days=30, hours=2),
-        )
-        vol1 = _make_volunteer(db_session)
-        vol2 = _make_volunteer(db_session)
-
-        _make_pending_signup_with_token(
-            db_session, vol1, slot,
-            token_issued_at=now - timedelta(days=15),
-            token_expires_at=now - timedelta(days=1),
-        )
-        waitlisted = Signup(
-            id=uuid.uuid4(),
-            volunteer_id=vol2.id,
-            slot_id=slot.id,
-            status=SignupStatus.waitlisted,
-            timestamp=now - timedelta(days=2),
-        )
-        db_session.add(waitlisted)
-        db_session.commit()
-
-        waitlisted_id = waitlisted.id
-
-        with freeze_time(now):
-            expire_pending_signups.apply().get()
-
-            db_session.expire_all()
-            token = (
-                db_session.query(MagicLinkToken)
-                .filter(MagicLinkToken.signup_id == waitlisted_id)
-                .order_by(MagicLinkToken.expires_at.desc())
-                .first()
-            )
-            expected = datetime.now(timezone.utc) + timedelta(minutes=4320)
-            assert abs((token.expires_at - expected).total_seconds()) < 3600
+        assert slot_reloaded.current_count == 0
+        assert sent == []
 
     def test_tokenless_pending_is_not_deleted(
         self, db_session, monkeypatch, patch_session_local
@@ -516,78 +471,6 @@ class TestExpirePendingSignups:
 
         db_session.expire_all()
         assert db_session.get(Signup, tokenless_id) is not None
-
-    def test_chain_does_not_promote_into_ended_event(
-        self, db_session, monkeypatch, patch_session_local
-    ):
-        """A freed seat on a slot whose event already ended must still be
-        reaped (pending deleted, count decremented) but must NOT
-        chain-promote the waitlist behind it.
-
-        Without this guard: a last-minute reap frees a seat on a slot whose
-        event is already over, chain-promotion fires anyway, the promotee
-        gets a "a spot opened up — confirm within 3 days" email for an
-        event that has already happened, their token expires unconfirmed,
-        and the NEXT hourly run reaps that pending and repeats the cycle
-        for the next waitlister — one nonsense email roughly every 3 days
-        until the waitlist drains.
-
-        Task 7 item 6 (2026-07-29): the same run's stale-waitlisted sweep
-        now also cancels this waitlisted signup outright, since its slot has
-        already ended — the assertion below checks "not chain-promoted, no
-        email" (this test's original point), which cancelled satisfies just
-        as much as the old "stays waitlisted" terminal state did.
-        """
-        sent = []
-        monkeypatch.setattr(
-            "app.celery_app.send_waitlist_promotion_email.delay",
-            lambda **kw: sent.append(kw),
-        )
-
-        owner = make_user(db_session)
-        event = _make_event(db_session, owner.id)
-        now = datetime(2030, 7, 14, 3, 0, tzinfo=timezone.utc)
-        # Event already ended 2 days ago.
-        slot = _make_slot(
-            db_session, event.id, capacity=1, current_count=1,
-            start_time=now - timedelta(days=2, hours=2),
-            end_time=now - timedelta(days=2),
-        )
-        vol1 = _make_volunteer(db_session)
-        vol2 = _make_volunteer(db_session)
-
-        expired_signup, _token = _make_pending_signup_with_token(
-            db_session, vol1, slot,
-            token_issued_at=now - timedelta(days=15),
-            token_expires_at=now - timedelta(days=1),
-        )
-        waitlisted = Signup(
-            id=uuid.uuid4(),
-            volunteer_id=vol2.id,
-            slot_id=slot.id,
-            status=SignupStatus.waitlisted,
-            timestamp=now - timedelta(days=2, hours=1),
-        )
-        db_session.add(waitlisted)
-        db_session.commit()
-
-        expired_id = expired_signup.id
-        waitlisted_id = waitlisted.id
-        slot_id = slot.id
-
-        with freeze_time(now):
-            expire_pending_signups.apply().get()
-
-        db_session.expire_all()
-        # Reaped: expired pending gone, count decremented.
-        assert db_session.get(Signup, expired_id) is None
-        slot_reloaded = db_session.get(Slot, slot_id)
-        assert slot_reloaded.current_count == 0
-        # NOT chain-promoted (no email) — and now cancelled outright by the
-        # stale-waitlisted sweep (item 6), since its slot has already ended.
-        waitlisted_row = db_session.get(Signup, waitlisted_id)
-        assert waitlisted_row.status == SignupStatus.cancelled
-        assert sent == []
 
     def test_reap_correlates_live_token_to_its_own_signup(
         self, db_session, monkeypatch, patch_session_local
@@ -935,86 +818,6 @@ class TestStaleTokenCleanup:
             .all()
         }
         assert remaining_hashes == {live_token_hash}
-
-
-class TestPromotionsCommitAndEnqueuePerSignup:
-    """Task 7 item 2b: shrink the crash window that silently drops
-    promotion emails. Each promotion must commit and enqueue its email
-    immediately, interleaved — not one bulk commit across every affected
-    slot followed by one bulk enqueue loop.
-    """
-
-    def test_promotions_interleave_commit_and_enqueue_not_batched(
-        self, db_session, monkeypatch, patch_session_local
-    ):
-        events = []
-
-        real_promote = celery_mod.promote_waitlist_fifo
-
-        def recording_promote(db, slot_id):
-            result = real_promote(db, slot_id)
-            if result is not None:
-                events.append(("promote", result.signup.id))
-            return result
-
-        monkeypatch.setattr(celery_mod, "promote_waitlist_fifo", recording_promote)
-
-        def recording_delay(**kw):
-            events.append(("email", uuid.UUID(kw["signup_id"])))
-
-        monkeypatch.setattr(
-            celery_mod.send_waitlist_promotion_email, "delay", recording_delay
-        )
-
-        owner = make_user(db_session)
-        event = _make_event(db_session, owner.id)
-        now = datetime(2030, 7, 20, 3, 0, tzinfo=timezone.utc)
-        # capacity 3, current_count 2: two expired pendings free two seats,
-        # enough room to chain-promote both waitlisted signups below.
-        slot = _make_slot(
-            db_session, event.id, capacity=3, current_count=2,
-            start_time=now + timedelta(days=30),
-            end_time=now + timedelta(days=30, hours=2),
-        )
-        vol_a1 = _make_volunteer(db_session)
-        vol_a2 = _make_volunteer(db_session)
-        vol_b = _make_volunteer(db_session)
-        vol_c = _make_volunteer(db_session)
-
-        _make_pending_signup_with_token(
-            db_session, vol_a1, slot,
-            token_issued_at=now - timedelta(days=15),
-            token_expires_at=now - timedelta(days=1),
-        )
-        _make_pending_signup_with_token(
-            db_session, vol_a2, slot,
-            token_issued_at=now - timedelta(days=15),
-            token_expires_at=now - timedelta(days=1),
-        )
-        waitlisted_b = Signup(
-            id=uuid.uuid4(), volunteer_id=vol_b.id, slot_id=slot.id,
-            status=SignupStatus.waitlisted, timestamp=now - timedelta(days=3),
-        )
-        waitlisted_c = Signup(
-            id=uuid.uuid4(), volunteer_id=vol_c.id, slot_id=slot.id,
-            status=SignupStatus.waitlisted, timestamp=now - timedelta(days=2),
-        )
-        db_session.add_all([waitlisted_b, waitlisted_c])
-        db_session.commit()
-
-        with freeze_time(now):
-            expire_pending_signups.apply().get()
-
-        # Interleaved order: promote(b), email(b), promote(c), email(c) —
-        # NOT promote(b), promote(c), email(b), email(c) (the old batched
-        # shape, where a crash after the bulk commit could drop every
-        # promotion's email in one go).
-        kinds = [e[0] for e in events]
-        assert kinds == ["promote", "email", "promote", "email"], events
-        assert events[0][1] == waitlisted_b.id
-        assert events[1][1] == waitlisted_b.id
-        assert events[2][1] == waitlisted_c.id
-        assert events[3][1] == waitlisted_c.id
 
 
 class TestStaleWaitlistedRowsCancelled:

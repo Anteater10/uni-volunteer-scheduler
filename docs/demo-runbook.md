@@ -71,17 +71,20 @@ curl -s -X DELETE http://localhost:8025/api/v1/messages
    signups* from the same email.
    - If the recruiter re-submits the same email/slot, the toast now says
      "already signed up" (fixed) — a nice validation moment, not an error.
-2. **Cancel → waitlist auto-promote (admin, the centerpiece):** open the
+2. **Cancel, then manually promote (admin, the centerpiece):** open the
    Biology @ Isla Vista event (7/03, 6/6 full, 3 waitlisted). Cancel a
-   confirmed signup → the roster auto-refreshes and waitlist #1 flips to
-   confirmed. Mailpit shows **two** emails: the cancellation and the
-   **"You're in from the waitlist"** promotion email (wired tonight —
-   previously silent). Rehearsed end-to-end 2026-07-01.
-   - Nuance: the promotion email says "confirm your spot" but the volunteer
-     is already confirmed — clicking its link is a safe no-op. Don't dwell
-     on the email body copy.
-3. **Slot swap (participant view):** Physics @ Adelante (7/09) has two
-   sessions (5/8 and 3/8) — swap between them from Manage signups.
+   confirmed signup → the roster auto-refreshes and the seat shows freed,
+   but waitlist #1 stays waitlisted — cancelling never auto-promotes.
+   Click **Promote** on waitlist #1's row to move them to pending; Mailpit
+   shows the **"A spot opened up"** confirm-your-spot email with a 3-day
+   window. This reflects the 2026-08-02 read-only-signups change: the
+   waitlist only moves when staff deliberately promote someone.
+3. **Signups are read-only for participants:** Physics @ Adelante (7/09)
+   has two sessions (5/8 and 3/8). Open a signup's manage link and show
+   that it's view-only — no cancel or swap controls, just the signup list,
+   reminder preferences, and a notice to email the organizers for changes.
+   Moving between sessions is now a staff action (**Move**/**Swap** on the
+   event page), not something a participant can do from their link.
 4. **Organizer roster + check-in (organizer, phone width):** login organizer
    → Dashboard shows Astronomy @ McKinley under *Today* → **Open roster** →
    one-tap check-in works at ANY time (no window). 9 confirmed volunteers to

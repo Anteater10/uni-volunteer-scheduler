@@ -1,7 +1,12 @@
 """Admin router integration tests (Plan 06 / Task 2).
 
-Proves admin paths use the same canonical promote_waitlist_fifo as the
-participant cancel path, and locks basic admin CRUD + audit-log filtering.
+Locks basic admin CRUD + audit-log filtering. 2026-08-02 read-only signups:
+the waitlist is a pure holding list — nothing auto-promotes it anymore.
+admin_cancel_signup (Task 4) and admin_signup_move's freed-source-seat path
+(Task 7) both free a seat and stop; only the manual promote endpoint
+(admin_promote_signup, via waitlist_service.manual_promote) and a move that
+lands a waitlisted signup directly in an open target seat (via
+mark_promoted_pending, an explicit staff action) ever promote anyone.
 """
 import pytest
 from datetime import datetime, timedelta, timezone
@@ -63,8 +68,10 @@ def test_admin_delete_user(client, db_session):
     assert gone is None
 
 
-def test_admin_cancel_signup_promotes_waitlist(client, db_session):
-    """Admin cancel path uses promote_waitlist_fifo — B waitlisted, A cancelled, B promoted."""
+def test_admin_cancel_signup_does_not_promote_waitlist(client, db_session):
+    """2026-08-02 read-only signups (Task 4): admin cancel frees the seat
+    but leaves the waitlist untouched — the waitlist only moves by explicit
+    staff promotion now, never as a side effect of a cancel."""
     admin = _make_admin(db_session, email="admin_pf@example.com")
     _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
 
@@ -99,9 +106,10 @@ def test_admin_cancel_signup_promotes_waitlist(client, db_session):
 
     db_session.expire_all()
     b_row = db_session.query(models.Signup).filter(models.Signup.id == b_signup.id).one()
-    # Promoted signups go to 'pending' (2026-07-28 spec) — promotion is a
-    # system/staff action, so the volunteer confirms via the emailed link.
-    assert b_row.status == models.SignupStatus.pending
+    # No auto-promotion — B stays waitlisted, the freed seat sits open.
+    assert b_row.status == models.SignupStatus.waitlisted
+    slot_row = db_session.query(models.Slot).filter(models.Slot.id == slot.id).one()
+    assert slot_row.current_count == 0
 
 
 def test_admin_cancel_of_attended_signup_is_refused(client, db_session):
@@ -192,11 +200,10 @@ def test_admin_audit_logs_filter(client, db_session):
     assert any(entry["action"] == "admin_summary" for entry in body["items"])
 
 
-def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session, monkeypatch):
-    """The on-camera cancel→auto-promote must notify the promoted volunteer.
-    Regression: the admin cancel path promoted silently ("email dispatch
-    deferred to Phase 12") while the organizer manual promote already sends
-    the promotion confirmation email."""
+def test_admin_cancel_sends_no_waitlist_promote_email(client, db_session, monkeypatch):
+    """2026-08-02 read-only signups (Task 4): admin cancel still sends the
+    cancellation email, but must never enqueue a waitlist promotion email —
+    cancel no longer promotes anyone."""
     sent = []
     monkeypatch.setattr(
         "app.celery_app.send_email_notification.delay",
@@ -237,9 +244,54 @@ def test_admin_cancel_promotion_sends_waitlist_promote_email(client, db_session,
 
     pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
     assert ("cancellation", str(a_signup.id)) in pairs
-    assert any(kw["signup_id"] == str(b_signup.id) for kw in promoted_emails), (
-        f"promoted volunteer got no waitlist promotion email (sent: {promoted_emails})"
+    assert promoted_emails == [], (
+        f"cancel must never enqueue a promotion email (sent: {promoted_emails})"
     )
+
+
+def test_admin_cancel_leaves_waitlist_untouched(client, db_session, monkeypatch):
+    """Canonical Task 4 regression: cancelling a confirmed signup frees the
+    seat and stops — no FIFO promotion, no promotion email, current_count
+    stays down."""
+    sent = []
+    monkeypatch.setattr(
+        "app.celery_app.send_waitlist_promotion_email.delay",
+        lambda **kw: sent.append(kw),
+    )
+    admin = _make_admin(db_session, email="admin_leave_wl@example.com")
+    _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
+
+    _bind_factories(db_session)
+    from tests.fixtures.factories import VolunteerFactory
+    vol_confirmed = VolunteerFactory(email="admin_leave_wl_conf@example.com")
+    vol_wait = VolunteerFactory(email="admin_leave_wl_wait@example.com")
+    confirmed_signup = SignupFactory(
+        volunteer=vol_confirmed,
+        slot=slot,
+        status=models.SignupStatus.confirmed,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    slot.current_count = 1
+    waitlisted_signup = SignupFactory(
+        volunteer=vol_wait,
+        slot=slot,
+        status=models.SignupStatus.waitlisted,
+        timestamp=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/signups/{confirmed_signup.id}/cancel",
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    waitlisted = db_session.get(models.Signup, waitlisted_signup.id)
+    assert waitlisted.status == models.SignupStatus.waitlisted
+    slot_row = db_session.get(models.Slot, slot.id)
+    assert slot_row.current_count == 0
+    assert sent == []
 
 
 def test_admin_promote_signup_goes_pending_with_confirm_email(client, db_session, monkeypatch):
@@ -342,9 +394,11 @@ def test_admin_move_pending_signup_frees_source_capacity(client, db_session):
     assert slot_b_row.current_count == 1
 
 
-def test_admin_move_pending_signup_promotes_source_waitlist(client, db_session):
-    """Freeing a seat by moving a pending signup must promote the source
-    waitlist, exactly as moving a confirmed signup does."""
+def test_admin_move_pending_signup_leaves_source_waitlist_untouched(client, db_session):
+    """2026-08-02 read-only signups: freeing a seat by moving a pending
+    signup away must NOT chain-promote the source slot's waitlist — the
+    freed seat stays open until an admin/organizer explicitly promotes
+    someone. Only the moved signup's own semantics change."""
     admin = _make_admin(db_session, email="admin_mv_wl@example.com")
     event, slot_a = make_event_with_slot(db_session, capacity=1, owner=admin)
 
@@ -377,10 +431,10 @@ def test_admin_move_pending_signup_promotes_source_waitlist(client, db_session):
     db_session.expire_all()
     w = db_session.get(models.Signup, waitlisted.id)
     slot_a_row = db_session.get(models.Slot, slot_a.id)
-    assert w.status == models.SignupStatus.pending, (
-        "source waitlist was not promoted after the pending move freed a seat"
+    assert w.status == models.SignupStatus.waitlisted, (
+        "moving a signup away must not auto-promote the source waitlist"
     )
-    assert slot_a_row.current_count == 1
+    assert slot_a_row.current_count == 0, "the freed source seat must stay open"
 
 
 def test_admin_move_pending_signup_stays_pending_when_target_has_room(client, db_session):
@@ -422,12 +476,16 @@ def test_admin_move_pending_signup_stays_pending_when_target_has_room(client, db
     assert slot_b_row.current_count == 1, "target slot should have incremented"
 
 
-def test_admin_move_sends_waitlist_promotion_email_for_source_promotion(
+def test_admin_move_sends_no_promotion_email_for_source_slot(
     client, db_session, monkeypatch
 ):
-    """Regression: the move path must enqueue send_waitlist_promotion_email
-    for anyone promoted off the source slot's waitlist when the move frees a
-    seat — the move previously promoted silently with no email at all."""
+    """2026-08-02 read-only signups: moving a signup away and freeing a
+    source seat must never enqueue a waitlist promotion email for that
+    source slot — nobody there was promoted. (A moved *waitlisted* signup
+    landing in an open target seat is a distinct, explicit self-promotion
+    and keeps its own email — see TestAdminMoveWaitlisted /
+    test_move_waitlisted_into_open_slot_goes_pending_with_email in
+    test_promotion_consent.py.)"""
     promoted_emails = []
     monkeypatch.setattr(
         "app.celery_app.send_waitlist_promotion_email.delay",
@@ -462,8 +520,12 @@ def test_admin_move_sends_waitlist_promotion_email_for_source_promotion(
     )
     assert resp.status_code == 200, resp.text
 
-    assert len(promoted_emails) == 1, (
-        f"expected exactly one promotion email, got: {promoted_emails}"
+    assert promoted_emails == [], (
+        f"move must never send a promotion email for the source slot's "
+        f"waitlist (sent: {promoted_emails})"
     )
-    assert promoted_emails[0]["signup_id"] == str(waitlisted.id)
-    assert promoted_emails[0]["token"], "raw token must travel to the email task"
+    db_session.expire_all()
+    assert (
+        db_session.get(models.Signup, waitlisted.id).status
+        == models.SignupStatus.waitlisted
+    )

@@ -79,22 +79,20 @@ def ensure_signup_cancellable(signup: Signup) -> None:
     function's own docstring calls it "the one exception" — so cancel must
     not become a second, narrower door out of a resolved status.
 
-    Deliberately actor-independent, unlike swap's participant-only attended
-    guard: swapping an attended signup preserves its status (only the slot
-    pointer moves — a lateral correction), but cancelling one erases the
-    resolved status entirely by turning it into 'cancelled'. Volunteer
+    Deliberately actor-independent: swapping an attended signup preserves
+    its status (only the slot pointer moves — a lateral correction), but
+    cancelling one erases the resolved status entirely by turning it into
+    'cancelled'. Volunteer
     hours (course credit) are summed over attended signups (admin.py), so
     cancelling one destroys the basis for someone's credit; cancelling a
-    no_show erases the audit trail of it. A volunteer's manage link
-    deliberately outlives the confirm deadline, so the participant path is
-    reachable long after the fact — but staff get no carve-out either: the
-    app's own staff-facing undo (undo_check_in) already refuses to reverse
-    attended/no_show ("undo covers the tap-slip, not resolution"), so
-    cancel must not open a backdoor around that.
+    no_show erases the audit trail of it. Staff get no carve-out either:
+    the app's own staff-facing undo (undo_check_in) already refuses to
+    reverse attended/no_show ("undo covers the tap-slip, not resolution"),
+    so cancel must not open a backdoor around that.
 
-    Called by every cancel entry point (participant token cancel, both
-    staff cancel routes) after the already-cancelled idempotency check and
-    before any mutation, so none of them can bypass it.
+    Called by both staff cancel routes (admin.py, signups.py) after the
+    already-cancelled idempotency check and before any mutation, so
+    neither can bypass it.
     """
     if signup.status in (SignupStatus.attended, SignupStatus.no_show):
         raise HTTPException(

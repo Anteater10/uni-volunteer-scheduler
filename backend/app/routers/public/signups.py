@@ -3,17 +3,18 @@
 POST   /public/signups            — create signup batch (volunteer upsert + tokens)
 POST   /public/signups/confirm    — consume confirm token (batch-flip pending→confirmed)
 GET    /public/signups/manage     — view signups for a token's volunteer+event scope
-DELETE /public/signups/{id}       — cancel one signup (token must own the signup)
-"""
-from uuid import UUID
 
+2026-08-02 read-only signups: this page is view-only. Volunteers can no
+longer self-cancel or self-swap — those are staff-only operations now
+(see routers/admin.py, routers/signups.py). Contact the event's staff
+(SiteSettings.contact_email) for changes.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ... import models, schemas
-from ...celery_app import send_email_notification, send_waitlist_promotion_email
 from ...database import get_db
-from ...deps import log_action, rate_limit
+from ...deps import rate_limit
 from ...magic_link_service import (
     MANAGE_PURPOSES,
     ConsumeResult,
@@ -22,12 +23,10 @@ from ...magic_link_service import (
     zero_confirm_reason,
 )
 from ...models import Signup, SignupStatus, Slot
-from ...services.check_in_service import ensure_signup_cancellable
 from ...services.public_signup_service import create_public_signup
 from ...services.phone_service import InvalidPhoneError
-from ...services.swap_service import swap_signup
+from ...services.settings_service import get_app_settings
 from ...services.waitlist_service import compute_waitlist_position
-from ...signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -120,8 +119,8 @@ def manage_signups(
     (signup_confirm, signup_manage, promotion_confirm).
     """
     # 2026-07-28 spec: expires_at is the CONFIRMATION deadline only.
-    # Manage/swap/cancel stay usable for as long as the token row exists
-    # (rows die with their signup via cascade, or via the stale-token sweep).
+    # Manage stays usable for as long as the token row exists (rows die
+    # with their signup via cascade, or via the stale-token sweep).
     token_row = _lookup_token(db, token)
     if token_row is None:
         raise HTTPException(status_code=400, detail="token invalid")
@@ -192,159 +191,5 @@ def manage_signups(
         volunteer_last_name=volunteer.last_name,
         event_id=event_id,
         signups=signup_reads,
+        contact_email=(get_app_settings(db).contact_email or None),
     )
-
-
-@router.post(
-    "/signups/{signup_id}/swap",
-    dependencies=[Depends(rate_limit(max_requests=30, window_seconds=60))],
-)
-def swap_signup_public(
-    signup_id: UUID,
-    body: schemas.SignupMoveRequest,
-    token: str = Query(..., min_length=16),
-    db: Session = Depends(get_db),
-):
-    """Phase 29 (SWAP-01/02) — participant-initiated swap to a different slot.
-
-    Requires the owning volunteer's ``manage_token``. Delegates to the
-    shared ``swap_service.swap_signup`` which enforces same-event +
-    target-capacity and writes the audit row. Hard-fails on target full
-    (409) and cross-event (400).
-    """
-    token_row = _lookup_token(db, token)
-    if token_row is None:
-        raise HTTPException(status_code=400, detail="token invalid")
-    if token_row.purpose not in MANAGE_PURPOSES:
-        raise HTTPException(status_code=400, detail="token not valid for manage")
-
-    signup = db.query(Signup).filter(Signup.id == signup_id).first()
-    if signup is None:
-        raise HTTPException(status_code=404, detail="signup not found")
-    if signup.volunteer_id != token_row.volunteer_id:
-        raise HTTPException(status_code=403, detail="token does not own this signup")
-
-    result = swap_signup(
-        db,
-        signup_id=signup_id,
-        target_slot_id=body.target_slot_id,
-        actor_kind="participant",
-        actor=None,
-        actor_label="participant",
-    )
-    updated = result.signup
-    promo_kwargs = result.promotion.email_kwargs if result.promotion else None
-    db.commit()
-    db.refresh(updated)
-    if promo_kwargs:
-        # Fixes the silent-promotion bug: swaps previously promoted with no email.
-        send_waitlist_promotion_email.delay(**promo_kwargs)
-    return {
-        "signup_id": str(updated.id),
-        "slot_id": str(updated.slot_id),
-        "status": updated.status.value,
-    }
-
-
-@router.delete(
-    "/signups/{signup_id}",
-    dependencies=[Depends(rate_limit(max_requests=30, window_seconds=60))],
-)
-def cancel_signup(
-    signup_id: UUID,
-    token: str = Query(..., min_length=16),
-    db: Session = Depends(get_db),
-):
-    """Cancel one signup using the owning volunteer's token.
-
-    T-09-04 mitigation: rejects tokens belonging to different volunteers (403).
-    """
-    token_row = _lookup_token(db, token)
-    if token_row is None:
-        raise HTTPException(status_code=400, detail="token invalid")
-
-    # Phase 25 (WAIT-02): lock signup + slot, cancel, then auto-promote the
-    # FIFO head of the waitlist. Mirrors the admin cancel flow.
-    signup = (
-        db.query(Signup)
-        .filter(Signup.id == signup_id)
-        .with_for_update()
-        .first()
-    )
-    if signup is None:
-        raise HTTPException(status_code=404, detail="signup not found")
-
-    # T-09-04: cross-volunteer token must be rejected
-    if signup.volunteer_id != token_row.volunteer_id:
-        raise HTTPException(status_code=403, detail="token does not own this signup")
-
-    if signup.status == SignupStatus.cancelled:
-        return {"cancelled": True, "signup_id": str(signup_id), "already_cancelled": True}
-
-    # 2026-07-29 sweep: attended/no_show are terminal — see
-    # check_in_service.ensure_signup_cancellable for the full rationale.
-    ensure_signup_cancellable(signup)
-
-    slot = (
-        db.query(Slot)
-        .filter(Slot.id == signup.slot_id)
-        .with_for_update()
-        .first()
-    )
-
-    previous_status = signup.status
-    signup.status = SignupStatus.cancelled
-    # Only confirmed/pending signups hold capacity; waitlisted cancels are
-    # a no-op on current_count.
-    if slot and previous_status in (
-        SignupStatus.pending,
-        SignupStatus.confirmed,
-    ):
-        slot.current_count = max(0, slot.current_count - 1)
-
-    # Phase 25 (WAIT-02): auto-promote the FIFO head until the slot is full
-    # or the waitlist is empty. Each promotion bumps current_count.
-    promotions = []
-    if slot:
-        while slot.current_count < slot.capacity:
-            promo = promote_waitlist_fifo(db, slot.id)
-            if promo is None:
-                break
-            slot.current_count += 1
-            promotions.append(promo)
-    promoted_count = len(promotions)
-
-    log_action(
-        db, actor=None, action="signup_cancelled",
-        entity_type="signup", entity_id=str(signup_id),
-        extra={
-            "volunteer_email": token_row.volunteer.email,
-            "signup_id": str(signup_id),
-            "promoted_from_waitlist": promoted_count,
-        },
-    )
-    # Capture before commit — expire_on_commit would force refresh queries.
-    promotion_email_kwargs = [p.email_kwargs for p in promotions]
-    db.commit()
-
-    # Tamper-evidence for long-lived manage links (2026-07-28 spec decision 6):
-    # the volunteer learns immediately if someone else cancels them. Deduped
-    # by (signup_id, kind) — a signup cancels at most once. A waitlisted
-    # signup never held a seat, so it gets waitlist-appropriate copy instead
-    # of "your signup has been cancelled".
-    cancellation_kind = (
-        "cancellation_waitlisted"
-        if previous_status == SignupStatus.waitlisted
-        else "cancellation"
-    )
-    send_email_notification.delay(signup_id=str(signup_id), kind=cancellation_kind)
-
-    # Emails only after commit — the worker reads rows from its own session.
-    for kwargs in promotion_email_kwargs:
-        send_waitlist_promotion_email.delay(**kwargs)
-
-    return {
-        "cancelled": True,
-        "signup_id": str(signup_id),
-        "promoted_from_waitlist": promoted_count,
-    }
