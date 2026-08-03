@@ -10,8 +10,15 @@ from ..database import get_db
 from ..deps import get_current_user, log_action
 from ..services.check_in_service import ensure_signup_cancellable
 from ..services.swap_service import swap_signup as _swap_signup
+from ..services.swap_service import swap_shift_signup as _swap_shift_signup
 
 router = APIRouter(prefix="/signups", tags=["signups"])
+
+# 2026-08-02 shifts: shift-commitment routes are siblings of /signups, not
+# children of it, and the check-in router already publishes /shift-signups/...
+# — an unprefixed router keeps the URL shape consistent while leaving the swap
+# logic next to its slot twin below.
+shift_signups_router = APIRouter(tags=["signups"])
 
 
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
@@ -211,5 +218,40 @@ def swap_signup_authed(
     db.refresh(updated)
     if promo_kwargs:
         # Fixes the silent-promotion bug: swaps previously promoted with no email.
+        send_waitlist_promotion_email.delay(**promo_kwargs)
+    return updated
+
+
+@shift_signups_router.post(
+    "/shift-signups/{shift_signup_id}/swap", response_model=schemas.ShiftSignupRead
+)
+def swap_shift_signup_authed(
+    shift_signup_id: str,
+    payload: schemas.ShiftSignupMoveRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """2026-08-02 shifts: staff move a commitment between shifts of one event.
+
+    Shift twin of ``swap_signup_authed``. Staff-only for the same reason: there
+    is no volunteer self-swap since the read-only-signups change. The extra
+    refusal that has no slot equivalent is a part-attended shift — see
+    ``swap_service.swap_shift_signup``.
+    """
+    if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    result = _swap_shift_signup(
+        db,
+        shift_signup_id=shift_signup_id,
+        target_shift_id=payload.target_shift_id,
+        actor=current_user,
+        actor_label=current_user.role.value,
+    )
+    updated = result.shift_signup
+    promo_kwargs = result.promotion.email_kwargs if result.promotion else None
+    db.commit()
+    db.refresh(updated)
+    if promo_kwargs:
         send_waitlist_promotion_email.delay(**promo_kwargs)
     return updated

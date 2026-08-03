@@ -235,6 +235,16 @@ def update_session(
             .all()
         )
         # Reminders were computed against the old window; let them fire again.
+        # The denormalized columns are only half of it — the real gate is the
+        # session-scoped dedup marker in sent_notifications, so clear that too
+        # or the new window silently produces no reminder at all.
+        suffix = f"_s{session.sort_order}"
+        db.query(models.SentNotification).filter(
+            models.SentNotification.shift_signup_id.in_(
+                [signup.id for signup in confirmed]
+            ),
+            models.SentNotification.kind.like(f"reminder%{suffix}"),
+        ).delete(synchronize_session=False)
         for signup in confirmed:
             signup.reminder_24h_sent_at = None
             signup.reminder_1h_sent_at = None
@@ -246,8 +256,14 @@ def update_session(
 
     if time_changed:
         for signup in confirmed:
+            # Scoped to this session on both counts: the mail should name the
+            # day that actually moved, and a second session rescheduled later
+            # must not be swallowed by the first one's dedup marker.
             send_email_notification.delay(
-                shift_signup_id=str(signup.id), kind="reschedule"
+                shift_signup_id=str(signup.id),
+                kind="reschedule",
+                dedup_kind=f"reschedule_s{session.sort_order}",
+                session_slot_id=str(session.id),
             )
     return session
 

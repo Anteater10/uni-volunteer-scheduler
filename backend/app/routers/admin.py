@@ -27,6 +27,8 @@ from ..services import (
     module_service,
     quarter_service,
     session_attendance_service,
+    shift_service,
+    waitlist_service,
 )
 from ..services.audit_log_humanize import humanize as humanize_audit_log
 from ..schemas import ModuleRead, ModuleCreate, ModuleUpdate, SentNotificationRead
@@ -837,6 +839,68 @@ def admin_promote_signup(
     return signup
 
 
+@router.post(
+    "/shift-signups/{shift_signup_id}/promote", response_model=schemas.ShiftSignupRead
+)
+def admin_promote_shift_signup(
+    shift_signup_id: str,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """2026-08-02 shifts: promote a waitlisted shift commitment.
+
+    Shift twin of ``admin_promote_signup``. Capacity is owned by the shift row,
+    so that is what gets locked — see ``shift_service.lock_shift``. Overfill is
+    refused here exactly as it is for slots: the endpoint is the "there's a free
+    seat" path, not the "squeeze someone in" path.
+    """
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .with_for_update(of=models.ShiftSignup)
+        .first()
+    )
+    if not shift_signup:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+
+    shift = shift_service.lock_shift(db, shift_signup.shift_id)
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, actor)
+
+    if shift_signup.status != models.SignupStatus.waitlisted:
+        raise HTTPException(
+            status_code=400, detail="Only waitlisted shift signups can be promoted"
+        )
+
+    try:
+        promo = waitlist_service.manual_promote_shift(
+            db, shift_signup, shift, allow_overfill=False
+        )
+    except SlotEndedError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    log_action(
+        db, actor, "admin_shift_signup_promote", "ShiftSignup", str(shift_signup.id)
+    )
+    promo_kwargs = promo.email_kwargs
+    db.commit()
+    db.refresh(shift_signup)
+
+    send_waitlist_promotion_email.delay(**promo_kwargs)
+    return shift_signup
+
+
 # =========================
 # PHASE 25 — ADMIN WAITLIST REORDER (WAIT-05)
 # =========================
@@ -900,6 +964,58 @@ def admin_reorder_waitlist(
         },
     )
     db.commit()
+
+
+@router.patch("/events/{event_id}/shifts/{shift_id}/waitlist-order")
+def admin_reorder_shift_waitlist(
+    event_id: str,
+    shift_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """2026-08-02 shifts: rewrite a shift's waitlist FIFO order.
+
+    Body: ``{"ordered_shift_signup_ids": [...]}``, which must be exactly the
+    currently-waitlisted commitments — all-or-nothing, so a stale client cannot
+    drop someone out of the queue by omitting them.
+    """
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    shift = shift_service.lock_shift(db, shift_id)
+    if not shift or str(shift.event_id) != str(event.id):
+        raise HTTPException(status_code=404, detail="Shift not found for this event")
+
+    ordered = (
+        payload.get("ordered_shift_signup_ids") if isinstance(payload, dict) else None
+    )
+    if not isinstance(ordered, list):
+        raise HTTPException(
+            status_code=422,
+            detail="ordered_shift_signup_ids must be a list of UUIDs",
+        )
+
+    try:
+        rows = waitlist_service.reorder_shift_waitlist(db, shift.id, ordered)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    log_action(
+        db,
+        actor,
+        "waitlist_reorder",
+        "Shift",
+        str(shift.id),
+        extra={
+            "event_id": str(event.id),
+            "shift_id": str(shift.id),
+            "ordered_shift_signup_ids": [str(s) for s in ordered],
+        },
+    )
+    db.commit()
+    return {"ordered_shift_signup_ids": [str(r.id) for r in rows]}
 
     return {
         "slot_id": str(slot.id),

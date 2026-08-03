@@ -456,6 +456,10 @@ class SignupMoveRequest(BaseModel):
     target_slot_id: UUID
 
 
+class ShiftSignupMoveRequest(BaseModel):
+    target_shift_id: UUID
+
+
 # =========================
 # NOTIFICATION SCHEMAS
 # =========================
