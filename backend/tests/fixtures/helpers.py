@@ -6,6 +6,9 @@ from app.deps import hash_password
 
 from .factories import (
     EventFactory,
+    SessionAttendanceFactory,
+    ShiftFactory,
+    ShiftSignupFactory,
     SignupFactory,
     SlotFactory,
     UserFactory,
@@ -15,7 +18,16 @@ from .factories import (
 
 def _bind_factories(db_session):
     """Attach all factories to the given SQLAlchemy session."""
-    for factory in (UserFactory, EventFactory, SlotFactory, VolunteerFactory, SignupFactory):
+    for factory in (
+        UserFactory,
+        EventFactory,
+        ShiftFactory,
+        SlotFactory,
+        VolunteerFactory,
+        SignupFactory,
+        ShiftSignupFactory,
+        SessionAttendanceFactory,
+    ):
         factory._meta.sqlalchemy_session = db_session
 
 

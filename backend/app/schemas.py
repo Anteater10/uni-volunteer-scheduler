@@ -238,6 +238,28 @@ class ShiftRead(ORMBase):
     sessions: List[SlotRead] = []
 
 
+class SessionAttendanceRead(ORMBase):
+    """One "did they show up" record. Absent from a roster row means no record
+    yet — the normal state before a session is checked in or closed out."""
+
+    slot_id: UUID
+    status: SignupStatus
+    checked_in_at: Optional[datetime] = None
+
+
+class ShiftSignupRead(ORMBase):
+    """Staff-facing view of a commitment. `status` is lifecycle only
+    (pending / confirmed / waitlisted / cancelled) — attendance lives in
+    `session_attendance`, one entry per session actually resolved."""
+
+    id: UUID
+    shift_id: UUID
+    volunteer_id: UUID
+    status: SignupStatus
+    timestamp: datetime
+    session_attendance: List[SessionAttendanceRead] = []
+
+
 class ShiftReorderRequest(BaseModel):
     """Full ordering for one event's shifts — every shift id, in display
     order. Partial lists are rejected so two concurrent reorders cannot
@@ -603,7 +625,20 @@ class EventCheckInByEmailRequest(BaseModel):
 
 # Issue #31 UX rework — pick-your-shift check-in.
 class CheckInShift(BaseModel):
-    signup_id: UUID
+    """One thing the volunteer can check in for.
+
+    2026-08-02 shifts: `unit_id` is what the client sends back to select this
+    row — an orientation signup id, or a session's slot id. `signup_id` and
+    `shift_signup_id` are mutually exclusive and tell the UI which kind of row
+    it is drawing (only a session has a shift name to show).
+    """
+
+    unit_id: UUID
+    signup_id: Optional[UUID] = None
+    shift_signup_id: Optional[UUID] = None
+    shift_id: Optional[UUID] = None
+    shift_name: Optional[str] = None
+    session_name: Optional[str] = None
     slot_id: UUID
     slot_type: Optional[str] = None
     slot_location: Optional[str] = None
@@ -624,11 +659,19 @@ class CheckInLookupResponse(BaseModel):
 class CheckInSelectedRequest(BaseModel):
     email: str
     venue_code: str
-    signup_ids: List[UUID] = Field(min_length=1)
+    # 2026-08-02 shifts: the ids echoed back from CheckInShift.unit_id, which
+    # may be orientation signup ids or session slot ids. Named for the field it
+    # carries rather than for one of the two kinds it can hold.
+    unit_ids: List[UUID] = Field(min_length=1)
 
 
 class EventCheckInByEmailSignup(BaseModel):
-    signup_id: UUID
+    unit_id: UUID
+    signup_id: UUID | None = None
+    shift_signup_id: UUID | None = None
+    shift_id: UUID | None = None
+    shift_name: str | None = None
+    session_name: str | None = None
     slot_id: UUID
     slot_start: datetime | None = None
     slot_end: datetime | None = None

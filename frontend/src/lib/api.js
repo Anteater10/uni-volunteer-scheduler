@@ -620,11 +620,14 @@ export const api = {
         auth: false,
         body: { email, venue_code: venueCode },
       }),
-    checkInSelected: (eventId, email, signupIds, venueCode) =>
+    // 2026-08-02 shifts: the ids echoed back are whatever check-in-lookup
+    // handed out as `unit_id` — an orientation signup id, or a session's slot
+    // id. The caller doesn't need to know which kind it is holding.
+    checkInSelected: (eventId, email, unitIds, venueCode) =>
       request(`/events/${eventId}/check-in-selected`, {
         method: "POST",
         auth: false,
-        body: { email, venue_code: venueCode, signup_ids: signupIds },
+        body: { email, venue_code: venueCode, unit_ids: unitIds },
       }),
   },
 

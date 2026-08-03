@@ -58,7 +58,7 @@ function ShiftCard({ shift, onCheckIn, busy }) {
     <li>
       <button
         type="button"
-        data-testid={`shift-${shift.signup_id}`}
+        data-testid={`shift-${shift.unit_id}`}
         className={`w-full rounded-xl border-2 px-4 py-3 text-left transition-all ${
           done
             ? "border-green-300 bg-green-50"
@@ -72,6 +72,16 @@ function ShiftCard({ shift, onCheckIn, busy }) {
         <div className="flex items-center justify-between gap-2">
           <span className="flex flex-wrap items-center gap-2 text-sm">
             <TypeBadge slotType={shift.slot_type} />
+            {/* 2026-08-02 shifts: a session row leads with its shift name, so
+                a Tue+Wed bundle's two rows read as one commitment. */}
+            {shift.shift_name ? (
+              <span className="font-semibold">{shift.shift_name}</span>
+            ) : null}
+            {shift.session_name ? (
+              <span className="text-[var(--color-fg-muted)]">
+                {shift.session_name}
+              </span>
+            ) : null}
             <span className="font-medium">
               {fmtTime(shift.slot_start)} – {fmtTime(shift.slot_end)}
             </span>
@@ -136,18 +146,20 @@ export default function EventCheckInPage() {
   });
 
   const checkInMut = useMutation({
-    mutationFn: (signupId) =>
-      api.public.checkInSelected(eventId, email.trim(), [signupId], venueCode),
+    mutationFn: (unitId) =>
+      api.public.checkInSelected(eventId, email.trim(), [unitId], venueCode),
     onSuccess: (data) => {
-      // Flip the tapped shift(s) to their new status in place.
-      const updated = new Map(data.signups.map((s) => [s.signup_id, s.status]));
+      // Flip the tapped row(s) to their new status in place. Keyed on unit_id
+      // because a row is now either an orientation signup or one session of a
+      // shift, and only unit_id is present for both.
+      const updated = new Map(data.signups.map((s) => [s.unit_id, s.status]));
       setLookup((prev) =>
         prev
           ? {
               ...prev,
               shifts: prev.shifts.map((sh) =>
-                updated.has(sh.signup_id)
-                  ? { ...sh, status: updated.get(sh.signup_id) }
+                updated.has(sh.unit_id)
+                  ? { ...sh, status: updated.get(sh.unit_id) }
                   : sh,
               ),
             }
@@ -296,10 +308,10 @@ export default function EventCheckInPage() {
             <ul className="space-y-2">
               {lookup.shifts.map((shift) => (
                 <ShiftCard
-                  key={shift.signup_id}
+                  key={shift.unit_id}
                   shift={shift}
                   busy={checkInMut.isPending}
-                  onCheckIn={(sh) => checkInMut.mutate(sh.signup_id)}
+                  onCheckIn={(sh) => checkInMut.mutate(sh.unit_id)}
                 />
               ))}
             </ul>

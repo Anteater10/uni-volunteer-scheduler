@@ -6,7 +6,7 @@ from uuid import UUID
 
 from ..database import get_db
 from ..deps import ensure_event_staff_access, rate_limit, require_role
-from ..models import Event, Signup, Slot, UserRole
+from ..models import Event, ShiftSignup, Signup, Slot, UserRole
 from ..schemas import (
     CheckInLookupResponse,
     CheckInSelectedRequest,
@@ -18,6 +18,7 @@ from ..schemas import (
     RosterResponse,
     SelfCheckInRequest,
     SelfCheckInSignupRead,
+    ShiftSignupRead,
     SignupRead,
 )
 from ..services.check_in_service import (
@@ -26,6 +27,7 @@ from ..services.check_in_service import (
     NoSignupForEmailError,
     VenueCodeError,
     check_in_selected,
+    check_in_session,
     check_in_signup,
     event_check_in_by_email,
     lookup_check_in_options,
@@ -34,10 +36,52 @@ from ..services.check_in_service import (
     resolve_slot,
     self_check_in,
     undo_check_in,
+    undo_session_check_in,
 )
 from .roster import _build_roster
 
 router = APIRouter(tags=["check-in"])
+
+
+def _check_in_shift(option) -> CheckInShift:
+    """Render one CheckInOption. Single place so the lookup step and the
+    check-in step can never disagree about how a row is labelled."""
+    slot = option.slot
+    return CheckInShift(
+        unit_id=option.unit_id,
+        signup_id=option.signup.id if option.signup else None,
+        shift_signup_id=option.shift_signup.id if option.shift_signup else None,
+        shift_id=option.shift.id if option.shift else None,
+        shift_name=option.shift.name if option.shift else None,
+        session_name=slot.name,
+        slot_id=slot.id,
+        slot_type=slot.slot_type.value,
+        slot_location=slot.location,
+        slot_start=slot.start_time,
+        slot_end=slot.end_time,
+        status=option.status,
+        window_state=option.window_state,
+        window_opens_at=option.window_opens_at,
+    )
+
+
+def _check_in_result(option, was_new: bool) -> EventCheckInByEmailSignup:
+    slot = option.slot
+    return EventCheckInByEmailSignup(
+        unit_id=option.unit_id,
+        signup_id=option.signup.id if option.signup else None,
+        shift_signup_id=option.shift_signup.id if option.shift_signup else None,
+        shift_id=option.shift.id if option.shift else None,
+        shift_name=option.shift.name if option.shift else None,
+        session_name=slot.name,
+        slot_id=slot.id,
+        slot_start=slot.start_time,
+        slot_end=slot.end_time,
+        slot_type=slot.slot_type.value,
+        slot_location=slot.location,
+        status=option.status,
+        newly_checked_in=was_new,
+    )
 
 
 def _load_signup_event(db: Session, signup_id: UUID) -> Event:
@@ -108,6 +152,88 @@ def organizer_undo_check_in(
         return signup
     except LookupError:
         raise HTTPException(status_code=404, detail="Signup not found")
+    except InvalidTransitionError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INVALID_TRANSITION",
+                "from": e.from_status.value,
+                "to": e.to_status.value,
+            },
+        )
+
+
+def _load_shift_signup_event(db: Session, shift_signup_id: UUID) -> Event:
+    shift_signup = db.get(ShiftSignup, shift_signup_id)
+    if shift_signup is None:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+    event = db.get(Event, shift_signup.shift.event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+    return event
+
+
+@router.post(
+    "/shift-signups/{shift_signup_id}/sessions/{slot_id}/check-in",
+    response_model=ShiftSignupRead,
+    dependencies=[Depends(rate_limit(60, 60))],
+)
+def organizer_check_in_session(
+    shift_signup_id: UUID,
+    slot_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+):
+    """2026-08-02 shifts: organizer one-tap check-in for one session.
+
+    The shift-side twin of organizer_check_in. Keyed on (commitment, session)
+    because a Tue+Wed shift is checked in twice, once per day, and one seat can
+    be present on Tuesday and absent on Wednesday.
+    """
+    event = _load_shift_signup_event(db, shift_signup_id)
+    ensure_event_staff_access(event, current_user)
+    try:
+        shift_signup = check_in_session(db, shift_signup_id, slot_id, current_user.id)
+        db.commit()
+        db.refresh(shift_signup)
+        return shift_signup
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except InvalidTransitionError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INVALID_TRANSITION",
+                "from": e.from_status.value,
+                "to": e.to_status.value,
+            },
+        )
+
+
+@router.post(
+    "/shift-signups/{shift_signup_id}/sessions/{slot_id}/undo-check-in",
+    response_model=ShiftSignupRead,
+    dependencies=[Depends(rate_limit(60, 60))],
+)
+def organizer_undo_check_in_session(
+    shift_signup_id: UUID,
+    slot_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+):
+    """Revert a mis-tapped session check-in. Idempotent; a session already
+    resolved to attended/no_show 409s — undo covers the tap-slip only."""
+    event = _load_shift_signup_event(db, shift_signup_id)
+    ensure_event_staff_access(event, current_user)
+    try:
+        shift_signup = undo_session_check_in(
+            db, shift_signup_id, slot_id, current_user.id
+        )
+        db.commit()
+        db.refresh(shift_signup)
+        return shift_signup
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except InvalidTransitionError as e:
         raise HTTPException(
             status_code=409,
@@ -304,20 +430,7 @@ def check_in_lookup_endpoint(
         event_title=event.title if event else "",
         volunteer_name=f"{volunteer.first_name} {volunteer.last_name}".strip()
         or volunteer.email,
-        shifts=[
-            CheckInShift(
-                signup_id=signup.id,
-                slot_id=slot.id,
-                slot_type=slot.slot_type.value,
-                slot_location=slot.location,
-                slot_start=slot.start_time,
-                slot_end=slot.end_time,
-                status=signup.status.value,
-                window_state=state,
-                window_opens_at=opens_at,
-            )
-            for signup, slot, state, opens_at in rows
-        ],
+        shifts=[_check_in_shift(option) for option in rows],
     )
 
 
@@ -337,7 +450,7 @@ def check_in_selected_endpoint(
     """
     try:
         volunteer, results = check_in_selected(
-            db, event_id, body.email, body.venue_code, body.signup_ids
+            db, event_id, body.email, body.venue_code, body.unit_ids
         )
     except VenueCodeError:
         raise HTTPException(
@@ -372,24 +485,12 @@ def check_in_selected_endpoint(
     rows: list[EventCheckInByEmailSignup] = []
     newly = 0
     already = 0
-    for s, was_new in results:
-        slot = db.get(Slot, s.slot_id)
+    for option, was_new in results:
         if was_new:
             newly += 1
         else:
             already += 1
-        rows.append(
-            EventCheckInByEmailSignup(
-                signup_id=s.id,
-                slot_id=s.slot_id,
-                slot_start=slot.start_time if slot else None,
-                slot_end=slot.end_time if slot else None,
-                slot_type=slot.slot_type.value if slot else None,
-                slot_location=slot.location if slot else None,
-                status=s.status.value,
-                newly_checked_in=was_new,
-            )
-        )
+        rows.append(_check_in_result(option, was_new))
     db.commit()
     return EventCheckInByEmailResponse(
         event_id=event_id,
@@ -421,7 +522,7 @@ def event_check_in_by_email_endpoint(
     time window still gates every transition.
     """
     try:
-        volunteer, signups = event_check_in_by_email(
+        volunteer, results = event_check_in_by_email(
             db, event_id, body.email, body.venue_code
         )
     except VenueCodeError:
@@ -453,28 +554,15 @@ def event_check_in_by_email_endpoint(
     newly_checked_in = 0
     already_checked_in = 0
     rows: list[EventCheckInByEmailSignup] = []
-    for s in signups:
-        slot = db.get(Slot, s.slot_id)
-        was_new = bool(
-            s.checked_in_at
-            and (datetime.now(timezone.utc) - s.checked_in_at).total_seconds() < 10
-        )
+    for option, was_new in results:
+        # The service now reports this per unit. It used to be inferred from
+        # "checked_in_at is less than 10 seconds old", which mislabelled a
+        # genuine repeat scan inside that window.
         if was_new:
             newly_checked_in += 1
         else:
             already_checked_in += 1
-        rows.append(
-            EventCheckInByEmailSignup(
-                signup_id=s.id,
-                slot_id=s.slot_id,
-                slot_start=slot.start_time if slot else None,
-                slot_end=slot.end_time if slot else None,
-                slot_type=slot.slot_type.value if slot else None,
-                slot_location=slot.location if slot else None,
-                status=s.status.value,
-                newly_checked_in=was_new,
-            )
-        )
+        rows.append(_check_in_result(option, was_new))
 
     db.commit()
     return EventCheckInByEmailResponse(
