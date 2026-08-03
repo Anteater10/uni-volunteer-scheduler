@@ -94,11 +94,12 @@ from an unconfirmed pending signup, which is **deleted** rather than cancelled.
 
 ## Manual promotion
 
-**Manual promotion lets an organizer jump the queue.** From the event roster an organizer can
-promote one specific waitlisted volunteer instead of taking the next in line. Since the slot is
-usually still full, this asks for confirmation to go **over capacity** — putting an extra person in
-a real room is a real decision, so it has to be made deliberately rather than happening by
-default. Without the over-capacity option the button would simply fail every time it was used.
+**Manual promotion lets an organizer pick who gets the seat.** From the event roster an organizer
+promotes one specific waitlisted volunteer — there's no default "next in line" the system would
+promote instead. Freed seats sit open until staff act, so promoting into a seat that's already
+free is the normal case. The **over capacity** confirmation only shows up when staff deliberately
+promote into a slot that's still full: putting an extra person in a real room is a real decision,
+so that has to be made deliberately rather than happening by default.
 
 A manual promotion works the same way as any other staff promotion: the volunteer lands at pending
 and gets the same three-day confirm email. That's fine for someone standing in front of you, because

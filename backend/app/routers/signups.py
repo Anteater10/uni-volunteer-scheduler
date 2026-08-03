@@ -55,7 +55,8 @@ def cancel_signup(
 
     # Phase 09: signups no longer have user_id.
     # 2026-08-02 read-only signups: volunteer self-cancel is gone entirely —
-    # admin/organizer cancel via this endpoint is the only way a signup gets cancelled.
+    # cancellation is staff-only now, via this endpoint and admin.py's
+    # /admin/signups/{id}/cancel (the reaper also cancels stale rows on its own).
     # For auth'd users (admin/organizer), allow if they have the admin/organizer role
     if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
         raise HTTPException(status_code=403, detail="Not authorized to cancel signups via this endpoint")

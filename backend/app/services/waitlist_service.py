@@ -149,15 +149,15 @@ def manual_promote(
     Caller must hold FOR UPDATE on both rows and must have verified the
     signup belongs to the slot. Raises ``ValueError`` on invalid state so
     the router can translate to an HTTP status, and the ``SlotEndedError``
-    subclass when the slot has already ended (staff action, so it fails loudly
-    instead of skipping the way FIFO auto-promotion does).
+    subclass when the slot has already ended (staff action, so it fails
+    loudly rather than silently doing nothing).
 
     Delegates the status flip to ``mark_promoted_pending`` (waitlisted →
     pending, issues a fresh 3-day PROMOTION_CONFIRM token) then increments
     ``slot.current_count`` itself, since ``mark_promoted_pending``
     deliberately leaves capacity accounting to the caller. 2026-07-28 spec:
     staff promotion is not volunteer intent — the volunteer confirms via the
-    emailed magic link, which doubles as their manage/cancel page. Caller
+    emailed magic link, which doubles as their read-only manage page. Caller
     must enqueue ``send_waitlist_promotion_email(**result.email_kwargs)``
     AFTER commit.
 
@@ -180,7 +180,7 @@ def manual_promote(
 
     # 2026-07-28 spec: staff promotion is not volunteer intent — the
     # volunteer confirms via the emailed 3-day magic link, which is also
-    # their manage/cancel page. Caller enqueues the email after commit.
+    # their read-only manage page. Caller enqueues the email after commit.
     result = mark_promoted_pending(db, signup)
     slot.current_count += 1
     db.flush()
