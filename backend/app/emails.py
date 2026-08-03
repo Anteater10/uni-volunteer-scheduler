@@ -527,7 +527,7 @@ def build_waitlist_promotion_email(
 
     Unlike the old link-less promotion notification, this carries
     the magic-link confirm URL: the promotee must confirm within 3 days,
-    and the same link is their manage/cancel page.
+    and the same link is their read-only manage page.
 
     Returns:
         (subject, html_body) — HTML only, same as the fresh-signup flow.

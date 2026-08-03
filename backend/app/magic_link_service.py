@@ -36,9 +36,9 @@ CONFIRM_PURPOSES = (
     MagicLinkPurpose.PROMOTION_CONFIRM,
 )
 
-# Purposes that grant token-gated manage access (manage page, swap, cancel,
+# Purposes that grant token-gated manage access (read-only manage page,
 # preferences, reminder manage links). Every confirm link doubles as the
-# volunteer's manage/cancel page — that is the promotion link's whole point.
+# volunteer's read-only manage page — that is the promotion link's whole point.
 MANAGE_PURPOSES = (
     MagicLinkPurpose.SIGNUP_CONFIRM,
     MagicLinkPurpose.SIGNUP_MANAGE,

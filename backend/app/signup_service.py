@@ -38,7 +38,7 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
 
     Promotion is a system/staff action, not volunteer intent, so the
     volunteer confirms via the emailed magic link (3-day TTL) — the same
-    link is their manage/cancel page. Shared by
+    link is their read-only manage page. Shared by
     waitlist_service.manual_promote, the admin move, and the staff swap of a
     waitlisted signup so no promotion path can forget the token. Does NOT
     touch slot.current_count.
