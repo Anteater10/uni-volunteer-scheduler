@@ -584,7 +584,21 @@ class SiteSettingsUpdate(BaseModel):
 # ROSTER / CHECK-IN (Phase 3)
 # =========================
 class RosterRow(BaseModel):
-    signup_id: UUID
+    """One volunteer at one slot.
+
+    2026-08-02 shifts: for a session the row is (commitment, session), so a
+    volunteer holding a Tue+Wed shift appears twice — once per day they are
+    expected. `status` is the *session's* status: the attendance record when
+    one exists, otherwise the commitment's lifecycle status, so an unmarked
+    session reads "confirmed" exactly like an unmarked slot signup used to.
+    """
+
+    # Exactly one of these identifies the booking behind the row.
+    signup_id: UUID | None = None
+    shift_signup_id: UUID | None = None
+    shift_id: UUID | None = None
+    shift_name: str | None = None
+    session_name: str | None = None
     student_name: str
     status: SignupStatus
     slot_time: datetime

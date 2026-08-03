@@ -8,8 +8,18 @@ from uuid import UUID
 
 from ..database import get_db
 from ..deps import ensure_event_staff_access, require_role
-from ..models import Event, Signup, SignupStatus, Slot, UserRole, Volunteer
+from ..models import (
+    Event,
+    Shift,
+    ShiftSignup,
+    Signup,
+    SignupStatus,
+    Slot,
+    UserRole,
+    Volunteer,
+)
 from ..schemas import RosterResponse, RosterRow
+from ..services import session_attendance_service
 
 router = APIRouter(tags=["roster"])
 
@@ -73,19 +83,85 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
             )
         )
 
+    # 2026-08-02 shifts: a session's roster is the confirmed membership of the
+    # shift that owns it, annotated with that session's attendance. There are
+    # no per-session bookings to list, so the rows are produced here rather
+    # than read out of a table.
+    shift_rows, shift_statuses = _session_rows(db, event)
+    rows.extend(shift_rows)
+
+    statuses = [s.status for s in signups] + shift_statuses
     checked = sum(
-        1 for s in signups
-        if s.status in (SignupStatus.checked_in, SignupStatus.attended)
+        1 for st in statuses
+        if st in (SignupStatus.checked_in, SignupStatus.attended)
     )
 
     return RosterResponse(
         event_id=event.id,
         event_name=event.title,
         venue_code=event.venue_code,
-        total=sum(1 for s in signups if s.status in _ATTENDEE_STATUSES),
+        total=sum(1 for st in statuses if st in _ATTENDEE_STATUSES),
         checked_in_count=checked,
         rows=rows,
     )
+
+
+def _session_rows(
+    db: Session, event: Event
+) -> tuple[list[RosterRow], list[SignupStatus]]:
+    """One row per (commitment, session) for every shift on this event.
+
+    Same deterministic ordering rule as the orientation rows above —
+    alphabetical within the session, id as tiebreaker — so a check-in UPDATE
+    can't visibly shuffle the roster on the next poll.
+    """
+    shift_signups = (
+        db.execute(
+            select(ShiftSignup)
+            .join(Shift, Shift.id == ShiftSignup.shift_id)
+            .join(Volunteer, ShiftSignup.volunteer_id == Volunteer.id)
+            .where(Shift.event_id == event.id)
+            .order_by(
+                Shift.sort_order,
+                Volunteer.first_name,
+                Volunteer.last_name,
+                ShiftSignup.id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    rows: list[RosterRow] = []
+    statuses: list[SignupStatus] = []
+    for shift_signup in shift_signups:
+        v = shift_signup.volunteer
+        vol_name = f"{v.first_name} {v.last_name}" if v else "Unknown"
+        records = session_attendance_service.attendance_for_shift_signup(
+            db, shift_signup.id
+        )
+        shift = shift_signup.shift
+        for session in sorted(shift.sessions, key=lambda s: (s.sort_order, s.start_time)):
+            record = records.get(session.id)
+            status = record.status if record is not None else shift_signup.status
+            statuses.append(status)
+            rows.append(
+                RosterRow(
+                    shift_signup_id=shift_signup.id,
+                    shift_id=shift.id,
+                    shift_name=shift.name,
+                    session_name=session.name,
+                    student_name=vol_name,
+                    status=status,
+                    slot_time=session.start_time,
+                    checked_in_at=record.checked_in_at if record else None,
+                    slot_id=session.id,
+                    slot_type=session.slot_type.value,
+                    slot_end=session.end_time,
+                    slot_location=session.location,
+                )
+            )
+    return rows, statuses
 
 
 @router.get("/events/{event_id}/roster", response_model=RosterResponse)

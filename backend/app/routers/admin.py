@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import uuid as uuid_mod
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -21,7 +22,12 @@ from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..signup_service import mark_promoted_pending
 from ..services.check_in_service import ensure_signup_cancellable
 from ..services.waitlist_service import SlotEndedError
-from ..services import module_service, quarter_service
+from ..services import (
+    attendance_facts,
+    module_service,
+    quarter_service,
+    session_attendance_service,
+)
 from ..services.audit_log_humanize import humanize as humanize_audit_log
 from ..schemas import ModuleRead, ModuleCreate, ModuleUpdate, SentNotificationRead
 
@@ -79,6 +85,72 @@ def _volunteer_participant_payload(v: models.Volunteer, privacy: PrivacyMode) ->
         display_name = "".join(p[0].upper() for p in vol_name.split() if p)
         return {"name": display_name, "email": None, "university_id": None}
     return {"name": "Volunteer", "email": None, "university_id": None}
+
+
+@dataclass
+class _ExportBooking:
+    """One person on one slot, for the roster/attendance exports.
+
+    2026-08-02 shifts: the exports used to iterate `slot.signups`, which is now
+    empty for a session — nobody books a session directly. This flattens both
+    kinds of booking into the shape those loops already read, so a session
+    exports the confirmed membership of its owning shift annotated with that
+    session's attendance.
+    """
+
+    id: uuid_mod.UUID
+    volunteer: object | None
+    status: models.SignupStatus
+    checked_in_at: datetime | None
+    timestamp: datetime
+    answers: list
+    responses: list
+    shift_name: str | None = None
+    session_name: str | None = None
+
+
+def _bookings_for_slot(db: Session, slot: models.Slot) -> list[_ExportBooking]:
+    if slot.shift_id is None:
+        return [
+            _ExportBooking(
+                id=s.id,
+                volunteer=s.volunteer,
+                status=s.status,
+                checked_in_at=s.checked_in_at,
+                timestamp=s.timestamp,
+                answers=list(s.answers or []),
+                responses=list(s.responses or []),
+            )
+            for s in slot.signups
+        ]
+
+    shift = slot.shift
+    records = {}
+    bookings = []
+    for shift_signup in shift.shift_signups:
+        records = session_attendance_service.attendance_for_shift_signup(
+            db, shift_signup.id
+        )
+        record = records.get(slot.id)
+        bookings.append(
+            _ExportBooking(
+                id=shift_signup.id,
+                volunteer=shift_signup.volunteer,
+                # No attendance record ⇒ the commitment's own status, the same
+                # rule the roster and the analytics union use.
+                status=record.status if record else shift_signup.status,
+                checked_in_at=record.checked_in_at if record else None,
+                timestamp=shift_signup.timestamp,
+                # Legacy per-event custom questions were not carried onto shift
+                # commitments (migration 0037 lists custom_answers as a
+                # casualty); Phase 22 form responses were.
+                answers=[],
+                responses=list(shift_signup.responses or []),
+                shift_name=shift.name,
+                session_name=slot.name,
+            )
+        )
+    return bookings
 
 
 # =========================
@@ -181,10 +253,15 @@ def admin_summary(
         .scalar()
         or 0
     )
+    # 2026-08-02 shifts: every count below reads the attendance-facts union
+    # instead of `signups` directly, so a shift commitment contributes one row
+    # per session it covers — which is what these numbers always meant
+    # ("bookings to staff", not "rows in a table").
+    af = attendance_facts.facts()
     signups_quarter = (
-        db.query(func.count(models.Signup.id))
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
+        db.query(func.count())
+        .select_from(af)
+        .join(models.Event, models.Event.id == af.c.event_id)
         .filter(
             models.Event.start_date >= q_start,
             models.Event.start_date < q_end,
@@ -193,13 +270,13 @@ def admin_summary(
         or 0
     )
     signups_confirmed_quarter = (
-        db.query(func.count(models.Signup.id))
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
+        db.query(func.count())
+        .select_from(af)
+        .join(models.Event, models.Event.id == af.c.event_id)
         .filter(
             models.Event.start_date >= q_start,
             models.Event.start_date < q_end,
-            models.Signup.status.in_(_CONFIRMED_STATUSES),
+            af.c.status.in_(_CONFIRMED_STATUSES),
         )
         .scalar()
         or 0
@@ -283,32 +360,33 @@ def admin_summary(
 
     # -------- volunteer hours + attendance rate this quarter --------
     vh_rows = (
-        db.query(models.Slot, models.Signup)
-        .join(models.Signup, models.Signup.slot_id == models.Slot.id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
+        db.query(models.Slot)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
         .filter(
             models.Event.start_date >= q_start,
             models.Event.start_date < q_end,
-            models.Signup.status == models.SignupStatus.attended,
+            af.c.status == models.SignupStatus.attended,
         )
         .all()
     )
     volunteer_hours_quarter = round(
         sum(
             (slot.end_time - slot.start_time).total_seconds() / 3600.0
-            for slot, _ in vh_rows
+            for (slot,) in vh_rows
         ),
         2,
     )
 
     att_rows = (
-        db.query(models.Signup.status, func.count(models.Signup.id))
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
+        db.query(af.c.status, func.count())
+        .select_from(af)
+        .join(models.Event, models.Event.id == af.c.event_id)
         .filter(
             models.Event.start_date >= q_start,
             models.Event.start_date < q_end,
-            models.Signup.status.in_(
+            af.c.status.in_(
                 [
                     models.SignupStatus.confirmed,
                     models.SignupStatus.attended,
@@ -316,7 +394,7 @@ def admin_summary(
                 ]
             ),
         )
-        .group_by(models.Signup.status)
+        .group_by(af.c.status)
         .all()
     )
     att_counts = {s: c for s, c in att_rows}
@@ -462,14 +540,15 @@ def event_roster(
     }
 
     for slot in slots_sorted:
+        bookings = _bookings_for_slot(db, slot)
         waitlisted_sorted = sorted(
-            [s for s in slot.signups if s.status == models.SignupStatus.waitlisted],
+            [s for s in bookings if s.status == models.SignupStatus.waitlisted],
             key=lambda s: (s.timestamp, str(s.id)),
         )
         waitlist_positions = {s.id: idx + 1 for idx, s in enumerate(waitlisted_sorted)}
 
         signups_sorted = sorted(
-            slot.signups,
+            bookings,
             key=lambda s: (status_order.get(s.status, 99), s.timestamp, str(s.id)),
         )
 
@@ -573,15 +652,14 @@ def export_event_csv(
         return ""
 
     for slot in slots_sorted:
+        bookings = _bookings_for_slot(db, slot)
         waitlisted_sorted = sorted(
-            [s for s in slot.signups if s.status == models.SignupStatus.waitlisted],
+            [s for s in bookings if s.status == models.SignupStatus.waitlisted],
             key=lambda s: (s.timestamp, str(s.id)),
         )
         waitlist_positions = {s.id: idx + 1 for idx, s in enumerate(waitlisted_sorted)}
 
-        signups_sorted = sorted(
-            slot.signups, key=lambda s: (s.timestamp, str(s.id))
-        )
+        signups_sorted = sorted(bookings, key=lambda s: (s.timestamp, str(s.id)))
 
         for signup in signups_sorted:
             # Phase 09: signup.user removed; use signup.volunteer
@@ -1026,7 +1104,7 @@ def notify_event_participants(
     recipient_volunteers: set = set()
 
     for slot in event.slots:
-        for signup in slot.signups:
+        for signup in _bookings_for_slot(db, slot):
             if signup.status == models.SignupStatus.confirmed and signup.volunteer:
                 recipient_volunteers.add(signup.volunteer)
             elif payload.include_waitlisted and signup.status == models.SignupStatus.waitlisted and signup.volunteer:
@@ -1217,12 +1295,17 @@ def analytics_volunteer_hours(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Volunteer hours grouped by volunteer, joining Signup -> Slot -> Event."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     query = (
-        db.query(models.Signup, models.Slot, models.Event, models.Volunteer)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
-        .filter(models.Signup.status == models.SignupStatus.attended)
+        db.query(af.c.status, models.Slot, models.Event, models.Volunteer)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
+        .filter(af.c.status == models.SignupStatus.attended)
     )
     if from_date:
         query = query.filter(models.Event.start_date >= from_date)
@@ -1234,7 +1317,7 @@ def analytics_volunteer_hours(
     # Aggregate by volunteer_id
     from collections import defaultdict
     vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
-    for signup, slot, event, volunteer in rows:
+    for status, slot, event, volunteer in rows:
         key = volunteer.id
         duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
         vol_hours[key]["hours"] += duration_hours
@@ -1306,12 +1389,17 @@ def analytics_no_show_rates(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """No-show rate per volunteer, joining Signup -> Slot -> Event."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     query = (
-        db.query(models.Signup, models.Volunteer)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
-        .filter(models.Signup.status.in_([
+        db.query(af.c.status, models.Volunteer)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
+        .filter(af.c.status.in_([
             models.SignupStatus.attended,
             models.SignupStatus.no_show,
         ]))
@@ -1325,11 +1413,11 @@ def analytics_no_show_rates(
 
     from collections import defaultdict
     vol_counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
-    for signup, volunteer in rows:
+    for status, volunteer in rows:
         key = volunteer.id
-        if signup.status == models.SignupStatus.attended:
+        if status == models.SignupStatus.attended:
             vol_counts[key]["attended"] += 1
-        elif signup.status == models.SignupStatus.no_show:
+        elif status == models.SignupStatus.no_show:
             vol_counts[key]["no_show"] += 1
         vol_counts[key]["volunteer"] = volunteer
 
@@ -1372,7 +1460,7 @@ def export_event_attendance_csv(
     writer.writerow(["user_name", "email", "status", "checked_in_at", "slot_start", "slot_end"])
 
     for slot in sorted(event.slots, key=lambda s: s.start_time):
-        for signup in slot.signups:
+        for signup in _bookings_for_slot(db, slot):
             # Phase 09: signup.user removed; use signup.volunteer
             v = signup.volunteer
             writer.writerow([
@@ -1397,12 +1485,17 @@ def export_volunteer_hours_csv(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Volunteer hours as CSV, joining Signup -> Slot -> Event -> Volunteer."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     query = (
-        db.query(models.Signup, models.Slot, models.Event, models.Volunteer)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
-        .filter(models.Signup.status == models.SignupStatus.attended)
+        db.query(af.c.status, models.Slot, models.Event, models.Volunteer)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
+        .filter(af.c.status == models.SignupStatus.attended)
     )
     if from_date:
         query = query.filter(models.Event.start_date >= from_date)
@@ -1413,7 +1506,7 @@ def export_volunteer_hours_csv(
 
     from collections import defaultdict
     vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
-    for signup, slot, event, volunteer in rows:
+    for status, slot, event, volunteer in rows:
         key = volunteer.id
         duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
         vol_hours[key]["hours"] += duration_hours
@@ -1499,13 +1592,18 @@ def export_no_show_rates_csv(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """No-show-rate-per-volunteer CSV (mirrors /analytics/no-show-rates JSON)."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     query = (
-        db.query(models.Signup, models.Volunteer)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        db.query(af.c.status, models.Volunteer)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
         .filter(
-            models.Signup.status.in_(
+            af.c.status.in_(
                 [models.SignupStatus.attended, models.SignupStatus.no_show]
             )
         )
@@ -1518,11 +1616,11 @@ def export_no_show_rates_csv(
 
     from collections import defaultdict
     counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
-    for signup, volunteer in rows:
+    for status, volunteer in rows:
         key = volunteer.id
-        if signup.status == models.SignupStatus.attended:
+        if status == models.SignupStatus.attended:
             counts[key]["attended"] += 1
-        elif signup.status == models.SignupStatus.no_show:
+        elif status == models.SignupStatus.no_show:
             counts[key]["no_show"] += 1
         counts[key]["volunteer"] = volunteer
 
@@ -1636,22 +1734,27 @@ def analytics_hours_by_school(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Total attended volunteer hours grouped by partner school."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     q = (
-        db.query(models.Signup, models.Slot, models.Event)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .filter(models.Signup.status == models.SignupStatus.attended)
+        db.query(af.c.volunteer_id, models.Slot, models.Event)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .filter(af.c.status == models.SignupStatus.attended)
     )
     q = _apply_date_filter(q, from_date, to_date)
 
     from collections import defaultdict
     by_school: dict = defaultdict(lambda: {"hours": 0.0, "events": set(), "volunteers": set()})
-    for signup, slot, event in q.all():
+    for volunteer_id, slot, event in q.all():
         school = event.school or event.location or "(unspecified)"
         hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
         by_school[school]["hours"] += hours
         by_school[school]["events"].add(event.id)
-        by_school[school]["volunteers"].add(signup.volunteer_id)
+        by_school[school]["volunteers"].add(volunteer_id)
 
     result = [
         {
@@ -1695,22 +1798,27 @@ def analytics_unique_volunteers(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Unique volunteers per quarter (distinct volunteer_id among attended signups)."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     q = (
-        db.query(models.Signup, models.Event)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .filter(models.Signup.status == models.SignupStatus.attended)
+        db.query(af.c.volunteer_id, models.Event)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .filter(af.c.status == models.SignupStatus.attended)
     )
     q = _apply_date_filter(q, from_date, to_date)
 
     from collections import defaultdict
     by_qtr: dict = defaultdict(set)
-    for signup, event in q.all():
+    for volunteer_id, event in q.all():
         if event.quarter and event.year:
             key = (event.year, event.quarter.value)
         else:
             key = (event.start_date.year if event.start_date else 0, "unknown")
-        by_qtr[key].add(signup.volunteer_id)
+        by_qtr[key].add(volunteer_id)
 
     result = [
         {"year": y, "quarter": qtr, "unique_volunteers": len(vols)}
