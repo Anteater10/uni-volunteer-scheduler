@@ -388,8 +388,8 @@ def event_analytics(
     # Count anyone still holding a seat: pending + confirmed + checked_in
     # + attended. Pending holds capacity (just hasn't clicked the magic link
     # yet). Otherwise the "Confirmed" card drops when someone checks in or
-    # when a waitlisted person auto-promotes into pending — both misread
-    # the state (they're more present, not less).
+    # when staff manually promote a waitlisted person into pending — both
+    # misread the state (they're more present, not less).
     confirmed = (
         db.query(func.count(models.Signup.id))
         .join(models.Slot)

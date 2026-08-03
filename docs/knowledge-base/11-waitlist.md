@@ -10,8 +10,10 @@ but promote nobody. A volunteer leaves the waitlist only when an admin or organi
 which sends the 3-day confirm email; unclaimed offers expire and the seat stays open.
 
 **The waitlist is first-come, first-served.** Order is by when the signup was created, and that
-ordering drives the position a volunteer sees, the order staff promote people in, and the waitlist
-panel on the event page. The organizer's check-in roster is the exception: it's sorted alphabetically
+ordering drives the position a volunteer sees and the waitlist panel on the event page. It's
+informational, not mechanical — nothing consumes it automatically. Staff choose whom to promote,
+same as manual promotion always has, though in practice they'll usually work from the top. The
+organizer's check-in roster is the exception: it's sorted alphabetically
 within each session and shows no waitlist positions at all, because at the door you're looking
 someone up by name rather than working down a queue.
 
@@ -104,8 +106,9 @@ and gets the same three-day confirm email. That's fine for someone standing in f
 checked in doesn't need to find the email first.
 
 **Admins can reorder a waitlist** from the event page, which rewrites the queue so the order you
-set becomes the order used for promotion. You must submit the whole current waitlist for the slot —
-no additions, no omissions.
+set becomes the position shown to staff and volunteers. Staff still choose who to promote by hand —
+reordering doesn't bind that choice, it just sets what everyone sees. You must submit the whole
+current waitlist for the slot — no additions, no omissions.
 
 ## Other things to know
 

@@ -1,9 +1,10 @@
 """Waitlist service — position computation + manual promotion + admin reorder.
 
-Pairs with the canonical FIFO promotion in ``app.signup_service``. The FIFO
-promote belongs to the cancel-triggered autopromote path; this module owns
-the read-side "what's my position?" question plus the two organizer/admin
-override operations (manual promote, admin reorder).
+The waitlist never moves on its own (2026-08-02 read-only signups): freed
+seats sit open until a staff member acts. This module owns the read-side
+"what's my position?" question plus the two organizer/admin override
+operations (manual promote, admin reorder) that are now the only way
+anyone leaves the waitlist.
 
 All write operations assume the caller has already acquired a FOR UPDATE
 lock on the slot row to serialize against concurrent cancels and public
@@ -45,9 +46,9 @@ class SlotEndedError(ValueError):
 def slot_has_ended(slot: models.Slot, now: datetime | None = None) -> bool:
     """True when ``slot.end_time`` is at or before ``now`` (UTC-aware).
 
-    Single source of truth for every promotion path: FIFO auto-promotion
-    skips an ended slot silently (the seat simply stays free), staff
-    promotion raises ``SlotEndedError``. Timestamps come back from Postgres
+    Single source of truth for every promotion path: staff promotion raises
+    ``SlotEndedError`` rather than letting anyone be offered a seat in a
+    session that's already over. Timestamps come back from Postgres
     tz-aware; the naive fallback keeps the comparison from blowing up if a
     caller hands over a hand-built slot.
     """
@@ -160,12 +161,13 @@ def manual_promote(
     must enqueue ``send_waitlist_promotion_email(**result.email_kwargs)``
     AFTER commit.
 
-    ``allow_overfill`` exists because a full slot is normally the *only*
-    reason anyone is waitlisted, and auto-promote (WAIT-02) already claims any
-    seat that frees up. Refusing on capacity therefore made the manual
-    override (WAIT-03) unreachable in practice — the button 409'd every time.
-    Going over capacity is a real decision about a real room, so the caller
-    has to ask for it deliberately rather than get it by default.
+    ``allow_overfill`` exists because freed seats now sit open until staff
+    act (2026-08-02 read-only signups), so promoting into a seat that's
+    already free is the normal case. ``allow_overfill`` instead covers the
+    case where the slot is still at or over capacity and staff want to put
+    someone in anyway. Going over capacity is a real decision about a real
+    room, so the caller has to ask for it deliberately rather than get it
+    by default.
     """
     if signup.status != models.SignupStatus.waitlisted:
         raise ValueError("only waitlisted signups can be promoted")
