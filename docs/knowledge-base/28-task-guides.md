@@ -108,18 +108,19 @@ everyone marked attended.
 
 ## How do I promote someone off the waitlist?
 
-Usually you don't need to — when a confirmed volunteer cancels, the longest-waiting person is
-promoted automatically.
+You always need to — the waitlist never moves on its own. Cancelling a confirmed volunteer, raising a
+session's capacity, and the hourly cleanup all free seats, but none of them promote anyone; the seat
+just sits open until a staff member acts.
 
-To promote one specific person, open the event in Admin → Events and click **Promote** on their row
-in the event page's roster table. Since the slot is normally still full, this asks you to confirm
-going over capacity — that's a real decision about a real room, so it's deliberate rather than
-automatic.
+Open the event in Admin → Events and click **Promote** on the row of the person you want in the event
+page's roster table — usually the longest-waiting person, though you can promote anyone waiting.
+Since the slot is normally still full, this asks you to confirm going over capacity — that's a real
+decision about a real room, so it's deliberate rather than automatic.
 
-**A promotion is an offer, not a seat.** Either way — automatic or manual — the volunteer is moved to
-**pending** and emailed a link with **3 days** to confirm. Their seat is held while they decide, and
-they show on the roster the whole time. If they don't confirm, the signup is removed and the seat
-passes to the next person on the waitlist with a fresh 3-day clock of their own. So a promoted
+**A promotion is an offer, not a seat.** The volunteer is moved to **pending** and emailed a link with
+**3 days** to confirm. Their seat is held while they decide, and they show on the roster the whole
+time. If they don't confirm, the signup is removed and the seat is freed again — it doesn't pass to
+anyone automatically, so promote the next person by hand if the seat should be filled. So a promoted
 volunteer who hasn't clicked yet is expected to look half-finished on the roster; that's the flow
 working, not a fault.
 

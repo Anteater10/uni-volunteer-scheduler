@@ -81,8 +81,9 @@ Drive from the Participant incognito window.
       Mailpit (http://localhost:8025) within 15s.
 - [ ] Click the magic link in the Mailpit email → lands on `/signup/confirm`
       → "your signup is confirmed" banner shows.
-- [ ] `/signup/manage?token=...` shows the signup with per-row Cancel and a
-      Cancel-all button.
+- [ ] `/signup/manage?token=...` shows the signup read-only — no Cancel or
+      swap controls — plus a notice to contact the SciTrek organizers by
+      email for any change.
 - [ ] Self check-in via `/check-in/:signupId` works inside the time window
       (flips status to checked in).
 - [ ] No horizontal scroll on any page at 375px; all tap targets ≥44px; no
@@ -111,6 +112,9 @@ Drive from the Admin desktop window.
       download with real (non-empty) data.
 - [ ] `Overrides` tab is **NOT** present in the admin sidebar (Phase 16
       retirement regression check).
+- [ ] On an event with a waitlisted signup, clicking **Promote** on the
+      event page moves the volunteer to pending (not straight to confirmed)
+      and a confirm-your-spot email arrives in Mailpit within 15s.
 - [ ] Every admin page shows loading / empty / error states correctly.
 - [ ] No console errors in DevTools across the full admin sweep.
 
@@ -146,15 +150,16 @@ Drive all three windows in one sitting. Mirrors Scenario 1 from
 - [ ] **Organizer** checks the participant in; the row status chip flips to
       "checked in".
 - [ ] **Admin** navigates to `/admin/audit-logs`, filters by the
-      participant's email, and sees the expected audited entries (cancel
-      and admin-initiated actions are audited; see note below).
+      participant's email, and sees the expected audited entries
+      (admin-initiated actions are audited; see note below).
 - [ ] **Participant** visits `/signup/manage?token=...` and sees the signup
       marked checked in.
 
-> Note: per 20-01 findings, only ADMIN-initiated actions and public cancel
-> write to the audit log. `signup.created` (public) and organizer check-in
-> are NOT audited in v1.2-prod. The admin audit-log page must still be
-> reachable and filterable without error.
+> Note: per 20-01 findings, only ADMIN-initiated actions write to the audit
+> log (the public cancel endpoint was removed by the read-only-signups
+> change). `signup.created` (public) and organizer check-in are NOT audited
+> in v1.2-prod. The admin audit-log page must still be reachable and
+> filterable without error.
 
 ---
 

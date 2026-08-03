@@ -79,10 +79,10 @@ def ensure_signup_cancellable(signup: Signup) -> None:
     function's own docstring calls it "the one exception" — so cancel must
     not become a second, narrower door out of a resolved status.
 
-    Deliberately actor-independent, unlike swap's participant-only attended
-    guard: swapping an attended signup preserves its status (only the slot
-    pointer moves — a lateral correction), but cancelling one erases the
-    resolved status entirely by turning it into 'cancelled'. Volunteer
+    Deliberately actor-independent: swapping an attended signup preserves
+    its status (only the slot pointer moves — a lateral correction), but
+    cancelling one erases the resolved status entirely by turning it into
+    'cancelled'. Volunteer
     hours (course credit) are summed over attended signups (admin.py), so
     cancelling one destroys the basis for someone's credit; cancelling a
     no_show erases the audit trail of it. A volunteer's manage link

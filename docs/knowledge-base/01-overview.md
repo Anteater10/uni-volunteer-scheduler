@@ -24,9 +24,11 @@ credit** for that module's family — and if they don't, they must include an or
 the same signup. This is a hard requirement enforced by the server, not a warning. See the
 orientation document for the cases that pass automatically.
 
-Volunteers never log in. Every action a volunteer takes after signing up — confirming, viewing,
-cancelling, swapping, checking in — happens through a **magic link** emailed to them, or through a
-QR code scanned at the door. Staff, by contrast, do log in with an email and password at `/login`.
+Volunteers never log in. Every action a volunteer takes after signing up — confirming, viewing their
+signups, managing reminder preferences, checking in — happens through a **magic link** emailed to
+them, or through a QR code scanned at the door. A volunteer cannot cancel or move a signup themselves;
+they email the SciTrek organizers and a staff member makes the change. Staff, by contrast, do log in
+with an email and password at `/login`.
 
 The staff side of the SciTrek scheduler lives under `/admin` and is built for desktop screens.
 Below tablet width every page inside the admin shell shows a desktop-only banner instead of the
