@@ -75,12 +75,13 @@ def test_no_template_advertises_self_cancel(db_session, seeded_signup, seeded_ev
         seeded_signup.volunteer, [seeded_signup], "tok" * 8, seeded_event
     )
     assert "cancelling your signups" not in html
-    assert "cancel" not in html.lower() or "email" in html.lower()
+    assert "Need to change or cancel? Please" in html
 
     subject, html = build_waitlist_promotion_email(
         seeded_signup.volunteer, seeded_signup, "tok" * 8, seeded_event
     )
     assert "Use the same link to cancel" not in html
+    assert "spot passes" not in html
 
     body = send_reminder_pre_24h(seeded_signup)
     assert "please cancel" not in body["text_body"]
