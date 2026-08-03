@@ -17,16 +17,20 @@ signups and everything hanging off them are untouched.
    with it (FK ondelete CASCADE). Pre-production this costs nothing real; a
    re-send covers any dev/demo case. Tokens anchored to orientation signups
    survive.
-2. ``custom_answers`` and ``sent_notifications`` rows for converted period
-   signups are deleted explicitly. Their FKs are NO ACTION, so the signup
-   delete would otherwise fail outright. ``custom_answers`` is the legacy
-   pre-Phase-22 answer store; ``sent_notifications`` is per-signup send
-   bookkeeping used for reminder dedup.
-3. ``signup_responses`` (Phase 22 form answers) for converted period signups
-   are dropped by FK CASCADE. ``shift_signups`` has no response store, so
-   there is nowhere to repoint them. THIS IS REAL DATA LOSS if the deployment
-   already collects custom form answers on period signups — see the PR
-   description; pre-production it is empty or throwaway.
+2. ``custom_answers`` rows for converted period signups are deleted. That FK
+   is NO ACTION, so the signup delete would otherwise fail outright.
+   ``custom_answers`` is the legacy pre-Phase-22 answer store, written by no
+   live code path (only a test helper references it); the Phase 22 store is
+   ``signup_responses``, which is preserved — see below.
+3. ``sent_notifications`` rows for converted period signups are deleted (also
+   NO ACTION). These are per-signup reminder-dedup markers, not user data;
+   the worst case is one duplicate reminder for a signup mid-flight.
+
+NOT a casualty: ``signup_responses`` (Phase 22 custom form answers) are
+*repointed* to the new shift signup rather than dropped. The table gains the
+same dual anchor as ``magic_link_tokens`` and ``sent_notifications``, because
+without it the custom form would stop collecting answers for period signups
+altogether — those no longer have a ``Signup`` row to hang off.
 
 Revision ID: 0037_add_shifts
 Revises: 0036_add_site_settings_contact_email
@@ -227,6 +231,79 @@ def upgrade() -> None:
         "(signup_id IS NULL AND shift_signup_id IS NOT NULL)",
     )
 
+    # ---- 3b. sent_notifications: the same two anchors -----------------------
+    # The dedup key is (anchor, kind). A shift signup gets reminders and
+    # reschedule notices just like a slot signup did, so it needs its own
+    # anchor and its own unique index — one partial index per anchor, because
+    # a single index over two nullable columns would let (NULL, kind) rows
+    # repeat and silently disable dedup.
+    op.alter_column("sent_notifications", "signup_id", nullable=True)
+    op.add_column(
+        "sent_notifications",
+        sa.Column(
+            "shift_signup_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("shift_signups.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
+    )
+    op.create_check_constraint(
+        "ck_sent_notifications_exactly_one_anchor",
+        "sent_notifications",
+        "(signup_id IS NOT NULL AND shift_signup_id IS NULL) OR "
+        "(signup_id IS NULL AND shift_signup_id IS NOT NULL)",
+    )
+    op.drop_index("uq_sent_notifications_signup_kind", table_name="sent_notifications")
+    op.create_index(
+        "uq_sent_notifications_signup_kind",
+        "sent_notifications",
+        ["signup_id", "kind"],
+        unique=True,
+        postgresql_where=sa.text("signup_id IS NOT NULL"),
+    )
+    op.create_index(
+        "uq_sent_notifications_shift_signup_kind",
+        "sent_notifications",
+        ["shift_signup_id", "kind"],
+        unique=True,
+        postgresql_where=sa.text("shift_signup_id IS NOT NULL"),
+    )
+
+    # ---- 3c. signup_responses: the same two anchors -------------------------
+    # Phase 22 form answers must follow the commitment, so this anchor is what
+    # keeps the custom form working for period signups at all.
+    op.alter_column("signup_responses", "signup_id", nullable=True)
+    op.add_column(
+        "signup_responses",
+        sa.Column(
+            "shift_signup_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("shift_signups.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
+    )
+    op.create_check_constraint(
+        "ck_signup_responses_exactly_one_anchor",
+        "signup_responses",
+        "(signup_id IS NOT NULL AND shift_signup_id IS NULL) OR "
+        "(signup_id IS NULL AND shift_signup_id IS NOT NULL)",
+    )
+    op.drop_index("uq_signup_responses_signup_field", table_name="signup_responses")
+    op.create_index(
+        "uq_signup_responses_signup_field",
+        "signup_responses",
+        ["signup_id", "field_id"],
+        unique=True,
+        postgresql_where=sa.text("signup_id IS NOT NULL"),
+    )
+    op.create_index(
+        "uq_signup_responses_shift_signup_field",
+        "signup_responses",
+        ["shift_signup_id", "field_id"],
+        unique=True,
+        postgresql_where=sa.text("shift_signup_id IS NOT NULL"),
+    )
+
     # ---- 4. Backfill: one single-session shift per existing period slot -----
     # A temporary provenance column lets the slot → shift mapping be set with
     # plain set-based UPDATEs instead of a row-by-row loop.
@@ -341,10 +418,21 @@ def upgrade() -> None:
         """
     )
 
-    # ---- 6. Drop the converted period signups ------------------------------
+    # ---- 6. Carry the form answers over, then drop the old signups ---------
+    # Phase 22 responses move to the new commitment. This must happen BEFORE
+    # the signup delete, which would otherwise cascade them away.
+    op.execute(
+        """
+        UPDATE signup_responses sr
+        SET shift_signup_id = ss.id, signup_id = NULL
+        FROM shift_signups ss
+        WHERE ss.migrated_from_signup_id = sr.signup_id
+        """
+    )
+
     # custom_answers and sent_notifications are NO ACTION, so they must go
-    # first or the delete fails. signup_responses and magic_link_tokens
-    # cascade. See the accepted-casualties note at the top.
+    # first or the delete fails. magic_link_tokens cascade. See the
+    # accepted-casualties note at the top.
     op.execute(
         """
         DELETE FROM custom_answers
@@ -427,6 +515,59 @@ def downgrade() -> None:
                ON sa.shift_signup_id = ss.id AND sa.slot_id = sole.slot_id
         ON CONFLICT (volunteer_id, slot_id) DO NOTHING
         """
+    )
+
+    # Repoint the form answers back onto the rebuilt slot signups, matching on
+    # (volunteer, sole session). Answers whose shift gained a second session
+    # have no slot signup to land on and go with the anchor column.
+    op.execute(
+        """
+        UPDATE signup_responses sr
+        SET signup_id = su.id, shift_signup_id = NULL
+        FROM shift_signups ss
+        JOIN (
+            SELECT shift_id, (array_agg(id))[1] AS slot_id, count(*) AS n
+            FROM slots WHERE shift_id IS NOT NULL GROUP BY shift_id
+        ) sole ON sole.shift_id = ss.shift_id AND sole.n = 1
+        JOIN signups su
+          ON su.volunteer_id = ss.volunteer_id AND su.slot_id = sole.slot_id
+        WHERE sr.shift_signup_id = ss.id
+        """
+    )
+    op.drop_constraint(
+        "ck_signup_responses_exactly_one_anchor", "signup_responses", type_="check"
+    )
+    op.execute("DELETE FROM signup_responses WHERE signup_id IS NULL")
+    op.drop_index(
+        "uq_signup_responses_shift_signup_field", table_name="signup_responses"
+    )
+    op.drop_index("uq_signup_responses_signup_field", table_name="signup_responses")
+    op.drop_column("signup_responses", "shift_signup_id")
+    op.alter_column("signup_responses", "signup_id", nullable=False)
+    op.create_index(
+        "uq_signup_responses_signup_field",
+        "signup_responses",
+        ["signup_id", "field_id"],
+        unique=True,
+    )
+
+    op.drop_constraint(
+        "ck_sent_notifications_exactly_one_anchor", "sent_notifications", type_="check"
+    )
+    # Dedup markers for shift signups have no slot-level equivalent, so they
+    # go; the worst case after a downgrade is one duplicate reminder.
+    op.execute("DELETE FROM sent_notifications WHERE signup_id IS NULL")
+    op.drop_index(
+        "uq_sent_notifications_shift_signup_kind", table_name="sent_notifications"
+    )
+    op.drop_index("uq_sent_notifications_signup_kind", table_name="sent_notifications")
+    op.drop_column("sent_notifications", "shift_signup_id")
+    op.alter_column("sent_notifications", "signup_id", nullable=False)
+    op.create_index(
+        "uq_sent_notifications_signup_kind",
+        "sent_notifications",
+        ["signup_id", "kind"],
+        unique=True,
     )
 
     op.drop_constraint(

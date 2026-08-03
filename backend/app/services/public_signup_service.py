@@ -3,12 +3,19 @@
 Handles the full create-signup flow:
 1. Normalize phone to E.164
 2. Upsert volunteer by email
-3. Create one Signup per slot_id (with capacity check + FOR UPDATE lock)
+3. Book each requested unit — a Shift (all-or-nothing bundle of sessions) or
+   an orientation Slot — with a capacity check under a FOR UPDATE row lock
 4. Issue signup_confirm magic-link token (14-day TTL)
 5. Enqueue confirmation email via Celery
 
-Returns PublicSignupResponse with volunteer_id, signup_ids, magic_link_sent=True.
-When EXPOSE_TOKENS_FOR_TESTING=1, also returns confirm_token (dev/test only).
+2026-08-02 shifts design: period slots are no longer bookable on their own.
+They are *sessions* inside a shift, and a shift signup covers all of them.
+``slot_ids`` therefore accepts orientation slots only; a bare period-slot id
+is refused. Orientation keeps its own ``Signup`` rows end to end.
+
+Returns PublicSignupResponse with volunteer_id, signup_ids, shift_signup_ids,
+magic_link_sent=True. When EXPOSE_TOKENS_FOR_TESTING=1, also returns
+confirm_token (dev/test only).
 """
 import os
 from datetime import datetime, timezone
@@ -18,9 +25,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from ..models import Event, MagicLinkPurpose, Signup, SignupStatus, Slot, SlotType
+from ..models import (
+    Event,
+    MagicLinkPurpose,
+    Shift,
+    ShiftSignup,
+    Signup,
+    SignupStatus,
+    Slot,
+    SlotType,
+)
 from ..schemas import PublicSignupCreate, PublicSignupResponse, PublicSignupResultItem
-from . import form_schema_service
+from . import form_schema_service, shift_service
 from .phone_service import InvalidPhoneError, normalize_us_phone
 from .volunteer_service import upsert_volunteer
 from .waitlist_service import compute_waitlist_position
@@ -79,6 +95,24 @@ def _ensure_event_visible(db: Session, event_id) -> None:
         raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
 
 
+def _ensure_units_visible(db: Session, slot_ids, shift_ids) -> None:
+    """Same contract as ``_ensure_slots_visible`` below, extended to shifts:
+    every event referenced by either list has its visibility enforced BEFORE
+    any other per-event validation runs."""
+    _ensure_slots_visible(db, slot_ids)
+    if not shift_ids:
+        return
+    event_ids = (
+        db.execute(
+            select(Shift.event_id).where(Shift.id.in_(set(shift_ids))).distinct()
+        )
+        .scalars()
+        .all()
+    )
+    for event_id in event_ids:
+        _ensure_event_visible(db, event_id)
+
+
 def _ensure_slots_visible(db: Session, slot_ids) -> None:
     """Fix round 1 (Task 2 review) — resolve every event referenced by
     ``slot_ids`` and enforce visibility on all of them BEFORE any other
@@ -126,8 +160,46 @@ def _ensure_signup_window(db: Session, event_id, bypass: bool = False) -> None:
         )
 
 
-def _ensure_orientation_requirement(db: Session, email: str, slot_ids) -> None:
+def _reject_bare_period_slots(db: Session, slot_ids) -> None:
+    """2026-08-02 shifts: a period slot is a session inside a shift, so it is
+    not bookable by itself. Reject rather than silently ignore — a client
+    sending one is out of date and would otherwise think it booked something.
+
+    Safe to be specific here: ``_ensure_units_visible`` has already 404'd
+    anything belonging to a non-public event, so any id that reaches this point
+    names a slot the public event page lists anyway.
+    """
+    if not slot_ids:
+        return
+    offenders = (
+        db.execute(
+            select(Slot.id).where(
+                Slot.id.in_(set(slot_ids)), Slot.slot_type == SlotType.PERIOD
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if offenders:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PERIOD_SLOT_NOT_BOOKABLE",
+                "message": (
+                    "Sessions are booked as part of a shift. Send the shift id "
+                    "instead of the session id."
+                ),
+                "slot_ids": [str(sid) for sid in offenders],
+            },
+        )
+
+
+def _ensure_orientation_requirement(db: Session, email: str, slot_ids, shift_ids) -> None:
     """Batch constraints: one event per signup + orientation requirement.
+
+    2026-08-02 shifts: the orientation gate is retargeted from period slots to
+    shifts. Selecting a shift is what makes orientation credit necessary; the
+    logic is otherwise unchanged.
 
     Single-event: nothing in the product ever signs up across events in one
     request (the event page submits its own slots), and multi-event batches
@@ -154,11 +226,16 @@ def _ensure_orientation_requirement(db: Session, email: str, slot_ids) -> None:
         db.execute(select(Slot).where(Slot.id.in_(set(slot_ids))))
         .scalars()
         .all()
-    )
-    if not slots:
-        return  # all ids unknown — the per-slot loop 404s
+    ) if slot_ids else []
+    shifts = (
+        db.execute(select(Shift).where(Shift.id.in_(set(shift_ids))))
+        .scalars()
+        .all()
+    ) if shift_ids else []
+    if not slots and not shifts:
+        return  # all ids unknown — the booking loop 404s
 
-    event_ids = {s.event_id for s in slots}
+    event_ids = {s.event_id for s in slots} | {sh.event_id for sh in shifts}
     if len(event_ids) > 1:
         raise HTTPException(
             status_code=422,
@@ -169,7 +246,7 @@ def _ensure_orientation_requirement(db: Session, email: str, slot_ids) -> None:
         )
     event_id = next(iter(event_ids))
 
-    if not any(s.slot_type == SlotType.PERIOD for s in slots):
+    if not shifts:
         return  # orientation-only selections always pass
     if any(s.slot_type == SlotType.ORIENTATION for s in slots):
         return  # doing orientation as part of this signup
@@ -226,13 +303,18 @@ def create_public_signup(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # 1a. Visibility guard — must run before ANY other per-event validation
-    # (esp. 1b below) so a private event 404s identically to a nonexistent
-    # one on every branch, not just the per-slot loop further down.
-    _ensure_slots_visible(db, payload.slot_ids)
+    # (esp. 1c below) so a private event 404s identically to a nonexistent
+    # one on every branch, not just the booking loop further down.
+    _ensure_units_visible(db, payload.slot_ids, payload.shift_ids)
 
-    # 1b. Orientation requirement — enforced before any write so a rejected
+    # 1b. A period slot id is a client sending the old shape.
+    _reject_bare_period_slots(db, payload.slot_ids)
+
+    # 1c. Orientation requirement — enforced before any write so a rejected
     # signup leaves no volunteer/signup rows behind.
-    _ensure_orientation_requirement(db, str(payload.email), payload.slot_ids)
+    _ensure_orientation_requirement(
+        db, str(payload.email), payload.slot_ids, payload.shift_ids
+    )
 
     # 2. Upsert volunteer by email
     volunteer = upsert_volunteer(
@@ -243,9 +325,43 @@ def create_public_signup(
         phone_e164=phone_e164,
     )
 
-    # 3. Load slots, lock them, check capacity, create one Signup per slot
+    # 3. Book each unit. Orientation slots keep their own Signup rows; shifts
+    # get a ShiftSignup that covers every session inside them.
     signups = []
+    shift_signups: list[ShiftSignup] = []
     checked_events: set = set()
+
+    for shift_id in payload.shift_ids:
+        # The capacity gate is the shift row lock, exactly the pattern slots
+        # used — one level up, because the shift owns the counter now.
+        shift = shift_service.lock_shift(db, shift_id)
+        if shift is None:
+            raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
+        if shift.event_id not in checked_events:
+            _ensure_event_visible(db, shift.event_id)
+            _ensure_signup_window(db, shift.event_id)
+            checked_events.add(shift.event_id)
+
+        at_capacity = shift.current_count >= shift.capacity
+        try:
+            shift_signup = ShiftSignup(
+                volunteer_id=volunteer.id,
+                shift_id=shift.id,
+                status=(
+                    SignupStatus.waitlisted if at_capacity else SignupStatus.pending
+                ),
+            )
+            db.add(shift_signup)
+            if not at_capacity:
+                shift.current_count += 1  # pending counts against capacity
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=409, detail=f"already signed up for shift {shift_id}"
+            )
+        shift_signups.append(shift_signup)
+
     for slot_id in payload.slot_ids:
         slot = (
             db.query(Slot)
@@ -290,11 +406,16 @@ def create_public_signup(
             raise HTTPException(status_code=409, detail=f"already signed up for slot {slot_id}")
         signups.append(signup)
 
-    # 4. Issue magic-link token anchored to first signup, 14-day TTL
+    # 4. Issue magic-link token, 14-day TTL. It anchors to the orientation
+    # signup when there is one, else to the first shift signup — a shift-only
+    # batch has no Signup row to point at. consume() still resolves the rest of
+    # the batch by email + event, so which anchor is used doesn't change the
+    # confirm semantics.
     from ..magic_link_service import issue_token, SIGNUP_CONFIRM_TTL_MINUTES
     raw_token = issue_token(
         db,
-        signup=signups[0],
+        signup=signups[0] if signups else None,
+        shift_signup=None if signups else shift_signups[0],
         email=volunteer.email,
         purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
         volunteer_id=volunteer.id,
@@ -306,10 +427,11 @@ def create_public_signup(
     # worker opens its own session, so enqueuing before commit caused an
     # intermittent "missing entity, skipping" race when the worker queried
     # rows that hadn't committed yet.
-    event_id = signups[0].slot.event_id
+    event_id = signups[0].slot.event_id if signups else shift_signups[0].shift.event_id
     confirmation_email_args = dict(
         volunteer_id=str(volunteer.id),
         signup_ids=[str(s.id) for s in signups],
+        shift_signup_ids=[str(s.id) for s in shift_signups],
         token=raw_token,
         event_id=str(event_id),
     )
@@ -322,6 +444,10 @@ def create_public_signup(
     if responses_in:
         for signup in signups:
             form_schema_service.persist_responses(db, signup.id, responses_in)
+        for shift_signup in shift_signups:
+            form_schema_service.persist_responses(
+                db, responses=responses_in, shift_signup_id=shift_signup.id
+            )
         effective_schema = form_schema_service.get_effective_schema(db, event_id)
         missing_required = form_schema_service.validate_responses(
             effective_schema, responses_in
@@ -351,10 +477,20 @@ def create_public_signup(
                 position=position,
             )
         )
+    for ss in shift_signups:
+        result_items.append(
+            PublicSignupResultItem(
+                shift_signup_id=ss.id,
+                shift_id=ss.shift_id,
+                status=ss.status,
+                position=shift_service.waitlist_position(db, ss),
+            )
+        )
 
     response_kwargs: dict = dict(
         volunteer_id=volunteer.id,
         signup_ids=[s.id for s in signups],
+        shift_signup_ids=[s.id for s in shift_signups],
         magic_link_sent=True,
         missing_required=missing_required,
         signups=result_items,

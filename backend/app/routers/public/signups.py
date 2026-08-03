@@ -19,10 +19,12 @@ from ...magic_link_service import (
     MANAGE_PURPOSES,
     ConsumeResult,
     _lookup_token,
+    anchor_event_id,
     consume_token,
     zero_confirm_reason,
 )
-from ...models import Signup, SignupStatus, Slot
+from ...models import Shift, ShiftSignup, Signup, SignupStatus, Slot
+from ...services import shift_service
 from ...services.public_signup_service import create_public_signup
 from ...services.phone_service import InvalidPhoneError
 from ...services.settings_service import get_app_settings
@@ -76,8 +78,8 @@ def confirm_signup(
             reason = zero_confirm_reason(signup)
             messages = {
                 "waitlisted": (
-                    "You're on the waitlist for this slot — we'll email you "
-                    "if a spot opens up."
+                    "You're on the waitlist — we'll email you if a spot "
+                    "opens up."
                 ),
                 "promotion_pending": (
                     "This link didn't confirm a seat. Your spot came from a "
@@ -127,7 +129,12 @@ def manage_signups(
     if token_row.purpose not in MANAGE_PURPOSES:
         raise HTTPException(status_code=400, detail="token not valid for manage")
 
-    anchor = db.get(Signup, token_row.signup_id)
+    # 2026-08-02 shifts: the token anchors to an orientation Signup or to a
+    # ShiftSignup — a shift-only batch has no Signup row at all.
+    if token_row.shift_signup_id is not None:
+        anchor = db.get(models.ShiftSignup, token_row.shift_signup_id)
+    else:
+        anchor = db.get(Signup, token_row.signup_id)
     if anchor is None:
         raise HTTPException(status_code=400, detail="token references missing signup")
 
@@ -135,10 +142,9 @@ def manage_signups(
     if volunteer is None:
         raise HTTPException(status_code=400, detail="token references missing volunteer")
 
-    anchor_slot = db.get(Slot, anchor.slot_id)
-    if anchor_slot is None:
+    event_id = anchor_event_id(db, anchor)
+    if event_id is None:
         raise HTTPException(status_code=400, detail="anchor slot not found")
-    event_id = anchor_slot.event_id
 
     # Phase 25 (WAIT-01): include waitlisted signups so the manage page can
     # show "Waitlist #N" alongside confirmed/pending rows.
@@ -185,11 +191,39 @@ def manage_signups(
             )
         )
 
+    shift_signups = (
+        db.query(ShiftSignup)
+        .join(Shift, Shift.id == ShiftSignup.shift_id)
+        .filter(
+            ShiftSignup.volunteer_id == token_row.volunteer_id,
+            Shift.event_id == event_id,
+            ShiftSignup.status.in_(
+                [
+                    SignupStatus.pending,
+                    SignupStatus.confirmed,
+                    SignupStatus.waitlisted,
+                ]
+            ),
+        )
+        .order_by(Shift.sort_order)
+        .all()
+    )
+    shift_signup_reads = [
+        schemas.TokenedShiftSignupRead(
+            shift_signup_id=ss.id,
+            status=ss.status,
+            shift=shift_service.to_public_shift(ss.shift),
+            waitlist_position=shift_service.waitlist_position(db, ss),
+        )
+        for ss in shift_signups
+    ]
+
     return schemas.TokenedManageRead(
         volunteer_id=token_row.volunteer_id,
         volunteer_first_name=volunteer.first_name,
         volunteer_last_name=volunteer.last_name,
         event_id=event_id,
         signups=signup_reads,
+        shift_signups=shift_signup_reads,
         contact_email=(get_app_settings(db).contact_email or None),
     )

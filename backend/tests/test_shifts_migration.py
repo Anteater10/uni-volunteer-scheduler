@@ -309,13 +309,81 @@ def test_casualties_are_confined_to_converted_period_signups(migrated):
             h="hash-orient-a",
         ) == 1
 
-        # Documented casualties 2 and 3.
+        # Documented casualties 2 and 3: the legacy answer store and the
+        # reminder-dedup markers.
         assert count("SELECT count(*) FROM custom_answers") == 0
         assert count("SELECT count(*) FROM sent_notifications") == 0
-        assert count("SELECT count(*) FROM signup_responses") == 0
 
         # The question itself belongs to the event, not the signup — it stays.
         assert count("SELECT count(*) FROM custom_questions") == 1
+
+
+def test_phase_22_form_answers_follow_the_commitment(migrated):
+    """signup_responses is explicitly NOT a casualty — the answers move to the
+    new shift signup instead of cascading away with the old slot signup."""
+    with migrated.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT sr.field_id, sr.value_text, sr.signup_id, v.email "
+                "FROM signup_responses sr "
+                "JOIN shift_signups ss ON ss.id = sr.shift_signup_id "
+                "JOIN volunteers v ON v.id = ss.volunteer_id"
+            )
+        ).one()
+
+    assert (row.field_id, row.value_text) == ("dietary", "none")
+    assert row.signup_id is None, "exactly one anchor — the old one is released"
+    assert row.email == "v-confirmed-a@mig.test", "landed on the right volunteer"
+
+
+def test_response_and_notification_anchors_are_exclusive(migrated):
+    from sqlalchemy.exc import IntegrityError
+
+    with migrated.begin() as conn:
+        shift_signup_id = conn.execute(
+            text("SELECT id FROM shift_signups LIMIT 1")
+        ).scalar()
+        signup_id = conn.execute(text("SELECT id FROM signups LIMIT 1")).scalar()
+
+        # Both anchors set is as invalid as neither.
+        with pytest.raises(IntegrityError):
+            conn.execute(
+                text(
+                    "INSERT INTO signup_responses "
+                    "(id, signup_id, shift_signup_id, field_id, value_text) "
+                    "VALUES (:id, :su, :ss, 'dietary', 'x')"
+                ),
+                {"id": str(uuid.uuid4()), "su": signup_id, "ss": shift_signup_id},
+            )
+
+
+def test_shift_signup_reminder_dedup_still_dedups(migrated):
+    """The dedup index has to be *partial* per anchor. A single index over both
+    nullable columns would treat every (NULL, kind) row as distinct and let the
+    same reminder send twice."""
+    from sqlalchemy.exc import IntegrityError
+
+    with migrated.begin() as conn:
+        shift_signup_id = conn.execute(
+            text("SELECT id FROM shift_signups LIMIT 1")
+        ).scalar()
+        conn.execute(
+            text(
+                "INSERT INTO sent_notifications (shift_signup_id, kind, sent_at) "
+                "VALUES (:ss, 'reminder_24h', now())"
+            ),
+            {"ss": shift_signup_id},
+        )
+
+    with migrated.begin() as conn:
+        with pytest.raises(IntegrityError):
+            conn.execute(
+                text(
+                    "INSERT INTO sent_notifications (shift_signup_id, kind, sent_at) "
+                    "VALUES (:ss, 'reminder_24h', now())"
+                ),
+                {"ss": shift_signup_id},
+            )
 
 
 def test_slot_membership_invariant_is_enforced(migrated):
@@ -390,3 +458,9 @@ def test_downgrade_rebuilds_slot_signups_then_round_trips(
         assert conn.execute(
             text("SELECT count(*) FROM session_attendance")
         ).scalar() == 3
+        # The form answer survived down *and* back up, re-anchored each way.
+        assert conn.execute(
+            text(
+                "SELECT count(*) FROM signup_responses WHERE shift_signup_id IS NOT NULL"
+            )
+        ).scalar() == 1

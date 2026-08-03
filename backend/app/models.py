@@ -521,6 +521,17 @@ class ShiftSignup(Base):
         back_populates="shift_signup",
         cascade="all, delete-orphan",
     )
+    sent_notifications = relationship(
+        "SentNotification",
+        back_populates="shift_signup",
+        cascade="all, delete-orphan",
+    )
+    responses = relationship(
+        "SignupResponse",
+        back_populates="shift_signup",
+        cascade="all, delete-orphan",
+    )
+    # `magic_link_tokens` arrives as a backref from MagicLinkToken.shift_signup.
 
 
 class SessionAttendance(Base):
@@ -909,23 +920,52 @@ class OrientationCredit(Base):
 class SentNotification(Base):
     """Dedup table for exactly-once email delivery.
 
-    The UNIQUE(signup_id, kind) constraint is the dedup key: Celery tasks
+    The UNIQUE(anchor, kind) constraint is the dedup key: Celery tasks
     INSERT ... ON CONFLICT DO NOTHING before calling the email provider.
     If the insert returns 0 rows, the email was already sent.
+
+    2026-08-02 shifts: exactly one of ``signup_id`` (orientation) or
+    ``shift_signup_id`` (a shift commitment) is set. Each anchor gets its own
+    *partial* unique index — one index across both nullable columns would
+    treat every (NULL, kind) pair as distinct and quietly disable dedup.
     """
     __tablename__ = "sent_notifications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id"), nullable=False)
+    signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id"), nullable=True)
+    shift_signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shift_signups.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     kind = Column(String(32), nullable=False)  # magic_link|reminder_24h|reminder_1h|cancellation|reschedule
     sent_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     provider_id = Column(String(255), nullable=True)  # Resend message id
 
     __table_args__ = (
-        Index("uq_sent_notifications_signup_kind", "signup_id", "kind", unique=True),
+        Index(
+            "uq_sent_notifications_signup_kind",
+            "signup_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("signup_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_sent_notifications_shift_signup_kind",
+            "shift_signup_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("shift_signup_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(signup_id IS NOT NULL AND shift_signup_id IS NULL) OR "
+            "(signup_id IS NULL AND shift_signup_id IS NOT NULL)",
+            name="ck_sent_notifications_exactly_one_anchor",
+        ),
     )
 
     signup = relationship("Signup", back_populates="sent_notifications")
+    shift_signup = relationship("ShiftSignup", back_populates="sent_notifications")
 
 # -------------------------
 # Signup responses (Phase 22 — custom form fields)
@@ -938,6 +978,11 @@ class SignupResponse(Base):
     lives on the event (``Event.form_schema``) or template
     (``Module.default_form_schema``); responses are snapshotted by
     ``field_id`` so schema edits don't retroactively break old signups.
+
+    2026-08-02 shifts: exactly one of ``signup_id`` (orientation) or
+    ``shift_signup_id`` (a shift commitment) is set. Without the second anchor
+    the custom form would simply stop collecting answers for period signups,
+    since those no longer have a ``Signup`` row to hang off.
     """
 
     __tablename__ = "signup_responses"
@@ -950,7 +995,12 @@ class SignupResponse(Base):
     signup_id = Column(
         UUID(as_uuid=True),
         ForeignKey("signups.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+    shift_signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shift_signups.id", ondelete="CASCADE"),
+        nullable=True,
     )
     field_id = Column(String(128), nullable=False)
     value_text = Column(Text, nullable=True)
@@ -966,15 +1016,31 @@ class SignupResponse(Base):
     )
 
     __table_args__ = (
+        # Partial, for the same reason SentNotification's are: a single index
+        # over a nullable anchor would let duplicates through as (NULL, field).
         Index(
             "uq_signup_responses_signup_field",
             "signup_id",
             "field_id",
             unique=True,
+            postgresql_where=text("signup_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_signup_responses_shift_signup_field",
+            "shift_signup_id",
+            "field_id",
+            unique=True,
+            postgresql_where=text("shift_signup_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(signup_id IS NOT NULL AND shift_signup_id IS NULL) OR "
+            "(signup_id IS NULL AND shift_signup_id IS NOT NULL)",
+            name="ck_signup_responses_exactly_one_anchor",
         ),
     )
 
     signup = relationship("Signup", back_populates="responses")
+    shift_signup = relationship("ShiftSignup", back_populates="responses")
 
 
 # Phase 08: PrereqOverride model REMOVED (D-05).

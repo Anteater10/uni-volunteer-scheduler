@@ -4,7 +4,14 @@ from datetime import date as DateType, datetime, timezone
 from typing import Optional, List, Literal, Dict, Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType
 
@@ -124,6 +131,12 @@ class SlotRead(ORMBase, SlotBase):
     slot_type: Optional[SlotType] = None
     date: Optional[DateType] = None
     location: Optional[str] = None
+    # Shifts design: a period slot is a *session* inside a shift, and its
+    # capacity/current_count above are inert — the shift owns the counter.
+    # NULL shift_id means an orientation slot, which is still bookable alone.
+    shift_id: Optional[UUID] = None
+    name: Optional[str] = None
+    sort_order: int = 0
 
     # Same method name as SlotBase's validator → replaces it, so Read
     # payloads keep the UTC offset instead of stripping it.
@@ -163,6 +176,91 @@ class SlotRecurrenceCreate(BaseModel):
 
 
 # =========================
+# SHIFT SCHEMAS
+# =========================
+# A shift is the bookable unit: volunteers commit to all of its sessions or
+# none of them. Sessions are Slot rows with slot_type='period'; the shift
+# carries the single capacity and the single waitlist.
+class ShiftSessionBase(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    name: Optional[str] = None
+    date: Optional[DateType] = None
+    location: Optional[str] = None
+    sort_order: int = 0
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalize_session_datetimes(cls, value: datetime) -> datetime:
+        return _to_utc_naive(value)
+
+
+class ShiftSessionCreate(ShiftSessionBase):
+    pass
+
+
+class ShiftSessionUpdate(BaseModel):
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    name: Optional[str] = None
+    date: Optional[DateType] = None
+    location: Optional[str] = None
+    sort_order: Optional[int] = None
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def normalize_session_update_datetimes(cls, value: datetime | None) -> datetime | None:
+        return _to_utc_naive(value)
+
+
+class ShiftCreate(BaseModel):
+    name: str = Field(min_length=1)
+    capacity: int = Field(gt=0)
+    sort_order: int = 0
+    # A shift with no sessions is not bookable and cannot be checked in to,
+    # so it is rejected rather than stored as an empty shell.
+    sessions: List[ShiftSessionCreate] = Field(min_length=1)
+
+
+class ShiftUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1)
+    capacity: Optional[int] = Field(default=None, gt=0)
+    sort_order: Optional[int] = None
+
+
+class ShiftRead(ORMBase):
+    id: UUID
+    event_id: UUID
+    name: str
+    sort_order: int
+    capacity: int
+    current_count: int
+    sessions: List[SlotRead] = []
+
+
+class ShiftReorderRequest(BaseModel):
+    """Full ordering for one event's shifts — every shift id, in display
+    order. Partial lists are rejected so two concurrent reorders cannot
+    interleave into an order neither organizer asked for."""
+    shift_ids: List[UUID] = Field(min_length=1)
+
+
+class SlotGenerationResult(BaseModel):
+    """What a recurrence produced. An orientation recurrence fills `slots`; a
+    period recurrence fills `shifts` (one single-session shift per occurrence,
+    which is what those slots used to be)."""
+
+    slots: List[SlotRead] = []
+    shifts: List[ShiftRead] = []
+
+
+class SessionReorderRequest(BaseModel):
+    """Full ordering for one shift's sessions. Same all-or-nothing contract as
+    `ShiftReorderRequest`."""
+    session_ids: List[UUID] = Field(min_length=1)
+
+
+# =========================
 # EVENT SCHEMAS
 # =========================
 class EventBase(BaseModel):
@@ -189,7 +287,10 @@ class EventCreate(EventBase):
     week_number: Optional[int] = None
     school: Optional[str] = None
     module_slug: Optional[str] = None
+    # Only orientation slots may be created here — a period slot has to belong
+    # to a shift, so bundles come in through `shifts`.
     slots: Optional[List[SlotCreate]] = None
+    shifts: Optional[List[ShiftCreate]] = None
     # Duplicate flow: the event this payload was prefilled from. The server
     # copies what the form can't carry (form_schema, reminder toggle,
     # shifted signup window) and audits the create as event_duplicate.
@@ -208,7 +309,11 @@ class EventRead(ORMBase, EventBase):
     # Set once every expected signup is resolved (attended/no_show); null
     # again after a reopen. The admin list derives its Completed badge here.
     completed_at: Optional[datetime] = None
+    # `slots` stays the flat list (orientation slots plus every shift's
+    # sessions) so check-in windows and ICS generation keep one place to look;
+    # `shifts` is the bookable view.
     slots: List[SlotRead] = []
+    shifts: List[ShiftRead] = []
 
     # Same method name as EventBase's validator → replaces it, so Read
     # payloads keep the UTC offset instead of stripping it.
@@ -632,30 +737,49 @@ class VolunteerRead(BaseModel):
 
 
 class PublicSignupCreate(VolunteerCreate):
-    slot_ids: List[UUID] = Field(min_length=1, max_length=20)
+    # 2026-08-02 shifts: `slot_ids` is now orientation-only — a bare period
+    # slot id is refused, because period slots are booked as part of a shift.
+    # `shift_ids` carries the bundles. At least one of the two is required.
+    slot_ids: List[UUID] = Field(default_factory=list, max_length=20)
+    shift_ids: List[UUID] = Field(default_factory=list, max_length=20)
     # Phase 22: optional dynamic form responses keyed by field_id. Soft-warn:
     # backend does NOT raise if a required field is skipped — just records
     # the missing field_ids in the response for organizer display.
     responses: Optional[List["SignupResponseCreate"]] = None
 
+    @model_validator(mode="after")
+    def require_something_to_book(self):
+        if not self.slot_ids and not self.shift_ids:
+            raise ValueError("Select at least one shift or orientation session")
+        return self
+
 
 class PublicSignupResultItem(BaseModel):
-    """Phase 25 — per-signup result so the UI can branch confirmed vs waitlisted."""
+    """Phase 25 — per-signup result so the UI can branch confirmed vs waitlisted.
 
-    signup_id: UUID
+    2026-08-02 shifts: one item per booked unit. An orientation booking sets
+    `signup_id`/`slot_id`; a shift booking sets `shift_signup_id`/`shift_id`.
+    """
+
+    signup_id: Optional[UUID] = None
     # Which slot this result belongs to — lets the UI badge slots without
     # relying on the order of the submitted slot_ids list.
-    slot_id: UUID
+    slot_id: Optional[UUID] = None
+    shift_signup_id: Optional[UUID] = None
+    shift_id: Optional[UUID] = None
     status: SignupStatus
     # 1-indexed position within the waitlist when status == waitlisted. None
     # otherwise. Ordering matches waitlist_service.compute_waitlist_position
-    # (timestamp ASC, id ASC).
+    # (timestamp ASC, id ASC) — for a shift, the same rule one level up.
     position: Optional[int] = None
 
 
 class PublicSignupResponse(BaseModel):
     volunteer_id: UUID
     signup_ids: List[UUID]
+    # Shift commitments created by this batch, alongside `signup_ids` for the
+    # orientation bookings.
+    shift_signup_ids: List[UUID] = []
     magic_link_sent: bool
     confirm_token: str | None = None
     # Phase 22: soft-warn list of field_ids that were required but left blank.
@@ -687,6 +811,33 @@ class PublicSlotRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PublicSessionRead(BaseModel):
+    """One session inside a shift, as the volunteer sees it. Carries a real
+    organizer-given `name` — the old frontend numbered periods itself, which
+    had no database backing and disagreed between views."""
+
+    id: UUID
+    name: Optional[str] = None
+    sort_order: int = 0
+    date: DateType
+    start_time: datetime
+    end_time: datetime
+    location: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicShiftRead(BaseModel):
+    """The bookable unit: commit to every session or none."""
+
+    id: UUID
+    name: str
+    sort_order: int = 0
+    capacity: int
+    filled: int  # = shift.current_count
+    sessions: List[PublicSessionRead] = []
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PublicEventRead(BaseModel):
     id: UUID
     title: str
@@ -703,7 +854,10 @@ class PublicEventRead(BaseModel):
     # an opens/closes banner and disable the submit outside the window.
     signup_open_at: Optional[datetime] = None
     signup_close_at: Optional[datetime] = None
+    # `slots` is orientation-only now — period slots appear as sessions inside
+    # `shifts`, which is what the volunteer actually picks from.
     slots: List[PublicSlotRead] = []
+    shifts: List[PublicShiftRead] = []
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -867,12 +1021,25 @@ class TokenedSignupRead(BaseModel):
     waitlist_position: Optional[int] = None
 
 
+class TokenedShiftSignupRead(BaseModel):
+    """A shift commitment on the read-only manage page: the shift, its sessions
+    in organizer order, and the waitlist position if any."""
+
+    shift_signup_id: UUID
+    status: SignupStatus
+    shift: PublicShiftRead
+    waitlist_position: Optional[int] = None
+
+
 class TokenedManageRead(BaseModel):
     volunteer_id: UUID
     volunteer_first_name: str
     volunteer_last_name: str
     event_id: UUID
+    # Orientation bookings.
     signups: List[TokenedSignupRead]
+    # Shift commitments — the bulk of what a volunteer holds.
+    shift_signups: List[TokenedShiftSignupRead] = []
     contact_email: Optional[str] = None
 
 

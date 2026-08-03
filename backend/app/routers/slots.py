@@ -28,6 +28,17 @@ def _normalize_dt(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _reject_session(slot: models.Slot, use_instead: str) -> None:
+    """2026-08-02 shifts: a slot inside a shift is a *session*. Editing or
+    deleting it has shift-level consequences (its commitment covers every
+    session), so it is handled by the shifts router, not here."""
+    if slot.shift_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This slot is a session inside a shift. Use {use_instead}.",
+        )
+
+
 def _event_is_public(db: Session, event_id) -> bool:
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     return event is not None and event.visibility == "public"
@@ -101,6 +112,19 @@ def create_slot(
     ensure_event_staff_access(event, actor)
     quarter_service.ensure_event_quarter_writable(event)
 
+    # 2026-08-02 shifts: this endpoint creates orientation slots only. A period
+    # slot is a session inside a shift, so it comes in through POST /shifts or
+    # POST /shifts/{id}/sessions. The DB CHECK refuses a shift-less period slot
+    # regardless — this makes it a clear 400 rather than a 500.
+    if slot_in.slot_type != models.SlotType.ORIENTATION:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Period sessions belong to a shift. Create the shift instead "
+                "(POST /shifts), or add a session to one."
+            ),
+        )
+
     start_time = _normalize_dt(slot_in.start_time)
     end_time = _normalize_dt(slot_in.end_time)
     event_start = _normalize_dt(event.start_date)
@@ -155,7 +179,16 @@ def update_slot(
     ensure_event_staff_access(event, actor)
     quarter_service.ensure_event_quarter_writable(event)
 
+    _reject_session(slot, "PATCH /shifts/sessions/{session_id}")
+
     data = slot_in.model_dump(exclude_unset=True)
+    if data.get("slot_type") is not None and data["slot_type"] != slot.slot_type:
+        # Flipping the type would violate ck_slots_shift_membership_matches_type
+        # in one direction and orphan a session in the other.
+        raise HTTPException(
+            status_code=400,
+            detail="A slot's type cannot be changed. Delete it and create the right kind.",
+        )
     if "start_time" in data and data["start_time"] is not None:
         data["start_time"] = _normalize_dt(data["start_time"])
     if "end_time" in data and data["end_time"] is not None:
@@ -237,6 +270,8 @@ def delete_slot(
     # ✅ ownership check
     ensure_event_staff_access(event, actor)
     quarter_service.ensure_event_quarter_writable(event)
+
+    _reject_session(slot, "DELETE /shifts/sessions/{session_id}")
 
     existing_signups = (
         db.query(models.Signup)
