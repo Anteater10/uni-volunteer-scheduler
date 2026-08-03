@@ -93,26 +93,40 @@ def test_event_on_last_day_of_quarter_gets_final_week(
 def test_first_week_of_each_summer_session(
     client, db_session, organizer_headers, module_template
 ):
+    # Sweep remediation task 5 (ended quarters are read-only): dates are
+    # relative to real today, like the last-day test above. The original
+    # hardcoded Jun 22 - Jul 31 / Aug 3 - Sep 11 2026 ranges passed until
+    # 2026-07-31 and failed every run after, because event creation rejects
+    # a quarter whose end_date has passed. Both sessions now start today or
+    # later so neither is read-only whenever this suite runs. The original
+    # shape is preserved: two 40-day sessions with a 2-day gap between them,
+    # and an event on each session's first day.
+    today = datetime.now(timezone.utc).date()  # is_quarter_read_only uses UTC
+    a_start = today
+    a_end = a_start + timedelta(days=39)
+    b_start = a_end + timedelta(days=3)
+    b_end = b_start + timedelta(days=39)
+
     session_a = _seed_quarter(
         db_session,
         season=models.Quarter.SUMMER,
-        year=2026,
+        year=a_start.year,
         label="Session A",
-        start_date=date(2026, 6, 22),
-        end_date=date(2026, 7, 31),
+        start_date=a_start,
+        end_date=a_end,
     )
     session_b = _seed_quarter(
         db_session,
         season=models.Quarter.SUMMER,
-        year=2026,
+        year=b_start.year,
         label="Session B",
-        start_date=date(2026, 8, 3),
-        end_date=date(2026, 9, 11),
+        start_date=b_start,
+        end_date=b_end,
     )
 
     on_a_start = client.post(
         "/api/v1/events/",
-        json=_event_payload("2026-06-22", module_template.slug),
+        json=_event_payload(a_start.isoformat(), module_template.slug),
         headers=organizer_headers,
     )
     assert on_a_start.status_code == 200, on_a_start.text
@@ -121,7 +135,7 @@ def test_first_week_of_each_summer_session(
 
     on_b_start = client.post(
         "/api/v1/events/",
-        json=_event_payload("2026-08-03", module_template.slug),
+        json=_event_payload(b_start.isoformat(), module_template.slug),
         headers=organizer_headers,
     )
     assert on_b_start.status_code == 200, on_b_start.text
