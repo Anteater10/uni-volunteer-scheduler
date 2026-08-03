@@ -422,19 +422,6 @@ async function publicConfirmSignup(token) {
 async function publicGetManageSignups(token) {
   return request("/public/signups/manage", { method: "GET", auth: false, params: { token } });
 }
-async function publicCancelSignup(signupId, token) {
-  return request(`/public/signups/${signupId}`, { method: "DELETE", auth: false, params: { token } });
-}
-
-// Phase 29 (SWAP-02) — participant swap to a different slot in the same event.
-async function publicSwapSignup(signupId, targetSlotId, token) {
-  return request(`/public/signups/${signupId}/swap`, {
-    method: "POST",
-    auth: false,
-    params: { token },
-    body: { target_slot_id: targetSlotId },
-  });
-}
 
 // Phase 24 — volunteer reminder preferences (token-gated)
 async function publicGetPreferences(manageToken) {
@@ -605,10 +592,6 @@ export const api = {
       }),
     confirmSignup: (token) => publicConfirmSignup(token),
     getManageSignups: (token) => publicGetManageSignups(token),
-    cancelSignup: (signupId, token) => publicCancelSignup(signupId, token),
-    // Phase 29 (SWAP-02) — participant swap via manage_token.
-    swapSignup: (signupId, targetSlotId, token) =>
-      publicSwapSignup(signupId, targetSlotId, token),
     // Phase 24 — reminder preferences
     getPreferences: (manageToken) => publicGetPreferences(manageToken),
     updatePreferences: (manageToken, patch) =>
