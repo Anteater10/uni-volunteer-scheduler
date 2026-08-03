@@ -61,7 +61,12 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..signup_service import PromotionResult, mark_promoted_pending
+from ..signup_service import (
+    PromotionResult,
+    ShiftPromotionResult,
+    mark_promoted_pending,
+    mark_shift_promoted_pending,
+)
 from .waitlist_service import SlotEndedError
 
 
@@ -243,3 +248,161 @@ def swap_signup(
     db.flush()
 
     return SwapResult(signup=signup, promotion=promotion)
+
+
+class ShiftSwapResult(NamedTuple):
+    shift_signup: "models.ShiftSignup"
+    promotion: Optional[ShiftPromotionResult]
+
+
+def _lock_shifts_in_order(db: Session, shift_a_id, shift_b_id):
+    """Lock two shift rows FOR UPDATE, id-ordered to avoid deadlocks."""
+    ids = sorted([str(shift_a_id), str(shift_b_id)])
+    rows = (
+        db.query(models.Shift)
+        .filter(models.Shift.id.in_(ids))
+        .order_by(models.Shift.id.asc())
+        .with_for_update()
+        .all()
+    )
+    by_id = {str(r.id): r for r in rows}
+    return by_id.get(str(shift_a_id)), by_id.get(str(shift_b_id))
+
+
+def swap_shift_signup(
+    db: Session,
+    shift_signup_id,
+    target_shift_id,
+    *,
+    actor: Optional[models.User] = None,
+    actor_label: Optional[str] = None,
+) -> ShiftSwapResult:
+    """2026-08-02 shifts: staff move a commitment between shifts.
+
+    Same contract as `swap_signup` one level up — single transaction, both
+    shift rows locked in id order, same-event only, hard fail on a full target
+    with no waitlist fallback, and a waitlisted source self-promotes through
+    the one promotion choke point (`pending` + its own confirm email, which the
+    **caller** enqueues after commit).
+
+    Two rules are specific to shifts:
+
+    - **Recorded attendance blocks the move.** `session_attendance` rows point
+      at the *old* shift's sessions. Moving the commitment would leave them
+      dangling against sessions the volunteer no longer holds, so a
+      part-attended shift is refused outright rather than moved and quietly
+      corrupted. The slot-level code could allow this (an attended signup moved
+      laterally kept its own status), but there the status travelled with the
+      row; here it doesn't.
+    - **Capacity is all-or-nothing.** One seat in the target covers every
+      session in it, so there is no partial move — the same reason a shift has
+      one capacity number.
+    """
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .first()
+    )
+    if shift_signup is None:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+
+    if shift_signup.status == models.SignupStatus.cancelled:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "SIGNUP_NOT_SWAPPABLE",
+                "message": "Cannot swap a signup with status 'cancelled'.",
+            },
+        )
+
+    if shift_signup.session_attendance:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "SIGNUP_NOT_SWAPPABLE",
+                "message": (
+                    "Attendance has already been recorded for this shift. "
+                    "Correct the attendance first, or cancel and re-book."
+                ),
+            },
+        )
+
+    source_shift_id = shift_signup.shift_id
+    if str(source_shift_id) == str(target_shift_id):
+        raise HTTPException(
+            status_code=400, detail="Target shift must be different from source"
+        )
+
+    source_shift, target_shift = _lock_shifts_in_order(
+        db, source_shift_id, target_shift_id
+    )
+    if source_shift is None:
+        raise HTTPException(status_code=404, detail="Source shift not found")
+    if target_shift is None:
+        raise HTTPException(status_code=404, detail="Target shift not found")
+    if source_shift.event_id != target_shift.event_id:
+        raise HTTPException(
+            status_code=400, detail="Target shift must be in the same event"
+        )
+
+    existing = (
+        db.query(models.ShiftSignup)
+        .filter(
+            models.ShiftSignup.shift_id == target_shift.id,
+            models.ShiftSignup.volunteer_id == shift_signup.volunteer_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        # uq_shift_signups_volunteer_id_shift_id would raise an opaque 500 here.
+        raise HTTPException(
+            status_code=409,
+            detail="This volunteer already has a booking in the target shift",
+        )
+
+    if target_shift.current_count >= target_shift.capacity:
+        raise HTTPException(status_code=409, detail="target shift full")
+
+    previous_status = shift_signup.status
+    holds_capacity = previous_status in (
+        models.SignupStatus.pending,
+        models.SignupStatus.confirmed,
+    )
+
+    shift_signup.shift_id = target_shift.id
+    promotion: Optional[ShiftPromotionResult] = None
+    if holds_capacity:
+        if source_shift.current_count > 0:
+            source_shift.current_count -= 1
+        target_shift.current_count += 1
+    else:
+        # Waitlisted source: the move into an open seat *is* the promotion, so
+        # it routes through the same choke point every other staff promotion
+        # uses. The shift_id repoint above happens first so the ended-shift
+        # guard judges the seat actually being offered.
+        try:
+            promotion = mark_shift_promoted_pending(db, shift_signup)
+        except SlotEndedError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
+        target_shift.current_count += 1
+
+    db.flush()
+
+    db.add(
+        models.AuditLog(
+            actor_id=actor.id if actor is not None else None,
+            action="shift_signup_swap",
+            entity_type="ShiftSignup",
+            entity_id=str(shift_signup.id),
+            extra={
+                "from_shift_id": str(source_shift.id),
+                "to_shift_id": str(target_shift.id),
+                "shift_signup_id": str(shift_signup.id),
+                "actor": (actor_label or "staff") if actor is None else "staff",
+            },
+        )
+    )
+    db.flush()
+    return ShiftSwapResult(shift_signup=shift_signup, promotion=promotion)
