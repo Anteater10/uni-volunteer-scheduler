@@ -571,6 +571,13 @@ export const api = {
     update: (id, payload) => updateEvent(id, payload),
     delete: (id) => deleteEvent(id),
   },
+  slots: {
+    list: (params) => listSlots(params),
+    create: (eventId, payload) => createSlot(eventId, payload),
+    update: (slotId, payload) => updateSlot(slotId, payload),
+    delete: (slotId) => deleteSlot(slotId),
+    generate: (eventId, payload) => generateSlots(eventId, payload),
+  },
   notifications: {
     my: (params) => listMyNotifications(params),
   },
