@@ -53,10 +53,12 @@ class TestBuildWaitlistPromotionEmail:
             "A spot opened up — confirm your SciTrek signup for Robots Module"
         )
 
-    def test_mentions_manage_and_cancel(self, db_session):
+    def test_mentions_contact_instruction(self, db_session):
         volunteer, signup, event = _build_fixture_rows(db_session)
         _, html = build_waitlist_promotion_email(
             volunteer, signup, "tok-abc123", event
         )
-        # The same link manages/cancels — the whole point of this change.
-        assert "cancel" in html.lower()
+        # 2026-08-02 read-only signups: no self-service cancel — the email
+        # points any change at the organizer contact (falls back to
+        # "reply to this email" when no site contact_email is configured).
+        assert "reply to this email" in html
