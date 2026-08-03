@@ -1474,7 +1474,7 @@ export default function EventDetailPage() {
                       : "Sign up"}
                 </Button>
                 <p className="mt-2 text-center text-xs text-[var(--color-fg-muted)]">
-                  You'll get a confirmation email with a link to manage or cancel your signups.
+                  You'll get a confirmation email with a link to view your signups.
                 </p>
               </div>
             </form>

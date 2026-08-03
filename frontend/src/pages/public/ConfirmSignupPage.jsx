@@ -122,7 +122,7 @@ export default function ConfirmSignupPage() {
       <div className="max-w-xl mx-auto mt-6 px-4">
         <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
           <p className="text-green-800 font-medium text-sm">
-            Your signup is confirmed! You can manage or cancel your signups
+            Your signup is confirmed! Here's everything you're signed up for
             below.
           </p>
         </div>
