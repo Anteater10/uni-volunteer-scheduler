@@ -38,7 +38,23 @@ def _fmt_slot_time(dt) -> str:
         from datetime import timezone
         dt = dt.replace(tzinfo=timezone.utc)
     local = dt.astimezone(VENUE_TZ)
-    return local.strftime("%I:%M %p %Z")
+    # %I zero-pads ("02:00 PM"); lstrip gives the "2:00 PM" a reader expects.
+    return local.strftime("%I:%M %p %Z").lstrip("0")
+
+
+def _fmt_slot_day(dt) -> str:
+    """'Tuesday, Oct 14' in the venue timezone.
+
+    Same UTC-to-venue conversion as _fmt_slot_time: a slot at 5pm Pacific is
+    stored as midnight UTC the following day, so formatting the date before
+    converting names the wrong day for every late-afternoon session.
+    """
+    if dt.tzinfo is None:
+        from datetime import timezone
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(VENUE_TZ)
+    return local.strftime("%A, %b %d").replace(" 0", " ")
+
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +82,22 @@ def _render_html(template_name: str, **kwargs: str) -> str:
 
 
 def _fmt_when(slot: models.Slot) -> str:
-    return f"{slot.start_time} to {slot.end_time}"
+    """The headline "When:" line for one slot or session.
+
+    This used to interpolate the raw columns, so volunteers were emailed
+    '2026-10-14 14:00:00+00:00 to 2026-10-14 16:00:00+00:00' — a UTC timestamp,
+    for an event that happens in Pacific time, in a field they are meant to read
+    at a glance. It feeds nine builders, and since 2026-08-02 every shift email
+    too via _fmt_shift_when.
+
+    Includes the weekday and date, not just times: this is the one line telling
+    someone which day to turn up, and _fmt_slot_time alone gives clock times
+    with no day attached.
+    """
+    return (
+        f"{_fmt_slot_day(slot.start_time)}, "
+        f"{_fmt_slot_time(slot.start_time)} - {_fmt_slot_time(slot.end_time)}"
+    )
 
 
 def _sessions_in_order(shift: "models.Shift") -> list:
