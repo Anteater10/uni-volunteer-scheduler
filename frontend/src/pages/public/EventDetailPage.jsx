@@ -1,19 +1,20 @@
 // src/pages/public/EventDetailPage.jsx
 //
 // Volunteer-facing sign-up page.
-// Two slot layouts split at the Tailwind `md` (768px) breakpoint:
-//   • Desktop (md+): one <table> for Orientation and one for Modules (period
-//     slots). Each row shows date/time/location, availability, selection, and
-//     an expandable "who's signed up" drawer.
-//   • Mobile (<md): the same slots as stacked cards (never a sideways-scrolling
-//     table) so the page stays 100% usable on a phone.
-// Both layouts live in the DOM at once, toggled by CSS visibility.
+//
+// Two kinds of bookable thing, and they are shaped differently on purpose:
+//   • Orientation slots are single sessions, so they get the two-layout split at
+//     the Tailwind `md` (768px) breakpoint — a <table> on desktop, stacked cards
+//     on mobile. Both live in the DOM at once, toggled by CSS visibility.
+//   • Shifts (2026-08-02) are all-or-nothing bundles of sessions, so they are
+//     cards at every width: a table row cannot hold the sessions inside a shift
+//     without hiding the dates the volunteer needs in order to say yes.
 //
 // E2E CONTRACT (e2e/fixtures.js slotLabel/clickSlotByLabel):
-//   • Desktop table: label cells are <div class="font-medium"> ("Orientation …"
-//     / "Period N") with an in-row "Sign up" button.
-//   • Mobile card: div.rounded-xl whose label is a <p class="font-medium"> with
-//     an in-card "Sign up" button.
+//   • Desktop table: label cells are <div class="font-medium"> ("Orientation …")
+//     with an in-row "Sign up" button.
+//   • Mobile card / shift card: div.rounded-xl whose label is a
+//     <p class="font-medium"> with an in-card "Sign up" button.
 //   Only the layout visible at the current viewport is matched (`:visible`).
 //
 // SECURITY: No PII (name, email, phone) is logged, stored in localStorage/sessionStorage,
@@ -167,11 +168,28 @@ function slotStatus(slot) {
   return "open";
 }
 
+// 2026-08-02 shifts: orientation slots still number themselves (there is
+// nothing else to call them), but the work is booked as shifts, which carry an
+// organizer-given name. The old `Period N` label was derived in this file and
+// had no database backing, so two views could disagree about which period was
+// which — nothing derives a label any more.
 function slotDisplayLabel(slot) {
   if (!slot) return "";
-  return slot.slot_type === "orientation"
-    ? `Orientation ${slot._periodLabel || ""}`.trim()
-    : `Period ${slot._periodLabel || ""}`.trim();
+  if (slot._shiftName) return slot._shiftName;
+  return `Orientation ${slot._periodLabel || ""}`.trim();
+}
+
+// A shift is all-or-nothing, so its availability is one number, not per session.
+function shiftStatus(shift) {
+  return slotStatus({ capacity: shift.capacity, filled: shift.filled });
+}
+
+function sessionsInOrder(shift) {
+  return [...(shift.sessions || [])].sort(
+    (a, b) =>
+      (a.sort_order ?? 0) - (b.sort_order ?? 0) ||
+      String(a.start_time).localeCompare(String(b.start_time)),
+  );
 }
 
 function AvailabilityBadge({ status, selected }) {
@@ -317,9 +335,124 @@ function SlotCard({ slot, selected, onToggle, highlight, showDate }) {
 }
 
 // ---------------------------------------------------------------------------
-// Slot table — the desktop (md+) rendering. One table per group (Orientation /
-// Modules). Label cells are div.font-medium (e2e contract). Each row has an
-// in-row "Sign up" button and an optional expandable "who signed up" drawer.
+// Shift card — the bookable unit for the classroom work, at every breakpoint.
+//
+// Deliberately a card and not a table row: a shift holds several sessions, and
+// one row per shift cannot show them without either hiding the detail the
+// volunteer needs to check their own availability or nesting a table. Same
+// label/button structure as SlotCard so the e2e helpers keep working.
+// ---------------------------------------------------------------------------
+
+function ShiftCard({ shift, selected, onToggle }) {
+  const isFull = (shift.filled ?? 0) >= (shift.capacity ?? 0);
+  const status = shiftStatus(shift);
+  const sessions = sessionsInOrder(shift);
+  const fillPct =
+    shift.capacity > 0
+      ? Math.min(100, Math.round(((shift.filled ?? 0) / shift.capacity) * 100))
+      : 0;
+
+  return (
+    <div
+      data-testid={`shift-${shift.id}`}
+      className={[
+        "rounded-xl border bg-white p-4 shadow-sm transition-colors",
+        selected
+          ? "border-[var(--color-brand)] ring-2 ring-sky-200 bg-sky-50/40"
+          : "border-[var(--color-border)] hover:border-sky-300",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-base font-medium text-[var(--color-fg)]">{shift.name}</p>
+            <AvailabilityBadge status={status} selected={selected} />
+          </div>
+          <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
+            {sessions.length === 1
+              ? "1 session — signing up commits you to it."
+              : `${sessions.length} sessions — signing up commits you to all of them.`}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onToggle(shift.id)}
+          className={[
+            "shrink-0 min-h-11 min-w-[6.5rem] px-4 rounded-lg text-sm font-semibold transition-all shadow-sm",
+            "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 focus-visible:ring-offset-2",
+            isFull
+              ? selected
+                ? "bg-amber-500 text-white"
+                : "bg-amber-600 text-white hover:bg-amber-700"
+              : selected
+                ? "bg-[var(--color-success)] text-white"
+                : "bg-[var(--color-brand)] text-white hover:brightness-110",
+          ].join(" ")}
+        >
+          {isFull
+            ? selected ? "On waitlist" : "Join waitlist"
+            : selected ? "Selected" : "Sign up"}
+        </button>
+      </div>
+
+      <ul className="mt-3 flex flex-col gap-1.5 border-t border-[var(--color-border)] pt-3">
+        {sessions.map((s) => (
+          <li
+            key={s.id}
+            className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-[var(--color-fg-muted)]"
+          >
+            {s.name && (
+              <span className="font-medium text-[var(--color-fg)]">{s.name}</span>
+            )}
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+              {formatShortDate(s.date)} · {formatWeekday(s.date)}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+              {formatTime(s.start_time)} – {formatTime(s.end_time)}
+            </span>
+            {s.location && (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                {s.location}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {/* Text first, bar as reinforcement — never colour alone (WCAG 1.4.1). */}
+      {shift.capacity > 0 && (
+        <div className="mt-3">
+          <p className="text-xs text-[var(--color-fg-muted)]">
+            {shift.filled ?? 0} of {shift.capacity} filled
+          </p>
+          <div className="mt-1 h-1.5 w-full max-w-xs rounded-full bg-slate-100" aria-hidden="true">
+            <div
+              className={[
+                "h-full rounded-full transition-all",
+                status === "full"
+                  ? "bg-slate-400"
+                  : status === "few"
+                    ? "bg-amber-500"
+                    : "bg-[var(--color-brand)]",
+              ].join(" ")}
+              style={{ width: `${fillPct}%` }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Slot table — the desktop (md+) rendering for orientation. Label cells are
+// div.font-medium (e2e contract). Each row has an in-row "Sign up" button and
+// an optional expandable "who signed up" drawer.
 // ---------------------------------------------------------------------------
 
 function SignUpButton({ slot, selected, onToggle }) {
@@ -617,6 +750,10 @@ export default function EventDetailPage() {
   // State machine
   const [step, setStep] = useState("browse");
   const [selectedSlotIds, setSelectedSlotIds] = useState(new Set());
+  // Kept separate from the orientation slot ids: they are different kinds of
+  // booking with different endpoints, and a single set would need a lookup on
+  // every read just to tell which it was holding.
+  const [selectedShiftIds, setSelectedShiftIds] = useState(new Set());
   const [identity, setIdentity] = useState({
     first_name: "",
     last_name: "",
@@ -661,54 +798,50 @@ export default function EventDetailPage() {
   const formSchema = formSchemaQ.data?.schema || [];
   const [responses, setResponses] = useState({}); // { field_id: value }
 
-  // Build slot lookup and group slots by date
-  const { slotMap, labeledSlotMap, orientationSlots, periodSlotsByDate } = useMemo(() => {
+  // `event.slots` is orientation-only now; the classroom work arrives as
+  // `event.shifts`, each already carrying its sessions in organizer order.
+  const { slotMap, labeledSlotMap, orientationSlots, shifts, shiftMap } = useMemo(() => {
     const slots = eventQ.data?.slots || [];
     const map = Object.fromEntries(slots.map((s) => [s.id, s]));
 
     const orientations = slots.filter((s) => s.slot_type === "orientation");
-    const periods = slots.filter((s) => s.slot_type === "period");
-
-    // Label periods: group by date+start_time, assign "1", "2", etc.
-    const sorted = [...periods].sort((a, b) => {
-      const dateComp = String(a.date).localeCompare(String(b.date));
-      if (dateComp !== 0) return dateComp;
-      return String(a.start_time).localeCompare(String(b.start_time));
-    });
-
-    // Assign period labels per date
-    const byDate = {};
-    for (const slot of sorted) {
-      const key = String(slot.date);
-      if (!byDate[key]) byDate[key] = [];
-      const label = String(byDate[key].length + 1);
-      byDate[key].push({ ...slot, _periodLabel: label });
-    }
-
-    // Also label orientations
     const labeledOrientations = orientations.map((s, i) => ({
       ...s,
       _periodLabel: orientations.length > 1 ? `#${i + 1}` : "",
     }));
 
+    const orderedShifts = [...(eventQ.data?.shifts || [])].sort(
+      (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+    );
+
     // Labeled lookup for the selection summary (raw map lacks _periodLabel).
     const labeledMap = { ...map };
     for (const s of labeledOrientations) labeledMap[s.id] = s;
-    for (const daySlots of Object.values(byDate)) {
-      for (const s of daySlots) labeledMap[s.id] = s;
-    }
 
     return {
       slotMap: map,
       labeledSlotMap: labeledMap,
       orientationSlots: labeledOrientations,
-      periodSlotsByDate: byDate,
+      shifts: orderedShifts,
+      shiftMap: Object.fromEntries(orderedShifts.map((s) => [s.id, s])),
     };
   }, [eventQ.data]);
 
   // Slot toggle
   function toggleSlot(id) {
     setSelectedSlotIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setStep((prev) => (prev === "browse" ? "form" : prev));
+    setHighlightOrientation(false);
+  }
+
+  // Shifts are toggled whole — the commitment covers every session in one.
+  function toggleShift(id) {
+    setSelectedShiftIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -916,11 +1049,26 @@ export default function EventDetailPage() {
   // Submit signup
   async function submitSignup() {
     setStep("submitting");
-    const selectedSlots = [...selectedSlotIds].map((id) => slotMap[id]).filter(Boolean);
+    // The success card and the calendar buttons want concrete sessions, so a
+    // selected shift contributes each of its sessions, tagged with the shift
+    // name they were booked under.
+    const selectedSlots = [
+      ...[...selectedSlotIds].map((id) => slotMap[id]).filter(Boolean),
+      ...[...selectedShiftIds].flatMap((id) => {
+        const shift = shiftMap[id];
+        if (!shift) return [];
+        return sessionsInOrder(shift).map((s) => ({
+          ...s,
+          slot_type: "period",
+          _shiftName: shift.name,
+        }));
+      }),
+    ];
     try {
       const response = await api.public.createSignup({
         ...identity,
         slot_ids: [...selectedSlotIds],
+        shift_ids: [...selectedShiftIds],
         responses: buildResponsesArray(),
       });
       // Phase 25 (WAIT-01): if any selected slot was at capacity the server
@@ -1000,12 +1148,15 @@ export default function EventDetailPage() {
       return;
     }
 
-    const hasPeriod = [...selectedSlotIds].some((id) => slotMap[id]?.slot_type === "period");
+    // The gate is now "committing to a shift without an orientation", which is
+    // exactly what the backend enforces (orientation_gate retargeted from
+    // period slots to shifts).
+    const hasShift = selectedShiftIds.size > 0;
     const hasOrientation = [...selectedSlotIds].some(
       (id) => slotMap[id]?.slot_type === "orientation"
     );
 
-    if (hasPeriod && !hasOrientation) {
+    if (hasShift && !hasOrientation) {
       setStep("checking-orientation");
       try {
         // Phase 21: credit check is cross-week / cross-module within the same
@@ -1039,6 +1190,7 @@ export default function EventDetailPage() {
   function handleDismissSuccess() {
     setStep("browse");
     setSelectedSlotIds(new Set());
+    setSelectedShiftIds(new Set());
     setIdentity({ first_name: "", last_name: "", email: "", phone: "" });
     setFormErrors({});
     setSubmitError(null);
@@ -1080,8 +1232,9 @@ export default function EventDetailPage() {
 
   const event = eventQ.data;
   const slots = event?.slots || [];
+  const selectionCount = selectedSlotIds.size + selectedShiftIds.size;
   const showForm =
-    selectedSlotIds.size > 0 && (step === "form" || step === "checking-orientation");
+    selectionCount > 0 && (step === "form" || step === "checking-orientation");
   const isSubmitting = step === "submitting" || step === "checking-orientation";
 
   // Phase 29 (LOCK-01) — compute signup-window state for banner + submit gate.
@@ -1097,23 +1250,28 @@ export default function EventDetailPage() {
       ? `Signup closed ${closesAt?.toLocaleString("en-US", { timeZone: "America/Los_Angeles", dateStyle: "medium", timeStyle: "short" })} PT`
       : null;
 
-  const dateKeys = Object.keys(periodSlotsByDate).sort();
-  // Flattened, date-sorted period list for the single desktop Modules table.
-  const allPeriodSlots = dateKeys.flatMap((k) => periodSlotsByDate[k]);
   const selectedSlots = [...selectedSlotIds]
     .map((id) => labeledSlotMap[id])
     .filter(Boolean);
+  const selectedShifts = [...selectedShiftIds].map((id) => shiftMap[id]).filter(Boolean);
 
   // What "Add to calendar" should export, in order of preference: whatever the
   // volunteer has ticked, else the first orientation with room left, else the
   // first slot on the page. Shared by both calendar buttons so they can never
   // disagree about which session they added.
   function calendarSlots() {
-    if (selectedSlots.length > 0) return selectedSlots;
+    const chosen = [
+      ...selectedSlots,
+      ...selectedShifts.flatMap((sh) =>
+        sessionsInOrder(sh).map((se) => ({ ...se, _shiftName: sh.name })),
+      ),
+    ];
+    if (chosen.length > 0) return chosen;
     const openOrientation = orientationSlots.find(
       (s) => (s.filled ?? 0) < (s.capacity ?? 0),
     );
-    const fallback = openOrientation || slots[0];
+    const firstSession = shifts.length > 0 ? sessionsInOrder(shifts[0])[0] : null;
+    const fallback = openOrientation || slots[0] || firstSession;
     return fallback ? [fallback] : [];
   }
 
@@ -1123,9 +1281,7 @@ export default function EventDetailPage() {
     >
       {/* Selection announcer for screen readers */}
       <p aria-live="polite" className="sr-only">
-        {selectedSlotIds.size === 1
-          ? "1 slot selected"
-          : `${selectedSlotIds.size} slots selected`}
+        {selectionCount === 1 ? "1 selected" : `${selectionCount} selected`}
       </p>
 
       {/* Back link */}
@@ -1194,7 +1350,7 @@ export default function EventDetailPage() {
 
       {/* Add to calendar (PART-13 surface A) — secondary CTA below event metadata,
           above the slot list. Only renders when there is at least one slot to add. */}
-      {slots.length > 0 && (
+      {(slots.length > 0 || shifts.length > 0) && (
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -1234,8 +1390,8 @@ export default function EventDetailPage() {
         </div>
       )}
 
-      {/* Slot sections — one card layout for every screen size */}
-      {slots.length === 0 ? (
+      {/* Booking sections: orientation slots, then shifts */}
+      {slots.length === 0 && shifts.length === 0 ? (
         <EmptyState
           title="Every slot is full"
           body="This event is fully booked. Try another event from this week's list."
@@ -1289,66 +1445,34 @@ export default function EventDetailPage() {
             </section>
           )}
 
-          {allPeriodSlots.length > 0 && (
+          {shifts.length > 0 && (
             <section aria-labelledby="modules-heading">
               <div className="mb-3 border-l-4 border-[var(--color-accent)] pl-3">
                 <h2
                   id="modules-heading"
                   className="text-sm font-semibold uppercase tracking-wide text-[var(--color-fg)]"
                 >
-                  Modules
+                  Shifts
                 </h2>
                 <p className="text-sm text-[var(--color-fg-muted)]">
-                  Pick the classroom sessions you can mentor.
+                  Pick the shifts you can mentor. Each shift is all-or-nothing —
+                  signing up commits you to every session listed inside it.
                 </p>
               </div>
 
-              {/* Desktop: one Modules table across all days */}
-              <SlotTable
-                slots={allPeriodSlots}
-                kind="period"
-                showDate
-                selectedSlotIds={selectedSlotIds}
-                onToggle={toggleSlot}
-                expandedIds={expandedIds}
-                onToggleExpand={toggleExpand}
-              />
-
-              {/* Mobile: stacked cards grouped by day */}
-              <div className="flex flex-col gap-6 md:hidden">
-                {dateKeys.map((dateKey) => {
-                  const daySlots = periodSlotsByDate[dateKey];
-                  const firstSlot = daySlots[0];
-                  return (
-                    <div key={dateKey}>
-                      <div className="mb-3">
-                        <h3 className="text-sm font-semibold text-[var(--color-fg)]">
-                          {formatWeekday(dateKey)} · {formatShortDate(dateKey)}
-                        </h3>
-                        {firstSlot.location && (
-                          <p className="inline-flex items-center gap-1 text-sm text-[var(--color-fg-muted)]">
-                            <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
-                            {firstSlot.location}
-                          </p>
-                        )}
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        {daySlots.map((slot) => (
-                          <SlotCard
-                            key={slot.id}
-                            slot={slot}
-                            selected={selectedSlotIds.has(slot.id)}
-                            onToggle={toggleSlot}
-                            showDate
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="flex flex-col gap-3">
+                {shifts.map((shift) => (
+                  <ShiftCard
+                    key={shift.id}
+                    shift={shift}
+                    selected={selectedShiftIds.has(shift.id)}
+                    onToggle={toggleShift}
+                  />
+                ))}
               </div>
             </section>
           )}
+
         </div>
       )}
 
@@ -1357,12 +1481,38 @@ export default function EventDetailPage() {
         <div ref={formRef} className="scroll-mt-6">
           <Card className="mt-2 !border-sky-100 shadow-sm">
             {/* Selection summary — review before entering details */}
-            {selectedSlots.length > 0 && (
+            {selectionCount > 0 && (
               <div className="mb-5 rounded-lg border border-sky-100 bg-sky-50/60 p-3 sm:p-4">
                 <p className="text-sm font-semibold text-sky-900">
-                  Your selections ({selectedSlots.length})
+                  Your selections ({selectionCount})
                 </p>
                 <ul className="mt-2 flex flex-col gap-1">
+                  {/* One line per shift, not per session — the volunteer picked
+                      the shift, and listing its days here would read as several
+                      separate bookings they could drop individually. */}
+                  {selectedShifts.map((shift) => (
+                    <li
+                      key={shift.id}
+                      className="flex items-center justify-between gap-2 text-sm text-[var(--color-fg)]"
+                    >
+                      <span className="min-w-0">
+                        <span className="font-semibold">{shift.name}</span>
+                        <span className="text-[var(--color-fg-muted)]">
+                          {" "}· {sessionsInOrder(shift).length === 1
+                            ? "1 session"
+                            : `${sessionsInOrder(shift).length} sessions`}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleShift(shift.id)}
+                        aria-label={`Remove ${shift.name}`}
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600"
+                      >
+                        <XCircle className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
                   {selectedSlots.map((slot) => (
                     <li
                       key={slot.id}
@@ -1493,9 +1643,7 @@ export default function EventDetailPage() {
         >
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm font-semibold text-[var(--color-fg)]">
-              {selectedSlotIds.size === 1
-                ? "1 slot selected"
-                : `${selectedSlotIds.size} slots selected`}
+              {selectionCount === 1 ? "1 selected" : `${selectionCount} selected`}
             </span>
             <Button type="button" variant="primary" className="min-h-11 px-6" onClick={scrollToForm}>
               Continue

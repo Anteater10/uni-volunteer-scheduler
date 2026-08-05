@@ -29,8 +29,8 @@ import { api } from "../../../lib/api";
 import EventSettingsModal from "../EventSettingsModal";
 
 // A complete event: the form legitimately refuses to save without a module
-// and at least one valid slot, so the fixture has to satisfy both. Times sit
-// mid-day UTC so the local dates the form derives don't shift timezone to
+// and at least one bookable shift, so the fixture has to satisfy both. Times
+// sit mid-day UTC so the local dates the form derives don't shift timezone to
 // timezone and drift outside the event window.
 const EVENT = {
   id: "ev-1",
@@ -44,14 +44,40 @@ const EVENT = {
   visibility: "public",
   max_signups_per_user: null,
   slots: [
+    // The session appears in the flat list too, but it is edited through its
+    // shift, so it draws no row of its own here.
     {
       id: "slot-1",
       slot_type: "period",
+      shift_id: "shift-1",
       start_time: "2026-07-27T12:00:00Z",
       end_time: "2026-07-27T15:00:00Z",
-      capacity: 5,
+      capacity: 1,
       location: "GVJH — Room 12",
       current_count: 0,
+    },
+  ],
+  shifts: [
+    {
+      id: "shift-1",
+      event_id: "ev-1",
+      name: "Mon 12:00pm",
+      sort_order: 0,
+      capacity: 5,
+      current_count: 0,
+      sessions: [
+        {
+          id: "slot-1",
+          slot_type: "period",
+          shift_id: "shift-1",
+          sort_order: 0,
+          start_time: "2026-07-27T12:00:00Z",
+          end_time: "2026-07-27T15:00:00Z",
+          capacity: 1,
+          location: "GVJH — Room 12",
+          current_count: 0,
+        },
+      ],
     },
   ],
 };
@@ -103,9 +129,10 @@ describe("EventSettingsModal", () => {
     renderModal();
     expect(screen.getByText("Event settings")).toBeInTheDocument();
     expect(screen.getByDisplayValue("CRISPR Module 1")).toBeInTheDocument();
-    // Location shows twice — once for the event, once on the slot that
-    // inherited it — so assert on the count rather than a single match.
-    expect(screen.getAllByDisplayValue("GVJH — Room 12")).toHaveLength(2);
+    // Once, for the event. The session that inherited the same location is
+    // inside a collapsed shift, so its field isn't rendered yet.
+    expect(screen.getAllByDisplayValue("GVJH — Room 12")).toHaveLength(1);
+    expect(screen.getByDisplayValue("Mon 12:00pm")).toBeInTheDocument();
   });
 
   it("PATCHes the event and closes on save", async () => {

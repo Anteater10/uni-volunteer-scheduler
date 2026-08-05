@@ -357,8 +357,10 @@ function loadedSlotToForm(slot) {
 
 function newEmptySlot(defaults = {}) {
   return {
-    // no id → this is a new slot when diffing
-    slot_type: "period",
+    // no id → this is a new slot when diffing.
+    // Orientation is the only kind a slot row can be now: a period slot has to
+    // belong to a shift, so it is created through the shift instead.
+    slot_type: "orientation",
     date: defaults.date || "",
     start_time: "",
     end_time: "",
@@ -421,6 +423,186 @@ function validateSlot(slot, eventStartIso, eventEndIso) {
   if (evStartDate && slot.date < evStartDate) return "Slot date is before the event start.";
   if (evEndDate && slot.date > evEndDate) return "Slot date is after the event end.";
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Shift form shape (2026-08-02 shifts design)
+//
+// A shift is the bookable unit: a name, a capacity, and one or more sessions.
+// The sessions are ordinary period slots under the hood, but the form never
+// treats them as independently bookable — capacity lives on the shift, so a
+// session row has no capacity field at all.
+// ---------------------------------------------------------------------------
+
+function loadedSessionToForm(session) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const start = new Date(session.start_time);
+  const end = new Date(session.end_time);
+  const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return {
+    id: session.id,
+    name: session.name || "",
+    date:
+      session.date ||
+      `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
+    start_time: fmtTime(start),
+    end_time: fmtTime(end),
+    location: session.location || "",
+  };
+}
+
+function sessionsInOrder(shift) {
+  return [...(shift.sessions || [])].sort(
+    (a, b) =>
+      (a.sort_order ?? 0) - (b.sort_order ?? 0) ||
+      String(a.start_time).localeCompare(String(b.start_time)),
+  );
+}
+
+function loadedShiftToForm(shift) {
+  return {
+    id: shift.id,
+    name: shift.name || "",
+    capacity: String(shift.capacity ?? ""),
+    // `current_count` gates removal the same way a slot's does: you cannot
+    // delete a bundle somebody is holding a seat in.
+    current_count: Number(shift.current_count || 0),
+    sessions: sessionsInOrder(shift).map(loadedSessionToForm),
+    // Open/closed lives on the row itself so reordering carries it along —
+    // an index-keyed Set would hand the state to whichever shift moved in.
+    _expanded: false,
+  };
+}
+
+function newEmptySession(defaults = {}) {
+  return {
+    name: "",
+    date: defaults.date || "",
+    start_time: "",
+    end_time: "",
+    location: defaults.location || "",
+  };
+}
+
+function newEmptyShift(defaults = {}) {
+  return {
+    name: "",
+    capacity: "",
+    current_count: 0,
+    // A shift with no sessions is not bookable, and the API rejects it, so a
+    // fresh shift starts with one row rather than an empty list.
+    sessions: [newEmptySession(defaults)],
+    _expanded: true,
+  };
+}
+
+function sessionFormToApiPayload(session, index) {
+  return {
+    name: session.name?.trim() || null,
+    date: session.date || null,
+    start_time: combineDateTime(session.date, session.start_time),
+    end_time: combineDateTime(session.date, session.end_time),
+    location: session.location?.trim() || null,
+    sort_order: index,
+  };
+}
+
+function shiftFormToApiPayload(shift, index = 0) {
+  return {
+    name: shift.name?.trim(),
+    capacity: Number(shift.capacity),
+    sort_order: index,
+    sessions: shift.sessions.map(sessionFormToApiPayload),
+  };
+}
+
+function sessionChanged(a, b) {
+  return (
+    (a.name || "") !== (b.name || "") ||
+    a.date !== b.date ||
+    a.start_time !== b.start_time ||
+    a.end_time !== b.end_time ||
+    (a.location || "") !== (b.location || "")
+  );
+}
+
+function validateShift(shift, eventStartIso, eventEndIso) {
+  if (!shift.name?.trim()) return "Shift name is required.";
+  const cap = Number(shift.capacity);
+  if (!Number.isFinite(cap) || cap <= 0) return "Capacity must be a positive integer.";
+  if (!shift.sessions?.length) return "A shift needs at least one session.";
+  const evStartDate = localDatePart(eventStartIso);
+  const evEndDate = localDatePart(eventEndIso);
+  for (let i = 0; i < shift.sessions.length; i += 1) {
+    const s = shift.sessions[i];
+    const where = `Session ${i + 1}: `;
+    if (!s.date) return `${where}date is required.`;
+    if (!s.start_time || !s.end_time) return `${where}start and end times are required.`;
+    const start = new Date(`${s.date}T${s.start_time}`);
+    const end = new Date(`${s.date}T${s.end_time}`);
+    if (!(end > start)) return `${where}end time must be after start time.`;
+    if (evStartDate && s.date < evStartDate) return `${where}date is before the event start.`;
+    if (evEndDate && s.date > evEndDate) return `${where}date is after the event end.`;
+  }
+  return null;
+}
+
+// Shift-level diff. Sessions are diffed inside each surviving shift because
+// they have their own endpoints — a shift PATCH carries name/capacity/order
+// only, never its session list.
+function diffShifts(initial, draft) {
+  const initialById = new Map((initial || []).map((s) => [s.id, s]));
+  const draftIds = new Set(draft.filter((s) => s.id).map((s) => s.id));
+  const creates = [];
+  const updates = [];
+  draft.forEach((shift, index) => {
+    if (!shift.id) {
+      creates.push({ shift, index });
+      return;
+    }
+    const before = initialById.get(shift.id);
+    if (!before) return;
+    const fieldsChanged =
+      before.name !== shift.name ||
+      Number(before.capacity) !== Number(shift.capacity) ||
+      (initial || []).findIndex((s) => s.id === shift.id) !== index;
+    const sessionsBefore = new Map((before.sessions || []).map((s) => [s.id, s]));
+    const draftSessionIds = new Set(shift.sessions.filter((s) => s.id).map((s) => s.id));
+    const sessionCreates = shift.sessions
+      .map((s, sessionIndex) => ({ session: s, index: sessionIndex }))
+      .filter(({ session }) => !session.id);
+    // Ordering rides along on the PATCH rather than a separate reorder call:
+    // every session carries its index, so a pure drag with no field edits is
+    // still a set of updates.
+    const sessionUpdates = [];
+    shift.sessions.forEach((s, sessionIndex) => {
+      if (!s.id || !sessionsBefore.has(s.id)) return;
+      const wasAt = (before.sessions || []).findIndex((b) => b.id === s.id);
+      if (sessionChanged(sessionsBefore.get(s.id), s) || wasAt !== sessionIndex) {
+        sessionUpdates.push({ session: s, index: sessionIndex });
+      }
+    });
+    const sessionDeletes = [...sessionsBefore.keys()].filter(
+      (id) => !draftSessionIds.has(id),
+    );
+    if (
+      fieldsChanged ||
+      sessionCreates.length ||
+      sessionUpdates.length ||
+      sessionDeletes.length
+    ) {
+      updates.push({
+        shift,
+        index,
+        fieldsChanged,
+        sessionCreates,
+        sessionUpdates,
+        sessionDeletes,
+      });
+    }
+  });
+  const deletes = [...initialById.keys()].filter((id) => !draftIds.has(id));
+  return { creates, updates, deletes };
 }
 
 const EMPTY_FORM = {
@@ -558,14 +740,24 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
     staleTime: 30_000,
   });
   const modules = Array.isArray(modulesQ.data) ? modulesQ.data : [];
-  const [slots, setSlots] = useState(() => {
-    if (initial?.slots?.length) {
-      return initial.slots.map(loadedSlotToForm);
-    }
-    return [newEmptySlot()];
-  });
+  // `initial.slots` is the flat list — orientation slots plus every shift's
+  // sessions. Only the orientation ones are editable here; sessions are edited
+  // inside their shift.
+  const [slots, setSlots] = useState(() =>
+    (initial?.slots || [])
+      .filter((s) => (s.slot_type || "period") === "orientation")
+      .map(loadedSlotToForm),
+  );
+  const [shifts, setShifts] = useState(() =>
+    initial?.shifts?.length
+      ? initial.shifts.map(loadedShiftToForm)
+      : isEdit
+        ? []
+        : [newEmptyShift()],
+  );
   const [error, setError] = useState(null);
   const [slotErrors, setSlotErrors] = useState({});
+  const [shiftErrors, setShiftErrors] = useState({});
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -594,10 +786,105 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
     });
   }
 
+  // --- shifts -------------------------------------------------------------
+  function updateShift(index, patch) {
+    setShifts((arr) => arr.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+  }
+
+  function addShift() {
+    setShifts((arr) => [
+      ...arr,
+      newEmptyShift({
+        date: form.start_date ? form.start_date.slice(0, 10) : "",
+        location: form.location,
+      }),
+    ]);
+  }
+
+  function removeShift(index) {
+    setShifts((arr) => arr.filter((_, i) => i !== index));
+    setShiftErrors((errs) => {
+      const next = { ...errs };
+      delete next[index];
+      return next;
+    });
+  }
+
+  function moveShift(index, delta) {
+    setShifts((arr) => {
+      const to = index + delta;
+      if (to < 0 || to >= arr.length) return arr;
+      const next = [...arr];
+      [next[index], next[to]] = [next[to], next[index]];
+      return next;
+    });
+    setShiftErrors({});
+  }
+
+  function updateSession(shiftIndex, sessionIndex, patch) {
+    setShifts((arr) =>
+      arr.map((s, i) =>
+        i === shiftIndex
+          ? {
+              ...s,
+              sessions: s.sessions.map((sess, j) =>
+                j === sessionIndex ? { ...sess, ...patch } : sess,
+              ),
+            }
+          : s,
+      ),
+    );
+  }
+
+  function addSession(shiftIndex) {
+    setShifts((arr) =>
+      arr.map((s, i) =>
+        i === shiftIndex
+          ? {
+              ...s,
+              sessions: [
+                ...s.sessions,
+                newEmptySession({
+                  // A second session almost always shares the first one's day
+                  // and room, so seed from it rather than from the event.
+                  date: s.sessions.at(-1)?.date || "",
+                  location: s.sessions.at(-1)?.location || form.location,
+                }),
+              ],
+            }
+          : s,
+      ),
+    );
+  }
+
+  function removeSession(shiftIndex, sessionIndex) {
+    setShifts((arr) =>
+      arr.map((s, i) =>
+        i === shiftIndex
+          ? { ...s, sessions: s.sessions.filter((_, j) => j !== sessionIndex) }
+          : s,
+      ),
+    );
+  }
+
+  function moveSession(shiftIndex, sessionIndex, delta) {
+    setShifts((arr) =>
+      arr.map((s, i) => {
+        if (i !== shiftIndex) return s;
+        const to = sessionIndex + delta;
+        if (to < 0 || to >= s.sessions.length) return s;
+        const next = [...s.sessions];
+        [next[sessionIndex], next[to]] = [next[to], next[sessionIndex]];
+        return { ...s, sessions: next };
+      }),
+    );
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
     setSlotErrors({});
+    setShiftErrors({});
 
     if (!form.title.trim()) return setError("Title is required.");
     if (!form.module_slug)
@@ -607,8 +894,8 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
     if (new Date(form.end_date) <= new Date(form.start_date))
       return setError("Event end time must be after start time.");
 
-    if (slots.length === 0) {
-      return setError("At least one slot is required.");
+    if (slots.length === 0 && shifts.length === 0) {
+      return setError("Add at least one shift or orientation slot.");
     }
 
     const startIso = localInputToIso(form.start_date);
@@ -621,6 +908,16 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
     if (Object.keys(perSlotErrors).length) {
       setSlotErrors(perSlotErrors);
       return setError("Fix the slot errors below before saving.");
+    }
+
+    const perShiftErrors = {};
+    shifts.forEach((s, i) => {
+      const err = validateShift(s, startIso, endIso);
+      if (err) perShiftErrors[i] = err;
+    });
+    if (Object.keys(perShiftErrors).length) {
+      setShiftErrors(perShiftErrors);
+      return setError("Fix the shift errors below before saving.");
     }
 
     const metadata = {
@@ -637,13 +934,18 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
       module_slug: form.module_slug,
     };
 
-    const initialSlotsFormShape = (initial?.slots || []).map(loadedSlotToForm);
+    const initialSlotsFormShape = (initial?.slots || [])
+      .filter((s) => (s.slot_type || "period") === "orientation")
+      .map(loadedSlotToForm);
+    const initialShiftsFormShape = (initial?.shifts || []).map(loadedShiftToForm);
 
     try {
       await onSubmit({
         metadata,
         slots,
+        shifts,
         initialSlots: initialSlotsFormShape,
+        initialShifts: initialShiftsFormShape,
       });
     } catch (err) {
       setError(err?.message || "Save failed");
@@ -798,54 +1100,308 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
         }}
       />
 
+      {/* Shifts — the bookable unit. Capacity and the waitlist live here, not
+          on the sessions inside, so a volunteer says yes to the whole bundle
+          or not at all. */}
       <FormSection
         icon={LayoutGrid}
-        title="Slots"
+        title="Shifts"
+        hint="A shift is what volunteers book. Signing up commits them to every session inside it."
         action={
-          <InlineAction onClick={addSlot}>
+          <InlineAction onClick={addShift}>
             <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
-            Add slot
+            Add shift
           </InlineAction>
         }
       >
-        {slots.length === 0 ? (
+        {shifts.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-8 text-center">
             <p className="text-sm text-[var(--color-fg-muted)]">
-              No slots yet — add at least one so volunteers can sign up.
+              No shifts yet — add at least one so volunteers can sign up.
             </p>
             <button
               type="button"
-              onClick={addSlot}
+              onClick={addShift}
               className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand)] px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:brightness-110 focus:outline-none focus:ring-4 focus:ring-[var(--color-brand)]/25"
             >
               <Plus className="h-4 w-4" strokeWidth={2.5} />
-              Add slot
+              Add shift
             </button>
           </div>
         ) : (
           <ul className="space-y-3">
+            {shifts.map((sh, i) => {
+              const removeDisabled = isEdit && sh.current_count > 0;
+              return (
+                <li
+                  key={sh.id || `new-shift-${i}`}
+                  className="group relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow hover:shadow-[0_2px_10px_rgba(15,23,42,0.07)]"
+                  data-testid={`shift-row-${i}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-y-0 left-0 w-1 bg-[var(--color-brand)]"
+                  />
+                  <div className="flex items-center justify-between gap-3 mb-3 pl-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)]">
+                      Shift {i + 1}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {isEdit && sh.current_count > 0 ? (
+                        <span className="rounded-full bg-[var(--color-brand-soft)] px-2 py-0.5 text-xs font-medium text-[var(--color-brand)]">
+                          {sh.current_count} signup
+                          {sh.current_count === 1 ? "" : "s"}
+                        </span>
+                      ) : null}
+                      {/* Order is what volunteers see on the public page, so it
+                          is set here rather than derived from the times. */}
+                      <button
+                        type="button"
+                        onClick={() => moveShift(i, -1)}
+                        disabled={i === 0}
+                        aria-label={`Move shift ${i + 1} up`}
+                        className="rounded-md px-1.5 py-1 text-xs text-[var(--color-fg-muted)] transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveShift(i, 1)}
+                        disabled={i === shifts.length - 1}
+                        aria-label={`Move shift ${i + 1} down`}
+                        className="rounded-md px-1.5 py-1 text-xs text-[var(--color-fg-muted)] transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeShift(i)}
+                        disabled={removeDisabled}
+                        title={
+                          removeDisabled
+                            ? `Has ${sh.current_count} signup${sh.current_count === 1 ? "" : "s"} — cannot remove`
+                            : "Remove this shift"
+                        }
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--color-danger)] transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end pl-2">
+                    <div className="md:col-span-2">
+                      <label className={LABEL_SM}>Name</label>
+                      <input
+                        aria-label={`Shift ${i + 1} name`}
+                        value={sh.name}
+                        onChange={(e) => updateShift(i, { name: e.target.value })}
+                        placeholder="e.g. Tue 1:00pm"
+                        className={FIELD_SM}
+                      />
+                    </div>
+                    <div>
+                      <label className={LABEL_SM}>Capacity</label>
+                      <input
+                        type="number"
+                        min="1"
+                        aria-label={`Shift ${i + 1} capacity`}
+                        value={sh.capacity}
+                        onChange={(e) => updateShift(i, { capacity: e.target.value })}
+                        className={FIELD_SM}
+                      />
+                    </div>
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => updateShift(i, { _expanded: !sh._expanded })}
+                        aria-expanded={Boolean(sh._expanded)}
+                        className="w-full rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-sm font-medium text-[var(--color-fg-muted)] transition-colors hover:bg-slate-50"
+                      >
+                        {sh._expanded ? "Hide" : "Show"} {sh.sessions.length} session
+                        {sh.sessions.length === 1 ? "" : "s"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {sh._expanded ? (
+                    <div className="mt-4 ml-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-fg-muted)]">
+                          Sessions
+                        </span>
+                        <InlineAction onClick={() => addSession(i)}>
+                          <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                          Add session
+                        </InlineAction>
+                      </div>
+                      <ul className="space-y-3">
+                        {sh.sessions.map((sess, j) => (
+                          <li
+                            key={sess.id || `new-session-${j}`}
+                            className="rounded-md border border-[var(--color-border)] bg-white p-3"
+                            data-testid={`shift-${i}-session-${j}`}
+                          >
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className="text-[11px] font-medium text-[var(--color-fg-muted)]">
+                                Session {j + 1}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => moveSession(i, j, -1)}
+                                  disabled={j === 0}
+                                  aria-label={`Move shift ${i + 1} session ${j + 1} up`}
+                                  className="rounded px-1.5 py-0.5 text-xs text-[var(--color-fg-muted)] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => moveSession(i, j, 1)}
+                                  disabled={j === sh.sessions.length - 1}
+                                  aria-label={`Move shift ${i + 1} session ${j + 1} down`}
+                                  className="rounded px-1.5 py-0.5 text-xs text-[var(--color-fg-muted)] hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  ↓
+                                </button>
+                                {/* A shift must keep one session — the API
+                                    refuses the last delete, so don't offer it. */}
+                                <button
+                                  type="button"
+                                  onClick={() => removeSession(i, j)}
+                                  disabled={sh.sessions.length === 1}
+                                  aria-label={`Remove shift ${i + 1} session ${j + 1}`}
+                                  title={
+                                    sh.sessions.length === 1
+                                      ? "A shift must keep at least one session"
+                                      : "Remove this session"
+                                  }
+                                  className="rounded px-1.5 py-0.5 text-xs font-medium text-[var(--color-danger)] hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-400 disabled:hover:bg-transparent"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+                              <div>
+                                <label className={LABEL_SM}>Name</label>
+                                <input
+                                  aria-label={`Shift ${i + 1} session ${j + 1} name`}
+                                  value={sess.name}
+                                  onChange={(e) =>
+                                    updateSession(i, j, { name: e.target.value })
+                                  }
+                                  placeholder="e.g. Period 1"
+                                  className={FIELD_SM}
+                                />
+                              </div>
+                              <div>
+                                <label className={LABEL_SM}>Date</label>
+                                <PickerInput
+                                  type="date"
+                                  aria-label={`Shift ${i + 1} session ${j + 1} date`}
+                                  value={sess.date}
+                                  onChange={(e) =>
+                                    updateSession(i, j, { date: e.target.value })
+                                  }
+                                  className={FIELD_SM}
+                                />
+                              </div>
+                              <div>
+                                <label className={LABEL_SM}>Start</label>
+                                <PickerInput
+                                  type="time"
+                                  aria-label={`Shift ${i + 1} session ${j + 1} start time`}
+                                  value={sess.start_time}
+                                  onChange={(e) =>
+                                    updateSession(i, j, { start_time: e.target.value })
+                                  }
+                                  className={FIELD_SM}
+                                />
+                              </div>
+                              <div>
+                                <label className={LABEL_SM}>End</label>
+                                <PickerInput
+                                  type="time"
+                                  aria-label={`Shift ${i + 1} session ${j + 1} end time`}
+                                  value={sess.end_time}
+                                  onChange={(e) =>
+                                    updateSession(i, j, { end_time: e.target.value })
+                                  }
+                                  className={FIELD_SM}
+                                />
+                              </div>
+                              <div>
+                                <label className={LABEL_SM}>Location</label>
+                                <input
+                                  aria-label={`Shift ${i + 1} session ${j + 1} location`}
+                                  value={sess.location}
+                                  onChange={(e) =>
+                                    updateSession(i, j, { location: e.target.value })
+                                  }
+                                  placeholder="(uses event)"
+                                  className={FIELD_SM}
+                                />
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {shiftErrors[i] ? (
+                    <p
+                      className="mt-3 ml-2 rounded-md bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700"
+                      role="alert"
+                      data-testid={`shift-error-${i}`}
+                    >
+                      {shiftErrors[i]}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </FormSection>
+
+      {/* Orientation slots stay individually bookable — they are a one-off
+          prerequisite, not part of a week's commitment, so they keep their own
+          capacity and their own row. */}
+      <FormSection
+        icon={LayoutGrid}
+        title="Orientation slots"
+        hint="Optional. Booked one at a time, separately from shifts."
+        action={
+          <InlineAction onClick={addSlot}>
+            <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+            Add orientation slot
+          </InlineAction>
+        }
+      >
+        {slots.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-5 text-center text-sm text-[var(--color-fg-muted)]">
+            No orientation slots for this event.
+          </p>
+        ) : (
+          <ul className="space-y-3">
             {slots.map((s, i) => {
               const removeDisabled = isEdit && s.current_count > 0;
-              const isOrientation = s.slot_type === "orientation";
               return (
                 <li
                   key={s.id || `new-${i}`}
                   className="group relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow hover:shadow-[0_2px_10px_rgba(15,23,42,0.07)]"
                   data-testid={`slot-row-${i}`}
                 >
-                  {/* Colour spine: orientation slots read differently at a
-                      glance from ordinary class periods. */}
                   <span
                     aria-hidden="true"
-                    className={`absolute inset-y-0 left-0 w-1 ${
-                      isOrientation
-                        ? "bg-[var(--color-accent)]"
-                        : "bg-[var(--color-brand)]"
-                    }`}
+                    className="absolute inset-y-0 left-0 w-1 bg-[var(--color-accent)]"
                   />
                   <div className="flex items-center justify-between gap-3 mb-3 pl-2">
                     <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)]">
-                      Slot {i + 1}
+                      Orientation {i + 1}
                     </span>
                     <div className="flex items-center gap-3">
                       {isEdit && s.current_count > 0 ? (
@@ -870,19 +1426,7 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end pl-2">
-                    <div className="md:col-span-1">
-                      <label className={LABEL_SM}>Type</label>
-                      <select
-                        aria-label={`Slot ${i + 1} type`}
-                        value={s.slot_type}
-                        onChange={(e) => updateSlot(i, { slot_type: e.target.value })}
-                        className={FIELD_SM}
-                      >
-                        <option value="period">Period</option>
-                        <option value="orientation">Orientation</option>
-                      </select>
-                    </div>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end pl-2">
                     <div className="md:col-span-1">
                       <label className={LABEL_SM}>Date</label>
                       <PickerInput
@@ -1040,6 +1584,62 @@ async function applySlotDiff(eventId, initialSlots, draftSlots) {
   }
 }
 
+// The shift twin of applySlotDiff. Session ops inside one shift run in
+// sequence — the backend rejects adding or removing a session once the shift
+// has signups, and a delete that would empty the shift, so the order the
+// admin sees is the order those refusals arrive in.
+async function applyShiftDiff(eventId, initialShifts, draftShifts) {
+  const { creates, updates, deletes } = diffShifts(initialShifts, draftShifts);
+  const failed = [];
+
+  async function run(label, work) {
+    try {
+      await work();
+    } catch {
+      failed.push(label);
+    }
+  }
+
+  await Promise.all([
+    ...creates.map(({ shift, index }) =>
+      run(`new shift "${shift.name || index + 1}"`, () =>
+        api.shifts.create(eventId, shiftFormToApiPayload(shift, index)),
+      ),
+    ),
+    ...deletes.map((id) => run(`delete shift ${id}`, () => api.shifts.delete(id))),
+    ...updates.map((u) =>
+      run(`shift "${u.shift.name}"`, async () => {
+        if (u.fieldsChanged) {
+          await api.shifts.update(u.shift.id, {
+            name: u.shift.name.trim(),
+            capacity: Number(u.shift.capacity),
+            sort_order: u.index,
+          });
+        }
+        for (const id of u.sessionDeletes) {
+          await api.shifts.deleteSession(id);
+        }
+        for (const { session, index } of u.sessionUpdates) {
+          await api.shifts.updateSession(
+            session.id,
+            sessionFormToApiPayload(session, index),
+          );
+        }
+        for (const { session, index } of u.sessionCreates) {
+          await api.shifts.addSession(
+            u.shift.id,
+            sessionFormToApiPayload(session, index),
+          );
+        }
+      }),
+    ),
+  ]);
+
+  if (failed.length) {
+    throw new Error(`Shift changes failed: ${failed.join(", ")}`);
+  }
+}
+
 // fix/ux-quarter-batch — make an ended event unmistakable in the list.
 // "Completed" = every slot was ended (events.completed_at is stamped);
 // "Ended" = the dates went by but attendance was never closed out.
@@ -1134,10 +1734,13 @@ export default function EventsSection() {
   }, [events, search, scope, quarterEnded]);
 
   const createM = useMutation({
-    mutationFn: ({ metadata, slots }) =>
+    mutationFn: ({ metadata, slots, shifts }) =>
+      // One call: the create endpoint takes orientation slots and whole shifts
+      // (sessions included), so a new event never lands half-built.
       api.events.create({
         ...metadata,
         slots: slots.map(slotFormToApiPayload),
+        shifts: shifts.map(shiftFormToApiPayload),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["adminEventsList"] });
@@ -1147,9 +1750,10 @@ export default function EventsSection() {
   });
 
   const updateM = useMutation({
-    mutationFn: async ({ id, metadata, slots, initialSlots }) => {
+    mutationFn: async ({ id, metadata, slots, shifts, initialSlots, initialShifts }) => {
       await api.events.update(id, metadata);
       await applySlotDiff(id, initialSlots, slots);
+      await applyShiftDiff(id, initialShifts, shifts);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["adminEventsList"] });
@@ -1424,7 +2028,8 @@ export default function EventsSection() {
 
 // Exports for tests
 export { diffSlots, slotFormToApiPayload, validateSlot, loadedSlotToForm };
+export { diffShifts, shiftFormToApiPayload, validateShift, loadedShiftToForm };
 
 // Shared with the event page's "Event settings" modal so there is exactly one
 // event form and one slot-save path, not a second copy that drifts.
-export { EventForm, applySlotDiff };
+export { EventForm, applySlotDiff, applyShiftDiff };

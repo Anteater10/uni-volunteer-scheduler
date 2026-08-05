@@ -313,6 +313,82 @@ async function generateSlots(eventId, payload) {
 }
 
 // --------------------
+// SHIFTS (2026-08-02)
+// --------------------
+// A shift is the bookable unit for the work itself; the slots above are now
+// only orientation. Sessions live inside a shift and are edited through these
+// endpoints, not through /slots (which rejects them).
+async function listShifts(eventId) {
+  return request("/shifts/", { method: "GET", params: { event_id: eventId } });
+}
+
+async function createShift(eventId, payload) {
+  return request("/shifts/", {
+    method: "POST",
+    params: { event_id: eventId },
+    body: payload,
+  });
+}
+
+async function updateShift(shiftId, payload) {
+  return request(`/shifts/${shiftId}`, { method: "PATCH", body: payload });
+}
+
+async function deleteShift(shiftId) {
+  return request(`/shifts/${shiftId}`, { method: "DELETE" });
+}
+
+// Full ordering only — the backend rejects partial lists so two concurrent
+// reorders can't interleave.
+async function reorderShifts(eventId, shiftIds) {
+  return request("/shifts/reorder", {
+    method: "POST",
+    params: { event_id: eventId },
+    body: { shift_ids: shiftIds },
+  });
+}
+
+async function addShiftSession(shiftId, payload) {
+  return request(`/shifts/${shiftId}/sessions`, { method: "POST", body: payload });
+}
+
+async function updateShiftSession(sessionId, payload) {
+  return request(`/shifts/sessions/${sessionId}`, { method: "PATCH", body: payload });
+}
+
+async function deleteShiftSession(sessionId) {
+  return request(`/shifts/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+async function reorderShiftSessions(shiftId, sessionIds) {
+  return request(`/shifts/${shiftId}/sessions/reorder`, {
+    method: "POST",
+    body: { session_ids: sessionIds },
+  });
+}
+
+async function swapShiftSignup(shiftSignupId, targetShiftId) {
+  return request(`/shift-signups/${shiftSignupId}/swap`, {
+    method: "POST",
+    body: { target_shift_id: targetShiftId },
+  });
+}
+
+async function checkInSession(shiftSignupId, slotId, body) {
+  return request(`/shift-signups/${shiftSignupId}/sessions/${slotId}/check-in`, {
+    method: "POST",
+    body,
+  });
+}
+
+async function undoSessionCheckIn(shiftSignupId, slotId, body) {
+  return request(
+    `/shift-signups/${shiftSignupId}/sessions/${slotId}/undo-check-in`,
+    { method: "POST", body },
+  );
+}
+
+// --------------------
 // QUESTIONS
 // --------------------
 async function listEventQuestions(eventId) {
@@ -578,6 +654,24 @@ export const api = {
     delete: (slotId) => deleteSlot(slotId),
     generate: (eventId, payload) => generateSlots(eventId, payload),
   },
+  shifts: {
+    list: (eventId) => listShifts(eventId),
+    create: (eventId, payload) => createShift(eventId, payload),
+    update: (shiftId, payload) => updateShift(shiftId, payload),
+    delete: (shiftId) => deleteShift(shiftId),
+    reorder: (eventId, shiftIds) => reorderShifts(eventId, shiftIds),
+    addSession: (shiftId, payload) => addShiftSession(shiftId, payload),
+    updateSession: (sessionId, payload) => updateShiftSession(sessionId, payload),
+    deleteSession: (sessionId) => deleteShiftSession(sessionId),
+    reorderSessions: (shiftId, sessionIds) =>
+      reorderShiftSessions(shiftId, sessionIds),
+    swapSignup: (shiftSignupId, targetShiftId) =>
+      swapShiftSignup(shiftSignupId, targetShiftId),
+    checkInSession: (shiftSignupId, slotId, body) =>
+      checkInSession(shiftSignupId, slotId, body),
+    undoSessionCheckIn: (shiftSignupId, slotId, body) =>
+      undoSessionCheckIn(shiftSignupId, slotId, body),
+  },
   notifications: {
     my: (params) => listMyNotifications(params),
   },
@@ -654,6 +748,13 @@ export const api = {
           (allowOverfill ? "?allow_overfill=true" : ""),
         { method: "POST" },
       ),
+    // Shift twin — same allow_overfill contract, for the same reason.
+    promoteShiftSignup: (eventId, shiftSignupId, { allowOverfill = false } = {}) =>
+      request(
+        `/organizer/events/${eventId}/shift-signups/${shiftSignupId}/promote` +
+          (allowOverfill ? "?allow_overfill=true" : ""),
+        { method: "POST" },
+      ),
     // Phase 26 — broadcast messages (organizer reuse of same endpoints)
     broadcastRecipientCount: (eventId, params) =>
       getBroadcastRecipientCount(eventId, params),
@@ -698,6 +799,12 @@ export const api = {
       promote: (id) => adminPromoteSignup(id),
       move: (id, targetSlotId) => adminMoveSignup(id, targetSlotId),
       resend: (id) => adminResendSignup(id),
+    },
+    // 2026-08-02 shifts: the same staff overrides, one level up.
+    shiftSignups: {
+      promote: (id) =>
+        request(`/admin/shift-signups/${id}/promote`, { method: "POST" }),
+      swap: (id, targetShiftId) => swapShiftSignup(id, targetShiftId),
     },
     analytics: {
       // JSON read helpers — consumed by ExportsSection panels in Plan 06
@@ -774,6 +881,11 @@ export const api = {
       request(`/admin/events/${eventId}/form-schema`, {
         method: "PUT",
         body: { schema },
+      }),
+    reorderShiftWaitlist: (eventId, shiftId, orderedIds) =>
+      request(`/admin/events/${eventId}/shifts/${shiftId}/waitlist-order`, {
+        method: "PATCH",
+        body: { ordered_shift_signup_ids: orderedIds },
       }),
     // Phase 25 — admin reorder waitlist (WAIT-05)
     reorderWaitlist: (eventId, slotId, orderedIds) =>

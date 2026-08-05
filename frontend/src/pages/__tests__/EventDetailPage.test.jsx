@@ -65,26 +65,45 @@ const ORIENTATION_SLOT = {
   filled: 5,
 };
 
-const PERIOD_SLOT = {
-  id: "slot-period-1",
-  slot_type: "period",
-  date: "2026-04-23",
-  start_time: "2026-04-23T13:00:00",
-  end_time: "2026-04-23T15:00:00",
-  location: "Room 202",
+// 2026-08-02 shifts: the classroom work is booked as shifts, so the period
+// slots that used to live in `slots` are sessions inside a shift. Capacity and
+// filled belong to the shift — that is the thing with a waitlist.
+const SHIFT = {
+  id: "shift-1",
+  name: "Tue 1:00pm",
+  sort_order: 0,
   capacity: 20,
   filled: 7,
+  sessions: [
+    {
+      id: "slot-period-1",
+      name: "Period 1",
+      sort_order: 0,
+      date: "2026-04-23",
+      start_time: "2026-04-23T13:00:00",
+      end_time: "2026-04-23T15:00:00",
+      location: "Room 202",
+    },
+  ],
 };
 
-const FULL_SLOT = {
-  id: "slot-full-1",
-  slot_type: "period",
-  date: "2026-04-24",
-  start_time: "2026-04-24T10:00:00",
-  end_time: "2026-04-24T12:00:00",
-  location: "Room 303",
+const FULL_SHIFT = {
+  id: "shift-full-1",
+  name: "Wed 10:00am",
+  sort_order: 1,
   capacity: 10,
   filled: 10, // full
+  sessions: [
+    {
+      id: "slot-full-1",
+      name: "Period 1",
+      sort_order: 0,
+      date: "2026-04-24",
+      start_time: "2026-04-24T10:00:00",
+      end_time: "2026-04-24T12:00:00",
+      location: "Room 303",
+    },
+  ],
 };
 
 const MOCK_EVENT = {
@@ -98,7 +117,8 @@ const MOCK_EVENT = {
   module_slug: "crispr",
   start_date: "2026-04-22",
   end_date: "2026-04-28",
-  slots: [ORIENTATION_SLOT, PERIOD_SLOT, FULL_SLOT],
+  slots: [ORIENTATION_SLOT],
+  shifts: [SHIFT, FULL_SHIFT],
 };
 
 // ---------------------------------------------------------------------------
@@ -140,7 +160,7 @@ async function clickFirstSignUpButton() {
 // EventDetailPage renders BOTH the desktop table and the mobile card layout in
 // the DOM (CSS toggles visibility at md). jsdom applies no CSS, so button
 // ordering is not a reliable proxy for slot type. Target a slot deterministically
-// by its label ("Period N" / "Orientation") and click the Sign up button inside
+// by its label (shift name / "Orientation") and click the Sign up button inside
 // its own row (<tr>) or card (.rounded-xl).
 async function clickSignUpForLabel(labelRegex) {
   const labels = await screen.findAllByText(labelRegex);
@@ -206,7 +226,7 @@ describe("EventDetailPage", () => {
   });
 
   it("renders 'Every slot is full' empty state with Back to events action when no slots", async () => {
-    api.public.getEvent.mockResolvedValue({ ...MOCK_EVENT, slots: [] });
+    api.public.getEvent.mockResolvedValue({ ...MOCK_EVENT, slots: [], shifts: [] });
 
     renderDetailPage();
 
@@ -233,11 +253,11 @@ describe("EventDetailPage", () => {
     const orientationLabels = await screen.findAllByText(/orientation/i);
     expect(orientationLabels.length).toBeGreaterThanOrEqual(1);
 
-    // Period row labels are rendered (period slot rows). There are two period
-    // slots (PERIOD_SLOT + FULL_SLOT), so "Period 1" appears once per period
-    // group. Use getAllByText since both period dates produce a "Period 1".
-    const periodLabels = screen.getAllByText(/^Period\s*1$/);
-    expect(periodLabels.length).toBeGreaterThanOrEqual(1);
+    // Shift cards are labelled with the organizer's shift name, and the
+    // sessions inside each carry their own names.
+    expect(screen.getByText("Tue 1:00pm")).toBeInTheDocument();
+    expect(screen.getByText("Wed 10:00am")).toBeInTheDocument();
+    expect(screen.getAllByText(/^Period 1$/).length).toBeGreaterThanOrEqual(1);
 
     // Filled counts now show capacity denominator per UI-SPEC (PART-04 / GAP-A):
     // "N of M filled" so the remaining headroom is visible even when a slot is not yet full.
@@ -362,8 +382,7 @@ describe("EventDetailPage", () => {
     await screen.findByText("CRISPR at Carpinteria HS");
 
     // Select the period slot (not an orientation) so the credit check fires.
-    // Match "Period 1" (the row label), not the "Period" column header.
-    await clickSignUpForLabel(/^Period 1$/);
+    await clickSignUpForLabel(/^Tue 1:00pm$/);
 
     await screen.findByLabelText(/^first name$/i);
     await fillIdentityForm();
@@ -461,8 +480,8 @@ describe("EventDetailPage", () => {
     );
   });
 
-  it("does NOT render 'Add to calendar' when there are no slots", async () => {
-    api.public.getEvent.mockResolvedValue({ ...MOCK_EVENT, slots: [] });
+  it("does NOT render 'Add to calendar' when there is nothing to book", async () => {
+    api.public.getEvent.mockResolvedValue({ ...MOCK_EVENT, slots: [], shifts: [] });
 
     renderDetailPage();
     await screen.findByText(/every slot is full/i);
@@ -523,7 +542,7 @@ describe("EventDetailPage — orientation requirement gate", () => {
   });
 
   async function selectPeriodAndSubmit(container) {
-    await clickSignUpForLabel(/^Period 1$/);
+    await clickSignUpForLabel(/^Tue 1:00pm$/);
     await screen.findByLabelText(/^first name$/i);
     await fillIdentityForm();
     clickFormSubmitButton(container);
@@ -565,7 +584,7 @@ describe("EventDetailPage — orientation requirement gate", () => {
   it("keeps the advisory click-through when the event has no orientation slots", async () => {
     api.public.getEvent.mockResolvedValue({
       ...MOCK_EVENT,
-      slots: [PERIOD_SLOT, FULL_SLOT],
+      slots: [],
     });
     api.public.orientationCheck.mockResolvedValue({ has_credit: false });
     api.public.createSignup.mockResolvedValue({
@@ -638,7 +657,7 @@ describe("EventDetailPage — orientation gate refreshes slot data", () => {
     await screen.findByText("CRISPR at Carpinteria HS");
     const callsAfterLoad = api.public.getEvent.mock.calls.length;
 
-    await clickSignUpForLabel(/^Period 1$/);
+    await clickSignUpForLabel(/^Tue 1:00pm$/);
     await screen.findByLabelText(/^first name$/i);
     await fillIdentityForm();
     clickFormSubmitButton(container);
@@ -656,7 +675,7 @@ describe("EventDetailPage — orientation gate refreshes slot data", () => {
     await screen.findByText("CRISPR at Carpinteria HS");
     const callsAfterLoad = api.public.getEvent.mock.calls.length;
 
-    await clickSignUpForLabel(/^Period 1$/);
+    await clickSignUpForLabel(/^Tue 1:00pm$/);
     await screen.findByLabelText(/^first name$/i);
     await fillIdentityForm();
     clickFormSubmitButton(container);
