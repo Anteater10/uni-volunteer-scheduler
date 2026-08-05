@@ -732,6 +732,14 @@ export const api = {
         `/organizer/events/${eventId}/signups/${signupId}/grant-orientation`,
         { method: "POST" },
       ),
+    // 2026-08-02 shifts: the roster's classroom rows are commitments, so the
+    // slot-keyed route above 404s for them. This is the override the shift
+    // orientation gate depends on — staff vouching at the door.
+    grantOrientationForShift: (eventId, shiftSignupId) =>
+      request(
+        `/organizer/events/${eventId}/shift-signups/${shiftSignupId}/grant-orientation`,
+        { method: "POST" },
+      ),
     // Phase 22 — quick-add form field from roster page
     appendEventField: (eventId, field) =>
       request(`/organizer/events/${eventId}/form-fields`, {
@@ -804,6 +812,8 @@ export const api = {
     shiftSignups: {
       promote: (id) =>
         request(`/admin/shift-signups/${id}/promote`, { method: "POST" }),
+      cancel: (id) =>
+        request(`/admin/shift-signups/${id}/cancel`, { method: "POST" }),
       swap: (id, targetShiftId) => swapShiftSignup(id, targetShiftId),
     },
     analytics: {

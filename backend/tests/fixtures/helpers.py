@@ -31,6 +31,53 @@ def _bind_factories(db_session):
         factory._meta.sqlalchemy_session = db_session
 
 
+def in_shift(db_session, slot, *, name=None, capacity=None):
+    """Give a hand-built PERIOD slot the single-session shift it now needs.
+
+    2026-08-02 shifts: ``ck_slots_shift_membership_matches_type`` makes a
+    shift-less period slot unrepresentable, so every test that builds one by
+    hand has to say which bundle it belongs to. This does to one slot exactly
+    what migration 0037 did to the legacy rows — wraps it in a shift of its
+    own — so a test written against the old model keeps testing the same
+    scenario rather than being quietly retargeted at orientation, which would
+    trade real period coverage for a green tick.
+
+    Capacity and the live count move up to the shift (that is the whole point
+    of the feature), so they are mirrored from the slot unless overridden. Call
+    this after constructing the slot and before flushing it.
+    """
+    shift = models.Shift(
+        event_id=slot.event_id,
+        name=name or "Shift 1",
+        sort_order=0,
+        capacity=capacity if capacity is not None else slot.capacity,
+        current_count=slot.current_count or 0,
+    )
+    db_session.add(shift)
+    db_session.flush()
+    slot.shift_id = shift.id
+    slot.sort_order = 0
+    return shift
+
+
+def book_shift(db_session, shift, volunteer, *, status=None, when=None):
+    """The commitment a volunteer makes to a whole shift.
+
+    Replaces ``Signup(slot_id=<period slot>)`` in converted tests: nobody books
+    a session directly any more, so a period-slot Signup row exercises a path
+    production no longer has. One row covers every session in the shift.
+    """
+    _bind_factories(db_session)
+    kwargs = {"shift": shift, "volunteer": volunteer}
+    if status is not None:
+        kwargs["status"] = status
+    if when is not None:
+        kwargs["timestamp"] = when
+    shift_signup = ShiftSignupFactory(**kwargs)
+    db_session.flush()
+    return shift_signup
+
+
 def make_user(
     db_session,
     *,

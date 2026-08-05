@@ -86,15 +86,51 @@ const SOURCE = {
   week_number: 3,
   start_date: "2026-04-15T12:00:00Z",
   end_date: "2026-04-15T16:00:00Z",
+  // 2026-08-02 shifts: `slots` is orientation-only. The classroom work the
+  // admin actually wants copied is the shift and its ordered sessions, so a
+  // duplicate that only carried `slots` would produce an event with nothing
+  // bookable in it (and a bare period slot would not even insert).
   slots: [
     {
-      id: "slot-1",
-      slot_type: "period",
+      id: "slot-orient",
+      slot_type: "orientation",
       start_time: "2026-04-15T13:00:00Z",
       end_time: "2026-04-15T14:00:00Z",
       capacity: 4,
       location: "Room 13",
       current_count: 3,
+    },
+  ],
+  shifts: [
+    {
+      id: "shift-1",
+      event_id: "ev-src",
+      name: "Tue morning",
+      capacity: 6,
+      sort_order: 0,
+      // Signups on the *source* — the copy must not inherit them, or the
+      // admin could not remove a shift from a brand-new event.
+      current_count: 3,
+      sessions: [
+        {
+          id: "sess-1",
+          slot_type: "period",
+          name: "Period 1",
+          start_time: "2026-04-15T14:00:00Z",
+          end_time: "2026-04-15T15:00:00Z",
+          location: "Room 13",
+          sort_order: 0,
+        },
+        {
+          id: "sess-2",
+          slot_type: "period",
+          name: "Period 2",
+          start_time: "2026-04-15T15:00:00Z",
+          end_time: "2026-04-15T16:00:00Z",
+          location: "Room 14",
+          sort_order: 1,
+        },
+      ],
     },
   ],
 };
@@ -126,6 +162,7 @@ describe("DuplicateEventModal", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("defaults to the current/upcoming quarter and mirrors the source week, prefilled and shifted", async () => {
+    const user = userEvent.setup();
     renderModal();
 
     expect(
@@ -142,6 +179,20 @@ describe("DuplicateEventModal", () => {
     expect(screen.getByLabelText("Slot 1 date")).toHaveValue("2026-10-14");
     expect(screen.getByLabelText("Slot 1 capacity")).toHaveValue(4);
     expect(screen.getByLabelText("Slot 1 location")).toHaveValue("Room 13");
+
+    // The shift comes across with its name and capacity, and its signup count
+    // does not: Remove stays available on a fresh copy.
+    expect(screen.getByLabelText("Shift 1 name")).toHaveValue("Tue morning");
+    expect(screen.getByLabelText("Shift 1 capacity")).toHaveValue(6);
+    expect(screen.queryByText(/3 signups/)).not.toBeInTheDocument();
+
+    // Both sessions come across, shifted and in the organizer's order.
+    await user.click(screen.getByRole("button", { name: /Show 2 sessions/i }));
+    expect(screen.getByLabelText("Shift 1 session 1 name")).toHaveValue("Period 1");
+    expect(screen.getByLabelText("Shift 1 session 1 date")).toHaveValue("2026-10-14");
+    expect(screen.getByLabelText("Shift 1 session 2 name")).toHaveValue("Period 2");
+    expect(screen.getByLabelText("Shift 1 session 2 date")).toHaveValue("2026-10-14");
+    expect(screen.getByLabelText("Shift 1 session 2 location")).toHaveValue("Room 14");
   });
 
   it("re-applies suggested dates when the target week changes", async () => {
@@ -151,6 +202,9 @@ describe("DuplicateEventModal", () => {
     await user.selectOptions(screen.getByLabelText("Target week"), "4");
     expect(screen.getByLabelText("Start *").value.slice(0, 10)).toBe("2026-10-21");
     expect(screen.getByLabelText("Slot 1 date")).toHaveValue("2026-10-21");
+
+    await user.click(screen.getByRole("button", { name: /Show 2 sessions/i }));
+    expect(screen.getByLabelText("Shift 1 session 1 date")).toHaveValue("2026-10-21");
   });
 
   it("creates through the normal event-create path with source_event_id", async () => {
@@ -173,6 +227,27 @@ describe("DuplicateEventModal", () => {
     expect(new Date(payload.slots[0].start_time).toISOString()).toBe(
       plusDaysLocal("2026-04-15T13:00:00Z", 182).toISOString(),
     );
+
+    // The shift goes up in the same POST, whole: one capacity, both sessions,
+    // shifted by the same whole-day delta, in order. Without this the copy is
+    // an event with an orientation slot and no classroom work.
+    expect(payload.shifts).toHaveLength(1);
+    const shift = payload.shifts[0];
+    expect(shift.name).toBe("Tue morning");
+    expect(shift.capacity).toBe(6);
+    expect(shift.sort_order).toBe(0);
+    expect(shift.sessions).toHaveLength(2);
+    expect(shift.sessions.map((s) => s.name)).toEqual(["Period 1", "Period 2"]);
+    expect(shift.sessions.map((s) => s.sort_order)).toEqual([0, 1]);
+    expect(new Date(shift.sessions[0].start_time).toISOString()).toBe(
+      plusDaysLocal("2026-04-15T14:00:00Z", 182).toISOString(),
+    );
+    expect(new Date(shift.sessions[1].end_time).toISOString()).toBe(
+      plusDaysLocal("2026-04-15T16:00:00Z", 182).toISOString(),
+    );
+    // Source ids and counts must not ride along.
+    expect(shift.id).toBeUndefined();
+    expect(shift.current_count).toBeUndefined();
 
     await waitFor(() => expect(toastMock.success).toHaveBeenCalled());
     expect(onClose).toHaveBeenCalled();

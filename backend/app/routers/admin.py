@@ -109,6 +109,13 @@ class _ExportBooking:
     responses: list
     shift_name: str | None = None
     session_name: str | None = None
+    # Set only for a shift booking. The roster UI needs both: `shift_id` to
+    # group the sessions of one bundle under a single header, and `is_shift` to
+    # pick the right endpoint — promoting or cancelling a commitment is a
+    # different route from promoting a bare slot signup, and `id` alone cannot
+    # tell them apart.
+    shift_id: uuid_mod.UUID | None = None
+    is_shift: bool = False
 
 
 def _bookings_for_slot(db: Session, slot: models.Slot) -> list[_ExportBooking]:
@@ -150,6 +157,8 @@ def _bookings_for_slot(db: Session, slot: models.Slot) -> list[_ExportBooking]:
                 responses=list(shift_signup.responses or []),
                 shift_name=shift.name,
                 session_name=slot.name,
+                shift_id=shift.id,
+                is_shift=True,
             )
         )
     return bookings
@@ -578,7 +587,15 @@ def event_roster(
                     "slot_location": slot.location,
                     "slot_capacity": slot.capacity,
                     "slot_current_count": slot.current_count,
+                    # 2026-08-02 shifts: for a session this is the *shift
+                    # signup* id, since nobody books a session directly. The
+                    # key stays `signup_id` so existing consumers keep working;
+                    # `is_shift` says which kind of id it is.
                     "signup_id": str(signup.id),
+                    "is_shift": signup.is_shift,
+                    "shift_id": str(signup.shift_id) if signup.shift_id else None,
+                    "shift_name": signup.shift_name,
+                    "session_name": signup.session_name,
                     "volunteer_id": str(v.id) if v else None,
                     "participant": _volunteer_participant_payload(v, privacy) if v else {},
                     "status": signup.status.value,
@@ -898,6 +915,108 @@ def admin_promote_shift_signup(
     db.refresh(shift_signup)
 
     send_waitlist_promotion_email.delay(**promo_kwargs)
+    return shift_signup
+
+
+@router.post(
+    "/shift-signups/{shift_signup_id}/cancel", response_model=schemas.ShiftSignupRead
+)
+def admin_cancel_shift_signup(
+    shift_signup_id: str,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """2026-08-02 shifts: cancel a whole commitment.
+
+    Shift twin of ``admin_cancel_signup``. A commitment is all-or-nothing, so
+    there is no "cancel Wednesday only" — that is a swap to a different shift
+    (``swap_shift_signup``), not a cancel.
+
+    ``ensure_signup_cancellable`` has no direct twin because a ShiftSignup's
+    status is lifecycle-only by CHECK constraint — attended/no_show live on
+    SessionAttendance. The reason behind that guard still applies, though:
+    volunteer hours are summed over attendance records, so cancelling a
+    commitment that already has any would destroy the basis for someone's
+    credit (or erase the audit trail of a no-show). Refuse the same way, and
+    point staff at the event-wide reopen that is the one sanctioned way back.
+
+    As with slots, cancelling frees the seat but promotes nobody — the waitlist
+    only moves by explicit staff promotion.
+    """
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .with_for_update(of=models.ShiftSignup)
+        .first()
+    )
+    if not shift_signup:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+
+    shift = shift_service.lock_shift(db, shift_signup.shift_id)
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, actor)
+
+    # Idempotent, and checked before the attendance guard so re-clicking Cancel
+    # on an already-cancelled commitment can't start reporting 422.
+    if shift_signup.status == models.SignupStatus.cancelled:
+        db.commit()
+        db.refresh(shift_signup)
+        return shift_signup
+
+    resolved = [
+        record
+        for record in session_attendance_service.attendance_for_shift_signup(
+            db, shift_signup.id
+        ).values()
+        if record.status
+        in (models.SignupStatus.attended, models.SignupStatus.no_show)
+    ]
+    if resolved:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "SHIFT_SIGNUP_NOT_CANCELLABLE",
+                "message": (
+                    "This commitment already has attendance recorded for "
+                    f"{len(resolved)} session(s). Cancelling would erase it — "
+                    "reopen the event if the close-out was wrong."
+                ),
+            },
+        )
+
+    previous_status = shift_signup.status
+    shift_signup.status = models.SignupStatus.cancelled
+
+    # Confirmed and pending both hold a seat, same as on a slot.
+    if (
+        previous_status
+        in (models.SignupStatus.confirmed, models.SignupStatus.pending)
+        and shift.current_count > 0
+    ):
+        shift.current_count -= 1
+
+    log_action(
+        db, actor, "admin_shift_signup_cancel", "ShiftSignup", str(shift_signup.id)
+    )
+    db.commit()
+    db.refresh(shift_signup)
+
+    cancellation_kind = (
+        "cancellation_waitlisted"
+        if previous_status == models.SignupStatus.waitlisted
+        else "cancellation"
+    )
+    send_email_notification.delay(
+        shift_signup_id=str(shift_signup.id), kind=cancellation_kind
+    )
+
     return shift_signup
 
 

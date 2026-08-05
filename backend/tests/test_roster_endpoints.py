@@ -1,7 +1,12 @@
 """Tests for GET /events/{event_id}/roster endpoint."""
 import pytest
 import uuid
-from tests.fixtures.helpers import auth_headers, make_event_with_slot, make_user
+from tests.fixtures.helpers import (
+    auth_headers,
+    book_shift,
+    make_event_with_slot,
+    make_user,
+)
 
 from app.models import Signup, SignupStatus, UserRole, Volunteer
 
@@ -165,9 +170,11 @@ class TestAdminRosterSlotMetadata:
         admin = make_user(db_session, role=UserRole.admin)
         event, slot = make_event_with_slot(db_session, owner=admin, capacity=5)
         vol = _make_volunteer(db_session)
-        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
-        db_session.add(signup)
-        db_session.flush()
+        # 2026-08-02 shifts: a Signup against a period slot would produce no
+        # roster row at all — nobody books a session directly, so the roster
+        # reads the owning shift's commitments. Booking the shift is what a
+        # volunteer actually does now.
+        book_shift(db_session, slot.shift, vol, status=SignupStatus.confirmed)
 
         headers = auth_headers(client, admin)
         resp = client.get(f"/api/v1/admin/events/{event.id}/roster", headers=headers)
@@ -176,6 +183,11 @@ class TestAdminRosterSlotMetadata:
         row = resp.json()[0]
         assert row["slot_type"] == slot.slot_type.value
         assert "slot_location" in row
+        # The row must also say which bundle it belongs to, or the roster UI
+        # cannot group sessions under one shift header.
+        assert row["is_shift"] is True
+        assert row["shift_id"] == str(slot.shift_id)
+        assert row["shift_name"] == slot.shift.name
 
 
 class TestRosterStaffAccess:
