@@ -7,7 +7,8 @@ from sqlalchemy import text
 from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.tools.base import invoke
 from app.copilot.agent.tools.signup_trend import SIGNUP_TREND_TOOL
-from app.models import Event, Signup, SignupStatus, Slot, SlotType, Volunteer
+from app.models import Event, SignupStatus, Slot, SlotType, Volunteer
+from tests.fixtures.helpers import book_shift, make_shift
 
 
 def _make_session(db_session, user_id):
@@ -38,9 +39,18 @@ def _add_event_with_slot(db_session, owner_id, year, week, capacity, filled):
     )
     db_session.add(e)
     db_session.flush()
+    # A shift, not a bare period slot. These tools are asked about classroom
+    # work, and since the 2026-08-02 shifts work that is booked as a
+    # ShiftSignup — a fixture built from Signup rows is exactly what let the
+    # tools ship reading an empty roster while their tests passed. Capacity
+    # moves up to the shift, so the totals under test are unchanged.
+    shift = make_shift(db_session, e.id, capacity=capacity)
     slot = Slot(
         id=uuid.uuid4(),
         event_id=e.id,
+        shift_id=shift.id,
+        sort_order=0,
+        name="Period 1",
         start_time=now,
         end_time=now + timedelta(hours=1),
         capacity=capacity,
@@ -49,6 +59,7 @@ def _add_event_with_slot(db_session, owner_id, year, week, capacity, filled):
     )
     db_session.add(slot)
     db_session.flush()
+    shift.current_count = filled
     for _ in range(filled):
         v = Volunteer(
             id=uuid.uuid4(),
@@ -58,14 +69,7 @@ def _add_event_with_slot(db_session, owner_id, year, week, capacity, filled):
         )
         db_session.add(v)
         db_session.flush()
-        db_session.add(
-            Signup(
-                id=uuid.uuid4(),
-                volunteer_id=v.id,
-                slot_id=slot.id,
-                status=SignupStatus.confirmed,
-            )
-        )
+        book_shift(db_session, shift, v, status=SignupStatus.confirmed)
     db_session.flush()
     return e
 
@@ -89,6 +93,15 @@ def test_admin_sees_recent_weeks(db_session, seed_events):
     weeks = out["result"]["weeks"]
     labels = [w["week"] for w in weeks]
     assert labels == ["2026-W22", "2026-W21", "2026-W20", "2026-W19"]
+    # The totals, not just the labels. Asserting labels alone is what let the
+    # trend flatline to zero unnoticed: the weeks were all still listed, each
+    # reporting no signups, which reads as collapsing recruitment rather than a
+    # query that stopped seeing shift commitments.
+    by_week = {w["week"]: w for w in weeks}
+    assert by_week["2026-W21"]["total_signups"] == 2
+    assert by_week["2026-W21"]["fill_rate"] == round(2 / 10, 4)
+    assert by_week["2026-W20"]["total_signups"] == 1
+    assert by_week["2026-W19"]["total_signups"] == 0
 
 
 def test_organizer_scoped_to_own_weeks(db_session, seed_events):

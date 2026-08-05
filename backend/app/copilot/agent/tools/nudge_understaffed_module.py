@@ -7,8 +7,12 @@ and a notified_count cross the boundary back.
 
 Plan-vs-reality:
 - The plan doesn't pin a recipient policy. For now we nudge every Volunteer
-  who has at least one historical non-cancelled signup anywhere in the
+  who has at least one historical non-cancelled booking anywhere in the
   caller's scope. That is a reasonable default and keeps the tool hermetic.
+- 2026-08-05: "booking" spans orientation signups and shift commitments (see
+  ``_bookings``). Reading ``Signup`` alone made the recipient pool nearly empty
+  once events moved to shifts, so a confirmed nudge reported a small
+  notified_count and quietly reached almost nobody.
 - Side-effect goes through a ``_dispatch`` seam mirrored from
   send_reminder_email; tests monkeypatch it.
 - Organizer scope: organizer cannot nudge for a module owned by a
@@ -22,8 +26,9 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools import _bookings
 from app.copilot.agent.tools.base import Tool
-from app.models import Event, Signup, SignupStatus, Slot, Volunteer
+from app.models import Event
 
 _PII_SCHEMA = ["module_id", "module_name", "notified_count"]
 
@@ -45,21 +50,14 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     if event is None:
         return dict(_NOT_FOUND)
 
-    # Build recipient pool: any volunteer with prior non-cancelled signup
-    # in the caller's scope.
-    rec_q = (
-        db.query(Volunteer)
-        .join(Signup, Signup.volunteer_id == Volunteer.id)
-        .join(Slot, Slot.id == Signup.slot_id)
-        .join(Event, Event.id == Slot.event_id)
-        .filter(Signup.status != SignupStatus.cancelled)
-        .distinct()
+    # Build recipient pool: any volunteer with a prior non-cancelled booking
+    # in the caller's scope, of either kind.
+    recipients = _bookings.volunteers_with_active_bookings(
+        db, owner_id=None if scope.see_all else scope.module_owner_id
     )
-    if not scope.see_all:
-        rec_q = rec_q.filter(Event.owner_id == scope.module_owner_id)
 
     notified = 0
-    for vol in rec_q.all():
+    for vol in recipients:
         if _dispatch(vol.email, event.title):
             notified += 1
 

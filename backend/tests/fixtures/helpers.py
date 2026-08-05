@@ -43,8 +43,14 @@ def in_shift(db_session, slot, *, name=None, capacity=None):
     trade real period coverage for a green tick.
 
     Capacity and the live count move up to the shift (that is the whole point
-    of the feature), so they are mirrored from the slot unless overridden. Call
-    this after constructing the slot and before flushing it.
+    of the feature), so they are mirrored from the slot unless overridden.
+
+    **Call this after constructing the slot and before flushing it.** The CHECK
+    constraint is not deferrable, so a period slot that has already reached the
+    database cannot be retro-fitted — the INSERT that put it there would have
+    been the thing to fail. Hence the targeted ``flush([shift])``: a bare
+    ``flush()`` would drag the pending slot along with its ``shift_id`` still
+    unset and trip the same constraint.
     """
     shift = models.Shift(
         event_id=slot.event_id,
@@ -54,9 +60,28 @@ def in_shift(db_session, slot, *, name=None, capacity=None):
         current_count=slot.current_count or 0,
     )
     db_session.add(shift)
-    db_session.flush()
+    db_session.flush([shift])
     slot.shift_id = shift.id
     slot.sort_order = 0
+    return shift
+
+
+def make_shift(db_session, event_id, *, name="Shift 1", capacity=10, sort_order=0):
+    """A bare shift, for tests that build their session slots inline.
+
+    Prefer this over ``in_shift`` when the slot doesn't exist yet: pass
+    ``shift_id=shift.id, sort_order=...`` straight to the ``Slot``, and the row
+    satisfies the membership constraint on its first INSERT.
+    """
+    shift = models.Shift(
+        event_id=event_id,
+        name=name,
+        sort_order=sort_order,
+        capacity=capacity,
+        current_count=0,
+    )
+    db_session.add(shift)
+    db_session.flush([shift])
     return shift
 
 

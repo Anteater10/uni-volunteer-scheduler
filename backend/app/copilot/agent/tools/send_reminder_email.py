@@ -11,9 +11,13 @@ Plan-vs-reality:
   a module-level ``_dispatch`` hook that tests monkeypatch. Production
   wiring of ``_dispatch`` is a follow-up — leaving a clean seam keeps the
   confirmation gate honest without inventing email plumbing.
-- Organizer scope: only participants who have a non-cancelled signup on a
-  slot owned by the organizer's events are reachable. Out-of-scope IDs are
-  counted as failed (without leaking which ones).
+- Organizer scope: only participants who have a non-cancelled booking on the
+  organizer's events are reachable. Out-of-scope IDs are counted as failed
+  (without leaking which ones).
+- 2026-08-05: "booking" now means an orientation signup *or* a shift
+  commitment (see ``_bookings``). While this read ``Signup`` alone, a volunteer
+  whose history was entirely classroom work was unreachable — the tool counted
+  them as failed, so a confirmed send silently skipped most of the roster.
 """
 from __future__ import annotations
 
@@ -23,8 +27,9 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools import _bookings
 from app.copilot.agent.tools.base import Tool
-from app.models import Event, Signup, SignupStatus, Slot, Volunteer
+from app.models import Volunteer
 
 _PII_SCHEMA = ["sent_count", "failed_count"]
 
@@ -40,15 +45,9 @@ def _dispatch(email: str, template: str) -> bool:
 
 def _reachable_volunteer_ids(db: Session, scope: Scope) -> set:
     """Return the set of volunteer ids the caller is allowed to email."""
-    q = (
-        db.query(Signup.volunteer_id)
-        .join(Slot, Slot.id == Signup.slot_id)
-        .join(Event, Event.id == Slot.event_id)
-        .filter(Signup.status != SignupStatus.cancelled)
+    return _bookings.reachable_volunteer_ids(
+        db, owner_id=None if scope.see_all else scope.module_owner_id
     )
-    if not scope.see_all:
-        q = q.filter(Event.owner_id == scope.module_owner_id)
-    return {row[0] for row in q.all()}
 
 
 def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:

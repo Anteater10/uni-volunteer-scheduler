@@ -8,6 +8,9 @@ Plan-vs-reality:
 - "Most recent" is defined as the highest ``(year, week_number)``
   pairs found on the Event table, scoped to the caller (admin sees
   every event; organizer sees only their own).
+- Totals come from ``_bookings`` so shift commitments count. While this read
+  ``Signup`` alone the trend flatlined at zero as soon as events moved to
+  shifts, which reads as collapsing recruitment rather than a broken query.
 """
 from __future__ import annotations
 
@@ -18,8 +21,9 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools import _bookings
 from app.copilot.agent.tools.base import Tool
-from app.models import Event, Signup, SignupStatus, Slot
+from app.models import Event
 
 _PII_SCHEMA = ["weeks.week", "weeks.total_signups", "weeks.fill_rate"]
 
@@ -47,24 +51,8 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
             events_q = events_q.filter(Event.owner_id == scope.module_owner_id)
         events = events_q.all()
         event_ids = [e.id for e in events]
-        slots = (
-            db.query(Slot).filter(Slot.event_id.in_(event_ids)).all()
-            if event_ids
-            else []
-        )
-        slot_ids = [s.id for s in slots]
-        slots_total = sum(s.capacity or 0 for s in slots)
-        if slot_ids:
-            total_signups = (
-                db.query(Signup)
-                .filter(
-                    Signup.slot_id.in_(slot_ids),
-                    Signup.status != SignupStatus.cancelled,
-                )
-                .count()
-            )
-        else:
-            total_signups = 0
+        slots_total = _bookings.capacity_for_events(db, event_ids)
+        total_signups = _bookings.filled_for_events(db, event_ids)
         fill_rate = (total_signups / slots_total) if slots_total else 0.0
         weeks_out.append(
             {

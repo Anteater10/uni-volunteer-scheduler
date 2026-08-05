@@ -85,7 +85,8 @@ def seed_full_world(db_session):
     Yields a dict with: org_a_id, org_b_id, admin_id, event_ids (dict by title),
     slot_ids (dict by event title), volunteer_ids (list).
     """
-    from app.models import Signup, SignupStatus, Slot, Volunteer
+    from app.models import ShiftSignup, SignupStatus, Slot, SlotType, Volunteer
+    from tests.fixtures.helpers import make_shift
     org_a = make_user(db_session, role=UserRole.organizer)
     org_b = make_user(db_session, role=UserRole.organizer)
     admin = make_user(db_session, role=UserRole.admin)
@@ -101,7 +102,10 @@ def seed_full_world(db_session):
     ]
 
     event_ids: dict = {}
+    # The session slot of each event's shift. Kept in the payload because the
+    # adversarial cases address slots by id; nothing books one directly.
     slot_ids: dict = {}
+    shift_ids: dict = {}
     volunteer_ids: list = []
 
     for title, owner_id, school, year, wk, capacity, n_signups in spec:
@@ -119,17 +123,27 @@ def seed_full_world(db_session):
             week_number=wk,
             school=school,
         )
+        db_session.add(ev)
+        db_session.flush()
+        # 2026-08-02 shifts: the classroom work is a shift with session slots
+        # under it, and capacity lives on the shift. A bare period slot with
+        # signups against it is no longer representable — nor is it what any of
+        # these tools would meet in production.
+        shift = make_shift(db_session, eid, name=f"{title} shift", capacity=capacity)
+        shift_ids[title] = shift.id
         sl = Slot(
             id=sid,
             event_id=eid,
+            shift_id=shift.id,
+            sort_order=0,
             start_time=base,
             end_time=base + timedelta(hours=2),
             capacity=capacity,
             current_count=0,
-            slot_type="period",
+            slot_type=SlotType.PERIOD,
             date=base.date(),
         )
-        db_session.add_all([ev, sl])
+        db_session.add(sl)
         db_session.flush()
         for _ in range(n_signups):
             vol = Volunteer(
@@ -141,13 +155,15 @@ def seed_full_world(db_session):
             db_session.add(vol)
             db_session.flush()
             db_session.add(
-                Signup(
+                ShiftSignup(
                     id=uuid.uuid4(),
                     volunteer_id=vol.id,
-                    slot_id=sid,
+                    shift_id=shift.id,
                     status=SignupStatus.confirmed,
                 )
             )
+            shift.current_count += 1
+            sl.current_count += 1
             db_session.flush()
             volunteer_ids.append(vol.id)
 
@@ -167,6 +183,7 @@ def seed_full_world(db_session):
         "admin_id": admin.id,
         "event_ids": event_ids,
         "slot_ids": slot_ids,
+        "shift_ids": shift_ids,
         "volunteer_ids": volunteer_ids,
         "extra_volunteer_id": extra.id,
     }

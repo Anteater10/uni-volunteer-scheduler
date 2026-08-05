@@ -7,12 +7,17 @@ omitted from the PII schema so the schema filter (and redactor) keep
 them off the LLM-visible surface.
 
 Plan-vs-reality:
-- The plan asked for "participants[].signup_status". The Signup model
-  exposes a ``status`` enum (pending/confirmed/.../cancelled); we map
-  Signup.status.value into ``signup_status``.
+- The plan asked for "participants[].signup_status". Both booking models expose
+  a ``status`` enum (pending/confirmed/.../cancelled); we map its value into
+  ``signup_status``.
 - Role-scope errors collapse into a "not found" sentinel so an
   organizer cannot distinguish "module belongs to someone else" from
   "module does not exist".
+- 2026-08-05: the roster is a union of orientation signups and shift
+  commitments (see ``_bookings``). It used to join ``Signup -> Slot``, which for
+  a shift-booked event returns nothing — so asking the copilot "who is coming
+  to this module" answered "nobody" for a full classroom, and the empty list
+  was indistinguishable from a genuinely empty roster.
 """
 from __future__ import annotations
 
@@ -22,8 +27,9 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools import _bookings
 from app.copilot.agent.tools.base import Tool
-from app.models import Event, Signup, Slot, Volunteer
+from app.models import Event
 
 _PII_SCHEMA = [
     "module_id",
@@ -31,6 +37,7 @@ _PII_SCHEMA = [
     "participants.id",
     "participants.name",
     "participants.signup_status",
+    "participants.unit",
 ]
 
 _NOT_FOUND = {"error": "module not found or not accessible"}
@@ -44,26 +51,29 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     if not scope.see_all and event.owner_id != scope.module_owner_id:
         return dict(_NOT_FOUND)
 
-    q = (
-        db.query(Signup, Volunteer)
-        .join(Slot, Signup.slot_id == Slot.id)
-        .join(Volunteer, Signup.volunteer_id == Volunteer.id)
-        .filter(Slot.event_id == event.id)
-    )
+    bookings = _bookings.bookings_for_events(db, [event.id])
     status_filter = args.get("status")
     if status_filter:
-        q = q.filter(Signup.status == status_filter)
+        # Compared as a string because the arg arrives from the LLM as one.
+        bookings = [
+            b
+            for b in bookings
+            if b.status and b.status.value == str(status_filter)
+        ]
 
     participants = [
         {
-            "id": str(v.id),
-            "name": f"{v.first_name} {v.last_name}".strip(),
-            "signup_status": s.status.value if s.status else None,
+            "id": str(b.volunteer.id),
+            "name": f"{b.volunteer.first_name} {b.volunteer.last_name}".strip(),
+            "signup_status": b.status.value if b.status else None,
+            # Which shift (or "orientation") they are on — the roster is
+            # otherwise a flat list that hides who is where.
+            "unit": b.unit_name,
             # Tracked for completeness; schema filter drops these.
-            "email": v.email,
-            "phone": v.phone_e164,
+            "email": b.volunteer.email,
+            "phone": b.volunteer.phone_e164,
         }
-        for s, v in q.all()
+        for b in bookings
     ]
 
     payload = {

@@ -15,8 +15,8 @@ from app.copilot.agent.tools.base import invoke
 from app.copilot.agent.tools.nudge_understaffed_module import (
     NUDGE_UNDERSTAFFED_MODULE_TOOL,
 )
-from app.models import Event, Signup, SignupStatus, Slot, UserRole, Volunteer
-from tests.fixtures.helpers import make_user
+from app.models import Event, SignupStatus, Slot, UserRole, Volunteer
+from tests.fixtures.helpers import book_shift, make_shift, make_user
 
 
 def _make_session(db_session, user_id):
@@ -45,9 +45,24 @@ def _seed(db_session, *, owner_id):
         week_number=22,
         school="S",
     )
+    vol = Volunteer(
+        id=uuid.uuid4(),
+        email=f"v-{uuid.uuid4().hex[:8]}@example.com",
+        first_name="A",
+        last_name="B",
+    )
+    db_session.add_all([event, vol])
+    db_session.flush()
+    # The recipient pool is "anyone with prior non-cancelled work", and prior
+    # work is a shift commitment now. Seeding a Signup here would have the test
+    # confirm a nudge that in production reached almost nobody.
+    shift = make_shift(db_session, event.id, capacity=10)
     slot = Slot(
         id=uuid.uuid4(),
         event_id=event.id,
+        shift_id=shift.id,
+        sort_order=0,
+        name="Period 1",
         start_time=now,
         end_time=now + timedelta(hours=2),
         capacity=10,
@@ -55,21 +70,9 @@ def _seed(db_session, *, owner_id):
         slot_type="period",
         date=now.date(),
     )
-    vol = Volunteer(
-        id=uuid.uuid4(),
-        email=f"v-{uuid.uuid4().hex[:8]}@example.com",
-        first_name="A",
-        last_name="B",
-    )
-    db_session.add_all([event, slot, vol])
+    db_session.add(slot)
     db_session.flush()
-    signup = Signup(
-        id=uuid.uuid4(),
-        volunteer_id=vol.id,
-        slot_id=slot.id,
-        status=SignupStatus.confirmed,
-    )
-    db_session.add(signup)
+    book_shift(db_session, shift, vol, status=SignupStatus.confirmed)
     db_session.flush()
     return event, vol
 

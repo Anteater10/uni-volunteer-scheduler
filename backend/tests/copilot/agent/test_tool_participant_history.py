@@ -7,7 +7,8 @@ from sqlalchemy import text
 from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.tools.base import invoke
 from app.copilot.agent.tools.participant_history import PARTICIPANT_HISTORY_TOOL
-from app.models import Signup, SignupStatus, Slot, SlotType, Volunteer
+from app.models import SignupStatus, Slot, SlotType, Volunteer
+from tests.fixtures.helpers import book_shift, make_shift
 
 
 def _make_session(db_session, user_id):
@@ -25,10 +26,19 @@ def _make_session(db_session, user_id):
 
 
 def _signup_on(db_session, event_id, volunteer):
+    """Commit the volunteer to a shift on this event.
+
+    A participant's history is almost entirely classroom work, which is a
+    ShiftSignup now — the very rows the tool was failing to read.
+    """
     now = datetime.now(timezone.utc) + timedelta(days=1)
+    shift = make_shift(db_session, event_id, capacity=10)
     slot = Slot(
         id=uuid.uuid4(),
         event_id=event_id,
+        shift_id=shift.id,
+        sort_order=0,
+        name="Period 1",
         start_time=now,
         end_time=now + timedelta(hours=1),
         capacity=10,
@@ -37,14 +47,8 @@ def _signup_on(db_session, event_id, volunteer):
     )
     db_session.add(slot)
     db_session.flush()
-    db_session.add(
-        Signup(
-            id=uuid.uuid4(),
-            volunteer_id=volunteer.id,
-            slot_id=slot.id,
-            status=SignupStatus.confirmed,
-        )
-    )
+    shift.current_count = 1
+    book_shift(db_session, shift, volunteer, status=SignupStatus.confirmed)
     db_session.flush()
 
 
