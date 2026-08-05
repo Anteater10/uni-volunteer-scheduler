@@ -14,9 +14,9 @@ S (< 1h), M (half day), L (a day or more).
 |---|---|---|
 | 1 | DuplicateEventModal | **done** — commit `64ac08b` |
 | 2 | AdminEventPage roster | **done** — commit `64ac08b` |
-| 3 | ResolveEventModal close-out | open — frontend only, backend already works |
-| 4 | BroadcastModal | backend **done** — commit `b340735`; picker (B2) open |
-| 5 | SignupSuccessCard | open — frontend only |
+| 3 | ResolveEventModal close-out | **done** — commit `7890714` (also fixed `OrganizerRosterPage`) |
+| 4 | BroadcastModal | **done** — backend `b340735`, picker `89c32de` |
+| 5 | SignupSuccessCard | **done** — commit `89c32de` |
 | 6 | e2e / smoke / KB | open |
 
 ---
@@ -118,7 +118,15 @@ email** — volunteers get `2026-10-14 14:00:00+00:00` in their confirmation.
 
 ## B — The three remaining surfaces
 
-### B1 · ResolveEventModal — per-session close-out · M
+**All three are done** (2026-08-05).
+
+| # | Surface | Fixed by |
+|---|---|---|
+| B1 | ResolveEventModal + OrganizerRosterPage per-session close-out | `7890714` |
+| B2 | BroadcastModal unit picker | `89c32de` |
+| B3 | SignupSuccessCard names the shift | `89c32de` |
+
+### B1 · ResolveEventModal — per-session close-out · M — **done `7890714`**
 
 `frontend/src/components/ResolveEventModal.jsx` (182 lines, 0 shift refs).
 
@@ -134,14 +142,28 @@ Wednesday.
 Until this lands, `session_attendance` has no writer from the app, so
 volunteer hours and no-show data stop being recorded for classroom work.
 
-### B2 · BroadcastModal — shift recipients · S — **unblocked**
+**Scoped wrong.** `OrganizerRosterPage.jsx` — the live check-in page — was
+equally broken and the plan didn't list it. Tapping a shift volunteer's card
+issued `POST /signups/undefined/check-in`, and because the optimistic update
+also matched on `signup_id`, *every* shift row on the page flipped to "checked
+in" while the server recorded nothing. Both surfaces are now keyed on
+(commitment, session).
+
+One design call: `POST /events/{id}/resolve` applies one outcome to a
+commitment's whole shift, so it cannot express "attended Tuesday, no-show
+Wednesday". In event mode the modal now closes out one session at a time and
+reserves the event call for orientation and legacy rows. Atomicity traded for
+expressiveness; safe because `_apply_session_resolutions` skips sessions that
+already hold a terminal record, so a partial failure is retryable.
+
+### B2 · BroadcastModal — shift recipients · S — **done `89c32de`**
 
 `frontend/src/components/BroadcastModal.jsx:71,109,110`. `formatSlotOption`
 and the `slotId` state become a unit picker over shifts + orientation slots.
 The backend now takes `shift_id`, and posting a session slot's id returns 422
 with a message naming `shift_id`, so the modal cannot silently mis-target.
 
-### B3 · SignupSuccessCard — name the shift · S
+### B3 · SignupSuccessCard — name the shift · S — **done `89c32de`**
 
 `frontend/src/components/SignupSuccessCard.jsx:22` `formatSlotLine` formats a
 slot. A volunteer who booked "Tue morning" sees a bare list of times and is
@@ -149,9 +171,33 @@ not told which shift they committed to, nor that the sessions are a package.
 
 ---
 
-## C — Restore the test signal
+## C — Restore the test signal — **done `adff552`**
 
-The backend suite is **261 failed / 925 passed / 11 skipped / 43 errors**.
+**1270 passed, 11 skipped, 0 failed.** The starting point for this pass was
+192 failed / 1067 passed / 3 errors (the 261/925 figure below predates A1–A4).
+
+Two production bugs surfaced while writing the shift-side cases, each verified
+by reverting the fix and watching the new test fail:
+
+- `POST /events/{id}/check-in-selected` had no handler for
+  `InvalidTransitionError`, which the service raises for a waitlisted
+  commitment — a volunteer with no seat tapping their own row got a **500**.
+  Now 409, matching the staff routes.
+- `swap_signup` accepted a **session** as the destination. It repointed the
+  signup and bumped the session's `current_count`, but a shift's roster is
+  built from `ShiftSignup` rows, so the volunteer was moved to a day nobody
+  could see them on and the shift's seat count never changed. Now 422
+  `TARGET_IS_SESSION`.
+
+Two fixtures were also wrong in ways that hid work: `make_event_with_slot`
+handed back a *session* that callers then hung plain `Signup` rows off (a
+combination production cannot produce), and two raw-SQL user INSERTs left
+`created_at` NULL on rows that outlived their test, 500'ing `GET /users/`
+in whatever test ran later.
+
+The original diagnosis follows, for the record.
+
+The backend suite was **261 failed / 925 passed / 11 skipped / 43 errors**.
 
 This is *not* the "fixture bookkeeping" the PR body claims. ~45 sites across
 36 files build a period slot and book it directly. The new CHECK constraint
