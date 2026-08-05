@@ -65,22 +65,29 @@ def test_event_on_last_day_of_quarter_gets_final_week(
     client, db_session, organizer_headers, module_template
 ):
     # Sweep remediation task 5 (ended quarters are read-only): dates are
-    # relative to real today — end_date == today keeps the quarter writable
-    # (is_quarter_read_only only trips once end_date < today) regardless of
-    # when this suite runs. Span (76 days) preserves the original Mar 30 -
-    # Jun 14 2026 range so the week 11 assertion still holds.
-    today = date.today()
+    # relative to today, and the basis is UTC because is_quarter_read_only
+    # compares end_date against UTC today. A local date.today() basis is a
+    # day behind west of UTC for part of every day (PT is UTC-7/-8), so
+    # end_date == local today is already < UTC today every evening — the
+    # same calendar rot that took out the summer-session test below, just
+    # on a daily cycle instead of a one-off. The +1 day of margin keeps the
+    # quarter writable even if UTC ticks over mid-run.
+    #
+    # The event still lands on the quarter's last day (that is what week 11
+    # asserts); only the basis moved. Span (76 days) preserves the original
+    # Mar 30 - Jun 14 2026 range so the week 11 assertion still holds.
+    last_day = datetime.now(timezone.utc).date() + timedelta(days=1)
     spring = _seed_quarter(
         db_session,
         season=models.Quarter.SPRING,
         year=2026,
-        start_date=today - timedelta(days=76),
-        end_date=today,
+        start_date=last_day - timedelta(days=76),
+        end_date=last_day,
     )
 
     resp = client.post(
         "/api/v1/events/",
-        json=_event_payload(today.isoformat(), module_template.slug),
+        json=_event_payload(last_day.isoformat(), module_template.slug),
         headers=organizer_headers,
     )
     assert resp.status_code == 200, resp.text
