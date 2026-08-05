@@ -14,7 +14,6 @@ from email.message import EmailMessage
 from celery import Celery
 from celery.schedules import crontab
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -22,6 +21,7 @@ from sendgrid.helpers.mail import Mail
 from .config import settings
 from .database import SessionLocal
 from . import models
+from .services import notification_dedup
 from .emails import BUILDERS, SessionBooking
 from .magic_link_service import CONFIRM_PURPOSES
 from .observability import init_sentry
@@ -56,34 +56,11 @@ celery.conf.update(
 )
 
 
-def _dedup_insert(db: Session, signup_id, kind: str) -> bool:
-    """Insert into sent_notifications; return True if row was inserted (first sender wins)."""
-    stmt = pg_insert(models.SentNotification).values(
-        signup_id=signup_id, kind=kind
-    ).on_conflict_do_nothing(
-        index_elements=["signup_id", "kind"],
-        index_where=models.SentNotification.signup_id.isnot(None),
-    )
-    result = db.execute(stmt)
-    return result.rowcount == 1
-
-
-def _dedup_insert_shift(db: Session, shift_signup_id, kind: str) -> bool:
-    """Shift-commitment twin of ``_dedup_insert``.
-
-    sent_notifications is dual-anchored (2026-08-02 shifts), so the uniqueness
-    that makes "first sender wins" work lives in two *partial* indexes rather
-    than one. ON CONFLICT therefore has to name the matching predicate — an
-    unqualified (shift_signup_id, kind) inference finds no index and errors.
-    """
-    stmt = pg_insert(models.SentNotification).values(
-        shift_signup_id=shift_signup_id, kind=kind
-    ).on_conflict_do_nothing(
-        index_elements=["shift_signup_id", "kind"],
-        index_where=models.SentNotification.shift_signup_id.isnot(None),
-    )
-    result = db.execute(stmt)
-    return result.rowcount == 1
+# Thin aliases over the canonical implementations. The statement is subtly
+# conditional (partial indexes need index_where) and had been copy-pasted to
+# four sites, two of them wrong — see services/notification_dedup.py.
+_dedup_insert = notification_dedup.dedup_insert_signup
+_dedup_insert_shift = notification_dedup.dedup_insert_shift_signup
 
 
 def _check_daily_send_limit(db: Session) -> bool:

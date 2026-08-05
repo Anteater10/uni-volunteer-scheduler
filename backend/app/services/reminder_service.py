@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from .. import models
+from . import notification_dedup
 
 
 PT = ZoneInfo("America/Los_Angeles")
@@ -254,12 +255,10 @@ def send_reminder(
     if not force and is_quiet_hours(now):
         return SendResult(sent=False, reason="quiet_hours")
 
-    # Atomic dedup insert — first caller wins.
-    stmt = pg_insert(models.SentNotification).values(
-        signup_id=signup.id, kind=nk
-    ).on_conflict_do_nothing(index_elements=["signup_id", "kind"])
-    result = db.execute(stmt)
-    if result.rowcount != 1:
+    # Atomic dedup insert — first caller wins. This local copy shipped without
+    # the partial-index predicate and raised instead of sending, so it now goes
+    # through the one canonical implementation.
+    if not notification_dedup.dedup_insert_signup(db, signup.id, nk):
         return SendResult(sent=False, reason="already_sent")
     db.flush()
 
@@ -312,16 +311,7 @@ def send_session_reminder(
         return SendResult(sent=False, reason="quiet_hours")
 
     nk = notification_kind(kind, session.sort_order)
-    # Partial index, so ON CONFLICT has to name the predicate — see
-    # celery_app._dedup_insert_shift for why.
-    stmt = pg_insert(models.SentNotification).values(
-        shift_signup_id=shift_signup.id, kind=nk
-    ).on_conflict_do_nothing(
-        index_elements=["shift_signup_id", "kind"],
-        index_where=models.SentNotification.shift_signup_id.isnot(None),
-    )
-    result = db.execute(stmt)
-    if result.rowcount != 1:
+    if not notification_dedup.dedup_insert_shift_signup(db, shift_signup.id, nk):
         return SendResult(sent=False, reason="already_sent")
     db.flush()
 

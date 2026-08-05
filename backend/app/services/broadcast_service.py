@@ -32,6 +32,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models
+from . import notification_dedup
 
 logger = logging.getLogger(__name__)
 
@@ -290,16 +291,12 @@ def _manage_url_for_volunteer(volunteer: "models.Volunteer") -> Optional[str]:
 
 
 def _dedup_insert_broadcast(db: Session, signup_id, kind: str) -> bool:
-    """Insert into sent_notifications; return True if row was inserted."""
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    """Broadcast dedup — one canonical implementation, see notification_dedup.
 
-    stmt = (
-        pg_insert(models.SentNotification)
-        .values(signup_id=signup_id, kind=kind)
-        .on_conflict_do_nothing(index_elements=["signup_id", "kind"])
-    )
-    result = db.execute(stmt)
-    return result.rowcount == 1
+    This had its own copy of the insert without the partial-index predicate, so
+    every broadcast raised InvalidColumnReference and nothing was sent.
+    """
+    return notification_dedup.dedup_insert_signup(db, signup_id, kind)
 
 
 def send_broadcast(
