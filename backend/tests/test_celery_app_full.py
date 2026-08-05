@@ -1,4 +1,5 @@
 """Full coverage for app.celery_app — email send paths, dispatch, all tasks."""
+import base64
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 from uuid import UUID
@@ -128,6 +129,73 @@ def test_send_via_smtp_no_tls_no_auth(monkeypatch):
     smtp_instance.send_message.assert_called_once()
 
 
+def test_send_via_smtp_attaches_calendar_file(monkeypatch):
+    """The .ics attachment loop (added 2026-07-29 with the all-sessions
+    calendar file) had no test — the per-file 100% coverage gate on
+    celery_app.py caught it only once the expired quarter-boundary test
+    stopped crashing the job before the gate ran."""
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    monkeypatch.setattr(celery_mod.settings, "smtp_host", "mailpit")
+    monkeypatch.setattr(celery_mod.settings, "smtp_port", 1025)
+    monkeypatch.setattr(celery_mod.settings, "smtp_use_tls", False)
+    monkeypatch.setattr(celery_mod.settings, "smtp_username", None)
+    monkeypatch.setattr(celery_mod.settings, "smtp_password", None)
+
+    smtp_instance = MagicMock()
+    smtp_cm = MagicMock()
+    smtp_cm.__enter__.return_value = smtp_instance
+    smtp_cm.__exit__.return_value = False
+    ics = "BEGIN:VCALENDAR\nEND:VCALENDAR"
+    with patch.object(celery_mod.smtplib, "SMTP", return_value=smtp_cm):
+        _send_via_smtp(
+            "to@x.com",
+            "s",
+            "b",
+            html_body="<b>hi</b>",
+            attachments=[("scitrek.ics", ics)],
+        )
+
+    smtp_instance.send_message.assert_called_once()
+    sent = smtp_instance.send_message.call_args[0][0]
+    calendar_parts = [
+        p for p in sent.walk() if p.get_content_type() == "text/calendar"
+    ]
+    assert len(calendar_parts) == 1
+    assert calendar_parts[0].get_filename() == "scitrek.ics"
+    assert calendar_parts[0].get_payload(decode=True).decode() == ics
+
+
+def test_send_via_smtp_attaches_every_file(monkeypatch):
+    """attachments is a list — the loop must add all of them, not just the
+    first."""
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    monkeypatch.setattr(celery_mod.settings, "smtp_host", "mailpit")
+    monkeypatch.setattr(celery_mod.settings, "smtp_port", 1025)
+    monkeypatch.setattr(celery_mod.settings, "smtp_use_tls", False)
+    monkeypatch.setattr(celery_mod.settings, "smtp_username", None)
+    monkeypatch.setattr(celery_mod.settings, "smtp_password", None)
+
+    smtp_instance = MagicMock()
+    smtp_cm = MagicMock()
+    smtp_cm.__enter__.return_value = smtp_instance
+    smtp_cm.__exit__.return_value = False
+    with patch.object(celery_mod.smtplib, "SMTP", return_value=smtp_cm):
+        _send_via_smtp(
+            "to@x.com",
+            "s",
+            "b",
+            attachments=[("one.ics", "ONE"), ("two.ics", "TWO")],
+        )
+
+    sent = smtp_instance.send_message.call_args[0][0]
+    names = sorted(
+        p.get_filename()
+        for p in sent.walk()
+        if p.get_content_type() == "text/calendar"
+    )
+    assert names == ["one.ics", "two.ics"]
+
+
 # ---------------------------------------------------------------------------
 # _send_via_sendgrid
 # ---------------------------------------------------------------------------
@@ -177,6 +245,36 @@ def test_send_via_sendgrid_sends_html_only(monkeypatch):
     with patch.object(celery_mod, "SendGridAPIClient", return_value=sg_instance):
         _send_via_sendgrid("to@x.com", "subj", "", html_body="<b>only html</b>")
     sg_instance.send.assert_called_once()
+
+
+def test_send_via_sendgrid_attaches_calendar_file(monkeypatch):
+    """SendGrid's attachment block base64-encodes the .ics and sets the
+    filename/type/disposition helpers. Untested since it landed on
+    2026-07-29."""
+    monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", "SG.test")
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+
+    ics = "BEGIN:VCALENDAR\nEND:VCALENDAR"
+    sg_instance = MagicMock()
+    with patch.object(celery_mod, "SendGridAPIClient", return_value=sg_instance):
+        _send_via_sendgrid(
+            "to@x.com",
+            "subj",
+            "plain",
+            html_body="<b>hi</b>",
+            attachments=[("scitrek.ics", ics)],
+        )
+
+    sg_instance.send.assert_called_once()
+    message = sg_instance.send.call_args[0][0]
+    assert len(message.attachments) == 1
+    attachment = message.attachments[0]
+    assert attachment.file_name.file_name == "scitrek.ics"
+    assert attachment.file_type.file_type == "text/calendar"
+    assert attachment.disposition.disposition == "attachment"
+    assert (
+        base64.b64decode(attachment.file_content.file_content).decode() == ics
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +591,34 @@ def test_waitlist_promotion_email_sends(
     assert len(sends) == 1
     html_body = sends[0][1]["html_body"]
     assert "/signup/confirm?token=raw-promo-token" in html_body
+
+
+def test_waitlist_promotion_email_logs_token_preview_in_debug(
+    db_session, monkeypatch, patch_session_local, caplog
+):
+    """settings.debug gates a token preview log line. Debug-only, but the
+    per-file gate requires celery_app.py at 100% line coverage."""
+    s = _seed_confirmed_signup(db_session, email_tag="wpedbg")
+    db_session.commit()
+    monkeypatch.setattr(celery_mod, "_send_email", lambda *a, **k: None)
+    monkeypatch.setattr(
+        celery_mod.settings, "frontend_url", "https://example.test", raising=False,
+    )
+    monkeypatch.setattr(celery_mod.settings, "debug", True, raising=False)
+
+    import logging
+    with caplog.at_level(logging.DEBUG, logger="app.celery_app"):
+        send_waitlist_promotion_email.run(
+            volunteer_id=str(s.volunteer.id),
+            signup_id=str(s.id),
+            token="preview-me",
+            event_id=str(s.slot.event_id),
+        )
+
+    assert any(
+        "waitlist_promotion_token_preview" in r.message and "preview-me" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_waitlist_promotion_email_missing_entity_returns(
