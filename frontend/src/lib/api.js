@@ -537,8 +537,11 @@ async function getBroadcastRecipientCount(eventId, params) {
   });
 }
 // Sends a broadcast. On 429 the Error carries .status and .retryAfter.
-// slot_id (optional) targets one slot's roster; omitted = all slots.
-async function sendBroadcast(eventId, { subject, body_markdown, slot_id }) {
+// Scope: slot_id targets one orientation slot's roster, shift_id targets one
+// shift's commitments, neither means everyone on the event. Passing both is a
+// 422, as is passing the id of a session slot — a session has no roster of its
+// own, so the server names shift_id in the message rather than guessing.
+async function sendBroadcast(eventId, { subject, body_markdown, slot_id, shift_id }) {
   const url = `${API_BASE}/events/${eventId}/broadcast`;
   const token = authStorage.getToken();
   const res = await fetch(url, {
@@ -551,6 +554,7 @@ async function sendBroadcast(eventId, { subject, body_markdown, slot_id }) {
       subject,
       body_markdown,
       ...(slot_id ? { slot_id } : {}),
+      ...(shift_id ? { shift_id } : {}),
     }),
   });
   const json = await safeReadJson(res);

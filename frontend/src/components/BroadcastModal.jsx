@@ -93,6 +93,45 @@ function formatSlotOption(slot) {
   return [type, date, timeRange, slot.location].filter(Boolean).join(" · ");
 }
 
+/**
+ * The things that actually have a roster to email.
+ *
+ * 2026-08-05 shifts: the picker used to list raw slots, which after shifts
+ * means listing *sessions* — and a session has no roster of its own, so every
+ * classroom option in the list was unsendable (the API 422s it, naming
+ * shift_id). Capacity, the waitlist and the commitment all sit on the shift,
+ * so the shift is the unit. Orientation slots are still booked directly and
+ * stay in the list as themselves.
+ */
+function buildUnits(slots, shifts) {
+  const units = [];
+  for (const shift of shifts || []) {
+    const sessions = (shift.sessions || [])
+      .slice()
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const days = sessions
+      .map((x) => formatSlotOption({ ...x, slot_type: null }))
+      .filter(Boolean);
+    units.push({
+      key: `shift:${shift.id}`,
+      param: { shift_id: shift.id },
+      // Sessions in the label because "Tue morning" alone doesn't say which
+      // days the volunteer committed to.
+      label: [shift.name, days.join(" + ")].filter(Boolean).join(" · "),
+    });
+  }
+  for (const slot of slots || []) {
+    // A session's roster is its shift's, and the shift is already listed.
+    if (slot.shift_id) continue;
+    units.push({
+      key: `slot:${slot.id}`,
+      param: { slot_id: slot.id },
+      label: formatSlotOption(slot),
+    });
+  }
+  return units;
+}
+
 export default function BroadcastModal({
   open,
   onClose,
@@ -107,7 +146,9 @@ export default function BroadcastModal({
   const [recipientCount, setRecipientCount] = useState(null);
   const [recipientErr, setRecipientErr] = useState("");
   const [slots, setSlots] = useState(null);
-  const [slotId, setSlotId] = useState(""); // "" = all slots
+  const [shifts, setShifts] = useState(null);
+  // "" = the whole event; otherwise a key from buildUnits.
+  const [unitKey, setUnitKey] = useState("");
 
   const countFetcher = scope === "organizer"
     ? api.organizer.broadcastRecipientCount
@@ -116,6 +157,12 @@ export default function BroadcastModal({
     ? api.organizer.sendBroadcast
     : api.admin.sendBroadcast;
 
+  const units = useMemo(
+    () => (slots === null && shifts === null ? null : buildUnits(slots, shifts)),
+    [slots, shifts],
+  );
+  const selectedUnit = units?.find((u) => u.key === unitKey) || null;
+
   useEffect(() => {
     if (!open || !eventId) return undefined;
     let cancelled = false;
@@ -123,8 +170,8 @@ export default function BroadcastModal({
     setRecipientCount(null);
     (async () => {
       try {
-        const r = slotId
-          ? await countFetcher(eventId, { slot_id: slotId })
+        const r = selectedUnit
+          ? await countFetcher(eventId, selectedUnit.param)
           : await countFetcher(eventId);
         if (!cancelled) setRecipientCount(r?.recipient_count ?? 0);
       } catch (e) {
@@ -135,19 +182,22 @@ export default function BroadcastModal({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, eventId, scope, slotId]);
+  }, [open, eventId, scope, unitKey]);
 
   useEffect(() => {
     if (!open || !eventId) return undefined;
     let cancelled = false;
     (async () => {
-      try {
-        const r = await api.listSlots({ event_id: eventId });
-        if (!cancelled) setSlots(Array.isArray(r) ? r : []);
-      } catch {
-        // Degrade gracefully: no picker, whole-event send still works.
-        if (!cancelled) setSlots([]);
-      }
+      // Both lists, independently: losing one shouldn't hide the other's
+      // options. Failing both just means no picker, and the whole-event send
+      // still works.
+      const [slotRes, shiftRes] = await Promise.all([
+        api.listSlots({ event_id: eventId }).catch(() => []),
+        api.shifts.list(eventId).catch(() => []),
+      ]);
+      if (cancelled) return;
+      setSlots(Array.isArray(slotRes) ? slotRes : []);
+      setShifts(Array.isArray(shiftRes) ? shiftRes : []);
     })();
     return () => {
       cancelled = true;
@@ -165,7 +215,8 @@ export default function BroadcastModal({
       setRecipientCount(null);
       setRecipientErr("");
       setSlots(null);
-      setSlotId("");
+      setShifts(null);
+      setUnitKey("");
     }
   }, [open]);
 
@@ -187,7 +238,7 @@ export default function BroadcastModal({
       const result = await sender(eventId, {
         subject: subject.trim(),
         body_markdown: body,
-        ...(slotId ? { slot_id: slotId } : {}),
+        ...(selectedUnit ? selectedUnit.param : {}),
       });
       const n = result?.recipient_count ?? 0;
       toast.success(`Broadcast sent to ${n} volunteer${n === 1 ? "" : "s"}.`);
@@ -217,25 +268,25 @@ export default function BroadcastModal({
     >
       <p className="text-sm text-[var(--color-fg-muted)] mb-3">
         Send a one-time email to volunteers signed up for this event
-        (confirmed, checked in, or attended) — everyone, or just one slot's
-        roster. Rate-limited to 5 broadcasts per hour per event.
+        (confirmed, checked in, or attended) — everyone, or just one shift or
+        orientation slot. Rate-limited to 5 broadcasts per hour per event.
       </p>
 
-      {slots && slots.length >= 2 ? (
+      {units && units.length >= 2 ? (
         <div className="mb-3">
           <Label htmlFor="broadcast-slot">Send to</Label>
           <select
             id="broadcast-slot"
             data-testid="broadcast-slot-select"
             className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
-            value={slotId}
-            onChange={(e) => setSlotId(e.target.value)}
+            value={unitKey}
+            onChange={(e) => setUnitKey(e.target.value)}
             disabled={sending}
           >
-            <option value="">All slots — everyone signed up</option>
-            {slots.map((s) => (
-              <option key={s.id} value={s.id}>
-                {formatSlotOption(s)}
+            <option value="">Everyone signed up for this event</option>
+            {units.map((u) => (
+              <option key={u.key} value={u.key}>
+                {u.label}
               </option>
             ))}
           </select>
@@ -258,7 +309,7 @@ export default function BroadcastModal({
           >
             Will send to {recipientCount} volunteer
             {recipientCount === 1 ? "" : "s"}
-            {slotId ? " in the selected slot" : ""}.
+            {selectedUnit ? " in the selected shift or slot" : ""}.
           </p>
         )}
       </div>

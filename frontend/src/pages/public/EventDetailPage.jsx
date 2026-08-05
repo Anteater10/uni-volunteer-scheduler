@@ -1061,6 +1061,9 @@ export default function EventDetailPage() {
           ...s,
           slot_type: "period",
           _shiftName: shift.name,
+          // The signup result for a shift is anchored on the shift, not on
+          // each session, so the card needs the id to find its status.
+          _shiftId: shift.id,
         }));
       }),
     ];
