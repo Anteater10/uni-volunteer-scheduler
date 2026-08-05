@@ -584,19 +584,23 @@ def weekly_digest() -> None:
 )
 def send_broadcast_email(
     self,
-    signup_id: str,
     to_email: str,
     subject: str,
     text_body: str,
     html_body: str,
+    signup_id: str | None = None,
+    shift_signup_id: str | None = None,
 ) -> None:
     """Phase 26 — deliver a single broadcast message.
 
     The caller (broadcast_service.send_broadcast) has already performed
-    the atomic dedup insert on ``sent_notifications(signup_id, kind)``
-    before enqueuing this task, so we only deliver here. Retries from
-    the Celery framework are worker-level guards; any persistent failure
-    surfaces in docker logs.
+    the atomic dedup insert on ``sent_notifications`` before enqueuing this
+    task, so we only deliver here. Retries from the Celery framework are
+    worker-level guards; any persistent failure surfaces in docker logs.
+
+    Exactly one of ``signup_id`` / ``shift_signup_id`` is set — a broadcast now
+    reaches shift commitments too, and they have no signup row. Both are
+    log-only here; the anchor that matters was already claimed upstream.
 
     Broadcasts are operational — they intentionally bypass
     ``volunteer_preferences.email_reminders_enabled``.
@@ -609,8 +613,9 @@ def send_broadcast_email(
             return
         _send_email(to_email, subject, text_body or "", html_body=html_body)
         logger.info(
-            "broadcast_email_sent signup_id=%s to=%s",
+            "broadcast_email_sent signup_id=%s shift_signup_id=%s to=%s",
             signup_id,
+            shift_signup_id,
             to_email,
         )
     finally:
