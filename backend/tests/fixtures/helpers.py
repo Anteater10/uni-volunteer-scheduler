@@ -142,6 +142,20 @@ def auth_headers(client, user, password="hunter2-secure"):
 
 
 def make_event_with_slot(db_session, *, capacity=1, owner=None, starts_in_days=1):
+    """An event with one directly-bookable slot, i.e. an orientation slot.
+
+    2026-08-05 shifts: this used to hand back a PERIOD slot, which the factory
+    now wraps in its own parent shift — so callers got a *session*, and then
+    hung plain ``Signup`` rows off it. That combination cannot occur in
+    production (a session is booked through its shift) and it quietly broke the
+    slot-level endpoints: PATCH /slots/{id} refuses a session, so a test that
+    edited this slot got a 400 for the right reason at the wrong target.
+
+    An orientation slot is the slot that is still booked, checked in, resolved
+    and edited on its own, which is what nearly every caller of this helper is
+    actually testing. Build a real shift with ``make_shift`` + ``book_shift``
+    where the subject is classroom work.
+    """
     _bind_factories(db_session)
     if owner is None:
         owner = make_user(db_session)
@@ -157,6 +171,7 @@ def make_event_with_slot(db_session, *, capacity=1, owner=None, starts_in_days=1
         end_time=start + timedelta(hours=2),
         capacity=capacity,
         current_count=0,
+        slot_type=models.SlotType.ORIENTATION,
     )
     db_session.flush()
     return event, slot

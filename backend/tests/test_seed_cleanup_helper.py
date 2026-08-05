@@ -16,22 +16,9 @@ from tests.fixtures.factories import (
     EventFactory,
     SignupFactory,
     SlotFactory,
-    UserFactory,
     VolunteerFactory,
 )
-
-ALL_FACTORIES = (
-    UserFactory,
-    EventFactory,
-    SlotFactory,
-    VolunteerFactory,
-    SignupFactory,
-)
-
-
-def _bind(db_session):
-    for f in ALL_FACTORIES:
-        f._meta.sqlalchemy_session = db_session
+from tests.fixtures.helpers import _bind_factories as _bind
 
 
 def test_seed_cleanup_deletes_cancelled_signups_with_dependents(db_session):

@@ -476,6 +476,21 @@ def check_in_selected_endpoint(
                 "message": "That shift is not open for check-in right now",
             },
         )
+    except InvalidTransitionError as e:
+        # 2026-08-05 shifts: reachable via a waitlisted commitment — they hold
+        # no seat, so a session of theirs has nothing to attend. The sibling
+        # event-QR route skips such units silently because that scan covers the
+        # whole event, but here the volunteer tapped this row specifically and
+        # deserves to be told, rather than getting a 500.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INVALID_TRANSITION",
+                "from": e.from_status.value,
+                "to": e.to_status.value,
+            },
+        )
     except LookupError:
         db.rollback()
         raise HTTPException(status_code=404, detail="Signup or event not found")

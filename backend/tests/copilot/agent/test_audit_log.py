@@ -14,8 +14,10 @@ def seeded_session(db_session):
     session_id = uuid.uuid4()
     db_session.execute(
         text(
-            "INSERT INTO users (id, name, email, role, is_active) "
-            "VALUES (:i, :n, :e, CAST('admin' AS userrole), true)"
+            # created_at: see test_shifts_migration — the model's default is
+            # Python-side, so a raw INSERT has to supply it.
+            "INSERT INTO users (id, name, email, role, is_active, created_at) "
+            "VALUES (:i, :n, :e, CAST('admin' AS userrole), true, now())"
         ),
         {"i": user_id, "n": "Audit Test", "e": f"audit-{user_id}@test"},
     )

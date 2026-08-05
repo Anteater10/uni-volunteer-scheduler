@@ -184,6 +184,24 @@ def swap_signup(
             status_code=400, detail="Target slot must be in the same event"
         )
 
+    # 2026-08-05 shifts: a session inside a shift is not a destination for a
+    # slot-level signup. Allowing it would write the one row shape production no
+    # longer has — a Signup against a session — which the shift roster, the
+    # per-session check-in and the shift's capacity all ignore, so the volunteer
+    # would silently vanish from the day they were moved to. Staff move
+    # classroom work with swap_shift_signup instead.
+    if target_slot.shift_id is not None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "TARGET_IS_SESSION",
+                "message": (
+                    "That slot is a session inside a shift. Move the volunteer "
+                    "between shifts instead."
+                ),
+            },
+        )
+
     # Hard capacity check — Phase 29 deliberately refuses waitlist fallback.
     # (Use cancel + new signup if the participant wants the waitlist route.)
     if target_slot.current_count >= target_slot.capacity:

@@ -7,6 +7,17 @@ These tests create Volunteer/Slot/Signup inline (self-contained) and verify:
 - scope guards (other events, other volunteers not flipped)
 - idempotency
 """
+
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -71,7 +82,7 @@ def _slot(db, event) -> Slot:
         end_time=datetime.utcnow() + timedelta(days=1, hours=2),
         capacity=10,
         current_count=0,
-        slot_type=SlotType.PERIOD,
+        slot_type=SlotType.ORIENTATION,
         date=datetime.utcnow().date(),
     )
     db.add(s)

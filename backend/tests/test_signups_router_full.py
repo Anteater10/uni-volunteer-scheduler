@@ -319,6 +319,11 @@ def test_swap_admin_succeeds(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw1@example.com")
     signup = _seed_confirmed(db_session, slot_a, vol)
@@ -343,6 +348,11 @@ def test_swap_organizer_succeeds(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw2@example.com")
     signup = _seed_confirmed(db_session, slot_a, vol)
@@ -367,6 +377,11 @@ def test_swap_participant_forbidden(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw3@example.com")
     signup = _seed_confirmed(db_session, slot_a, vol)
@@ -438,6 +453,11 @@ def test_swap_admin_of_waitlisted_signup_lands_pending_with_email(
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw4@example.com")
     signup = SignupFactory(
@@ -474,6 +494,11 @@ def test_swap_admin_of_cancelled_signup_is_refused(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw5@example.com")
     signup = SignupFactory(
@@ -508,6 +533,11 @@ def test_swap_admin_of_attended_signup_succeeds(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw6@example.com")
     signup = SignupFactory(

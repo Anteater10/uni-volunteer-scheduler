@@ -50,8 +50,13 @@ def _seed_old_shape(conn, tag: str):
     """Insert pre-0037 rows. ``tag`` keeps emails/slugs unique per test."""
     conn.execute(
         text(
-            "INSERT INTO users (id, name, email, role, notify_email) "
-            "VALUES (:id, 'Owner', :email, 'organizer', true)"
+            # created_at is a Python-side default on the model, so a raw
+            # INSERT leaves it NULL — and these rows outlive the test (alembic
+            # runs on its own committed connection). A NULL created_at then
+            # breaks GET /users/ for whatever test happens to run later, which
+            # is a confusing failure a long way from its cause.
+            "INSERT INTO users (id, name, email, role, notify_email, created_at) "
+            "VALUES (:id, 'Owner', :email, 'organizer', true, now())"
         ),
         {"id": OWNER, "email": f"owner-{tag}@mig.test"},
     )

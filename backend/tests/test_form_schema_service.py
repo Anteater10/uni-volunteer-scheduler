@@ -9,6 +9,16 @@ Covers:
   6. set_module_default_schema writes an audit log.
   7. set_event_schema validates schema shape and rejects duplicate ids.
 """
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 from __future__ import annotations
 
 import uuid
@@ -82,7 +92,7 @@ def _make_signup(db, event) -> Signup:
         start_time=event.start_date,
         end_time=event.end_date,
         capacity=10,
-        slot_type=SlotType.PERIOD,
+        slot_type=SlotType.ORIENTATION,
         date=date_type(2026, 4, 15),
     )
     db.add(slot)

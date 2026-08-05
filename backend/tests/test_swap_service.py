@@ -27,24 +27,33 @@ from tests.fixtures.factories import (
     UserFactory,
     VolunteerFactory,
 )
-
-
-def _bind_factories(db):
-    for f in (
-        UserFactory,
-        EventFactory,
-        SlotFactory,
-        VolunteerFactory,
-        SignupFactory,
-    ):
-        f._meta.sqlalchemy_session = db
+from tests.fixtures.helpers import _bind_factories
 
 
 def _make_event_with_two_slots(db, *, cap_a=2, cap_b=2):
+    """Two directly-bookable slots on one event.
+
+    2026-08-05 shifts: orientation, because ``swap_signup`` moves a ``Signup``
+    and a ``Signup`` only ever names a slot that is booked on its own. Moving a
+    commitment between shifts is ``swap_shift_signup``, a different service with
+    its own rules (it refuses a part-attended shift, for one).
+    """
     owner = UserFactory(role=models.UserRole.admin)
     event = EventFactory(owner=owner, owner_id=owner.id)
-    slot_a = SlotFactory(event=event, event_id=event.id, capacity=cap_a, current_count=0)
-    slot_b = SlotFactory(event=event, event_id=event.id, capacity=cap_b, current_count=0)
+    slot_a = SlotFactory(
+        event=event,
+        event_id=event.id,
+        capacity=cap_a,
+        current_count=0,
+        slot_type=models.SlotType.ORIENTATION,
+    )
+    slot_b = SlotFactory(
+        event=event,
+        event_id=event.id,
+        capacity=cap_b,
+        current_count=0,
+        slot_type=models.SlotType.ORIENTATION,
+    )
     db.flush()
     return event, slot_a, slot_b
 
@@ -338,9 +347,13 @@ def test_staff_swap_of_waitlisted_onto_ended_slot_is_rejected(db_session):
     owner = UserFactory(role=models.UserRole.admin)
     event = EventFactory(owner=owner, owner_id=owner.id)
     now = datetime.now(timezone.utc)
-    slot_a = SlotFactory(event=event, event_id=event.id, capacity=1, current_count=0)
+    slot_a = SlotFactory(
+        event=event, event_id=event.id, capacity=1, current_count=0,
+        slot_type=models.SlotType.ORIENTATION,
+    )
     slot_b = SlotFactory(
         event=event, event_id=event.id, capacity=2, current_count=0,
+        slot_type=models.SlotType.ORIENTATION,
         start_time=now - timedelta(hours=3), end_time=now - timedelta(hours=1),
     )
     signup = _make_waitlisted_signup(db_session, slot_a)
@@ -466,3 +479,44 @@ def test_staff_swap_of_attended_signup_succeeds(db_session):
     assert result.signup.status == models.SignupStatus.attended
     assert slot_a.current_count == 0
     assert slot_b.current_count == 1
+
+
+def test_swap_onto_a_shift_session_is_refused(db_session):
+    """A session is not a destination for a slot-level signup.
+
+    2026-08-05 shifts: nothing stopped this. The signup's ``slot_id`` was
+    repointed at the session and the session's ``current_count`` bumped, but the
+    shift's roster is built from ``ShiftSignup`` rows — so the volunteer was
+    moved to a day where nobody could see them, check them in, or close them
+    out, and the shift's own seat count never changed.
+    """
+    _bind_factories(db_session)
+    owner = UserFactory(role=models.UserRole.admin)
+    event = EventFactory(owner=owner, owner_id=owner.id)
+    orient = SlotFactory(
+        event=event,
+        event_id=event.id,
+        capacity=5,
+        current_count=1,
+        slot_type=models.SlotType.ORIENTATION,
+    )
+    # A PERIOD slot from the factory builds its own parent shift.
+    session = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol,
+        volunteer_id=vol.id,
+        slot=orient,
+        slot_id=orient.id,
+        status=models.SignupStatus.confirmed,
+    )
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(db_session, signup.id, session.id, actor=None, actor_label="staff")
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "TARGET_IS_SESSION"
+
+    db_session.expire_all()
+    assert str(db_session.get(models.Signup, signup.id).slot_id) == str(orient.id)
+    assert db_session.get(models.Slot, session.id).current_count == 0

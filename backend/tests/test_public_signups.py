@@ -30,6 +30,7 @@ from app.models import (
     MagicLinkPurpose,
     MagicLinkToken,
     Quarter,
+    ShiftSignup,
     Signup,
     SignupStatus,
     Slot,
@@ -60,7 +61,17 @@ def _make_event(db_session, *, module_slug=None):
     return e
 
 
-def _make_slot(db_session, event_id, *, capacity=5, current_count=0, slot_type=SlotType.PERIOD):
+def _make_slot(
+    db_session, event_id, *, capacity=5, current_count=0, slot_type=SlotType.ORIENTATION
+):
+    """A directly-bookable slot — i.e. an orientation slot.
+
+    2026-08-05 shifts: the default used to be PERIOD, and `slot_ids` used to
+    accept one. Both changed together. A period slot is a session inside a
+    shift, so the public endpoint refuses a bare period slot id with 422
+    PERIOD_SLOT_NOT_BOOKABLE, and the membership constraint won't even let a
+    shift-less one be inserted. Use `_make_shift` for classroom work.
+    """
     slot = Slot(
         id=uuid.uuid4(),
         event_id=event_id,
@@ -74,6 +85,40 @@ def _make_slot(db_session, event_id, *, capacity=5, current_count=0, slot_type=S
     db_session.add(slot)
     db_session.flush()
     return slot
+
+
+def _make_shift(
+    db_session, event_id, *, capacity=5, current_count=0, n_sessions=1, name="Shift 1"
+):
+    """The bookable unit for classroom work: a shift plus its session slots.
+
+    Capacity lives on the shift; each session carries a copy for display. The
+    sessions exist because the orientation gate, the roster and the check-in
+    window all read them, but nothing books one directly.
+    """
+    from tests.fixtures.helpers import make_shift
+
+    shift = make_shift(db_session, event_id, name=name, capacity=capacity)
+    shift.current_count = current_count
+    base = datetime.now(timezone.utc) + timedelta(days=1)
+    for i in range(n_sessions):
+        db_session.add(
+            Slot(
+                id=uuid.uuid4(),
+                event_id=event_id,
+                shift_id=shift.id,
+                sort_order=i,
+                name=f"Period {i + 1}",
+                start_time=base + timedelta(days=i),
+                end_time=base + timedelta(days=i, hours=2),
+                capacity=capacity,
+                current_count=current_count,
+                slot_type=SlotType.PERIOD,
+                date=(base + timedelta(days=i)).date(),
+            )
+        )
+    db_session.flush()
+    return shift
 
 
 def _signup_payload(slot_id, *, email="pub@example.com", phone=GOOD_PHONE):
@@ -664,11 +709,17 @@ def test_confirmation_email_enqueued_only_after_commit(client, db_session, monke
 class TestOrientationRequirement:
     """Un-oriented volunteers must include an orientation session in their
     signup. Server-enforced (the frontend modal is advisory UX only):
-    for every event in the batch with a PERIOD slot selected, the email must
+    for every event in the batch with a SHIFT selected, the email must
     hold orientation credit for the event's family, OR the batch must include
     an ORIENTATION slot on the same event (or an event resolving to the same
     family). Events offering no orientation slots at all are exempt —
-    organizers vouch at the door instead of dead-ending the volunteer."""
+    organizers vouch at the door instead of dead-ending the volunteer.
+
+    2026-08-05 shifts: the trigger moved from "a period slot is selected" to
+    "a shift is selected", because selecting a shift is what commits the
+    volunteer to classroom work now. The rule itself is unchanged, and these
+    cases send `shift_ids` where they used to send a period slot id.
+    """
 
     EMAIL = "fresh-volunteer@example.com"
 
@@ -692,13 +743,14 @@ class TestOrientationRequirement:
         db_session.flush()
         return tmpl
 
-    def _payload(self, slot_ids, *, email=None):
+    def _payload(self, slot_ids=(), *, shift_ids=(), email=None):
         return {
             "first_name": "Fresh",
             "last_name": "Volunteer",
             "email": email or self.EMAIL,
             "phone": GOOD_PHONE,
             "slot_ids": [str(s) for s in slot_ids],
+            "shift_ids": [str(s) for s in shift_ids],
         }
 
     def test_period_only_without_credit_422_and_no_rows(
@@ -707,17 +759,20 @@ class TestOrientationRequirement:
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
         event = _make_event(db_session, module_slug="bio-intro")
-        period = _make_slot(db_session, event.id)
-        orient = _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
         db_session.commit()
 
-        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
         assert resp.status_code == 422, resp.text
         # Global handler (AUDIT-03) normalizes to {error, code, detail}.
         assert resp.json()["code"] == "ORIENTATION_REQUIRED"
-        # Nothing persisted — no signup rows, no volunteer row.
+        # Nothing persisted — no signup rows, no commitment, no volunteer row.
         db_session.expire_all()
         assert db_session.query(Signup).count() == 0
+        assert db_session.query(ShiftSignup).count() == 0
         assert (
             db_session.query(Volunteer)
             .filter(Volunteer.email == self.EMAIL)
@@ -729,27 +784,32 @@ class TestOrientationRequirement:
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
         event = _make_event(db_session, module_slug="bio-intro")
-        period = _make_slot(db_session, event.id)
-        orient = _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
         db_session.commit()
 
         resp = client.post(
-            "/api/v1/public/signups", json=self._payload([period.id, orient.id])
+            "/api/v1/public/signups",
+            json=self._payload([orient.id], shift_ids=[shift.id]),
         )
         assert resp.status_code == 201, resp.text
-        assert len(resp.json()["signup_ids"]) == 2
+        # The two bookings land in different lists — one signup, one commitment.
+        assert len(resp.json()["signup_ids"]) == 1
+        assert len(resp.json()["shift_signup_ids"]) == 1
 
     def test_granted_credit_passes_period_only(self, client, db_session, monkeypatch):
         self._mute_email(monkeypatch)
         from app.services.orientation_service import grant_orientation_credit
         self._template(db_session, "bio-intro", family_key="bio")
         event = _make_event(db_session, module_slug="bio-intro")
-        period = _make_slot(db_session, event.id)
-        _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        shift = _make_shift(db_session, event.id)
+        _make_slot(db_session, event.id)
         grant_orientation_credit(db_session, self.EMAIL, "bio")
         db_session.commit()
 
-        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
         assert resp.status_code == 201, resp.text
 
     def test_attendance_credit_passes_period_only(self, client, db_session, monkeypatch):
@@ -760,7 +820,7 @@ class TestOrientationRequirement:
         from app.services.check_in_service import resolve_slot
 
         prior = _make_event(db_session, module_slug="bio-intro")
-        prior_orient = _make_slot(db_session, prior.id, slot_type=SlotType.ORIENTATION)
+        prior_orient = _make_slot(db_session, prior.id)
         vol = Volunteer(
             id=uuid.uuid4(), email=self.EMAIL, first_name="Fresh", last_name="Volunteer"
         )
@@ -776,11 +836,13 @@ class TestOrientationRequirement:
         db_session.flush()
         resolve_slot(db_session, prior_orient.id, None, [prior_signup.id], [])
         event = _make_event(db_session, module_slug="bio-intro")
-        period = _make_slot(db_session, event.id)
-        _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        shift = _make_shift(db_session, event.id)
+        _make_slot(db_session, event.id)
         db_session.commit()
 
-        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
         assert resp.status_code == 201, resp.text
 
     def test_event_without_orientation_slots_is_exempt(
@@ -789,17 +851,19 @@ class TestOrientationRequirement:
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
         event = _make_event(db_session, module_slug="bio-intro")
-        period = _make_slot(db_session, event.id)
+        shift = _make_shift(db_session, event.id)
         db_session.commit()
 
-        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
         assert resp.status_code == 201, resp.text
 
     def test_orientation_only_selection_passes(self, client, db_session, monkeypatch):
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
         event = _make_event(db_session, module_slug="bio-intro")
-        orient = _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        orient = _make_slot(db_session, event.id)
         db_session.commit()
 
         resp = client.post("/api/v1/public/signups", json=self._payload([orient.id]))
@@ -812,18 +876,23 @@ class TestOrientationRequirement:
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
         event_a = _make_event(db_session, module_slug="bio-intro")
-        period_a = _make_slot(db_session, event_a.id)
+        shift_a = _make_shift(db_session, event_a.id)
         event_b = _make_event(db_session, module_slug="bio-intro")
-        orient_b = _make_slot(db_session, event_b.id, slot_type=SlotType.ORIENTATION)
+        orient_b = _make_slot(db_session, event_b.id)
         db_session.commit()
 
+        # A batch mixing a shift on one event with a slot on another still has
+        # to be caught — the single-event rule spans both id lists, not just
+        # slot_ids.
         resp = client.post(
-            "/api/v1/public/signups", json=self._payload([period_a.id, orient_b.id])
+            "/api/v1/public/signups",
+            json=self._payload([orient_b.id], shift_ids=[shift_a.id]),
         )
         assert resp.status_code == 422, resp.text
         assert resp.json()["code"] == "MULTIPLE_EVENTS"
         db_session.expire_all()
         assert db_session.query(Signup).count() == 0
+        assert db_session.query(ShiftSignup).count() == 0
 
     def test_full_orientation_slot_still_satisfies_via_waitlist(
         self, client, db_session, monkeypatch
@@ -831,37 +900,38 @@ class TestOrientationRequirement:
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
         event = _make_event(db_session, module_slug="bio-intro")
-        period = _make_slot(db_session, event.id)
-        orient = _make_slot(
-            db_session,
-            event.id,
-            slot_type=SlotType.ORIENTATION,
-            capacity=1,
-            current_count=1,
-        )
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id, capacity=1, current_count=1)
         db_session.commit()
 
         resp = client.post(
-            "/api/v1/public/signups", json=self._payload([period.id, orient.id])
+            "/api/v1/public/signups",
+            json=self._payload([orient.id], shift_ids=[shift.id]),
         )
         assert resp.status_code == 201, resp.text
-        statuses = {s["signup_id"]: s["status"] for s in resp.json()["signups"]}
-        assert "waitlisted" in statuses.values()
+        # A waitlisted orientation still counts as "in the batch" — being 2nd in
+        # line for orientation must not block the shift they came for.
+        items = resp.json()["signups"]
+        assert [i["status"] for i in items if i["slot_id"]] == ["waitlisted"]
+        assert [i["status"] for i in items if i["shift_id"]] == ["pending"]
 
     def test_moduleless_event_fails_closed(self, client, db_session, monkeypatch):
         """No module_slug → family is None → no credit can exist; the
         same-event orientation slot is still required."""
         self._mute_email(monkeypatch)
         event = _make_event(db_session)
-        period = _make_slot(db_session, event.id)
-        orient = _make_slot(db_session, event.id, slot_type=SlotType.ORIENTATION)
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
         db_session.commit()
 
-        resp = client.post("/api/v1/public/signups", json=self._payload([period.id]))
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
         assert resp.status_code == 422, resp.text
         assert resp.json()["code"] == "ORIENTATION_REQUIRED"
 
         resp2 = client.post(
-            "/api/v1/public/signups", json=self._payload([period.id, orient.id])
+            "/api/v1/public/signups",
+            json=self._payload([orient.id], shift_ids=[shift.id]),
         )
         assert resp2.status_code == 201, resp2.text

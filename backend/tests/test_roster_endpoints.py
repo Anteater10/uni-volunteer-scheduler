@@ -1,14 +1,17 @@
 """Tests for GET /events/{event_id}/roster endpoint."""
 import pytest
 import uuid
+from datetime import timedelta
+
 from tests.fixtures.helpers import (
     auth_headers,
     book_shift,
     make_event_with_slot,
+    make_shift,
     make_user,
 )
 
-from app.models import Signup, SignupStatus, UserRole, Volunteer
+from app.models import Signup, SignupStatus, Slot, SlotType, UserRole, Volunteer
 
 
 def _make_volunteer(db_session, email=None):
@@ -168,13 +171,29 @@ class TestAdminRosterSlotMetadata:
 
     def test_admin_roster_rows_carry_slot_type(self, client, db_session):
         admin = make_user(db_session, role=UserRole.admin)
-        event, slot = make_event_with_slot(db_session, owner=admin, capacity=5)
-        vol = _make_volunteer(db_session)
+        event, _orient = make_event_with_slot(db_session, owner=admin, capacity=5)
         # 2026-08-02 shifts: a Signup against a period slot would produce no
         # roster row at all — nobody books a session directly, so the roster
         # reads the owning shift's commitments. Booking the shift is what a
-        # volunteer actually does now.
-        book_shift(db_session, slot.shift, vol, status=SignupStatus.confirmed)
+        # volunteer actually does now, so this builds a real one rather than
+        # borrowing the event's orientation slot.
+        shift = make_shift(db_session, event.id, name="Tue morning", capacity=5)
+        slot = Slot(
+            id=uuid.uuid4(),
+            event_id=event.id,
+            shift_id=shift.id,
+            sort_order=0,
+            name="Period 1",
+            start_time=event.start_date,
+            end_time=event.start_date + timedelta(hours=2),
+            capacity=5,
+            slot_type=SlotType.PERIOD,
+            location="Room 4",
+        )
+        db_session.add(slot)
+        db_session.flush()
+        vol = _make_volunteer(db_session)
+        book_shift(db_session, shift, vol, status=SignupStatus.confirmed)
 
         headers = auth_headers(client, admin)
         resp = client.get(f"/api/v1/admin/events/{event.id}/roster", headers=headers)
