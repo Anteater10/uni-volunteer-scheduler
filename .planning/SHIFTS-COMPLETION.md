@@ -15,7 +15,7 @@ S (< 1h), M (half day), L (a day or more).
 | 1 | DuplicateEventModal | **done** — commit `64ac08b` |
 | 2 | AdminEventPage roster | **done** — commit `64ac08b` |
 | 3 | ResolveEventModal close-out | open — frontend only, backend already works |
-| 4 | BroadcastModal | open — **backend also broken**, see B1 |
+| 4 | BroadcastModal | backend **done** — commit `b340735`; picker (B2) open |
 | 5 | SignupSuccessCard | open — frontend only |
 | 6 | e2e / smoke / KB | open |
 
@@ -23,12 +23,23 @@ S (< 1h), M (half day), L (a day or more).
 
 ## A — Production bugs shifts introduces
 
-These are the reason shifts cannot ship as-is. None of them are test
+**All four are fixed** (2026-08-05). Each fix was verified by reverting it and
+confirming the new tests fail — the suite was 6-for-6 on bugs hidden by a test
+that mocked the exact broken seam, so a green run on its own proves nothing.
+
+| # | Bug | Fixed by |
+|---|---|---|
+| A1 | eight copilot tools report every module empty | `27645d8` |
+| A2 | broadcast silently under-sends | `b340735` |
+| A3 | dedup `ON CONFLICT` on a partial index | `d97ccac` |
+| A4 | emails render raw UTC | `a9da85a` |
+
+These were the reason shifts cannot ship as-is. None of them are test
 problems; each is a wrong answer given to a real user. None is caught by the
 current suite, because the tests that would have caught them create their
 data through a path production no longer has.
 
-### A1 · The AI copilot reports every module as empty · L
+### A1 · The AI copilot reports every module as empty · L — **done `27645d8`**
 
 Eight of the sixteen copilot agent tools join `Signup → Slot`. A session has
 no `Signup` rows — a shift commitment lives in `shift_signups` — so every one
@@ -50,11 +61,23 @@ There are **zero** occurrences of `shift` anywhere under `app/copilot/`.
 Worst of these is `nudge_understaffed_module` + `send_reminder_email`: they
 don't just display wrong, they *send mail* based on the wrong answer.
 
-Fix: each tool needs to union the two booking sources, the same way
-`admin.py::_bookings_for_slot` already does. That helper is the model to
-follow — it exists and is correct; the copilot simply never adopted it.
+Fixed by `27645d8`. `app/copilot/agent/tools/_bookings.py` now holds one
+union for all eight, modelled on `admin.py::_bookings_for_slot`. Two extra
+bugs surfaced during the fix:
 
-### A2 · Broadcast silently under-sends · M
+- **capacity was double-counted.** A session slot inherits a copy of its
+  shift's `capacity`, so summing slot capacities multiplies a shift's seats by
+  its session count. Two errors pulling the fill ratio in opposite directions
+  is why the numbers looked plausible. Capacity now sums per bookable unit.
+- **`move_participant` could point a `Signup` at a session slot.** Its
+  destination lookup accepted any slot on the event. A move now stays within
+  its kind, and the orientation branch requires a shift-less destination.
+
+Also strengthened two tests that were too weak to notice the original bug:
+`signup_trend` asserted only week labels, and `send_reminder_email` covered
+only the negative scope case.
+
+### A2 · Broadcast silently under-sends · M — **done `b340735`**
 
 `broadcast_service.list_recipients` and `count_recipients`
 (`backend/app/services/broadcast_service.py:243,263`) join
@@ -71,17 +94,20 @@ picker. Backend first — the picker is cosmetic next to the silent under-send.
 Note `_dedup_insert_broadcast(db, signup_id, kind)` is keyed on a signup id
 and will need the shift-signup equivalent.
 
-### A3 · Suspected: exactly-once email dedup broken at runtime · M
+### A3 · Exactly-once email dedup broken at runtime · M — **done `d97ccac`**
 
 Two tests fail with `InvalidColumnReference: there is no unique or exclusion
 constraint matching the ON CONFLICT specification`. Shifts made
 `magic_link_tokens.signup_id` nullable, which can invalidate the partial
 unique index the dedup `ON CONFLICT` relies on.
 
-Not yet diagnosed. If confirmed, duplicate emails can be sent. Highest-risk
-unknown on the branch — do this before A1.
+Confirmed and fixed in `d97ccac`. `sent_notifications` is dual-anchored
+behind two *partial* unique indexes, and an `ON CONFLICT` against a partial
+index must repeat the predicate via `index_where` or Postgres refuses to match
+it. Without that the insert raised, so the dedup guard was not merely weak —
+it was absent, and every reminder path could double-send.
 
-### A4 · `_fmt_when` still renders raw UTC · S
+### A4 · `_fmt_when` still renders raw UTC · S — **done `a9da85a`**
 
 `backend/app/emails.py:68` returns `f"{slot.start_time} to {slot.end_time}"`.
 Pre-existing (roadmap item K4), but the new `_fmt_shift_when` at :76 routes
@@ -108,11 +134,12 @@ Wednesday.
 Until this lands, `session_attendance` has no writer from the app, so
 volunteer hours and no-show data stop being recorded for classroom work.
 
-### B2 · BroadcastModal — shift recipients · S after A2
+### B2 · BroadcastModal — shift recipients · S — **unblocked**
 
 `frontend/src/components/BroadcastModal.jsx:71,109,110`. `formatSlotOption`
 and the `slotId` state become a unit picker over shifts + orientation slots.
-Blocked on A2.
+The backend now takes `shift_id`, and posting a session slot's id returns 422
+with a message naming `shift_id`, so the modal cannot silently mis-target.
 
 ### B3 · SignupSuccessCard — name the shift · S
 
