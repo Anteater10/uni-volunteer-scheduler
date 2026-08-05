@@ -250,7 +250,26 @@ Two shared conftests are high leverage — `copilot/agent/conftest.py:122` and
 `copilot/adversarial/conftest.py` account for the ~30 copilot failures
 between them.
 
-### C2 · The tests the spec asked for and nobody wrote · L
+### C2 · The tests the spec asked for and nobody wrote · L — **done**
+
+Four files, +85 tests, suite now **1355 passed / 11 skipped / 0 failed**:
+
+| File | Covers |
+|---|---|
+| `tests/test_shifts_router.py` (39) | shift CRUD, both reorderings, session add/edit/delete, the reschedule mail |
+| `tests/test_shift_staff_routes.py` (23) | admin promote + cancel, waitlist reorder, organizer promote, grant-orientation |
+| `tests/test_shift_close_out.py` (10) | per-session and event-wide attendance |
+| `tests/test_public_signups.py` (+13) | shift booking, capacity, waitlist, duplicates, bare period-slot ids, batch confirm, manage |
+
+One more production bug, found the same way: `DELETE /shifts/{id}` **500'd for
+every shift that had sessions** — i.e. all of them. `Shift.sessions` had no
+cascade, so SQLAlchemy NULLed each session's `shift_id` before the delete and
+`ck_slots_shift_membership_matches_type` rejected the row. Fixed with
+`cascade="all, delete-orphan", passive_deletes=True`; the FK already said
+ON DELETE CASCADE.
+
+The original gap list follows.
+
 
 +3958 backend production lines landed against +560 test lines, all in
 `test_shifts_migration.py`. Missing, from the spec's own Tests section:

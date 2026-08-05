@@ -335,6 +335,14 @@ class Shift(Base):
         "Slot",
         back_populates="shift",
         order_by="Slot.sort_order",
+        # 2026-08-05 shifts: without this, deleting a shift whose sessions are
+        # in the identity map made SQLAlchemy NULL out their shift_id first —
+        # and ck_slots_shift_membership_matches_type rejects a period slot with
+        # no shift, so DELETE /shifts/{id} 500'd for every shift that had
+        # sessions, which is all of them. The FK already says ON DELETE
+        # CASCADE; passive_deletes lets the database do what it was told.
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     shift_signups = relationship(
         "ShiftSignup", back_populates="shift", cascade="all, delete-orphan"

@@ -935,3 +935,375 @@ class TestOrientationRequirement:
             json=self._payload([orient.id], shift_ids=[shift.id]),
         )
         assert resp2.status_code == 201, resp2.text
+
+
+class TestShiftBooking:
+    """2026-08-05 shifts: booking the bundle, not the session.
+
+    The gate above tests *whether* a shift may be booked; this class tests what
+    happens when it is — one commitment covering every session, capacity and
+    the waitlist read off the shift, and the old per-session shape refused
+    rather than quietly accepted.
+
+    These events are moduleless with no orientation slot, which the gate exempts
+    (nothing to require), so each case exercises the booking path alone.
+    """
+
+    def _mute_email(self, monkeypatch):
+        sent = []
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: sent.append(k or a),
+        )
+        return sent
+
+    def _payload(self, *, shift_ids=(), slot_ids=(), email="shift-vol@example.com"):
+        return {
+            "first_name": "Sam",
+            "last_name": "Shift",
+            "email": email,
+            "phone": GOOD_PHONE,
+            "slot_ids": [str(s) for s in slot_ids],
+            "shift_ids": [str(s) for s in shift_ids],
+        }
+
+    def test_one_commitment_covers_every_session(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id, n_sessions=3, capacity=4)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert len(body["shift_signup_ids"]) == 1
+        assert body["signup_ids"] == []
+        item = body["signups"][0]
+        assert item["shift_id"] == str(shift.id)
+        assert item["signup_id"] is None
+        assert item["status"] == "pending"
+        assert item["position"] is None
+
+        db_session.expire_all()
+        # One row for the whole bundle — three sessions, no per-session Signup.
+        assert db_session.query(ShiftSignup).count() == 1
+        assert db_session.query(Signup).count() == 0
+        # Pending counts against capacity, same rule slots have always had.
+        assert db_session.get(type(shift), shift.id).current_count == 1
+
+    def test_full_shift_waitlists_and_leaves_the_count_alone(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id, capacity=1, current_count=1)
+        db_session.commit()
+
+        first = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shift.id], email="w1@example.com"),
+        )
+        second = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shift.id], email="w2@example.com"),
+        )
+        assert first.status_code == 201, first.text
+        assert second.status_code == 201, second.text
+        assert first.json()["signups"][0]["status"] == "waitlisted"
+        # Position is 1-based and ordered the way the whole app orders a
+        # waitlist, so the second person to arrive is told they are second.
+        assert first.json()["signups"][0]["position"] == 1
+        assert second.json()["signups"][0]["position"] == 2
+
+        db_session.expire_all()
+        assert db_session.get(type(shift), shift.id).current_count == 1
+
+    def test_signing_up_twice_for_the_same_shift_is_409(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id, capacity=5)
+        db_session.commit()
+
+        payload = self._payload(shift_ids=[shift.id])
+        assert client.post("/api/v1/public/signups", json=payload).status_code == 201
+        again = client.post("/api/v1/public/signups", json=payload)
+        assert again.status_code == 409
+
+        db_session.expire_all()
+        assert db_session.query(ShiftSignup).count() == 1
+        # The refused attempt must not have consumed a seat on its way out.
+        assert db_session.get(type(shift), shift.id).current_count == 1
+
+    def test_a_session_id_in_slot_ids_is_refused(
+        self, client, db_session, monkeypatch
+    ):
+        """A client sending a session id is running the pre-shift UI. Refusing
+        is the point: silently ignoring it would report success for a signup
+        that booked nothing."""
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id, n_sessions=2)
+        session = (
+            db_session.query(Slot).filter(Slot.shift_id == shift.id).first()
+        )
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(slot_ids=[session.id])
+        )
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert body["code"] == "PERIOD_SLOT_NOT_BOOKABLE"
+        # The service names the offending ids, but the global error normalizer
+        # keeps only {error, code, detail}, so the client sees the message and
+        # not the list. Asserted as-is rather than aspirationally: the frontend
+        # steers off the code, and widening the envelope is a separate change.
+        assert "shift id" in body["detail"]
+
+        db_session.expire_all()
+        assert db_session.query(Signup).count() == 0
+        assert db_session.query(ShiftSignup).count() == 0
+
+    def test_orientation_and_shift_in_one_batch(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shift.id], slot_ids=[orient.id]),
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert len(body["signup_ids"]) == 1
+        assert len(body["shift_signup_ids"]) == 1
+        # Two units, two result items, each naming which kind it is.
+        kinds = {("shift" if i["shift_id"] else "slot") for i in body["signups"]}
+        assert kinds == {"shift", "slot"}
+
+    def test_a_shift_only_batch_still_gets_a_confirm_link(
+        self, client, db_session, monkeypatch
+    ):
+        """There is no Signup row to anchor the token to, so it hangs off the
+        shift signup instead — without this the volunteer never gets a
+        confirmable link for classroom work."""
+        sent = self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["magic_link_sent"] is True
+
+        shift_signup_id = resp.json()["shift_signup_ids"][0]
+        token_row = (
+            db_session.query(MagicLinkToken)
+            .filter(MagicLinkToken.purpose == MagicLinkPurpose.SIGNUP_CONFIRM)
+            .order_by(MagicLinkToken.created_at.desc())
+            .first()
+        )
+        assert token_row is not None
+        assert str(token_row.shift_signup_id) == shift_signup_id
+        assert sent and sent[0]["shift_signup_ids"] == [shift_signup_id]
+
+    def test_unknown_shift_404_matches_unknown_slot_404(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        missing_shift = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[uuid.uuid4()])
+        )
+        missing_slot = client.post(
+            "/api/v1/public/signups", json=self._payload(slot_ids=[uuid.uuid4()])
+        )
+        assert missing_shift.status_code == 404
+        assert missing_shift.json() == missing_slot.json()
+
+    def test_private_events_shift_404s_the_same_way(
+        self, client, db_session, monkeypatch
+    ):
+        """Booking a shift you were never shown is the same leak as listing the
+        private event, so it must be indistinguishable from a bad id."""
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        event.visibility = "private"
+        shift = _make_shift(db_session, event.id)
+        db_session.commit()
+
+        private = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        unknown = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[uuid.uuid4()])
+        )
+        assert private.status_code == 404
+        assert private.json() == unknown.json()
+
+        db_session.expire_all()
+        assert db_session.query(ShiftSignup).count() == 0
+
+    def test_a_closed_signup_window_blocks_a_shift_too(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        event.signup_close_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        shift = _make_shift(db_session, event.id)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        assert resp.status_code == 403
+        assert "Signup closed" in resp.json()["detail"]
+
+        db_session.expire_all()
+        assert db_session.query(ShiftSignup).count() == 0
+
+
+class TestShiftBatchConfirm:
+    """One link confirms everything the volunteer submitted.
+
+    2026-08-05 shifts: the batch spans two tables now, so the confirm has to
+    sweep both — a link that confirmed the orientation slot and left the shift
+    pending would silently drop the classroom commitment at the reminder stage.
+    """
+
+    def _mute_email(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+
+    def _create(self, client, monkeypatch, *, slot_ids=(), shift_ids=(), email):
+        payload = {
+            "first_name": "Bea",
+            "last_name": "Confirm",
+            "email": email,
+            "phone": GOOD_PHONE,
+            "slot_ids": [str(s) for s in slot_ids],
+            "shift_ids": [str(s) for s in shift_ids],
+        }
+        with _TokenCapture(monkeypatch) as cap:
+            resp = client.post("/api/v1/public/signups", json=payload)
+        assert resp.status_code == 201, resp.text
+        if cap.last_token is None:
+            pytest.skip("Token capture failed — issue_token not patched at module level")
+        return resp.json(), cap.last_token
+
+    def test_one_link_confirms_the_orientation_and_the_shift(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id, n_sessions=2)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        body, token = self._create(
+            client, monkeypatch, slot_ids=[orient.id], shift_ids=[shift.id],
+            email="batch-both@example.com",
+        )
+
+        resp = client.post("/api/v1/public/signups/confirm", params={"token": token})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["confirmed"] is True
+        # Two units confirmed by the one link, counted together.
+        assert resp.json()["signup_count"] == 2
+
+        db_session.expire_all()
+        signup = db_session.get(Signup, uuid.UUID(body["signup_ids"][0]))
+        commitment = db_session.get(
+            ShiftSignup, uuid.UUID(body["shift_signup_ids"][0])
+        )
+        assert signup.status == SignupStatus.confirmed
+        assert commitment.status == SignupStatus.confirmed
+
+    def test_a_shift_only_batch_confirms_from_its_own_anchor(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id)
+        db_session.commit()
+
+        body, token = self._create(
+            client, monkeypatch, shift_ids=[shift.id], email="batch-shift@example.com"
+        )
+        resp = client.post("/api/v1/public/signups/confirm", params={"token": token})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["signup_count"] == 1
+
+        db_session.expire_all()
+        assert (
+            db_session.get(ShiftSignup, uuid.UUID(body["shift_signup_ids"][0])).status
+            == SignupStatus.confirmed
+        )
+
+        again = client.post("/api/v1/public/signups/confirm", params={"token": token})
+        assert again.json()["idempotent"] is True
+
+    def test_a_waitlisted_shift_is_not_confirmed_by_the_link(
+        self, client, db_session, monkeypatch
+    ):
+        """Confirming is about the seat you hold; a waitlisted commitment has
+        none, so it stays waiting rather than being quietly seated."""
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        full = _make_shift(db_session, event.id, capacity=1, current_count=1,
+                           name="Full")
+        open_shift = _make_shift(db_session, event.id, capacity=5, name="Open")
+        db_session.commit()
+
+        body, token = self._create(
+            client, monkeypatch, shift_ids=[full.id, open_shift.id],
+            email="batch-wait@example.com",
+        )
+        client.post("/api/v1/public/signups/confirm", params={"token": token})
+
+        db_session.expire_all()
+        statuses = {
+            str(db_session.get(ShiftSignup, uuid.UUID(sid)).shift.name):
+                db_session.get(ShiftSignup, uuid.UUID(sid)).status
+            for sid in body["shift_signup_ids"]
+        }
+        assert statuses == {
+            "Full": SignupStatus.waitlisted,
+            "Open": SignupStatus.confirmed,
+        }
+
+    def test_manage_lists_the_shift_with_its_sessions(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id, n_sessions=2, name="Tue+Wed")
+        db_session.commit()
+
+        _, token = self._create(
+            client, monkeypatch, shift_ids=[shift.id], email="manage-shift@example.com"
+        )
+        resp = client.get("/api/v1/public/signups/manage", params={"token": token})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["signups"] == []
+        assert len(body["shift_signups"]) == 1
+        row = body["shift_signups"][0]
+        assert row["shift"]["name"] == "Tue+Wed"
+        # Both days are shown: the volunteer committed to the bundle, and the
+        # manage page is where they check what they actually signed up for.
+        assert len(row["shift"]["sessions"]) == 2
+        assert [s["sort_order"] for s in row["shift"]["sessions"]] == [0, 1]
