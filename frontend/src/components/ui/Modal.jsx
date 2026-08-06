@@ -30,9 +30,14 @@ const Modal = React.forwardRef(function Modal(
     if (typeof onClose === 'function') onClose()
   }
 
+  // K5: the backdrop was `fixed inset-0` with no overflow rule, so anything the
+  // panel pushed past the fold was unreachable — no scrollbar, no way down. On a
+  // phone that hid the confirm button of every dialog built on this component.
+  // The backdrop now takes the scroll, and its padding keeps the panel off the
+  // screen edges once it grows past one screen.
   return createPortal(
     <div
-      className="fixed inset-0 z-50 bg-black/50"
+      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/50 p-4 sm:p-6"
       onMouseDown={handleBackdrop}
     >
       <div
@@ -43,7 +48,7 @@ const Modal = React.forwardRef(function Modal(
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
         className={cn(
-          'mx-auto w-full max-w-md mt-[15vh] rounded-2xl bg-[var(--color-bg)] p-5 shadow-xl',
+          'mx-auto w-full max-w-md my-[10vh] rounded-2xl bg-[var(--color-bg)] p-5 shadow-xl',
           className,
         )}
         {...rest}
