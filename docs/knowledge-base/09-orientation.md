@@ -7,7 +7,7 @@ include an orientation session in their signup." There is no self-attested bypas
 cannot tick a box claiming they've done it.
 
 On the volunteer's side this appears as a **steering modal**: instead of offering a way through, the
-only action takes them back to the schedule to add an orientation session. Their slot selection and
+only action takes them back to the schedule to add an orientation session. Their selection and
 anything they typed into the form are preserved while they do it.
 
 **The one exception: an event that offers no orientation slots at all is exempt.** Requiring

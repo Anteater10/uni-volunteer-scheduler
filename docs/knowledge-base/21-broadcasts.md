@@ -5,11 +5,13 @@ has moved to Lot 22" message. Both organizers and admins can send one. There are
 it, both using the **Message volunteers** action: the event page in Admin → Events, and the live
 roster an organizer is already looking at on the day.
 
-**A broadcast can target the whole event or a single slot.** The default is **All slots**, which
-emails everyone signed up for the event. The picker also lists each slot individually, labelled by
-kind, date, time, and location, so you can email just Wednesday's group. The picker only appears on
-events with more than one slot. The recipient count preview updates as you change the selection, so
-you can see who you're about to email before sending.
+**A broadcast can target the whole event, one shift, or one orientation slot.** The default emails
+everyone signed up for the event. The picker also lists each shift by name and each orientation
+slot by date, time, and location, so you can email just Wednesday's group. Targeting a shift
+reaches everyone committed to it, across all of that shift's sessions — a single session is not a
+target, because a session is not something anyone signed up for separately. The picker only appears
+on events with more than one bookable unit. The recipient count preview updates as you change the
+selection, so you can see who you're about to email before sending.
 
 **Who receives a broadcast:** volunteers who hold or have held a confirmed spot — confirmed, checked
 in, and attended. **Waitlisted, pending, cancelled, and no-show volunteers are excluded**, because a
@@ -27,18 +29,19 @@ who has turned reminders off still gets told the room changed.
 **Broadcasts are rate-limited to five per event per clock hour.** The bucket is a fixed hour on the
 clock rather than a rolling window, so the count resets at the top of the hour rather than an hour
 after your first send, and the message you get when you hit the limit tells you how long that is. Two
-details worth knowing: the limit stays per event even when you target a single slot, because a
-per-slot limit would let one event send several times as many emails as it should; and a send that is
+details worth knowing: the limit stays per event even when you target a single shift, because a
+per-shift limit would let one event send several times as many emails as it should; and a send that is
 refused for hitting the limit still counts against the bucket, so hammering the button after a refusal
 does not help.
 
-If you pick a slot that doesn't belong to the event the send is refused — and refused *before* it
-counts against your hourly limit, so that particular mistake doesn't cost you a send.
+If you pick a shift or slot that doesn't belong to the event the send is refused — and refused
+*before* it counts against your hourly limit, so that particular mistake doesn't cost you a send.
 
-**Each recipient signup gets one copy.** The system records a delivery per signup per broadcast, so a
-retry can't double-send. Because the record is per signup rather than per person, a volunteer who
-took two sessions in the same event receives two copies of an all-slots broadcast — scope the
-broadcast to one slot if that matters.
+**Each recipient signup gets one copy.** The system records a delivery per signup per broadcast, so
+a retry can't double-send. Because the record is per signup rather than per person, a volunteer who
+took both an orientation slot and a shift on the same event receives two copies of an event-wide
+broadcast — scope the broadcast to one unit if that matters. A multi-session shift is still one
+signup, so it is still one copy.
 
 **The message body is Markdown.** Headings, lists, bold text and links all render, and the compose
 box shows a live preview of what you typed. Raw HTML is stripped rather than passed through. Every
@@ -53,5 +56,6 @@ signup should use the link from their own signup email instead.
 busy day can be silently truncated; the reminders document describes that ceiling.
 
 **Every broadcast is recorded in the audit log**, including the subject, the recipient count, who
-sent it, and which slot it targeted if you scoped it to one. That is where to look to answer "did
+sent it, and which shift or slot it targeted if you scoped it to one. That is where to look to
+answer "did
 anyone tell them?".

@@ -8,15 +8,15 @@ credit (**Grant orientation** on their row in the event page's roster table, or 
 Credits). If they *have* done orientation but the app disagrees, see "credit is missing" below.
 
 **The requirement is narrower than it looks.** It only bites when someone is signing up for a
-teaching session and hasn't included an orientation in the same submission. Signing up for an
+classroom shift and hasn't included an orientation in the same submission. Signing up for an
 orientation on its own always passes, and so does any signup for an event that offers no orientation
 slot at all — on those events the requirement is advisory only, because there is nothing on the event
 that would satisfy it.
 
 ## "A signup covers one event at a time"
 
-The submission touched slots from two different events. The normal event page never does this, so
-this usually means an odd link or a stale tab. Sign up for one event at a time.
+The submission touched shifts or slots from two different events. The normal event page never does
+this, so this usually means an odd link or a stale tab. Sign up for one event at a time.
 
 ## "No quarter covers {date} — add it in Admin → Quarters first"
 
@@ -35,9 +35,9 @@ than the module checks against. Confirm the event's module slug still matches a 
 that the two modules involved actually share a family key — credit earned in one family never
 counts for another.
 
-## The waitlist promote button says the slot is full
+## The waitlist promote button says the shift is full
 
-That's expected — the slot is full, which is why there's a waitlist in the first place. Cancels,
+That's expected — the shift is full, which is why there's a waitlist in the first place. Cancels,
 capacity raises, and the hourly cleanup free seats but never promote anyone, so a freed seat is
 waiting for staff to act on it, not already claimed. To promote this specific person you have to
 deliberately confirm going **over capacity**.
@@ -60,7 +60,7 @@ days ran out. They can sign up again if a seat is free.
 
 The app shows a **"Nothing to confirm"** page with a reason, and the three reasons need different
 answers. *"You're on the waitlist for this slot — we'll email you if a spot opens up."* means they
-were never promoted: their session was full when they signed up, nothing is wrong, and there is no
+were never promoted: the shift was full when they signed up, nothing is wrong, and there is no
 email to hunt for. *"This link didn't confirm a seat. Your spot came from a waitlist promotion — use
 the confirm link in that email instead."* means they clicked their original signup email when the seat
 they hold came from a promotion; the promotion email is the one with the working button, and if they
@@ -71,6 +71,10 @@ Clicking a link that was already used still reports the signup as confirmed rath
 "it says confirmed" on a second click is not a fault either.
 
 ## An event stays "Ended — not closed out" after every session was ended
+
+Check first that **every** session was ended, not just every shift's first one. Closing out is per
+session, so a two-session shift needs two close-outs, and the second one is easy to forget when the
+first day went smoothly. The roster shows an **Ended** tag on each session group that is done.
 
 Look for a **pending** volunteer on the roster. An event only counts as complete when nobody is still
 expected, and a pending signup counts as expected — but the close-out screen only lists confirmed and
@@ -127,13 +131,13 @@ so if a minute's wait doesn't help and colleagues see the same thing, that's wha
 
 ## Something can't be deleted
 
-Three deletions are deliberately blocked. **A staff user who still owns events** — reassign or delete
-those events first; their signups are never the reason. **A slot that still has signups** — cancel or
-move them first, because signups are the record behind hours and orientation credit. **Anything
-inside a quarter that has ended or been archived** — its events, their sessions, and their custom
-signup questions are read-only history, and the refusal reads "*[quarter name]* has ended and is
-read-only." There is no override; if the dates were genuinely wrong, fix the quarter's dates so the
-event falls inside an open one.
+Three deletions are deliberately blocked. **A staff user who still owns events** — reassign or
+delete those events first; their signups are never the reason. **A shift or slot that still has
+signups** — cancel or move them first, because signups are the record behind hours and orientation
+credit. **Anything inside a quarter that has ended or been archived** — its events, their sessions,
+and their custom signup questions are read-only history, and the refusal reads "*[quarter name]* has
+ended and is read-only." There is no override; if the dates were genuinely wrong, fix the quarter's
+dates so the event falls inside an open one.
 
 Volunteers themselves have no delete button at all — Admin → Users lists staff accounts only, so a
 volunteer never appears there. The CCPA export and delete actions on that page act on a **staff**

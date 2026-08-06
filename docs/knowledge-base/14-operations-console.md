@@ -53,5 +53,5 @@ the admin pages are desktop-only, and Today is how an organizer standing at a sc
 roster without opening a laptop.
 
 For an organizer, the normal day looks like: open Operations → Today, open the event that's
-running, work from the roster to check people in as they arrive, and end each slot once the session
+running, work from the roster to check people in as they arrive, and end each session once it
 is over.

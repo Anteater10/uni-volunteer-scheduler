@@ -4,6 +4,12 @@ When a session is over, the organizer **ends the slot** — the close-out step t
 volunteer either **attended** or **no-show**. This is the step that finishes a session, and it is
 the step people most often forget.
 
+**Closing out is per session, even though classroom work is booked per shift.** A volunteer who
+committed to a two-session shift is closed out twice, once on each day, and can be attended on one
+and no-show on the other — which is the ordinary case, not an edge case. Ending one session of a
+shift leaves that shift's other sessions open and does not settle the commitment: the volunteer is
+still expected back. Orientation slots are closed out the same way, one at a time.
+
 **The close-out screen lists only the slot's confirmed and checked-in volunteers.** Anyone
 waitlisted, cancelled, or already resolved is left out, because there is no attendance decision to
 make for them. Volunteers still sitting at **pending** are also left out, and that one is worth
@@ -30,12 +36,17 @@ lost by forgetting to tap them in during the session.
 slot is ended, so it's worth a glance at the list before saving. The one way back is reopening the
 whole event, which works only while the event's quarter is still open.
 
-**Whether a slot has been ended is worked out from its volunteers, not stored on the slot.** The app
-calls a session ended when every volunteer it still expects has been resolved, which is why a single
-leftover pending row leaves the slot — and with it the event — looking open indefinitely.
+**Whether a session has been ended is worked out from its volunteers, not stored on the session.**
+The app calls a session ended when every volunteer it still expects has been resolved, which is why
+a single leftover pending row leaves the session — and with it the event — looking open
+indefinitely.
 
-You can also end a whole event at once rather than slot by slot. It grants orientation credit
-exactly the same way for any orientation slots it covers.
+You can also end a whole event at once rather than session by session. It grants orientation credit
+exactly the same way for any orientation slots it covers. Be aware of what it means for a
+multi-session shift, though: one press applies the **same** answer to every session still open, so
+a volunteer marked attended is marked attended for all of their remaining days. Where the days
+really did differ, close those sessions out individually first — anything already recorded is left
+alone by the event-wide close-out.
 
 **Completing an event is not a separate action — it is what happens when nothing is left open.** The
 moment the last expected volunteer on the event is resolved, the app stamps the event with a

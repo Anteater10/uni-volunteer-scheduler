@@ -28,12 +28,12 @@ confirmation banner and their manage list, and neither carries one. A volunteer 
 success screen and wants their sessions on a calendar has to use the file attached to their
 confirmation email.
 
-The calendar entry covers the **slot** the volunteer signed up for — the specific session with its
-own date, start and end time, and location. Where the session doesn't carry its own location, the
-entry falls back to the event's location and then to the school. Entries are titled with the event
-name, orientation sessions are labelled as such so they're easy to tell from teaching periods, and
-the description carries the event's description plus a link back to its page. Sessions show up as
-busy time rather than free.
+There is one calendar entry **per session** — a volunteer who booked a three-session shift gets
+three entries, each with its own date, start and end time, and location. Where a session doesn't
+carry its own location, the entry falls back to the event's location and then to the school. Entries
+are titled with the event name, orientation sessions are labelled as such so they're easy to tell
+from classroom sessions, and the description carries the event's description plus a link back to its
+page. Sessions show up as busy time rather than free.
 
 **Only the original signup confirmation email carries the attachment.** The email a volunteer gets
 when a spot opens up for them off the waitlist has no calendar file — it is a "confirm this spot"

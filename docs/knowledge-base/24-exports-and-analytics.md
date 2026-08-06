@@ -34,6 +34,11 @@ its volunteers sitting at confirmed or checked-in, and those five see nothing. *
 Cancellation rates, and Module popularity work differently:** they count seats held rather than
 attendance, so closing a session out never changes them.
 
+**On a multi-session shift, every session counts separately.** Hours and attendance come from the
+sessions a volunteer was actually marked attended at, not from the size of their commitment — so a
+volunteer who booked a two-session shift and turned up once is credited once. Closing out only the
+first day of a shift therefore under-reports the second.
+
 **If hours or attendance look low, look for sessions that were never closed out.** The two report
 types fail in different ways, which is worth knowing when you're diagnosing a number. Hours simply
 go missing — an unresolved session contributes zero. Attendance rates instead quietly shrinks: its

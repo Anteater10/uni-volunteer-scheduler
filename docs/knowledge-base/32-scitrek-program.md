@@ -28,5 +28,6 @@ required before mentoring a module — see the orientation document for how the 
 the app.
 
 **How a module maps onto the app.** One module delivered at one school in one week is an **event**.
-Each of the five sessions is a **slot** inside that event. Volunteers sign up **session by session**
-and may take as many sessions as they want — there's no requirement to commit to all five.
+Its sessions are grouped into **shifts** inside that event, and a shift is what a volunteer books:
+taking it commits them to every session in it. Volunteers may take as many shifts as they want —
+there's no requirement to cover all five sessions.

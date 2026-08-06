@@ -3,14 +3,17 @@
 The **roster** is the live check-in list for an event, and it's where organizers do most of their
 day-of work. Open an event from Operations or from Admin → Events, then open its roster.
 
-Roster rows are **grouped by slot**, and each slot header names the kind of session (orientation or
-module), its times, and where it is — so a multi-day event reads as separate sessions rather than one
-long list. **The header does not show the weekday or the date**, only clock times, so on an event
+Roster rows are **grouped one section per session** (or per orientation slot), and each header
+names the kind of session, the shift it belongs to and the session's own name, its times, and where
+it is — so a multi-day event reads as separate sessions rather than one
+long list. A volunteer holding a multi-session shift therefore appears **once under each of its
+sessions** — check-in and attendance are per session, so there has to be a row to tap on each day.
+**The header does not show the weekday or the date**, only clock times, so on an event
 that runs across several days two sessions at the same hour look alike; the sections are in
 chronological order, so use their order to tell the days apart. The event detail page's version of
 the same list does label the day, if that's what you need.
 
-**Each slot header also carries that session's progress** — "2 / 7 checked in", where the second
+**Each session header also carries that session's progress** — "2 / 7 checked in", where the second
 number is how many volunteers the session expects. Once the session has been ended the header swaps
 to its outcome instead, "5 attended · 2 no show", and shows an **Ended** tag.
 
@@ -19,7 +22,7 @@ Their answers to the event's signup form are not on the roster. Those appear und
 name on the **event detail page**, so if there's something you need at the door, plan to have that
 page open rather than expecting the roster to carry it.
 
-**Rows are alphabetical within each slot and stay put as people check in.** The order deliberately
+**Rows are alphabetical within each session and stay put as people check in.** The order deliberately
 doesn't depend on status or on when someone was tapped, because a list that reshuffles under your
 thumb during check-in is how you tap the wrong person.
 
@@ -48,9 +51,10 @@ does.
 **From the roster you can:**
 
 - **Check a volunteer in**, and **undo** a mis-tap by tapping the same row again.
-- **End a slot** (or an orientation, or the whole event), marking people attended or no-show.
-- **Send a broadcast** to everyone on the event — or, on an event with more than one session, to just
-  one slot's volunteers.
+- **End a session** (or an orientation slot, or the whole event), marking people attended or
+  no-show. Ending one session of a shift leaves that shift's other sessions live.
+- **Send a broadcast** to everyone on the event — or, on an event with more than one bookable unit,
+  to just one shift's or one orientation slot's volunteers.
 - **Add a question** to the event's signup form, for something you realised you needed to ask.
 
 **From the event detail page — not the roster — you can:**
@@ -60,7 +64,8 @@ does.
 - **Cancel a signup**, which frees the seat but does not promote anyone — the seat just stays open
   until a staff member deliberately promotes someone off the waitlist.
 - **Grant orientation credit** to one volunteer directly — the "vouched for at the door" case.
-- **Reorder the waitlist** — admins only, and only on a slot with at least two people waiting.
+- **Reorder the waitlist** — admins only, and only on a shift or orientation slot with at least two
+  people waiting. A shift has one queue for the whole bundle.
 - **Download the roster as a CSV.**
 
 **Promoting someone off the waitlist always goes through pending, never straight to confirmed.**

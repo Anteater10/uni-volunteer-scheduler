@@ -12,14 +12,16 @@ default capacity, a duration in minutes, a session count, a materials list, a de
 
 **Capacity, duration, session count, and materials are reference metadata.** They appear in the
 Modules list so staff can see at a glance what a module involves, but they do not seed anything: a
-new event's slots start blank, and a slot's capacity is typed in per slot. The session count is not
-even editable on the module form, so modules created through the UI all read "1 session" whatever
-the real module runs to. Don't read those numbers as constraints — the numbers that bind are the
-ones on the event and its slots.
+new event's shifts and orientation slots start blank, and capacity is typed in per shift and per
+orientation slot. The session count is not even editable on the module form, so modules created
+through the UI all read "1 session" whatever the real module runs to. Don't read those numbers as
+constraints — the numbers that bind are the ones on the event, on its shifts, and on its
+orientation slots.
 
-**There is no separate "orientation module."** Orientation is a property of **slots**: any event
-can include an orientation slot alongside its regular sessions, and ending that orientation slot is
-what grants credit for the event's module family. Because the orientation slot lives inside the
+**There is no separate "orientation module."** Orientation is a property of the **slot**: any event
+can include an orientation slot alongside its shifts, and ending that orientation slot is what
+grants credit for the event's module family. A shift never grants credit, however many of its
+sessions a volunteer attends. Because the orientation slot lives inside the
 module's own event, the credit it grants always lands on that module's family.
 
 **Modules do three jobs today.** First, every event must name a live module — the module list is the

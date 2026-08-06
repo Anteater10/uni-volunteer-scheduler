@@ -45,9 +45,10 @@ should be treated like a password and never forwarded. As a safeguard, any cance
 by staff, never by the volunteer through the link — sends the volunteer a cancellation notice, so a
 change they didn't request lands in their inbox immediately.
 
-**One click confirms the whole submission, with one exception.** A volunteer who took three sessions
-in one event gets one link, and confirming it confirms all three — they are never asked to confirm
-session by session. A session whose seat came from a **waitlist promotion** is skipped: it needs the
+**One click confirms the whole submission, with one exception.** A volunteer who took an
+orientation slot and a shift in one event gets one link, and confirming it confirms both — they are
+never asked to confirm them one at a time. A seat that came from a **waitlist promotion** is
+skipped: it needs the
 confirm link from its own promotion email, because that email is the only message that told the
 volunteer the seat was being offered.
 
