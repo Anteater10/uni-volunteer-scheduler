@@ -315,8 +315,13 @@ container is a pre-shifts image (no `/shifts` paths in its openapi.json) and
 backend code is not volume-mounted, so verifying means rebuilding the image
 and migrating the dev database. Andy's call.
 
-### D2 · `docs/smoke-checklist.md` · S
-The ~30-minute three-window pass still describes picking periods.
+### D2 · `docs/smoke-checklist.md` · S — **done** (2026-08-05)
+Sections 1, 2, 3 and 4 rewritten for shifts: the participant picks a shift
+card (there is no "Period N" row to pick), the organizer roster groups one
+section per session and ending one leaves the others live, the admin roster
+shows one row per commitment, and the cross-role loop books a shift. Added
+the shift-builder rules (no empty shift; sessions frozen once booked), the
+one-queue-per-bundle waitlist, and the new audit row for a staff cancel.
 
 ### D3 · Knowledge base + corpus re-ingest · M
 `06-slots.md` needs a major rewrite; `05-events.md`, `07-modules.md`,
