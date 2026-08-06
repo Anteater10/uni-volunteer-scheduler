@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools._iso_week import iso_week_label
 from app.copilot.agent.tools.base import Tool
 from app.models import Event, User
 
@@ -37,11 +38,10 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
 
     rows = []
     for event, owner in q.all():
-        week_str = (
-            f"{event.year}-W{event.week_number:02d}"
-            if event.year and event.week_number
-            else None
-        )
+        # K7: was built from Event.week_number, which counts weeks inside a
+        # quarter. That label doesn't parse back to the week it names — and
+        # the LLM feeds it straight into list_modules / signup_stats_for_week.
+        week_str = iso_week_label(event.start_date)
         rows.append(
             {
                 "id": str(event.id),

@@ -5,23 +5,31 @@ at least one event. Each entry mirrors a slim signup_stats_for_week
 payload: week label, total signups, fill_rate.
 
 Plan-vs-reality:
-- "Most recent" is defined as the highest ``(year, week_number)``
-  pairs found on the Event table, scoped to the caller (admin sees
-  every event; organizer sees only their own).
+- "Most recent" is the latest calendar weeks that contain an event, scoped to
+  the caller (admin sees every event; organizer sees only their own).
+- K7: this used to order by ``(Event.year, Event.week_number)``. week_number
+  counts weeks inside an academic quarter, so Fall week 1 sorted *below*
+  Spring week 11 of the same year and "the last four weeks" could hand back
+  weeks from the previous autumn. It also grouped week 3 of every quarter into
+  one bucket and labelled the result "2026-W03". Grouping on the real Monday
+  of each event's start_date fixes the order, the buckets and the label at
+  once.
 - Totals come from ``_bookings`` so shift commitments count. While this read
   ``Signup`` alone the trend flatlined at zero as soon as events moved to
   shifts, which reads as collapsing recruitment rather than a broken query.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools import _bookings
+from app.copilot.agent.tools._iso_week import iso_week_label
 from app.copilot.agent.tools.base import Tool
 from app.models import Event
 
@@ -31,21 +39,24 @@ _PII_SCHEMA = ["weeks.week", "weeks.total_signups", "weeks.fill_rate"]
 def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     weeks_n = int(args.get("weeks", 4))
 
-    base_q = db.query(Event.year, Event.week_number).distinct().filter(
-        Event.year.isnot(None), Event.week_number.isnot(None)
-    )
+    # date_trunc('week', ...) is Monday-anchored in Postgres, so this is the
+    # ISO week the event genuinely falls in.
+    week_col = func.date_trunc("week", Event.start_date).label("week_start")
+
+    base_q = db.query(week_col).distinct().filter(Event.start_date.isnot(None))
     if not scope.see_all:
         base_q = base_q.filter(Event.owner_id == scope.module_owner_id)
-    week_pairs = (
-        base_q.order_by(desc(Event.year), desc(Event.week_number))
-        .limit(weeks_n)
-        .all()
-    )
+    week_starts = [
+        row[0]
+        for row in base_q.order_by(desc("week_start")).limit(weeks_n).all()
+    ]
 
     weeks_out = []
-    for year, wk in week_pairs:
+    for week_start in week_starts:
+        week_end = week_start + timedelta(days=7)
         events_q = db.query(Event).filter(
-            Event.year == year, Event.week_number == wk
+            Event.start_date >= week_start,
+            Event.start_date < week_end,
         )
         if not scope.see_all:
             events_q = events_q.filter(Event.owner_id == scope.module_owner_id)
@@ -56,7 +67,7 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         fill_rate = (total_signups / slots_total) if slots_total else 0.0
         weeks_out.append(
             {
-                "week": f"{year}-W{wk:02d}",
+                "week": iso_week_label(week_start),
                 "total_signups": total_signups,
                 "fill_rate": round(fill_rate, 4),
             }
