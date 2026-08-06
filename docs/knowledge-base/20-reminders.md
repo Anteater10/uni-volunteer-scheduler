@@ -24,8 +24,11 @@ above and were never switched off:
 
 - an older **24-hour** email, subject line "Reminder: volunteer slot for …", which in practice means
   a volunteer receives two day-before emails for the same session;
-- an older **1-hour** email, sent for any event whose 1-hour reminder toggle is on — and that toggle
-  is on by default.
+- an older **1-hour** email, sent shortly before every session. Each event carries an on/off flag
+  for it, but the flag defaults to on and no screen exposes it, so in practice it is always on.
+
+Neither of the older pair — nor the weekly digest below — appears on the Reminders tab, which
+previews only the three tracked kinds.
 
 Each individual reminder email is recorded against the signup once it's sent, so a retried or
 double-fired background run never repeats that same email. The two day-before emails are recorded
@@ -43,6 +46,11 @@ It is **not** honoured by the older 24-hour and 1-hour emails or by the weekly d
 volunteer who opts out will still see some mail. If someone asks to stop receiving everything, say
 so plainly rather than promising silence.
 
+One caution about finding that switch: the unsubscribe link printed in the reminder emails
+themselves doesn't work — it points at the manage page without the volunteer's token, so the page
+refuses to load, and the formatted version of the email carries no link at all. The working switch
+is on the manage page opened from the link in the **signup confirmation email**.
+
 **Volunteers also get a weekly digest.** Every Monday at 08:00 UTC — about 1:00 AM Pacific, which is
 inside the quiet-hours window and nowhere near the 07:00 kickoff — the app emails each volunteer a
 plain list of the confirmed sessions they have in the next seven days. It's a heads-up summary,
@@ -54,8 +62,9 @@ saying and the scheduled moment has passed. Send now deliberately ignores quiet 
 point of it — but it still respects a volunteer's opt-out and still won't send the same reminder
 twice. Every use is written to the audit log.
 
-**There is a daily ceiling on all outbound email**, counted across reminders, broadcasts,
-confirmations and everything else. Once the day's ceiling is reached, further sends are dropped
+**There is a daily ceiling on reminder and broadcast email.** Signup confirmations,
+waitlist-promotion offers and the weekly digest bypass it and aren't counted toward it. Once the
+day's ceiling is reached, reminder and broadcast sends are dropped
 silently rather than queued. If reminders simply stopped arriving partway through a busy day, this is
 the first thing to check.
 

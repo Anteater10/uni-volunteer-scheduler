@@ -1,6 +1,18 @@
 """CLI entry for corpus ingestion (Phase 31, plan 04).
 
-Canonical invocation (inside the compose network)::
+Canonical invocation — use the wrapper, not docker directly::
+
+    scripts/ingest_corpus.sh              # ingest
+    scripts/ingest_corpus.sh --dry-run    # show what would be ingested
+
+The wrapper exists because this module cannot be driven usefully by hand. It
+mounts the repo root at ``/repo`` (the image bakes only ``backend/``, so there
+is otherwise no ``docs/`` to walk), mounts ``backend/`` over ``/app`` so the run
+uses the current checkout's globs rather than whatever the image was last built
+with, and passes the host git SHA via ``CORPUS_GIT_SHA`` (the image carries no
+``.git``, so every run used to record 40 zeros).
+
+This docstring previously advertised::
 
     docker run --rm --network uni-event-scheduler_default --env-file backend/.env \
       -v $PWD/backend:/app -v $PWD/docs:/repo/docs:ro -w /app \
@@ -23,6 +35,10 @@ Prefer ``--rebuild`` when re-ingesting changed files. Without it,
 ``_persist_document`` inserts a fresh document/chunk set while the previous
 rows for that ``source_path`` remain, and retrieval has no latest-per-path
 filter — so stale and corrected text stay retrievable side by side.
+
+which could not work: no repo volume is mounted by compose, and because the
+globs are repo-root-relative, ``--source docs`` makes every candidate path start
+with ``knowledge-base/`` and match nothing.
 
 Two module paths reach the same ``main()`` function:
 

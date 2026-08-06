@@ -4,7 +4,8 @@ The copilot is the assistant built into the admin side of the SciTrek scheduler.
 organizers and admins — and it answers questions about how the app and the SciTrek program work.
 
 **What it answers from.** The copilot searches a curated knowledge base written for staff — the
-documents in this directory, plus the deployment guide, the demo runbook, and the CCPA policy — and
+documents in this directory (apart from its README), plus the deployment guide, the demo runbook,
+and the CCPA policy — and
 answers from what it finds, showing which documents it drew on. Those three extra documents are
 deliberate: they cover deploying and restoring the app and the policy behind CCPA requests, which
 nothing in the knowledge base explains. When something isn't covered anywhere, the honest answer is
@@ -35,9 +36,10 @@ run into that difference while the tools are off, and it may not survive being f
 app's pages as the authority on what an organizer can see and ignore this until the copilot can
 actually look anything up.
 
-**Write actions are being built, not shipped.** Having the copilot actually do things — send a
-reminder, nudge an understaffed module, move a participant — is in development behind the same switch
-as the live-data tools. If it were on, an action the copilot wanted to take would appear in the chat
+**Write actions are built but switched off.** Having the copilot actually do things — send a
+reminder, nudge an understaffed module, move a participant — sits behind the same switch as the
+live-data tools, and turning the switch on is not the missing step: the wiring behind it is
+unfinished, and flipping it today would break the chat rather than enable the tools. If it were on, an action the copilot wanted to take would appear in the chat
 as a **"Confirm action"** card showing exactly what it proposes to do, with **Confirm** and **Reject**
 buttons, so nothing happens without a person agreeing to it. Today no such card can appear. Treat the
 copilot as something that explains and looks things up, and do the doing yourself in the app.
@@ -55,7 +57,8 @@ you can read it and delete it.
 terse "Stream failed: HTTP 429" message. One is personal: sending messages faster than about ten a
 minute trips a per-person pace limit that clears after a minute's wait. The other is a **daily usage
 budget shared by the whole organization**: once the day's total is spent, nobody can chat until the
-next day begins. That one is worth knowing precisely because it isn't personal — one heavy afternoon
+next day begins — and the day rolls over at UTC midnight, which is late afternoon or early evening
+Pacific. That one is worth knowing precisely because it isn't personal — one heavy afternoon
 can use up the allowance for everybody, and only an admin changing the app's configuration can raise
 it. The troubleshooting document has the how-to-tell-them-apart entry.
 
@@ -68,5 +71,6 @@ knowledge base gets fixed.
 to see it from.
 
 **The whole copilot sits behind a feature switch.** When it is turned off for a deployment, the chat
-button and the Copilot feedback page both disappear rather than showing an error. A staff member who
-can't find the copilot at all is usually on a deployment where it isn't switched on.
+button and the Copilot feedback link both disappear rather than showing an error — though a
+bookmarked feedback page shows a plain error rather than vanishing. A staff member who can't find
+the copilot at all is usually on a deployment where it isn't switched on.

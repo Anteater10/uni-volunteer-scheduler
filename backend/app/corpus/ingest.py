@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -50,8 +52,24 @@ class IngestionResult:
     status: str  # 'succeeded' | 'partial' | 'failed'
 
 
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
 def _git_state(root: Path) -> tuple[str, bool]:
-    """Return ``(commit_sha, is_dirty)`` for ``root`` — empty SHA on non-repo."""
+    """Return ``(commit_sha, is_dirty)`` for ``root``.
+
+    ``CORPUS_GIT_SHA`` takes precedence over the git CLI. The backend image is
+    built ``COPY . /app`` from ``./backend`` and carries no ``.git``, so an
+    in-container ``git rev-parse`` always raised and every real ingestion run
+    recorded 40 zeros — which made "is the corpus stale relative to HEAD?"
+    unanswerable. ``scripts/ingest_corpus.sh`` passes the host's SHA in via
+    this variable. A malformed value is ignored rather than persisted, so a bad
+    export cannot poison the run row.
+    """
+    env_sha = (os.environ.get("CORPUS_GIT_SHA") or "").strip().lower()
+    if _SHA_RE.match(env_sha):
+        env_dirty = (os.environ.get("CORPUS_GIT_DIRTY") or "").strip().lower()
+        return env_sha, env_dirty in ("1", "true", "yes")
     try:
         sha = (
             subprocess.check_output(
@@ -257,6 +275,41 @@ def _persist_document(
             },
         )
 
+    # Supersede every earlier version of this path. ``_is_unchanged`` matches on
+    # (source_path, content_sha256), so an EDITED file is not an update — it is a
+    # second document. Without this delete both versions coexist legally (the
+    # unique constraint is on the pair, not on source_path) and
+    # ``retrieval/hybrid.py`` filters only on embedding_provider, never joining
+    # to the newest document — so a corrected knowledge-base file would not stop
+    # the copilot citing the text it replaced. Chunks and embeddings cascade.
+    session.execute(
+        text(
+            "DELETE FROM corpus_documents "
+            "WHERE source_path = :p AND id <> :new_id"
+        ),
+        {"p": doc.source_path, "new_id": doc_id},
+    )
+
+
+def _sweep_removed_sources(session, *, live_paths: set[str]) -> int:
+    """Delete documents whose source file the walker no longer emits.
+
+    Covers a knowledge-base file being deleted or renamed, and a glob being
+    narrowed. Without it the orphaned document stays retrievable forever — the
+    copilot answers out of a document nobody can find on disk or edit. Returns
+    the number of documents swept. Chunks cascade.
+    """
+    rows = session.execute(text("SELECT DISTINCT source_path FROM corpus_documents")).scalars().all()
+    stale = [p for p in rows if p not in live_paths]
+    if not stale:
+        return 0
+    session.execute(
+        text("DELETE FROM corpus_documents WHERE source_path = ANY(:paths)"),
+        {"paths": stale},
+    )
+    session.commit()
+    return len(stale)
+
 
 def run_ingestion(
     *,
@@ -369,6 +422,16 @@ def run_ingestion(
             if error_class is None:
                 error_class = exc.__class__.__name__
                 error_message = str(exc)
+
+    # Sweep documents whose source file is gone. Deliberately skipped when any
+    # file failed: a provider outage mid-run must not be read as "these files
+    # were deleted" and clear half the corpus.
+    if counters["files_failed"] == 0:
+        swept = _sweep_removed_sources(
+            session, live_paths={d.source_path for d in docs}
+        )
+        if swept:
+            notes.append(f"swept {swept} document(s) whose source file no longer exists")
 
     # REQ-31-09: any file failure flips the run to 'failed', even if some
     # files committed successfully. RESEARCH §Step 2 originally listed

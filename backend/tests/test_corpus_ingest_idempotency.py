@@ -236,6 +236,125 @@ def test_ingest_marks_failed_when_every_doc_fails(
     assert result.files_failed > 0
 
 
+def test_ingest_supersedes_an_edited_document(
+    tiny_markdown_corpus, fake_embedding_provider, corpus_db_session
+):
+    """An edited file REPLACES its old version — it does not accumulate.
+
+    Regression test for the corpus-refresh audit: ``_is_unchanged`` matches on
+    ``(source_path, content_sha256)``, so before this fix an edited file looked
+    like a brand-new document. The old row, its chunks and its embeddings stayed
+    behind and stayed retrievable, meaning a corrected knowledge-base file did
+    not stop the copilot citing the wrong text it replaced.
+    """
+    from app.corpus.ingest import run_ingestion
+
+    run_ingestion(
+        root=tiny_markdown_corpus,
+        provider=fake_embedding_provider,
+        session=corpus_db_session,
+    )
+    (tiny_markdown_corpus / "docs" / "knowledge-base" / "a.md").write_text(
+        "# A\n\nAlpha doc, corrected.\n"
+    )
+    r2 = run_ingestion(
+        root=tiny_markdown_corpus,
+        provider=fake_embedding_provider,
+        session=corpus_db_session,
+    )
+
+    assert r2.files_ingested == 1
+    assert r2.files_unchanged == 1
+
+    # Exactly one row per source_path — no duplicate versions coexisting.
+    dupes = corpus_db_session.execute(
+        text(
+            "SELECT source_path, count(*) FROM corpus_documents "
+            "GROUP BY source_path HAVING count(*) > 1"
+        )
+    ).all()
+    assert dupes == []
+
+    # And the surviving text is the corrected text, not the original.
+    body = corpus_db_session.execute(
+        text(
+            "SELECT c.content FROM corpus_chunks c "
+            "JOIN corpus_documents d ON d.id = c.document_id "
+            "WHERE d.source_path LIKE '%a.md'"
+        )
+    ).scalars().all()
+    assert any("corrected" in b for b in body)
+    assert not any("Alpha doc.\n" in b for b in body)
+
+
+def test_ingest_sweeps_documents_whose_source_file_is_gone(
+    tiny_markdown_corpus, fake_embedding_provider, corpus_db_session
+):
+    """A deleted source file's document + chunks are swept on the next run.
+
+    Without the sweep, deleting a knowledge-base file leaves it permanently
+    retrievable — the copilot keeps answering out of a document nobody can find
+    or edit any more.
+    """
+    from app.corpus.ingest import run_ingestion
+
+    run_ingestion(
+        root=tiny_markdown_corpus,
+        provider=fake_embedding_provider,
+        session=corpus_db_session,
+    )
+    assert _count(corpus_db_session, "corpus_documents") == 2
+
+    (tiny_markdown_corpus / "docs" / "knowledge-base" / "b.md").unlink()
+    run_ingestion(
+        root=tiny_markdown_corpus,
+        provider=fake_embedding_provider,
+        session=corpus_db_session,
+    )
+
+    remaining = corpus_db_session.execute(
+        text("SELECT source_path FROM corpus_documents")
+    ).scalars().all()
+    assert len(remaining) == 1
+    assert not any(p.endswith("b.md") for p in remaining)
+
+
+def test_git_state_prefers_the_env_override(monkeypatch, tmp_path):
+    """``CORPUS_GIT_SHA`` wins over the git CLI.
+
+    The backend image has no ``.git`` (it is built ``COPY . /app`` from
+    ``./backend``), so in-container ``git rev-parse`` always failed and every
+    real ingestion run recorded 40 zeros — making corpus-vs-HEAD staleness
+    impossible to detect. The wrapper script passes the host's SHA in via env.
+    """
+    from app.corpus import ingest as ingest_mod
+
+    real_sha = "b" * 40
+    monkeypatch.setenv("CORPUS_GIT_SHA", real_sha)
+
+    def boom(*a, **kw):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(ingest_mod.subprocess, "check_output", boom)
+    sha, dirty = ingest_mod._git_state(tmp_path)
+    assert sha == real_sha
+    assert dirty is False
+
+
+def test_git_state_rejects_a_malformed_env_override(monkeypatch, tmp_path):
+    """A junk ``CORPUS_GIT_SHA`` falls back rather than poisoning the run row."""
+    from app.corpus import ingest as ingest_mod
+
+    monkeypatch.setenv("CORPUS_GIT_SHA", "not-a-sha")
+
+    def boom(*a, **kw):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(ingest_mod.subprocess, "check_output", boom)
+    sha, _ = ingest_mod._git_state(tmp_path)
+    assert sha == "0" * 40
+
+
 def test_ingest_rebuild_truncates_existing_rows(
     tiny_markdown_corpus, fake_embedding_provider, corpus_db_session
 ):

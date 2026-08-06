@@ -65,7 +65,7 @@ can still be tapped in; the tap confirms them on the way through.
 For self check-in, show the event's QR code with the **Check-in QR** button on the **event page**
 (Admin → Events → the event), and volunteers enter their email and tap the shift they're there for.
 The roster screen shows the numeric venue code but not the QR. **Self check-in is the path with the
-time window:** it opens 30 minutes before a session starts and closes 30 minutes after.
+time window:** it opens 30 minutes before a session starts and closes 30 minutes after it starts.
 
 ## How do I close out a session once it's over?
 
