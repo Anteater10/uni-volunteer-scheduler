@@ -34,7 +34,7 @@ _docs_kwargs = (
     if settings.environment == "production"
     else {}
 )
-app = FastAPI(title="University Volunteer Scheduler API", **_docs_kwargs)
+app = FastAPI(title="UCSB SciTrek Volunteer Scheduler API", **_docs_kwargs)
 
 if _expose_tokens:
     logger.warning(

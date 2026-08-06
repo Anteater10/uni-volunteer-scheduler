@@ -1213,6 +1213,15 @@ export default function EventDetailPage() {
     setHighlightOrientation(true);
   }
 
+  // K22: the advisory variant of the modal only renders when this event has
+  // *no* orientation slots, so highlighting them here highlighted nothing —
+  // "show me orientation events" dropped the volunteer back on the same page
+  // unchanged. Send them somewhere that can actually answer.
+  function handleFindOrientationElsewhere() {
+    setStep("browse");
+    navigate("/volunteer?only=orientation");
+  }
+
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
@@ -1664,6 +1673,7 @@ export default function EventDetailPage() {
         onPickOrientation={handleOrientationNo}
         onYes={handleOrientationYes}
         onNo={handleOrientationNo}
+        onFindOrientation={handleFindOrientationElsewhere}
       />
 
       {/* Success popup card */}

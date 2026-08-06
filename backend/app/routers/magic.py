@@ -87,8 +87,13 @@ def resend_magic_link(
     if not check_rate_limit(redis_client, payload.email, ip):
         raise HTTPException(
             status_code=429,
-            # TODO(copy): rate-limit message
-            detail="Too many requests. Please wait a few minutes and try again.",
+            # K22: said "wait a few minutes" while Retry-After said 3600 and
+            # the counter (check_rate_limit) is bucketed per hour. Someone who
+            # waited the few minutes they were told to just got a second 429.
+            detail=(
+                "You've asked for too many links this hour. "
+                "Try again in an hour, or email scitrek@ucsb.edu if you're stuck."
+            ),
             headers={"Retry-After": "3600"},
         )
     # Phase 09: signup.user removed — find by volunteer email.

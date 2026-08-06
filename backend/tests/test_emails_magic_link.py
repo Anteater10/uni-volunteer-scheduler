@@ -2,7 +2,9 @@
 import logging
 from types import SimpleNamespace
 
-from app.emails import send_magic_link
+import pytest
+
+from app.emails import _humanise_minutes, send_magic_link
 
 
 def test_magic_link_email_html_contains_url():
@@ -28,7 +30,51 @@ def test_magic_link_email_text_contains_url():
         "https://example.com",
     )
     assert "https://example.com/auth/magic/abc123def456" in result["text"]
-    assert "15 minutes" in result["text"]
+    # K20: this used to assert "15 minutes" — the settings default, not the
+    # lifetime a signup-confirm token is ever issued with. The sentence now
+    # tracks the real TTL.
+    assert "14 days" in result["text"]
+
+
+def test_magic_link_email_states_the_ttl_it_was_given():
+    result = send_magic_link(
+        "user@example.com",
+        "tok",
+        SimpleNamespace(title="Test Event"),
+        "https://example.com",
+        ttl_minutes=4320,
+    )
+    assert "3 days" in result["text"]
+    assert "3 days" in result["html"]
+    assert "15 minutes" not in result["text"]
+
+
+@pytest.mark.parametrize(
+    "minutes,expected",
+    [
+        (20160, "14 days"),
+        (1440, "1 day"),
+        (120, "2 hours"),
+        (60, "1 hour"),
+        (15, "15 minutes"),
+        (1, "1 minute"),
+    ],
+)
+def test_humanise_minutes(minutes, expected):
+    assert _humanise_minutes(minutes) == expected
+
+
+def test_magic_link_email_is_branded_scitrek():
+    result = send_magic_link(
+        "user@example.com",
+        "tok",
+        SimpleNamespace(title="Test Event"),
+        "https://example.com",
+    )
+    # K20: nothing in this email said who it was from.
+    assert "SciTrek" in result["subject"]
+    assert "UCSB SciTrek" in result["html"]
+    assert "UCSB SciTrek" in result["text"]
 
 
 def test_magic_link_email_log_redacted(caplog):

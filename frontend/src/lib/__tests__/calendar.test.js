@@ -139,7 +139,7 @@ describe('buildIcs — escaping (RFC 5545 §3.3.11)', () => {
   it('escapes the same characters in SUMMARY', () => {
     const event = { ...FIXTURE_EVENT, title: 'Ev,ent;One\\Two' }
     expect(unfold(build({ event }))).toContain(
-      'SUMMARY:Sci Trek: Ev\\,ent\\;One\\\\Two',
+      'SUMMARY:SciTrek: Ev\\,ent\\;One\\\\Two',
     )
   })
 
@@ -178,8 +178,8 @@ describe('buildIcs — line folding (RFC 5545 §3.1)', () => {
 })
 
 describe('buildIcs — SUMMARY / LOCATION / URL', () => {
-  it('SUMMARY prefixes "Sci Trek: "', () => {
-    expect(build()).toContain('SUMMARY:Sci Trek: Rocket Physics @ Goleta Valley JH')
+  it('SUMMARY prefixes "SciTrek: "', () => {
+    expect(build()).toContain('SUMMARY:SciTrek: Rocket Physics @ Goleta Valley JH')
   })
 
   it('flags an orientation slot in the SUMMARY', () => {
@@ -257,7 +257,7 @@ describe('buildGoogleCalendarUrl', () => {
     })
     const parsed = new URL(url)
     expect(parsed.searchParams.get('text')).toBe(
-      'Sci Trek: Rocket Physics @ Goleta Valley JH',
+      'SciTrek: Rocket Physics @ Goleta Valley JH',
     )
     expect(parsed.searchParams.get('location')).toBe('Goleta Valley JH Room 12')
     expect(parsed.searchParams.get('details')).toContain(
