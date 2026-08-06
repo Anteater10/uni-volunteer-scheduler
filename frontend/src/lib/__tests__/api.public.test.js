@@ -196,28 +196,6 @@ describe("api.public.getManageSignups", () => {
   });
 });
 
-describe("api.public.cancelSignup", () => {
-  it("calls DELETE /api/v1/public/signups/{id} with token query param and auth:false", async () => {
-    const signupId = "550e8400-e29b-41d4-a716-446655440001";
-    const mockFetch = makeOkFetch({ cancelled: true, signup_id: signupId });
-    vi.stubGlobal("fetch", mockFetch);
-
-    const { api } = await import("../api.js");
-    const result = await api.public.cancelSignup(signupId, "tok_cancel_xyz987");
-
-    expect(mockFetch).toHaveBeenCalledOnce();
-    const url = capturedUrl(mockFetch);
-    expect(url).toContain(`/api/v1/public/signups/${signupId}`);
-    expect(url).toContain("token=tok_cancel_xyz987");
-
-    const init = capturedInit(mockFetch);
-    expect(init.method).toBe("DELETE");
-    expect(init.headers?.Authorization).toBeUndefined();
-
-    expect(result.cancelled).toBe(true);
-  });
-});
-
 describe("api.public error propagation", () => {
   it("429 response: error has err.status === 429 (D-08 rate-limit detection)", async () => {
     const mockFetch = makeErrorFetch(429, { detail: "Too Many Requests" });

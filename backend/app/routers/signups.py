@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
@@ -11,9 +10,15 @@ from ..database import get_db
 from ..deps import get_current_user, log_action
 from ..services.check_in_service import ensure_signup_cancellable
 from ..services.swap_service import swap_signup as _swap_signup
-from ..signup_service import PromotionResult, promote_waitlist_fifo
+from ..services.swap_service import swap_shift_signup as _swap_shift_signup
 
 router = APIRouter(prefix="/signups", tags=["signups"])
+
+# 2026-08-02 shifts: shift-commitment routes are siblings of /signups, not
+# children of it, and the check-in router already publishes /shift-signups/...
+# — an unprefixed router keeps the URL shape consistent while leaving the swap
+# logic next to its slot twin below.
+shift_signups_router = APIRouter(tags=["signups"])
 
 
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
@@ -43,7 +48,7 @@ def cancel_signup(
     - Lock Signup row
     - Lock Slot row
     - Maintain invariant: slot.current_count == #confirmed signups
-    - Promote waitlisted FIFO
+    - Never promotes — the waitlist only moves by explicit staff promotion (2026-08-02).
     """
     # Lock the signup row
     signup = (
@@ -55,8 +60,10 @@ def cancel_signup(
     if not signup:
         raise HTTPException(status_code=404, detail="Signup not found")
 
-    # Phase 09: signups no longer have user_id; volunteer cancel via token is in /public/signups
-    # Phase 12: admin/organizer cancel still uses this endpoint; volunteer self-cancel uses public endpoint
+    # Phase 09: signups no longer have user_id.
+    # 2026-08-02 read-only signups: volunteer self-cancel is gone entirely —
+    # cancellation is staff-only now, via this endpoint and admin.py's
+    # /admin/signups/{id}/cancel (the reaper also cancels stale rows on its own).
     # For auth'd users (admin/organizer), allow if they have the admin/organizer role
     if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
         raise HTTPException(status_code=403, detail="Not authorized to cancel signups via this endpoint")
@@ -99,21 +106,8 @@ def cancel_signup(
     if previous_status in (models.SignupStatus.confirmed, models.SignupStatus.pending) and slot.current_count > 0:
         slot.current_count -= 1
 
-    # Auto-promote from waitlist FIFO until capacity is full
-    # Canonical promotion path: app.signup_service.promote_waitlist_fifo
-    promotions: List[PromotionResult] = []
-    while slot.current_count < slot.capacity:
-        promo = promote_waitlist_fifo(db, slot.id)
-        if promo is None:
-            break
-        slot.current_count += 1
-        promotions.append(promo)
-
     # Audit log before commit
     log_action(db, current_user, "signup_cancelled", "Signup", str(signup.id))
-
-    # Capture before commit — expire_on_commit would force refresh queries.
-    promotion_email_kwargs = [p.email_kwargs for p in promotions]
 
     db.commit()
     db.refresh(signup)
@@ -127,11 +121,6 @@ def cancel_signup(
         else "cancellation"
     )
     send_email_notification.delay(signup_id=str(signup.id), kind=cancellation_kind)
-
-    # Promoted volunteers get the confirm-your-spot email — pending status
-    # holds the seat until the volunteer clicks the emailed magic link.
-    for kwargs in promotion_email_kwargs:
-        send_waitlist_promotion_email.delay(**kwargs)
 
     return signup
 
@@ -210,8 +199,8 @@ def swap_signup_authed(
 
     Admin/organizer move a signup between slots in the same event. Reuses
     the shared ``swap_service.swap_signup`` which hard-fails on target
-    full (409) and cross-event (400). Participant swap goes through the
-    token-gated ``/public/signups/{id}/swap`` endpoint instead.
+    full (409) and cross-event (400). Staff-only — the volunteer self-swap
+    endpoint was removed 2026-08-02 (read-only signups).
     """
     if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -220,7 +209,6 @@ def swap_signup_authed(
         db,
         signup_id=signup_id,
         target_slot_id=payload.target_slot_id,
-        actor_kind="staff",
         actor=current_user,
         actor_label=current_user.role.value,
     )
@@ -230,5 +218,40 @@ def swap_signup_authed(
     db.refresh(updated)
     if promo_kwargs:
         # Fixes the silent-promotion bug: swaps previously promoted with no email.
+        send_waitlist_promotion_email.delay(**promo_kwargs)
+    return updated
+
+
+@shift_signups_router.post(
+    "/shift-signups/{shift_signup_id}/swap", response_model=schemas.ShiftSignupRead
+)
+def swap_shift_signup_authed(
+    shift_signup_id: str,
+    payload: schemas.ShiftSignupMoveRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """2026-08-02 shifts: staff move a commitment between shifts of one event.
+
+    Shift twin of ``swap_signup_authed``. Staff-only for the same reason: there
+    is no volunteer self-swap since the read-only-signups change. The extra
+    refusal that has no slot equivalent is a part-attended shift — see
+    ``swap_service.swap_shift_signup``.
+    """
+    if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    result = _swap_shift_signup(
+        db,
+        shift_signup_id=shift_signup_id,
+        target_shift_id=payload.target_shift_id,
+        actor=current_user,
+        actor_label=current_user.role.value,
+    )
+    updated = result.shift_signup
+    promo_kwargs = result.promotion.email_kwargs if result.promotion else None
+    db.commit()
+    db.refresh(updated)
+    if promo_kwargs:
         send_waitlist_promotion_email.delay(**promo_kwargs)
     return updated

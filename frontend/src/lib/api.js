@@ -313,6 +313,82 @@ async function generateSlots(eventId, payload) {
 }
 
 // --------------------
+// SHIFTS (2026-08-02)
+// --------------------
+// A shift is the bookable unit for the work itself; the slots above are now
+// only orientation. Sessions live inside a shift and are edited through these
+// endpoints, not through /slots (which rejects them).
+async function listShifts(eventId) {
+  return request("/shifts/", { method: "GET", params: { event_id: eventId } });
+}
+
+async function createShift(eventId, payload) {
+  return request("/shifts/", {
+    method: "POST",
+    params: { event_id: eventId },
+    body: payload,
+  });
+}
+
+async function updateShift(shiftId, payload) {
+  return request(`/shifts/${shiftId}`, { method: "PATCH", body: payload });
+}
+
+async function deleteShift(shiftId) {
+  return request(`/shifts/${shiftId}`, { method: "DELETE" });
+}
+
+// Full ordering only — the backend rejects partial lists so two concurrent
+// reorders can't interleave.
+async function reorderShifts(eventId, shiftIds) {
+  return request("/shifts/reorder", {
+    method: "POST",
+    params: { event_id: eventId },
+    body: { shift_ids: shiftIds },
+  });
+}
+
+async function addShiftSession(shiftId, payload) {
+  return request(`/shifts/${shiftId}/sessions`, { method: "POST", body: payload });
+}
+
+async function updateShiftSession(sessionId, payload) {
+  return request(`/shifts/sessions/${sessionId}`, { method: "PATCH", body: payload });
+}
+
+async function deleteShiftSession(sessionId) {
+  return request(`/shifts/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+async function reorderShiftSessions(shiftId, sessionIds) {
+  return request(`/shifts/${shiftId}/sessions/reorder`, {
+    method: "POST",
+    body: { session_ids: sessionIds },
+  });
+}
+
+async function swapShiftSignup(shiftSignupId, targetShiftId) {
+  return request(`/shift-signups/${shiftSignupId}/swap`, {
+    method: "POST",
+    body: { target_shift_id: targetShiftId },
+  });
+}
+
+async function checkInSession(shiftSignupId, slotId, body) {
+  return request(`/shift-signups/${shiftSignupId}/sessions/${slotId}/check-in`, {
+    method: "POST",
+    body,
+  });
+}
+
+async function undoSessionCheckIn(shiftSignupId, slotId, body) {
+  return request(
+    `/shift-signups/${shiftSignupId}/sessions/${slotId}/undo-check-in`,
+    { method: "POST", body },
+  );
+}
+
+// --------------------
 // QUESTIONS
 // --------------------
 async function listEventQuestions(eventId) {
@@ -422,19 +498,6 @@ async function publicConfirmSignup(token) {
 async function publicGetManageSignups(token) {
   return request("/public/signups/manage", { method: "GET", auth: false, params: { token } });
 }
-async function publicCancelSignup(signupId, token) {
-  return request(`/public/signups/${signupId}`, { method: "DELETE", auth: false, params: { token } });
-}
-
-// Phase 29 (SWAP-02) — participant swap to a different slot in the same event.
-async function publicSwapSignup(signupId, targetSlotId, token) {
-  return request(`/public/signups/${signupId}/swap`, {
-    method: "POST",
-    auth: false,
-    params: { token },
-    body: { target_slot_id: targetSlotId },
-  });
-}
 
 // Phase 24 — volunteer reminder preferences (token-gated)
 async function publicGetPreferences(manageToken) {
@@ -457,10 +520,18 @@ async function publicUpdatePreferences(manageToken, patch) {
 async function adminListUpcomingReminders(days = 7) {
   return request("/admin/reminders/upcoming", { method: "GET", params: { days } });
 }
-async function adminSendReminderNow(signupId, kind) {
+// 2026-08-05 shifts: a preview row is either an orientation signup or one
+// session of a shift commitment. Pass the whole row's anchor through so the
+// server knows which of the two — and, for a session, which day.
+async function adminSendReminderNow({ signupId, shiftSignupId, slotId, kind }) {
   return request("/admin/reminders/send-now", {
     method: "POST",
-    body: { signup_id: signupId, kind },
+    body: {
+      signup_id: signupId ?? null,
+      shift_signup_id: shiftSignupId ?? null,
+      slot_id: shiftSignupId ? slotId ?? null : null,
+      kind,
+    },
   });
 }
 
@@ -474,8 +545,11 @@ async function getBroadcastRecipientCount(eventId, params) {
   });
 }
 // Sends a broadcast. On 429 the Error carries .status and .retryAfter.
-// slot_id (optional) targets one slot's roster; omitted = all slots.
-async function sendBroadcast(eventId, { subject, body_markdown, slot_id }) {
+// Scope: slot_id targets one orientation slot's roster, shift_id targets one
+// shift's commitments, neither means everyone on the event. Passing both is a
+// 422, as is passing the id of a session slot — a session has no roster of its
+// own, so the server names shift_id in the message rather than guessing.
+async function sendBroadcast(eventId, { subject, body_markdown, slot_id, shift_id }) {
   const url = `${API_BASE}/events/${eventId}/broadcast`;
   const token = authStorage.getToken();
   const res = await fetch(url, {
@@ -488,6 +562,7 @@ async function sendBroadcast(eventId, { subject, body_markdown, slot_id }) {
       subject,
       body_markdown,
       ...(slot_id ? { slot_id } : {}),
+      ...(shift_id ? { shift_id } : {}),
     }),
   });
   const json = await safeReadJson(res);
@@ -584,6 +659,31 @@ export const api = {
     update: (id, payload) => updateEvent(id, payload),
     delete: (id) => deleteEvent(id),
   },
+  slots: {
+    list: (params) => listSlots(params),
+    create: (eventId, payload) => createSlot(eventId, payload),
+    update: (slotId, payload) => updateSlot(slotId, payload),
+    delete: (slotId) => deleteSlot(slotId),
+    generate: (eventId, payload) => generateSlots(eventId, payload),
+  },
+  shifts: {
+    list: (eventId) => listShifts(eventId),
+    create: (eventId, payload) => createShift(eventId, payload),
+    update: (shiftId, payload) => updateShift(shiftId, payload),
+    delete: (shiftId) => deleteShift(shiftId),
+    reorder: (eventId, shiftIds) => reorderShifts(eventId, shiftIds),
+    addSession: (shiftId, payload) => addShiftSession(shiftId, payload),
+    updateSession: (sessionId, payload) => updateShiftSession(sessionId, payload),
+    deleteSession: (sessionId) => deleteShiftSession(sessionId),
+    reorderSessions: (shiftId, sessionIds) =>
+      reorderShiftSessions(shiftId, sessionIds),
+    swapSignup: (shiftSignupId, targetShiftId) =>
+      swapShiftSignup(shiftSignupId, targetShiftId),
+    checkInSession: (shiftSignupId, slotId, body) =>
+      checkInSession(shiftSignupId, slotId, body),
+    undoSessionCheckIn: (shiftSignupId, slotId, body) =>
+      undoSessionCheckIn(shiftSignupId, slotId, body),
+  },
   notifications: {
     my: (params) => listMyNotifications(params),
   },
@@ -605,10 +705,6 @@ export const api = {
       }),
     confirmSignup: (token) => publicConfirmSignup(token),
     getManageSignups: (token) => publicGetManageSignups(token),
-    cancelSignup: (signupId, token) => publicCancelSignup(signupId, token),
-    // Phase 29 (SWAP-02) — participant swap via manage_token.
-    swapSignup: (signupId, targetSlotId, token) =>
-      publicSwapSignup(signupId, targetSlotId, token),
     // Phase 24 — reminder preferences
     getPreferences: (manageToken) => publicGetPreferences(manageToken),
     updatePreferences: (manageToken, patch) =>
@@ -630,11 +726,14 @@ export const api = {
         auth: false,
         body: { email, venue_code: venueCode },
       }),
-    checkInSelected: (eventId, email, signupIds, venueCode) =>
+    // 2026-08-02 shifts: the ids echoed back are whatever check-in-lookup
+    // handed out as `unit_id` — an orientation signup id, or a session's slot
+    // id. The caller doesn't need to know which kind it is holding.
+    checkInSelected: (eventId, email, unitIds, venueCode) =>
       request(`/events/${eventId}/check-in-selected`, {
         method: "POST",
         auth: false,
-        body: { email, venue_code: venueCode, signup_ids: signupIds },
+        body: { email, venue_code: venueCode, unit_ids: unitIds },
       }),
   },
 
@@ -643,6 +742,14 @@ export const api = {
     grantOrientation: (eventId, signupId) =>
       request(
         `/organizer/events/${eventId}/signups/${signupId}/grant-orientation`,
+        { method: "POST" },
+      ),
+    // 2026-08-02 shifts: the roster's classroom rows are commitments, so the
+    // slot-keyed route above 404s for them. This is the override the shift
+    // orientation gate depends on — staff vouching at the door.
+    grantOrientationForShift: (eventId, shiftSignupId) =>
+      request(
+        `/organizer/events/${eventId}/shift-signups/${shiftSignupId}/grant-orientation`,
         { method: "POST" },
       ),
     // Phase 22 — quick-add form field from roster page
@@ -658,6 +765,13 @@ export const api = {
     promoteSignup: (eventId, signupId, { allowOverfill = false } = {}) =>
       request(
         `/organizer/events/${eventId}/signups/${signupId}/promote` +
+          (allowOverfill ? "?allow_overfill=true" : ""),
+        { method: "POST" },
+      ),
+    // Shift twin — same allow_overfill contract, for the same reason.
+    promoteShiftSignup: (eventId, shiftSignupId, { allowOverfill = false } = {}) =>
+      request(
+        `/organizer/events/${eventId}/shift-signups/${shiftSignupId}/promote` +
           (allowOverfill ? "?allow_overfill=true" : ""),
         { method: "POST" },
       ),
@@ -705,6 +819,14 @@ export const api = {
       promote: (id) => adminPromoteSignup(id),
       move: (id, targetSlotId) => adminMoveSignup(id, targetSlotId),
       resend: (id) => adminResendSignup(id),
+    },
+    // 2026-08-02 shifts: the same staff overrides, one level up.
+    shiftSignups: {
+      promote: (id) =>
+        request(`/admin/shift-signups/${id}/promote`, { method: "POST" }),
+      cancel: (id) =>
+        request(`/admin/shift-signups/${id}/cancel`, { method: "POST" }),
+      swap: (id, targetShiftId) => swapShiftSignup(id, targetShiftId),
     },
     analytics: {
       // JSON read helpers — consumed by ExportsSection panels in Plan 06
@@ -782,6 +904,11 @@ export const api = {
         method: "PUT",
         body: { schema },
       }),
+    reorderShiftWaitlist: (eventId, shiftId, orderedIds) =>
+      request(`/admin/events/${eventId}/shifts/${shiftId}/waitlist-order`, {
+        method: "PATCH",
+        body: { ordered_shift_signup_ids: orderedIds },
+      }),
     // Phase 25 — admin reorder waitlist (WAIT-05)
     reorderWaitlist: (eventId, slotId, orderedIds) =>
       request(
@@ -794,7 +921,7 @@ export const api = {
     // Phase 24 — scheduled reminder emails
     reminders: {
       listUpcoming: (days = 7) => adminListUpcomingReminders(days),
-      sendNow: (signupId, kind) => adminSendReminderNow(signupId, kind),
+      sendNow: (args) => adminSendReminderNow(args),
     },
     // Phase 26 — broadcast messages
     broadcastRecipientCount: (eventId, params) =>

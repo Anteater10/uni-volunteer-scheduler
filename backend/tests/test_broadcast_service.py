@@ -28,7 +28,12 @@ from app.services.broadcast_service import (
     render_plaintext,
     send_broadcast,
 )
-from tests.fixtures.factories import SignupFactory, VolunteerFactory
+from tests.fixtures.factories import (
+    ShiftFactory,
+    ShiftSignupFactory,
+    SignupFactory,
+    VolunteerFactory,
+)
 from tests.fixtures.helpers import _bind_factories, make_user
 
 
@@ -66,6 +71,12 @@ def _make_event_with_capacity(db_session, *, capacity=5):
     )
     db_session.add(event)
     db_session.flush()
+    # Orientation, not period. Every test using this fixture is about a
+    # *slot-level* roster — signups attached directly to a slot — and since the
+    # shifts work that is exactly what an orientation slot is. A period slot has
+    # no signups of its own (nobody books a session), so keeping it here would
+    # have the test asserting on an audience production cannot produce. The
+    # shift half of the roster is covered separately below.
     slot = models.Slot(
         id=uuid.uuid4(),
         event_id=event.id,
@@ -73,7 +84,7 @@ def _make_event_with_capacity(db_session, *, capacity=5):
         end_time=datetime.now(timezone.utc) + timedelta(days=1, hours=2),
         capacity=capacity,
         current_count=0,
-        slot_type=models.SlotType.PERIOD,
+        slot_type=models.SlotType.ORIENTATION,
         date=date_type.today(),
     )
     db_session.add(slot)
@@ -373,7 +384,7 @@ def test_list_recent_broadcasts_returns_audit_rows(db_session, dispatched):
 
 
 def _add_slot(db_session, event, *, capacity=5):
-    """Second slot on the same event — for slot-scoped broadcast tests."""
+    """Second orientation slot on the same event — for slot-scoped tests."""
     slot = models.Slot(
         id=uuid.uuid4(),
         event_id=event.id,
@@ -381,7 +392,7 @@ def _add_slot(db_session, event, *, capacity=5):
         end_time=datetime.now(timezone.utc) + timedelta(days=1, hours=5),
         capacity=capacity,
         current_count=0,
-        slot_type=models.SlotType.PERIOD,
+        slot_type=models.SlotType.ORIENTATION,
         date=date_type.today(),
     )
     db_session.add(slot)
@@ -708,3 +719,389 @@ def test_router_returns_429_on_rate_limit(client, db_session, dispatched):
     )
     assert r.status_code == 429
     assert int(r.headers.get("Retry-After", "0")) > 0
+
+
+# ------------------------------------------------------------------
+# 2026-08-05 · A2 — broadcasts must reach shift commitments too
+#
+# Until this landed, list_recipients/count_recipients queried Signup alone.
+# Since the shifts work the classroom roster lives in shift_signups and a
+# session slot carries no signup rows at all, so "email everyone on this event"
+# reached only the orientation signups — and the modal's own recipient-count
+# preview agreed with the short list, so nothing looked wrong. These tests pin
+# the union, because the failure mode was a silent under-send with a confirming
+# number printed next to it.
+# ------------------------------------------------------------------
+
+
+def _add_shift(db_session, event, *, name="Tue morning", capacity=5):
+    """A shift with two sessions — the bundle a volunteer commits to."""
+    _bind_factories(db_session)
+    shift = ShiftFactory(event=event, name=name, capacity=capacity)
+    db_session.flush()
+    base = datetime.now(timezone.utc) + timedelta(days=1)
+    for i in range(2):
+        db_session.add(
+            models.Slot(
+                id=uuid.uuid4(),
+                event_id=event.id,
+                shift_id=shift.id,
+                name=f"Period {i + 1}",
+                sort_order=i,
+                start_time=base + timedelta(hours=i),
+                end_time=base + timedelta(hours=i + 1),
+                capacity=capacity,
+                current_count=0,
+                slot_type=models.SlotType.PERIOD,
+                date=date_type.today(),
+            )
+        )
+    db_session.flush()
+    return shift
+
+
+def _seed_commitment(db_session, shift, *, status, email):
+    _bind_factories(db_session)
+    vol = VolunteerFactory(email=email)
+    commitment = ShiftSignupFactory(
+        volunteer=vol,
+        shift=shift,
+        status=status,
+        timestamp=datetime.now(timezone.utc),
+    )
+    if status in broadcast_service.SHIFT_RECIPIENT_STATUSES:
+        shift.current_count += 1
+    db_session.flush()
+    return commitment
+
+
+def test_whole_event_recipients_include_shift_commitments(db_session):
+    """The A2 regression itself: the classroom roster was being dropped."""
+    _, event, orientation = _make_event_with_capacity(db_session, capacity=5)
+    shift = _add_shift(db_session, event)
+    _seed_signup(
+        db_session, orientation,
+        status=models.SignupStatus.confirmed, email="orient@example.com",
+    )
+    _seed_commitment(
+        db_session, shift,
+        status=models.SignupStatus.confirmed, email="shifted@example.com",
+    )
+    db_session.commit()
+
+    recipients = list_recipients(db_session, event.id)
+    assert {r.volunteer.email for r in recipients} == {
+        "orient@example.com",
+        "shifted@example.com",
+    }
+    # The preview number has to agree, or an organizer has no way to notice.
+    assert count_recipients(db_session, event.id) == 2
+
+
+def test_shift_recipients_respect_lifecycle_status(db_session):
+    """Only confirmed commitments receive.
+
+    A ShiftSignup's status is lifecycle-only by CHECK constraint, so confirmed
+    is the whole eligible set here — waitlisted, pending and cancelled are all
+    people who do not hold a spot.
+    """
+    _, event, _ = _make_event_with_capacity(db_session, capacity=5)
+    shift = _add_shift(db_session, event, capacity=10)
+    _seed_commitment(
+        db_session, shift,
+        status=models.SignupStatus.confirmed, email="in@example.com",
+    )
+    for status, email in (
+        (models.SignupStatus.waitlisted, "wait@example.com"),
+        (models.SignupStatus.pending, "pend@example.com"),
+        (models.SignupStatus.cancelled, "gone@example.com"),
+    ):
+        _seed_commitment(db_session, shift, status=status, email=email)
+    db_session.commit()
+
+    assert {r.volunteer.email for r in list_recipients(db_session, event.id)} == {
+        "in@example.com"
+    }
+    assert count_recipients(db_session, event.id) == 1
+
+
+def test_send_broadcast_dispatches_to_shift_commitments(db_session, dispatched):
+    owner, event, orientation = _make_event_with_capacity(db_session, capacity=5)
+    shift = _add_shift(db_session, event)
+    _seed_signup(
+        db_session, orientation,
+        status=models.SignupStatus.confirmed, email="orient@example.com",
+    )
+    commitment = _seed_commitment(
+        db_session, shift,
+        status=models.SignupStatus.confirmed, email="shifted@example.com",
+    )
+    db_session.commit()
+
+    result = send_broadcast(
+        db_session,
+        event_id=event.id,
+        subject="Parking change",
+        body_markdown="Parking is now Lot 22.",
+        actor_user_id=owner.id,
+        redis_client=_FakeRedis(),
+    )
+
+    assert result.recipient_count == 2
+    by_email = {kwargs["to_email"]: kwargs for _, kwargs in dispatched}
+    assert set(by_email) == {"orient@example.com", "shifted@example.com"}
+    # The dispatch carries the anchor the delivery was claimed on, so the log
+    # line can be traced back to the right row.
+    assert by_email["shifted@example.com"]["shift_signup_id"] == str(commitment.id)
+    assert by_email["shifted@example.com"]["signup_id"] is None
+    assert by_email["orient@example.com"]["shift_signup_id"] is None
+
+
+def test_shift_dedup_uses_the_shift_anchor(db_session, dispatched):
+    """A commitment has no signup_id.
+
+    Routing it through the signup dedup would insert a sent_notifications row
+    with both anchors NULL, which the CHECK constraint rejects — taking the
+    whole broadcast down, orientation recipients included.
+    """
+    owner, event, _ = _make_event_with_capacity(db_session, capacity=5)
+    shift = _add_shift(db_session, event)
+    commitment = _seed_commitment(
+        db_session, shift,
+        status=models.SignupStatus.confirmed, email="dedup@example.com",
+    )
+    db_session.commit()
+
+    fixed_id = uuid.uuid4().hex[:22]
+    first = send_broadcast(
+        db_session,
+        event_id=event.id,
+        subject="once",
+        body_markdown="body",
+        actor_user_id=owner.id,
+        redis_client=_FakeRedis(),
+        broadcast_id=fixed_id,
+    )
+    second = send_broadcast(
+        db_session,
+        event_id=event.id,
+        subject="once",
+        body_markdown="body",
+        actor_user_id=owner.id,
+        redis_client=_FakeRedis(),
+        broadcast_id=fixed_id,
+    )
+
+    assert (first.recipient_count, second.recipient_count) == (1, 0)
+    assert len(dispatched) == 1
+
+    row = (
+        db_session.query(models.SentNotification)
+        .filter(models.SentNotification.kind == f"broadcast_{fixed_id}")
+        .one()
+    )
+    assert row.shift_signup_id == commitment.id
+    assert row.signup_id is None
+
+
+def test_shift_scoped_recipients_exclude_the_other_units(db_session):
+    _, event, orientation = _make_event_with_capacity(db_session, capacity=5)
+    shift_a = _add_shift(db_session, event, name="Tue morning")
+    shift_b = _add_shift(db_session, event, name="Wed morning")
+    _seed_signup(
+        db_session, orientation,
+        status=models.SignupStatus.confirmed, email="orient@example.com",
+    )
+    _seed_commitment(
+        db_session, shift_a,
+        status=models.SignupStatus.confirmed, email="a@example.com",
+    )
+    _seed_commitment(
+        db_session, shift_b,
+        status=models.SignupStatus.confirmed, email="b@example.com",
+    )
+    db_session.commit()
+
+    scoped = list_recipients(db_session, event.id, shift_id=shift_a.id)
+    assert {r.volunteer.email for r in scoped} == {"a@example.com"}
+    assert count_recipients(db_session, event.id, shift_id=shift_a.id) == 1
+
+    # Scoping to a slot must not sweep in the shift roster, and vice versa —
+    # targeting a unit means the people on that unit and nobody else.
+    slot_scoped = list_recipients(db_session, event.id, slot_id=orientation.id)
+    assert {r.volunteer.email for r in slot_scoped} == {"orient@example.com"}
+
+
+def test_send_broadcast_shift_scoped_records_shift_in_audit(
+    db_session, dispatched
+):
+    owner, event, _ = _make_event_with_capacity(db_session, capacity=5)
+    shift_a = _add_shift(db_session, event, name="Tue morning")
+    shift_b = _add_shift(db_session, event, name="Wed morning")
+    _seed_commitment(
+        db_session, shift_a,
+        status=models.SignupStatus.confirmed, email="a@example.com",
+    )
+    _seed_commitment(
+        db_session, shift_b,
+        status=models.SignupStatus.confirmed, email="b@example.com",
+    )
+    db_session.commit()
+
+    result = send_broadcast(
+        db_session,
+        event_id=event.id,
+        subject="Tue only",
+        body_markdown="Room change for your shift.",
+        actor_user_id=owner.id,
+        redis_client=_FakeRedis(),
+        shift_id=shift_a.id,
+    )
+
+    assert result.recipient_count == 1
+    assert {kwargs["to_email"] for _, kwargs in dispatched} == {"a@example.com"}
+
+    rows = list_recent_broadcasts(db_session, event.id, days=7)
+    assert rows[0]["shift_id"] == str(shift_a.id)
+    assert rows[0]["slot_id"] is None
+
+
+def test_router_shift_scoped_preview_and_send(client, db_session, dispatched):
+    from tests.fixtures.helpers import auth_headers
+
+    owner, event, orientation = _make_event_with_capacity(db_session, capacity=5)
+    shift = _add_shift(db_session, event)
+    _seed_signup(
+        db_session, orientation,
+        status=models.SignupStatus.confirmed, email="orient@example.com",
+    )
+    _seed_commitment(
+        db_session, shift,
+        status=models.SignupStatus.confirmed, email="shifted@example.com",
+    )
+    db_session.commit()
+    headers = auth_headers(client, owner)
+
+    from app.deps import redis_client as real_redis
+    real_redis.flushdb()
+
+    # Whole event — both kinds. This number is what the modal shows.
+    r = client.get(
+        f"/api/v1/events/{event.id}/broadcast-recipients", headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["recipient_count"] == 2
+
+    r = client.get(
+        f"/api/v1/events/{event.id}/broadcast-recipients",
+        params={"shift_id": str(shift.id)},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["recipient_count"] == 1
+
+    r = client.post(
+        f"/api/v1/events/{event.id}/broadcast",
+        json={
+            "subject": "shift only",
+            "body_markdown": "body",
+            "shift_id": str(shift.id),
+        },
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["recipient_count"] == 1
+    assert {kwargs["to_email"] for _, kwargs in dispatched} == {"shifted@example.com"}
+
+
+def test_router_rejects_a_session_slot_as_a_scope(client, db_session):
+    """A session has no roster of its own — say so instead of reporting zero."""
+    from tests.fixtures.helpers import auth_headers
+
+    owner, event, _ = _make_event_with_capacity(db_session, capacity=5)
+    shift = _add_shift(db_session, event)
+    session = (
+        db_session.query(models.Slot)
+        .filter(models.Slot.shift_id == shift.id)
+        .order_by(models.Slot.sort_order)
+        .first()
+    )
+    db_session.commit()
+    headers = auth_headers(client, owner)
+
+    from app.deps import redis_client as real_redis
+    real_redis.flushdb()
+
+    r = client.get(
+        f"/api/v1/events/{event.id}/broadcast-recipients",
+        params={"slot_id": str(session.id)},
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text
+    assert "shift_id" in r.text
+
+    r = client.post(
+        f"/api/v1/events/{event.id}/broadcast",
+        json={
+            "subject": "nope",
+            "body_markdown": "body",
+            "slot_id": str(session.id),
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_router_rejects_shift_from_another_event(client, db_session):
+    from tests.fixtures.helpers import auth_headers
+
+    owner, event, _ = _make_event_with_capacity(db_session, capacity=5)
+    _, other_event, _ = _make_event_with_capacity(db_session, capacity=5)
+    foreign = _add_shift(db_session, other_event, name="Not yours")
+    db_session.commit()
+    headers = auth_headers(client, owner)
+
+    from app.deps import redis_client as real_redis
+    real_redis.flushdb()
+
+    r = client.get(
+        f"/api/v1/events/{event.id}/broadcast-recipients",
+        params={"shift_id": str(foreign.id)},
+        headers=headers,
+    )
+    assert r.status_code == 404, r.text
+
+    r = client.post(
+        f"/api/v1/events/{event.id}/broadcast",
+        json={
+            "subject": "nope",
+            "body_markdown": "body",
+            "shift_id": str(foreign.id),
+        },
+        headers=headers,
+    )
+    assert r.status_code == 404, r.text
+
+
+def test_router_rejects_both_scopes_at_once(client, db_session):
+    from tests.fixtures.helpers import auth_headers
+
+    owner, event, orientation = _make_event_with_capacity(db_session, capacity=5)
+    shift = _add_shift(db_session, event)
+    db_session.commit()
+    headers = auth_headers(client, owner)
+
+    from app.deps import redis_client as real_redis
+    real_redis.flushdb()
+
+    r = client.post(
+        f"/api/v1/events/{event.id}/broadcast",
+        json={
+            "subject": "nope",
+            "body_markdown": "body",
+            "slot_id": str(orientation.id),
+            "shift_id": str(shift.id),
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text

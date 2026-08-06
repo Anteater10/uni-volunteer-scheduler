@@ -103,7 +103,9 @@ def test_cancel_via_signups_already_cancelled_idempotent(client, db_session):
     assert rc.json()["status"] == "cancelled"
 
 
-def test_cancel_via_signups_promotes_waitlisted(client, db_session):
+def test_cancel_via_signups_does_not_promote_waitlisted(client, db_session):
+    """2026-08-02 read-only signups (Task 4): cancel frees the seat but
+    leaves the waitlisted signup alone — no FIFO promotion."""
     admin = _make_admin(db_session, email="adm_sf5@example.com")
     _, slot = make_event_with_slot(db_session, capacity=1, owner=admin)
     _bind_factories(db_session)
@@ -122,6 +124,12 @@ def test_cancel_via_signups_promotes_waitlisted(client, db_session):
         headers=auth_headers(client, admin),
     )
     assert rc.status_code == 200, rc.text
+
+    db_session.expire_all()
+    b_row = db_session.get(models.Signup, signup_b.id)
+    assert b_row.status == models.SignupStatus.waitlisted
+    slot_row = db_session.get(models.Slot, slot.id)
+    assert slot_row.current_count == 0
 
 
 def test_cancel_via_signups_heals_count_drift(client, db_session):
@@ -311,6 +319,11 @@ def test_swap_admin_succeeds(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw1@example.com")
     signup = _seed_confirmed(db_session, slot_a, vol)
@@ -335,6 +348,11 @@ def test_swap_organizer_succeeds(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw2@example.com")
     signup = _seed_confirmed(db_session, slot_a, vol)
@@ -359,6 +377,11 @@ def test_swap_participant_forbidden(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw3@example.com")
     signup = _seed_confirmed(db_session, slot_a, vol)
@@ -372,9 +395,10 @@ def test_swap_participant_forbidden(client, db_session):
     assert rc.status_code == 403
 
 
-def test_cancel_via_signups_sends_waitlist_promote_email(client, db_session, monkeypatch):
-    """Cancel-triggered promotion must email the promoted volunteer, same as
-    the organizer manual-promote path does."""
+def test_cancel_via_signups_sends_no_waitlist_promote_email(client, db_session, monkeypatch):
+    """2026-08-02 read-only signups (Task 4): the authed staff cancel path
+    still sends the cancellation email, but must never enqueue a waitlist
+    promotion email — cancel no longer promotes anyone."""
     sent = []
     monkeypatch.setattr(
         "app.celery_app.send_email_notification.delay",
@@ -404,8 +428,8 @@ def test_cancel_via_signups_sends_waitlist_promote_email(client, db_session, mon
 
     pairs = {(kw["kind"], kw["signup_id"]) for kw in sent}
     assert ("cancellation", str(a.id)) in pairs
-    assert any(kw["signup_id"] == str(b.id) for kw in promoted_emails), (
-        f"promoted volunteer got no waitlist promotion email (sent: {promoted_emails})"
+    assert promoted_emails == [], (
+        f"cancel must never enqueue a promotion email (sent: {promoted_emails})"
     )
 
 
@@ -429,6 +453,11 @@ def test_swap_admin_of_waitlisted_signup_lands_pending_with_email(
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw4@example.com")
     signup = SignupFactory(
@@ -465,6 +494,11 @@ def test_swap_admin_of_cancelled_signup_is_refused(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw5@example.com")
     signup = SignupFactory(
@@ -499,6 +533,11 @@ def test_swap_admin_of_attended_signup_succeeds(client, db_session):
         end_time=slot_a.end_time + timedelta(hours=4),
         capacity=2,
         current_count=0,
+        # 2026-08-05 shifts: the swap target has to be a directly-bookable slot.
+        # The factory's default is PERIOD, which now builds a parent shift, and
+        # a session is not somewhere a slot-level signup can be moved to — the
+        # shift roster would never show them. See test_swap_service.py.
+        slot_type=models.SlotType.ORIENTATION,
     )
     vol = VolunteerFactory(email="v_sw6@example.com")
     signup = SignupFactory(

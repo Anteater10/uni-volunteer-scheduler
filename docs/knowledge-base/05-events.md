@@ -1,7 +1,8 @@
 # Events
 
 An **event** in the SciTrek scheduler is one module taught at one school during one week of a
-quarter. The event is the container; the actual bookable sessions inside it are **slots**. An
+quarter. The event is the container; the bookable things inside it are its **orientation slots**
+and its **shifts** — a shift being a named bundle of classroom sessions, booked all or nothing. An
 event carries a title, description, location, the module it delivers, the school, its quarter and
 week number, and the staff member who created it.
 
@@ -27,8 +28,8 @@ event was duplicated from one that had it. Most events have no window at all, wh
 stay open until the event happens.
 There is also a **max signups per volunteer** field on the event form, but **nothing enforces it
 today** — it is stored and displayed, and no signup is ever refused because of it. A volunteer can
-take every slot in an event regardless of what that field says. If a cap actually matters for an
-event, the practical lever is capacity per slot.
+take every shift in an event regardless of what that field says. If a cap actually matters for an
+event, the practical lever is the capacity on each shift.
 
 **An event's visibility setting is enforced on every public surface.** The check allows exactly one
 value — **public** — and it is applied in every place the public can reach an event: the
@@ -48,16 +49,17 @@ volunteers to see is missing from the browse page and its link returns "not foun
 
 Two other controls narrow public exposure independently of visibility: the signup window (which
 blocks signups outside it) and the site setting "hide past events from public" (which drops events
-whose last slot has ended).
+whose last session has ended).
 
 **Duplicating an event is the normal way to build out a term, and it is a prefilled create form
 rather than a batch copy.** Reach it from the **Duplicate** button on a row in Admin → Events, or
 from **Duplicate…** in the header of an event's own page. Pick a target quarter and target week, and
 the ordinary event form opens underneath, prefilled from the original: same title (no "(copy)"
-suffix — rename it yourself if you want one), description, location, school, module, and slots, with
-every date shifted by the whole number of days between the source week and the target week. Times of
-day and day-of-week are preserved. Everything is editable before you press **Create event** — which
-is the point, because rooms, days, and times are exactly what changes between quarters, and the old
+suffix — rename it yourself if you want one), description, location, school, module, orientation
+slots, and shifts with all their sessions, with every date shifted by the whole number of days
+between the source week and the target week. Times of day and day-of-week are preserved.
+Everything is editable before you press **Create event** — which is the point, because rooms,
+days, and times are exactly what changes between quarters, and the old
 flow copied them blind across a whole batch of weeks. Changing the target quarter or week re-derives
 the suggested dates and discards edits made so far, so choose where the copy lands before filling
 anything in.
@@ -125,5 +127,7 @@ moment the quarter's end date is past, which is late afternoon Pacific on the la
 around 5pm in summer, 4pm in winter, because the cutoff is worked out in UTC. Archiving the quarter
 has the same effect but happens later that night, so the date alone is what closes the door.
 
-Everything about an event can be reconfigured after creation — title, location, dates, and its
-slots — from the event page itself, without going back to the events list.
+Everything about an event can be reconfigured after creation — title, location, dates, its
+orientation slots, and its shifts — from the event page itself, without going back to the events
+list. The one thing that hardens is a shift's session list: once anyone has booked that shift, its
+sessions can be rescheduled but not added to or removed. See the shifts document.

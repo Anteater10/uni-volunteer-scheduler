@@ -65,22 +65,29 @@ def test_event_on_last_day_of_quarter_gets_final_week(
     client, db_session, organizer_headers, module_template
 ):
     # Sweep remediation task 5 (ended quarters are read-only): dates are
-    # relative to real today — end_date == today keeps the quarter writable
-    # (is_quarter_read_only only trips once end_date < today) regardless of
-    # when this suite runs. Span (76 days) preserves the original Mar 30 -
-    # Jun 14 2026 range so the week 11 assertion still holds.
-    today = date.today()
+    # relative to today, and the basis is UTC because is_quarter_read_only
+    # compares end_date against UTC today. A local date.today() basis is a
+    # day behind west of UTC for part of every day (PT is UTC-7/-8), so
+    # end_date == local today is already < UTC today every evening — the
+    # same calendar rot that took out the summer-session test below, just
+    # on a daily cycle instead of a one-off. The +1 day of margin keeps the
+    # quarter writable even if UTC ticks over mid-run.
+    #
+    # The event still lands on the quarter's last day (that is what week 11
+    # asserts); only the basis moved. Span (76 days) preserves the original
+    # Mar 30 - Jun 14 2026 range so the week 11 assertion still holds.
+    last_day = datetime.now(timezone.utc).date() + timedelta(days=1)
     spring = _seed_quarter(
         db_session,
         season=models.Quarter.SPRING,
         year=2026,
-        start_date=today - timedelta(days=76),
-        end_date=today,
+        start_date=last_day - timedelta(days=76),
+        end_date=last_day,
     )
 
     resp = client.post(
         "/api/v1/events/",
-        json=_event_payload(today.isoformat(), module_template.slug),
+        json=_event_payload(last_day.isoformat(), module_template.slug),
         headers=organizer_headers,
     )
     assert resp.status_code == 200, resp.text
@@ -93,26 +100,40 @@ def test_event_on_last_day_of_quarter_gets_final_week(
 def test_first_week_of_each_summer_session(
     client, db_session, organizer_headers, module_template
 ):
+    # Sweep remediation task 5 (ended quarters are read-only): dates are
+    # relative to real today, like the last-day test above. The original
+    # hardcoded Jun 22 - Jul 31 / Aug 3 - Sep 11 2026 ranges passed until
+    # 2026-07-31 and failed every run after, because event creation rejects
+    # a quarter whose end_date has passed. Both sessions now start today or
+    # later so neither is read-only whenever this suite runs. The original
+    # shape is preserved: two 40-day sessions with a 2-day gap between them,
+    # and an event on each session's first day.
+    today = datetime.now(timezone.utc).date()  # is_quarter_read_only uses UTC
+    a_start = today
+    a_end = a_start + timedelta(days=39)
+    b_start = a_end + timedelta(days=3)
+    b_end = b_start + timedelta(days=39)
+
     session_a = _seed_quarter(
         db_session,
         season=models.Quarter.SUMMER,
-        year=2026,
+        year=a_start.year,
         label="Session A",
-        start_date=date(2026, 6, 22),
-        end_date=date(2026, 7, 31),
+        start_date=a_start,
+        end_date=a_end,
     )
     session_b = _seed_quarter(
         db_session,
         season=models.Quarter.SUMMER,
-        year=2026,
+        year=b_start.year,
         label="Session B",
-        start_date=date(2026, 8, 3),
-        end_date=date(2026, 9, 11),
+        start_date=b_start,
+        end_date=b_end,
     )
 
     on_a_start = client.post(
         "/api/v1/events/",
-        json=_event_payload("2026-06-22", module_template.slug),
+        json=_event_payload(a_start.isoformat(), module_template.slug),
         headers=organizer_headers,
     )
     assert on_a_start.status_code == 200, on_a_start.text
@@ -121,7 +142,7 @@ def test_first_week_of_each_summer_session(
 
     on_b_start = client.post(
         "/api/v1/events/",
-        json=_event_payload("2026-08-03", module_template.slug),
+        json=_event_payload(b_start.isoformat(), module_template.slug),
         headers=organizer_headers,
     )
     assert on_b_start.status_code == 200, on_b_start.text

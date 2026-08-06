@@ -68,8 +68,8 @@ day's ceiling is reached, reminder and broadcast sends are dropped
 silently rather than queued. If reminders simply stopped arriving partway through a busy day, this is
 the first thing to check.
 
-Reminders are about **slots**, not events, so a volunteer signed up for three sessions gets
-reminders for each of them.
+Reminders are about **sessions**, not events and not bookings, so a volunteer committed to a
+three-session shift gets a reminder before each of the three.
 
 **Broadcasts ignore reminder preferences.** A broadcast is an operational instruction about a
 session someone is coming to ("we've moved to Lot 22"), not promotional email, so it goes to the

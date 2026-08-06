@@ -15,6 +15,16 @@ tests pin the new backend contract:
   credits admin page.
 - GET /events/ accepts an optional quarter_id filter.
 """
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -66,7 +76,7 @@ def _event_with_slots(db_session, *, owner, slot_count=1):
             event=event,
             start_time=start + timedelta(hours=i),
             end_time=start + timedelta(hours=i + 1),
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
             capacity=5,
             current_count=0,
         )

@@ -1,8 +1,9 @@
 # Check-in and attendance
 
-**Check-in is per slot, not per event.** A volunteer who is doing three sessions checks in three
-times, once for each session they attend. Checking in records that they arrived; it does not by
-itself finish anything.
+**Check-in is per session, not per event and not per booking.** A volunteer who committed to a
+three-session shift checks in three times, once on each day — the commitment is one signup, but
+arriving is something that happens on a particular morning. Checking in records that they arrived;
+it does not by itself finish anything.
 
 There are two ways a volunteer gets checked in.
 
@@ -17,9 +18,7 @@ see their own shifts as cards with a per-shift verdict (**Open now**, **Opens at
 carries the event's four-digit venue code — see the venue codes document for why that matters.
 
 **The 30-minute check-in window applies only to the volunteer's own self-check-in.** A volunteer can
-check themselves in from 30 minutes before their slot starts until 30 minutes after it starts —
-both ends of the window count from the start time, so on a long session self check-in closes well
-before the session ends. Outside that
+check themselves in from 30 minutes before that session starts until 30 minutes after; outside that
 window the door page tells them when the shift opens or that it has closed, rather than showing a
 locked screen with no explanation. The window opens half an hour early because volunteers reliably
 arrive early, and it closes because a self-serve link that works forever is a link that gets used

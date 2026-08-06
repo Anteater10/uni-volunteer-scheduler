@@ -59,6 +59,20 @@ ACTION_LABELS: dict[str, str] = {
     "waitlist_reorder": "Reordered the waitlist",
     # Phase 26 — broadcast messages
     "broadcast_sent": "Sent a broadcast message",
+    # 2026-08-05 shifts: staff actions on shifts and on the commitments to
+    # them. Without these the audit page rendered the raw action key —
+    # "Admin shift signup cancel" — for the most common staff override there
+    # is.
+    "shift_create": "Created a shift",
+    "shift_update": "Updated a shift",
+    "shift_delete": "Deleted a shift",
+    "shift_reorder": "Reordered an event's shifts",
+    "shift_session_add": "Added a session to a shift",
+    "shift_session_update": "Updated a shift session",
+    "shift_session_delete": "Deleted a shift session",
+    "shift_session_reorder": "Reordered a shift's sessions",
+    "admin_shift_signup_cancel": "Admin cancelled a shift signup",
+    "admin_shift_signup_promote": "Promoted a shift signup from the waitlist",
 }
 
 
@@ -126,6 +140,34 @@ def _resolve_entity(
         if ev_date:
             return f"{vol_name}'s signup for {ev_title}, {ev_date}"
         return f"{vol_name}'s signup for {ev_title}"
+
+    # 2026-08-05 shifts: the two entity types the shift routes log against.
+    # Same shape as the signup/slot branches above — name the thing a human
+    # would recognise, not its UUID.
+    if et in ("shiftsignup", "shift_signup"):
+        ss = (
+            db.query(models.ShiftSignup)
+            .filter(models.ShiftSignup.id == entity_id)
+            .first()
+        )
+        if not ss:
+            return f"(deleted) #{_short(entity_id)}"
+        vol = ss.volunteer
+        if vol:
+            first = (vol.first_name or "").strip()
+            last = (vol.last_name or "").strip()
+            vol_name = (f"{first} {last}".strip()) or vol.email or "a student"
+        else:
+            vol_name = "a student"
+        shift_name = ss.shift.name if ss.shift else "a shift"
+        return f"{vol_name}'s commitment to {shift_name}"
+
+    if et == "shift":
+        sh = db.query(models.Shift).filter(models.Shift.id == entity_id).first()
+        if not sh:
+            return f"(deleted) #{_short(entity_id)}"
+        ev_title = sh.event.title if sh.event else "an event"
+        return f"{sh.name} in {ev_title}"
 
     if et == "slot":
         sl = db.query(models.Slot).filter(models.Slot.id == entity_id).first()

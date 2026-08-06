@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
-from ..services import quarter_service
+from ..services import quarter_service, shift_service
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -104,13 +104,14 @@ def create_event(
         if source is None:
             raise HTTPException(status_code=404, detail="Source event not found")
         ensure_event_staff_access(source, current_user)
-        shift = start_date - _normalize_dt(source.start_date)
+        # Named date_delta, not `shift` — a Shift is a domain object now.
+        date_delta = start_date - _normalize_dt(source.start_date)
         # Explicit windows in the payload win; otherwise the source's window
         # rides along, shifted by the same delta as the event start.
         if signup_open_at is None and source.signup_open_at is not None:
-            signup_open_at = source.signup_open_at + shift
+            signup_open_at = source.signup_open_at + date_delta
         if signup_close_at is None and source.signup_close_at is not None:
-            signup_close_at = source.signup_close_at + shift
+            signup_close_at = source.signup_close_at + date_delta
 
     # Issue #24 decision 6: every event belongs to an admin-entered quarter.
     # quarter/year/week_number are a derived cache — always computed from the
@@ -159,6 +160,17 @@ def create_event(
 
     if event_in.slots:
         for s in event_in.slots:
+            # 2026-08-02 shifts: a period slot is a session inside a shift, so
+            # it cannot be created here. The DB CHECK would refuse it anyway —
+            # this turns that into a clear 400 instead of a 500.
+            if s.slot_type != models.SlotType.ORIENTATION:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Only orientation slots can be created directly. "
+                        "Send period sessions inside `shifts`."
+                    ),
+                )
             _validate_slot_range_within_event(event, s.start_time, s.end_time)
             slot = models.Slot(
                 event_id=event.id,
@@ -170,6 +182,14 @@ def create_event(
                 location=s.location,
             )
             db.add(slot)
+
+    if event_in.shifts:
+        for shift_in in event_in.shifts:
+            shift_service.build_shift(db, event, shift_in)
+    elif source is not None:
+        # Duplicate flow: the form doesn't carry shifts, so copy the source's,
+        # sliding session times by the same delta the event start moved.
+        shift_service.copy_shifts(db, source, event, delta=date_delta)
 
     db.commit()
     db.refresh(event)
@@ -310,7 +330,9 @@ def delete_event(
     return
 
 
-@router.post("/{event_id}/generate_slots", response_model=List[schemas.SlotRead])
+@router.post(
+    "/{event_id}/generate_slots", response_model=schemas.SlotGenerationResult
+)
 def generate_slots(
     event_id: str,
     recurrence: schemas.SlotRecurrenceCreate,
@@ -319,8 +341,15 @@ def generate_slots(
         require_role(models.UserRole.organizer, models.UserRole.admin)
     ),
 ):
-    """
-    Generate recurring slots for an event.
+    """Generate recurring bookable units for an event.
+
+    2026-08-02 shifts: an orientation recurrence still produces plain slots.
+    A period recurrence produces one **single-session shift per occurrence**,
+    which behaves exactly as the generated slots did — each occurrence is
+    independently bookable with its own capacity. Organizers who want the
+    occurrences bundled into one all-or-nothing commitment build that shift by
+    hand; guessing that from a recurrence would silently change what a
+    volunteer is agreeing to.
     """
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -363,25 +392,48 @@ def generate_slots(
         )
 
     created_slots: List[models.Slot] = []
+    created_shifts: List[models.Shift] = []
     start = start_time
     end = end_time
+    is_period = recurrence.slot_type == models.SlotType.PERIOD
 
-    for _ in range(recurrence.count):
+    for index in range(recurrence.count):
         _validate_slot_range_within_event(event, start, end)
-        slot = models.Slot(
-            event_id=event.id,
-            start_time=start,
-            end_time=end,
-            capacity=recurrence.capacity,
-            slot_type=recurrence.slot_type,
-            # Each occurrence gets its own date, derived from its own
-            # start_time — a shared override would be wrong for every
-            # occurrence but (at most) one.
-            date=start.date(),
-            location=recurrence.location,
-        )
-        db.add(slot)
-        created_slots.append(slot)
+        if is_period:
+            created_shifts.append(
+                shift_service.build_shift(
+                    db,
+                    event,
+                    schemas.ShiftCreate(
+                        name=shift_service.default_shift_name(start, end),
+                        capacity=recurrence.capacity,
+                        sort_order=index,
+                        sessions=[
+                            schemas.ShiftSessionCreate(
+                                start_time=start,
+                                end_time=end,
+                                # Each occurrence gets its own date, derived
+                                # from its own start_time — a shared override
+                                # would be wrong for every occurrence but one.
+                                date=start.date(),
+                                location=recurrence.location,
+                            )
+                        ],
+                    ),
+                )
+            )
+        else:
+            slot = models.Slot(
+                event_id=event.id,
+                start_time=start,
+                end_time=end,
+                capacity=recurrence.capacity,
+                slot_type=recurrence.slot_type,
+                date=start.date(),
+                location=recurrence.location,
+            )
+            db.add(slot)
+            created_slots.append(slot)
 
         start = start + step
         end = end + step
@@ -389,9 +441,11 @@ def generate_slots(
     db.commit()
     for s in created_slots:
         db.refresh(s)
+    for sh in created_shifts:
+        db.refresh(sh)
 
     log_action(db, current_user, "event_generate_slots", "Event", str(event.id))
-    return created_slots
+    return schemas.SlotGenerationResult(slots=created_slots, shifts=created_shifts)
 
 
 # -------------------------

@@ -16,7 +16,6 @@ vi.mock("../../lib/api", () => ({
     public: {
       confirmSignup: vi.fn(),
       getManageSignups: vi.fn(),
-      cancelSignup: vi.fn(),
     },
   },
 }));

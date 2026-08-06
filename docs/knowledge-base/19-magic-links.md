@@ -1,4 +1,4 @@
-# Magic links and volunteer self-service
+# Magic links — confirm, view, and reminder preferences
 
 Volunteers have no account, so every action they take after signing up is authorized by a **magic
 link** — a link emailed to them that stands in for a password.
@@ -7,12 +7,15 @@ When a volunteer signs up, the app emails them a link. The success screen they s
 deliberately doesn't show the link: it goes to their inbox, which is what proves the email address
 is theirs.
 
-With their magic link a volunteer can **confirm** the signup, **view** what they're signed up for,
-**cancel** a signup, and **swap** to a different session in the same event.
+With their magic link a volunteer can **confirm** the signup, **view** what they're signed up for, and
+manage their **reminder preferences** — nothing else. **A volunteer cannot cancel or move a signup
+themselves. The link in their email is a read-only view of their signups plus reminder preferences. To
+change or cancel anything, they email the SciTrek organizers (the address configured in Site
+settings), and an organizer applies the change.**
 
 **There is one link per signup submission, plus a second kind for a promoted seat.** The link in the
-signup email is the same link used for viewing, cancelling and swapping later — there is no separate
-short-lived "manage" link to request. It is scoped to that volunteer and that event, so it shows and
+signup email is the same link used for viewing later — there is no separate short-lived "manage" link
+to request. It is scoped to that volunteer and that event, so it shows and
 controls every session they took in that event and nothing else. A seat that came from a **waitlist
 promotion** is the exception: it gets its own confirm link in its own promotion email, and only that
 link can claim it. The original signup link cannot — clicking that one reports that it confirmed
@@ -25,11 +28,9 @@ decides and the next person in line is waiting on the answer.
 
 **Once a volunteer has confirmed, their link keeps working indefinitely.** The deadline governs the
 act of confirming and nothing else: a volunteer who confirmed on day one can still open that same
-link on day forty to see their signups, cancel one, or swap to another session they are still due at.
-A session that has already been closed out, or one they cancelled, is not theirs to move — staff
-handle those from the roster. This is deliberate. The old
-behaviour punished the wrong people — a confirmed volunteer lost control of their own signups on day
-fifteen, which meant seats going unfilled because nobody could release them.
+link on day forty to see their signups and manage their reminder preferences. It never lets them
+cancel or move a signup, at any point — any change to a signup goes through the SciTrek organizers by
+email, and a staff member makes it in the app.
 
 **A link whose deadline passed without ever being confirmed is refused.** Someone in that position
 sees a "This link has expired" page rather than their signup list, and there is nothing to rescue:
@@ -37,17 +38,17 @@ an hourly sweep deletes the unconfirmed signup shortly afterwards anyway. So "ex
 practice means "you never confirmed", not "you confirmed and then waited too long".
 
 **Only the confirmation step is single-use.** Clicking to confirm consumes that step; clicking it
-again reports the signup as already confirmed rather than failing. Viewing, cancelling and swapping
-are not consumed and can be repeated as often as the volunteer likes, for any session they are still
-due at. The practical consequence is
-worth being straight about: a link that leaks stays usable by whoever holds it, so it should be
-treated like a password and never forwarded. As a safeguard, cancelling through a link emails the
-volunteer a cancellation notice, so a cancellation they didn't make lands in their inbox
-immediately.
+again reports the signup as already confirmed rather than failing. Viewing and managing reminder
+preferences are not consumed and can be repeated as often as the volunteer likes. The practical
+consequence is worth being straight about: a link that leaks stays usable by whoever holds it, so it
+should be treated like a password and never forwarded. As a safeguard, any cancellation — always made
+by staff, never by the volunteer through the link — sends the volunteer a cancellation notice, so a
+change they didn't request lands in their inbox immediately.
 
-**One click confirms the whole submission, with one exception.** A volunteer who took three sessions
-in one event gets one link, and confirming it confirms all three — they are never asked to confirm
-session by session. A session whose seat came from a **waitlist promotion** is skipped: it needs the
+**One click confirms the whole submission, with one exception.** A volunteer who took an
+orientation slot and a shift in one event gets one link, and confirming it confirms both — they are
+never asked to confirm them one at a time. A seat that came from a **waitlist promotion** is
+skipped: it needs the
 confirm link from its own promotion email, because that email is the only message that told the
 volunteer the seat was being offered.
 
@@ -75,10 +76,11 @@ more than 30 days ago. Nothing is cleaned up while a volunteer still has a sessi
 while their link is still inside its confirmation window.
 
 **An unconfirmed signup is deleted, not just marked lapsed.** An hourly sweep looks for signups
-still waiting on confirmation whose links have all run out, deletes them, frees the seat, and offers
-it to the next person on the waitlist. Nothing tells the volunteer this happened, and no record of
-the signup remains in their manage view — so a volunteer who says "my signup vanished" most likely
-never confirmed in time. See the signups-and-statuses and troubleshooting documents.
+still waiting on confirmation whose links have all run out, deletes them, and frees the seat. Freeing
+the seat does not promote anyone off the waitlist — the waitlist only moves when a staff member
+deliberately promotes someone from the roster. Nothing tells the volunteer this happened, and no
+record of the signup remains in their manage view — so a volunteer who says "my signup vanished" most
+likely never confirmed in time. See the signups-and-statuses and troubleshooting documents.
 
 **Signing up and using a link are both rate-limited** by network address, so the signup form can't
 be hammered to flood an inbox and a link can't be brute-forced by guessing.
@@ -92,17 +94,12 @@ SciTrek staff directly.
 enforced when the signup is created, not when it's confirmed, so confirming a link never smuggles
 in a signup that wouldn't have been allowed in the first place.
 
-**Cancelling through a magic link behaves like staff cancelling.** The seat is freed, the volunteer
-gets a cancellation email, and the longest-waiting volunteer on that session is offered the spot —
-offered, not simply moved in, because a promotion now asks that volunteer to confirm within three
-days. The waitlist document explains that flow.
-
-Volunteers also manage their **reminder preferences** from the manage page, by email address,
+Volunteers manage their **reminder preferences** from the manage page, by email address,
 without logging in. Reminders are on by default and can be turned off there — that switch covers the
 tracked kickoff, 24-hour and 2-hour reminders, and does not stop the older 24-hour and 1-hour emails
 or the weekly digest, so it is not a way to stop all mail. One rough edge to be
-aware of: unlike cancelling and swapping, the reminder toggle still requires a link that is inside
-its confirmation window, so a volunteer opening an old link can cancel a session but may find the
+aware of: unlike viewing your signups, the reminder toggle still requires a link that is inside
+its confirmation window, so a volunteer opening an old link can see their signups but may find the
 reminder switch refuses to load. Broadcasts ignore the reminder preference either way, because
 broadcasts are operational instructions rather than promotional email.
 

@@ -19,12 +19,14 @@ import { getSeed, ORGANIZER, ephemeralEmail, grantOrientationCredit } from './fi
 test('organizer can view roster and check in a signup', async ({ page }) => {
   const seed = getSeed();
   expect(seed.event_id, 'E2E seed required').toBeTruthy();
-  expect(seed.period_slot_id, 'period_slot_id required in seed JSON').toBeTruthy();
+  expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
 
   const apiBase = process.env.E2E_BACKEND_URL || 'http://localhost:8000';
 
   // Step 1: Create a fresh signup via the API (not UI — avoids serial dependency).
-  // Period-only signup: grant orientation credit first (server-enforced rule).
+  // Shift-only signup: grant orientation credit first (server-enforced rule).
+  // 2026-08-05 shifts: the classroom work is booked through `shift_ids`; a
+  // bare period slot id in `slot_ids` is 422 PERIOD_SLOT_NOT_BOOKABLE.
   const email = ephemeralEmail('checkin');
   await grantOrientationCredit(email);
   const signupResp = await fetch(`${apiBase}/api/v1/public/signups`, {
@@ -35,7 +37,8 @@ test('organizer can view roster and check in a signup', async ({ page }) => {
       last_name: 'Test',
       email,
       phone: '8055550150',
-      slot_ids: [seed.period_slot_id],
+      slot_ids: [],
+      shift_ids: [seed.shift_id],
     }),
   });
 
@@ -59,8 +62,9 @@ test('organizer can view roster and check in a signup', async ({ page }) => {
     );
   }
 
-  const signupId = signupBody.signup_ids[0];
-  expect(signupId, 'signup_id required').toBeTruthy();
+  // A shift booking returns one commitment id, not a per-session signup id.
+  const signupId = signupBody.shift_signup_ids?.[0];
+  expect(signupId, 'shift_signup_id required').toBeTruthy();
 
   // Step 2: Login as organizer via UI
   // LoginPage.jsx uses id="login-email" and id="login-password"

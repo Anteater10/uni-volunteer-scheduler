@@ -13,6 +13,17 @@ Covers three HIGH findings from PR #53:
   #5 no promotion path (FIFO or manual) may promote onto a slot that has
      already ended.
 """
+
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import uuid
 from datetime import date as date_type, datetime, timedelta, timezone
 
@@ -30,7 +41,7 @@ from app.magic_link_service import (
     issue_token,
 )
 from app.services.waitlist_service import SlotEndedError, manual_promote
-from app.signup_service import mark_promoted_pending, promote_waitlist_fifo
+from app.signup_service import mark_promoted_pending
 from tests.fixtures.helpers import auth_headers, make_user
 
 
@@ -65,7 +76,7 @@ def _make_slot(db_session, event, *, capacity=1, current_count=0, ended=False):
         end_time=end,
         capacity=capacity,
         current_count=current_count,
-        slot_type=models.SlotType.PERIOD,
+        slot_type=models.SlotType.ORIENTATION,
         date=date_type.today(),
     )
     db_session.add(slot)
@@ -280,8 +291,8 @@ class TestSiblingFlipScope:
 
 
 class TestPromotionTokenStillManages:
-    """The promotion link is also the promotee's manage/cancel page, so the
-    new purpose has to be accepted by every token-gated public surface."""
+    """The promotion link is also the promotee's manage page, so the new
+    purpose has to be accepted by every token-gated public surface."""
 
     def _promoted(self, db_session):
         owner = make_user(db_session, role=models.UserRole.admin)
@@ -308,16 +319,6 @@ class TestPromotionTokenStillManages:
         )
         assert resp.status_code == 200, resp.text
 
-    def test_cancel_accepts_promotion_token(self, client, db_session, monkeypatch):
-        monkeypatch.setattr(
-            "app.celery_app.send_email_notification.delay", lambda **kw: None
-        )
-        signup, promo = self._promoted(db_session)
-        resp = client.delete(
-            f"/api/v1/public/signups/{signup.id}", params={"token": promo.raw_token}
-        )
-        assert resp.status_code == 200, resp.text
-
 
 # ===========================================================================
 # Finding #3 — reap + GC must keep treating promotion tokens as confirm tokens
@@ -325,11 +326,12 @@ class TestPromotionTokenStillManages:
 
 
 class TestReapSemanticsUnchanged:
-    def test_expired_promotion_pending_is_reaped_and_chain_promotes(
+    def test_expired_promotion_pending_is_reaped_seat_stays_open(
         self, db_session, monkeypatch, patch_session_local
     ):
-        """A promotion-pending signup whose 3-day promotion token lapsed is
-        still reaped, and its seat still chain-promotes the next waitlister."""
+        """2026-08-02 read-only signups: a promotion-pending signup whose
+        3-day promotion token lapsed is still reaped, but its freed seat
+        stays open — the reaper never promotes anyone anymore."""
         sent = []
         monkeypatch.setattr(
             "app.celery_app.send_waitlist_promotion_email.delay",
@@ -345,7 +347,7 @@ class TestReapSemanticsUnchanged:
             end_time=now + timedelta(days=30, hours=2),
             capacity=1,
             current_count=1,
-            slot_type=models.SlotType.PERIOD,
+            slot_type=models.SlotType.ORIENTATION,
             date=date_type.today(),
         )
         db_session.add(slot)
@@ -381,10 +383,10 @@ class TestReapSemanticsUnchanged:
         assert db_session.get(models.Signup, ghost_id) is None, (
             "an expired promotion-pending signup must still be reaped"
         )
-        promoted = db_session.get(models.Signup, next_id)
-        assert promoted.status == models.SignupStatus.pending
-        assert db_session.get(models.Slot, slot_id).current_count == 1
-        assert len(sent) == 1 and sent[0]["signup_id"] == str(next_id)
+        untouched = db_session.get(models.Signup, next_id)
+        assert untouched.status == models.SignupStatus.waitlisted
+        assert db_session.get(models.Slot, slot_id).current_count == 0
+        assert sent == []
 
     def test_live_promotion_token_protects_pending_from_reap(
         self, db_session, monkeypatch, patch_session_local
@@ -401,7 +403,7 @@ class TestReapSemanticsUnchanged:
             end_time=now + timedelta(days=30, hours=2),
             capacity=1,
             current_count=1,
-            slot_type=models.SlotType.PERIOD,
+            slot_type=models.SlotType.ORIENTATION,
             date=date_type.today(),
         )
         db_session.add(slot)
@@ -449,7 +451,7 @@ class TestReapSemanticsUnchanged:
             end_time=now - timedelta(days=90) + timedelta(hours=2),
             capacity=1,
             current_count=0,
-            slot_type=models.SlotType.PERIOD,
+            slot_type=models.SlotType.ORIENTATION,
             date=date_type.today(),
         )
         db_session.add(slot)
@@ -641,29 +643,6 @@ class TestEndedSlotGuard:
         assert signup.status == models.SignupStatus.waitlisted
         assert _token_rows(db_session, signup.id) == []
 
-    def test_promote_waitlist_fifo_skips_ended_slot(self, db_session):
-        owner = make_user(db_session, role=models.UserRole.admin)
-        event = _make_event(db_session, owner, days_out=-3)
-        slot = _make_slot(db_session, event, capacity=2, current_count=0, ended=True)
-        vol = _make_volunteer(db_session)
-        signup = _make_signup(db_session, vol, slot, models.SignupStatus.waitlisted)
-
-        assert promote_waitlist_fifo(db_session, slot.id) is None
-        assert signup.status == models.SignupStatus.waitlisted
-        assert _token_rows(db_session, signup.id) == []
-
-    def test_promote_waitlist_fifo_still_promotes_live_slot(self, db_session):
-        owner = make_user(db_session, role=models.UserRole.admin)
-        event = _make_event(db_session, owner)
-        slot = _make_slot(db_session, event, capacity=2, current_count=0)
-        vol = _make_volunteer(db_session)
-        signup = _make_signup(db_session, vol, slot, models.SignupStatus.waitlisted)
-
-        result = promote_waitlist_fifo(db_session, slot.id)
-
-        assert result is not None and result.signup.id == signup.id
-        assert signup.status == models.SignupStatus.pending
-
     def test_manual_promote_on_ended_slot_raises(self, db_session):
         owner = make_user(db_session, role=models.UserRole.admin)
         event = _make_event(db_session, owner, days_out=-3)
@@ -676,47 +655,6 @@ class TestEndedSlotGuard:
 
         assert signup.status == models.SignupStatus.waitlisted
         assert _token_rows(db_session, signup.id) == []
-
-    def test_public_cancel_does_not_promote_onto_ended_slot(
-        self, client, db_session, monkeypatch
-    ):
-        sent = []
-        monkeypatch.setattr(
-            "app.celery_app.send_waitlist_promotion_email.delay",
-            lambda **kw: sent.append(kw),
-        )
-        monkeypatch.setattr(
-            "app.celery_app.send_email_notification.delay", lambda **kw: None
-        )
-        owner = make_user(db_session, role=models.UserRole.admin)
-        event = _make_event(db_session, owner, days_out=-3)
-        slot = _make_slot(db_session, event, capacity=1, current_count=1, ended=True)
-        holder = _make_volunteer(db_session)
-        held = _make_signup(db_session, holder, slot, models.SignupStatus.confirmed)
-        waiter = _make_volunteer(db_session)
-        waiting = _make_signup(db_session, waiter, slot, models.SignupStatus.waitlisted)
-        raw = issue_token(
-            db_session,
-            signup=held,
-            email=holder.email,
-            purpose=models.MagicLinkPurpose.SIGNUP_CONFIRM,
-            volunteer_id=holder.id,
-            ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
-        )
-        db_session.commit()
-
-        resp = client.delete(
-            f"/api/v1/public/signups/{held.id}", params={"token": raw}
-        )
-
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["promoted_from_waitlist"] == 0
-        db_session.expire_all()
-        assert (
-            db_session.get(models.Signup, waiting.id).status
-            == models.SignupStatus.waitlisted
-        )
-        assert sent == []
 
     def test_organizer_manual_promote_ended_slot_is_rejected(
         self, client, db_session, monkeypatch

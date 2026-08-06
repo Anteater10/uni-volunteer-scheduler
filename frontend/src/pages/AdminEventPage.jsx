@@ -85,6 +85,26 @@ const STATUS_STYLES = {
   cancelled: "bg-slate-100 text-slate-600 line-through",
 };
 
+/**
+ * The commitment's own status, recovered from its per-session rows.
+ *
+ * A shift row's `status` is the *session's*: the attendance record when one
+ * exists, else the commitment's lifecycle status. So a volunteer who attended
+ * Tuesday and no-showed Wednesday has two different session statuses and no
+ * single row carrying "confirmed". Lifecycle values can only come from the
+ * commitment (attendance never records waitlisted/cancelled/pending), so
+ * finding one means that is the commitment's status; otherwise it is confirmed
+ * and the variation is attendance, shown per session alongside.
+ */
+const LIFECYCLE_ONLY = ["cancelled", "waitlisted", "pending"];
+
+function commitmentStatus(sessions) {
+  for (const lifecycle of LIFECYCLE_ONLY) {
+    if (sessions.some((s) => s.status === lifecycle)) return lifecycle;
+  }
+  return "confirmed";
+}
+
 function StatusPill({ status, waitlistPosition }) {
   const label =
     status === "waitlisted" && waitlistPosition
@@ -136,7 +156,9 @@ export default function AdminEventPage() {
   // Phase 23 — duplicate drawer
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   // Phase 25 — waitlist reorder modal
-  const [reorderState, setReorderState] = useState(null); // { slotId, ids: [...] }
+  // { slotId | null, shiftId | null, ids: [...] } — exactly one of slotId /
+  // shiftId is set; a shift's waitlist is one queue for the whole bundle.
+  const [reorderState, setReorderState] = useState(null);
   // Phase 26 — broadcast messages
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   // Event-QR check-in (post-integration)
@@ -172,8 +194,10 @@ export default function AdminEventPage() {
 
   // Phase 21 — one-tap orientation credit grant from roster.
   const grantOrientationMut = useMutation({
-    mutationFn: (signupId) =>
-      api.organizer.grantOrientation(eventId, signupId),
+    mutationFn: ({ signupId, isShift = false }) =>
+      isShift
+        ? api.organizer.grantOrientationForShift(eventId, signupId)
+        : api.organizer.grantOrientation(eventId, signupId),
     onSuccess: () => {
       toast.success("Orientation credit granted.");
       qc.invalidateQueries({
@@ -186,9 +210,15 @@ export default function AdminEventPage() {
   });
 
   // Phase 25 — organizer manual waitlist promote (WAIT-03).
+  //
+  // 2026-08-02 shifts: a commitment is promoted as a bundle through its own
+  // route. `isShift` comes from the roster row rather than being guessed from
+  // the id, which is a bare uuid either way.
   const promoteMut = useMutation({
-    mutationFn: ({ signupId, allowOverfill = false }) =>
-      api.organizer.promoteSignup(eventId, signupId, { allowOverfill }),
+    mutationFn: ({ signupId, allowOverfill = false, isShift = false }) =>
+      isShift
+        ? api.organizer.promoteShiftSignup(eventId, signupId, { allowOverfill })
+        : api.organizer.promoteSignup(eventId, signupId, { allowOverfill }),
     onSuccess: () => {
       toast.success("Promoted from waitlist.");
       qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
@@ -215,9 +245,12 @@ export default function AdminEventPage() {
     onError: (e) => toast.error(e?.message || "Couldn't reopen the event"),
   });
 
-  // Admin/organizer cancel signup (triggers Phase 25 FIFO auto-promote).
+  // Admin/organizer cancel signup — frees the seat; nobody is auto-promoted.
   const cancelMut = useMutation({
-    mutationFn: (signupId) => api.admin.signups.cancel(signupId),
+    mutationFn: ({ signupId, isShift = false }) =>
+      isShift
+        ? api.admin.shiftSignups.cancel(signupId)
+        : api.admin.signups.cancel(signupId),
     onSuccess: () => {
       toast.success("Signup cancelled.");
       qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
@@ -226,10 +259,13 @@ export default function AdminEventPage() {
     onError: (e) => toast.error(e?.message || "Cancel failed"),
   });
 
-  // Phase 25 — admin reorder waitlist (WAIT-05).
+  // Phase 25 — admin reorder waitlist (WAIT-05). A shift's waitlist is one
+  // queue for the whole bundle, so it reorders by shift, not by session.
   const reorderMut = useMutation({
-    mutationFn: ({ slotId, orderedIds }) =>
-      api.admin.reorderWaitlist(eventId, slotId, orderedIds),
+    mutationFn: ({ slotId, shiftId, orderedIds }) =>
+      shiftId
+        ? api.admin.reorderShiftWaitlist(eventId, shiftId, orderedIds)
+        : api.admin.reorderWaitlist(eventId, slotId, orderedIds),
     onSuccess: () => {
       toast.success("Waitlist order saved.");
       qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
@@ -271,12 +307,54 @@ export default function AdminEventPage() {
     onError: (e) => toast.error(e?.message || "Save failed"),
   });
 
+  // 2026-08-02 shifts: the roster arrives one row per (booking, session), so a
+  // volunteer holding a Tue+Wed shift appears twice. Grouping by slot would
+  // therefore split one commitment across two tables and offer Promote twice
+  // for a thing that can only be promoted as a bundle. Shift rows are grouped
+  // by shift and collapsed to one row per commitment, with each session's own
+  // attendance kept alongside; orientation (and any legacy shift-less slot)
+  // keeps the per-slot grouping it always had.
   const grouped = useMemo(() => {
-    const map = new Map();
+    const slotGroups = new Map();
+    const shiftGroups = new Map();
+
     for (const r of roster) {
+      if (r.is_shift && r.shift_id) {
+        if (!shiftGroups.has(r.shift_id)) {
+          shiftGroups.set(r.shift_id, {
+            kind: "shift",
+            id: r.shift_id,
+            name: r.shift_name,
+            sessions: [],
+            byCommitment: new Map(),
+          });
+        }
+        const group = shiftGroups.get(r.shift_id);
+        if (!group.sessions.some((s) => s.id === r.slot_id)) {
+          group.sessions.push({
+            id: r.slot_id,
+            name: r.session_name,
+            start: r.slot_start,
+            end: r.slot_end,
+            location: r.slot_location,
+          });
+        }
+        const session = {
+          slot_id: r.slot_id,
+          name: r.session_name,
+          start: r.slot_start,
+          status: r.status,
+        };
+        const existing = group.byCommitment.get(r.signup_id);
+        if (existing) existing.sessions.push(session);
+        else group.byCommitment.set(r.signup_id, { ...r, sessions: [session] });
+        continue;
+      }
+
       const key = r.slot_id;
-      if (!map.has(key))
-        map.set(key, {
+      if (!slotGroups.has(key))
+        slotGroups.set(key, {
+          kind: "slot",
           slot: {
             id: key,
             start: r.slot_start,
@@ -287,9 +365,24 @@ export default function AdminEventPage() {
           },
           rows: [],
         });
-      map.get(key).rows.push(r);
+      slotGroups.get(key).rows.push(r);
     }
-    return Array.from(map.values());
+
+    const shiftList = Array.from(shiftGroups.values()).map((group) => {
+      group.sessions.sort((a, b) => new Date(a.start) - new Date(b.start));
+      const rows = Array.from(group.byCommitment.values()).map((row) => {
+        row.sessions.sort((a, b) => new Date(a.start) - new Date(b.start));
+        return { ...row, status: commitmentStatus(row.sessions) };
+      });
+      return { ...group, rows };
+    });
+    // Shifts lead: they are the bookable unit, and orientation is the
+    // exception hanging off the end.
+    shiftList.sort(
+      (a, b) =>
+        new Date(a.sessions[0]?.start || 0) - new Date(b.sessions[0]?.start || 0),
+    );
+    return [...shiftList, ...Array.from(slotGroups.values())];
   }, [roster]);
 
   async function doExport() {
@@ -580,7 +673,21 @@ export default function AdminEventPage() {
           />
         ) : (
           <div className="space-y-3">
-            {grouped.map(({ slot, rows }) => {
+            {grouped.map((group) => {
+              const { kind, rows } = group;
+              const isShiftGroup = kind === "shift";
+              // A shift group has no single slot; its header is the bundle and
+              // its sessions. Keep one local shape so the table below does not
+              // have to branch on group kind in six places.
+              const slot = isShiftGroup
+                ? {
+                    id: group.id,
+                    start: group.sessions[0]?.start,
+                    end: group.sessions[group.sessions.length - 1]?.end,
+                    type: "period",
+                    location: group.sessions[0]?.location,
+                  }
+                : group.slot;
               const waitlistedRows = rows.filter((r) => r.status === "waitlisted");
               return (
               // Not <Card>: its padding is baked in and cn() is a plain join
@@ -588,11 +695,39 @@ export default function AdminEventPage() {
               // The table needs to run edge to edge.
               <div
                 key={slot.id}
+                data-testid={isShiftGroup ? `roster-shift-${group.id}` : `roster-slot-${slot.id}`}
                 className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] shadow-sm"
               >
                 {/* Group header: tinted band so each slot reads as its own
                     table rather than one continuous wall of names. */}
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+                  {isShiftGroup ? (
+                    // A shift is booked whole, so the header names the bundle
+                    // and lists every session under it — the roster has to say
+                    // which days a volunteer in this group is expected on,
+                    // because the row below is one commitment, not one day.
+                    <div>
+                      <p className="text-sm font-medium">
+                        <span className="mr-2 inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-blue-700">
+                          Shift
+                        </span>
+                        {group.name || "Untitled shift"}
+                        <span className="ml-2 font-normal text-[var(--color-fg-muted)]">
+                          · {group.sessions.length} session
+                          {group.sessions.length === 1 ? "" : "s"}
+                        </span>
+                      </p>
+                      <ul className="mt-1 space-y-0.5 text-xs text-[var(--color-fg-muted)]">
+                        {group.sessions.map((s) => (
+                          <li key={s.id}>
+                            {s.name ? `${s.name} — ` : ""}
+                            {fmtSlotDay(s.start)} · {fmtTimeRange(s.start, s.end)}
+                            {s.location ? ` · ${s.location}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
                   <p className="text-sm font-medium">
                     {/* Issue #31 — say what kind of shift this is and which
                         day, so orientation vs module rosters read at a glance. */}
@@ -612,6 +747,7 @@ export default function AdminEventPage() {
                       </span>
                     ) : null}
                   </p>
+                  )}
                   <div className="flex items-center gap-2">
                   <span className="rounded-full border border-[var(--color-border)] bg-white px-2 py-0.5 text-xs font-medium tabular-nums text-[var(--color-fg-muted)]">
                     {rows.length} signed up
@@ -623,7 +759,8 @@ export default function AdminEventPage() {
                       variant="secondary"
                       onClick={() =>
                         setReorderState({
-                          slotId: slot.id,
+                          slotId: isShiftGroup ? null : slot.id,
+                          shiftId: isShiftGroup ? group.id : null,
                           ids: waitlistedRows
                             .slice()
                             .sort(
@@ -715,8 +852,9 @@ export default function AdminEventPage() {
                                 data-testid="promote-btn"
                                 onClick={async () => {
                                   const signupId = r.signup_id || r.id;
+                                  const isShift = Boolean(r.is_shift);
                                   try {
-                                    await promoteMut.mutateAsync({ signupId });
+                                    await promoteMut.mutateAsync({ signupId, isShift });
                                   } catch (err) {
                                     // A full slot is the usual reason this
                                     // person is waitlisted, so "no" isn't a
@@ -725,13 +863,14 @@ export default function AdminEventPage() {
                                     if (
                                       !/full/i.test(err?.message || "") ||
                                       !window.confirm(
-                                        `This slot is already at capacity. Promote ${name} anyway, putting the slot one over?`,
+                                        `${isShift ? "This shift" : "This slot"} is already at capacity. Promote ${name} anyway, putting it one over?`,
                                       )
                                     ) {
                                       return;
                                     }
                                     promoteMut.mutate({
                                       signupId,
+                                      isShift,
                                       allowOverfill: true,
                                     });
                                   }
@@ -749,7 +888,10 @@ export default function AdminEventPage() {
                                 type="button"
                                 variant="secondary"
                                 onClick={() =>
-                                  grantOrientationMut.mutate(r.signup_id || r.id)
+                                  grantOrientationMut.mutate({
+                                    signupId: r.signup_id || r.id,
+                                    isShift: Boolean(r.is_shift),
+                                  })
                                 }
                                 disabled={grantOrientationMut.isPending}
                               >
@@ -763,10 +905,13 @@ export default function AdminEventPage() {
                                 onClick={() => {
                                   if (
                                     window.confirm(
-                                      `Cancel ${name}'s signup? If this was a confirmed seat, the next person on the waitlist will auto-promote.`
+                                      `Cancel ${name}'s signup? The seat will stay open until someone is promoted from the waitlist.`
                                     )
                                   ) {
-                                    cancelMut.mutate(r.signup_id || r.id);
+                                    cancelMut.mutate({
+                                      signupId: r.signup_id || r.id,
+                                      isShift: Boolean(r.is_shift),
+                                    });
                                   }
                                 }}
                                 disabled={cancelMut.isPending}
@@ -844,8 +989,8 @@ export default function AdminEventPage() {
         {reorderState && (
           <div className="space-y-3" data-testid="reorder-modal">
             <p className="text-sm text-[var(--color-fg-muted)]">
-              Rearrange the waitlist to decide who gets promoted next. The top
-              row is promoted first.
+              Rearrange the waitlist to set the order shown to staff and
+              volunteers. Promotion is always an explicit staff action.
             </p>
             <ol className="space-y-1">
               {reorderState.ids.map((row, idx) => (
@@ -910,6 +1055,7 @@ export default function AdminEventPage() {
                 onClick={() =>
                   reorderMut.mutate({
                     slotId: reorderState.slotId,
+                    shiftId: reorderState.shiftId,
                     orderedIds: reorderState.ids.map((r) => r.signup_id),
                   })
                 }

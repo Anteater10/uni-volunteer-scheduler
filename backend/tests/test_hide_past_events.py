@@ -18,9 +18,7 @@ from tests.fixtures.factories import (
 )
 
 
-def _bind_factories(db):
-    for f in (UserFactory, EventFactory, SlotFactory):
-        f._meta.sqlalchemy_session = db
+from tests.fixtures.helpers import _bind_factories  # noqa: E402
 
 
 def _seed_past_and_future(db, owner):

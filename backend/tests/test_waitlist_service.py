@@ -2,11 +2,26 @@
 
 Covers:
 - WAIT-01: public signup at capacity → waitlisted with computed position.
-- WAIT-02: public cancel → oldest waitlisted auto-promoted.
+- WAIT-02: (2026-08-02) admin/staff cancel no longer auto-promotes — see
+  test_signups.py / test_admin.py / test_signups_router_full.py for the
+  cancel-frees-but-does-not-promote coverage. Public self-cancel was
+  removed the same date.
 - WAIT-03: organizer manual promote bypasses FIFO.
 - WAIT-04: compute_waitlist_position ordering (timestamp ASC, id ASC).
-- WAIT-05: admin reorder persists and flips FIFO order.
+- WAIT-05: admin reorder persists (promotion-order verification via cancel
+  is no longer possible now that cancel doesn't promote).
 """
+
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import uuid
 from datetime import date as date_type, datetime, timedelta, timezone
 
@@ -65,7 +80,7 @@ def _make_event_and_slot(db_session, *, capacity):
         end_time=datetime.now(timezone.utc) + timedelta(days=1, hours=2),
         capacity=capacity,
         current_count=0,
-        slot_type=models.SlotType.PERIOD,
+        slot_type=models.SlotType.ORIENTATION,
         date=date_type.today(),
     )
     db_session.add(slot)
@@ -176,63 +191,10 @@ def test_public_signup_at_capacity_returns_waitlisted_with_position(
 
 
 # ------------------------------------------------------------------
-# WAIT-02 — public cancel auto-promotes oldest waitlister
+# WAIT-02 — auto-promote on cancel is covered via the admin/staff cancel
+# path now (test_signups.py) — public self-cancel was removed 2026-08-02
+# (read-only signups).
 # ------------------------------------------------------------------
-
-
-def test_public_cancel_promotes_oldest_waitlisted(
-    client, db_session, monkeypatch
-):
-    import os
-    os.environ["EXPOSE_TOKENS_FOR_TESTING"] = "1"
-    try:
-        _bypass_celery(monkeypatch)
-        _, _, slot = _make_event_and_slot(db_session, capacity=1)
-        _bind_factories(db_session)
-
-        # Confirmed volunteer; two waitlisters with deterministic timestamps.
-        vol_confirmed = VolunteerFactory(email="conf@example.com")
-        confirmed = _seed_confirmed(db_session, slot, vol_confirmed)
-
-        vol_wait_a = VolunteerFactory(email="wait_a@example.com")
-        vol_wait_b = VolunteerFactory(email="wait_b@example.com")
-        older = datetime.now(timezone.utc) - timedelta(minutes=20)
-        newer = datetime.now(timezone.utc) - timedelta(minutes=5)
-        wait_a = _seed_waitlisted(db_session, slot, vol_wait_a, when=older)
-        wait_b = _seed_waitlisted(db_session, slot, vol_wait_b, when=newer)
-
-        # Issue a manage token so we can hit the public cancel endpoint.
-        from app.magic_link_service import issue_token
-        raw = issue_token(
-            db_session,
-            signup=confirmed,
-            email=vol_confirmed.email,
-            purpose=models.MagicLinkPurpose.SIGNUP_CONFIRM,
-            volunteer_id=vol_confirmed.id,
-        )
-        db_session.commit()
-
-        r = client.delete(
-            f"/api/v1/public/signups/{confirmed.id}?token={raw}"
-        )
-        assert r.status_code == 200, r.text
-        body = r.json()
-        assert body["cancelled"] is True
-        assert body["promoted_from_waitlist"] == 1
-
-        db_session.expire_all()
-        a = db_session.query(models.Signup).filter_by(id=wait_a.id).one()
-        b = db_session.query(models.Signup).filter_by(id=wait_b.id).one()
-        # Older waitlister gets promoted to pending (2026-07-28 spec: FIFO
-        # promotion holds the seat pending the volunteer's confirm click).
-        assert a.status == models.SignupStatus.pending
-        assert b.status == models.SignupStatus.waitlisted
-
-        # Slot stays full via the promoted row.
-        s = db_session.query(models.Slot).filter_by(id=slot.id).one()
-        assert s.current_count == 1
-    finally:
-        os.environ.pop("EXPOSE_TOKENS_FOR_TESTING", None)
 
 
 # ------------------------------------------------------------------
@@ -386,9 +348,14 @@ def test_manual_promote_returns_pending_promotion_result(db_session):
 # ------------------------------------------------------------------
 
 
-def test_admin_reorder_waitlist_persists_and_flips_fifo(
+def test_admin_reorder_waitlist_persists(
     client, db_session, monkeypatch
 ):
+    """2026-08-02 read-only signups (Task 4): this used to also prove reorder
+    flips FIFO promotion order by cancelling the confirmed signup and
+    checking who got promoted. Cancel no longer promotes anyone, so that
+    half is gone — this now only proves the reorder persists (position
+    values) and that the subsequent cancel still doesn't promote."""
     _bypass_celery(monkeypatch)
     owner, event, slot = _make_event_and_slot(db_session, capacity=1)
     admin = make_user(
@@ -430,8 +397,8 @@ def test_admin_reorder_waitlist_persists_and_flips_fifo(
     assert compute_waitlist_position(db_session, slot.id, wait_a.id) == 2
     assert compute_waitlist_position(db_session, slot.id, wait_b.id) == 3
 
-    # Now cancel the confirmed signup via admin endpoint and verify C gets
-    # promoted (not A — reorder took effect).
+    # Cancel the confirmed signup via admin endpoint — frees the seat but
+    # promotes no one (2026-08-02: cancel never auto-promotes).
     r2 = client.post(
         f"/api/v1/admin/signups/{confirmed.id}/cancel",
         headers=headers,
@@ -441,8 +408,10 @@ def test_admin_reorder_waitlist_persists_and_flips_fifo(
     db_session.expire_all()
     c_row = db_session.query(models.Signup).filter_by(id=wait_c.id).one()
     a_row = db_session.query(models.Signup).filter_by(id=wait_a.id).one()
-    assert c_row.status == models.SignupStatus.pending
+    assert c_row.status == models.SignupStatus.waitlisted
     assert a_row.status == models.SignupStatus.waitlisted
+    slot_row = db_session.query(models.Slot).filter_by(id=slot.id).one()
+    assert slot_row.current_count == 0
 
 
 def test_admin_reorder_rejects_mismatched_set(client, db_session, monkeypatch):

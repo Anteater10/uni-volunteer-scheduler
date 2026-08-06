@@ -28,6 +28,7 @@ from app.models import (
     Module,
     OrientationCredit,
     OrientationCreditSource,
+    SessionAttendance,
     Signup,
     SignupStatus,
     Slot,
@@ -73,7 +74,13 @@ def _make_event(db, *, owner_id, module_slug: str | None = "crispr") -> Event:
     return e
 
 
-def _make_slot(db, *, event_id, slot_type=SlotType.ORIENTATION) -> Slot:
+def _make_slot(db, *, event_id, slot_type=SlotType.ORIENTATION, shift=None) -> Slot:
+    """A slot on this event. Pass ``shift=`` to make it a session inside one.
+
+    2026-08-05 shifts: a PERIOD slot has to name its bundle on the very first
+    INSERT — ``ck_slots_shift_membership_matches_type`` is not deferrable — so
+    the shift comes in as an argument rather than being attached afterwards.
+    """
     now = datetime.now(timezone.utc)
     slot = Slot(
         id=uuid.uuid4(),
@@ -83,6 +90,8 @@ def _make_slot(db, *, event_id, slot_type=SlotType.ORIENTATION) -> Slot:
         capacity=30,
         slot_type=slot_type,
         date=date_type.today(),
+        shift_id=shift.id if shift is not None else None,
+        sort_order=0,
     )
     db.add(slot)
     db.flush()
@@ -190,17 +199,45 @@ class TestResolveSlotGrantsCredit:
         assert s.status == SignupStatus.no_show
         assert _credits(db_session, "noshow@example.com") == []
 
-    def test_period_slot_grants_nothing(self, db_session):
+    def test_ending_a_shift_session_grants_nothing(self, db_session):
+        """Classroom work earns no orientation credit — only orientation does.
+
+        2026-08-05 shifts: this used to end a bare period slot holding a plain
+        Signup, which production can no longer produce. Ending a *session*
+        writes a `session_attendance` row against the commitment instead, and
+        the credit rule has to hold on that path too — it is the path every
+        classroom close-out now takes.
+        """
+        from tests.fixtures.helpers import book_shift, make_shift
+
         owner = make_user(db_session, role=UserRole.organizer)
         _make_template(db_session, slug="crispr")
         event = _make_event(db_session, owner_id=owner.id)
-        slot = _make_slot(db_session, event_id=event.id, slot_type=SlotType.PERIOD)
-        s = _make_signup(db_session, slot=slot, email="period@example.com")
+        shift = make_shift(db_session, event.id, name="Tue morning", capacity=5)
+        session = _make_slot(
+            db_session, event_id=event.id, slot_type=SlotType.PERIOD, shift=shift
+        )
+        vol = Volunteer(
+            id=uuid.uuid4(),
+            email="period@example.com",
+            first_name="Period",
+            last_name="Vol",
+        )
+        db_session.add(vol)
+        db_session.flush()
+        commitment = book_shift(
+            db_session, shift, vol, status=SignupStatus.confirmed
+        )
 
-        resolve_slot(db_session, slot.id, owner.id, [s.id], [])
+        resolve_slot(db_session, session.id, owner.id, [commitment.id], [])
         db_session.commit()
 
-        assert s.status == SignupStatus.attended
+        attendance = (
+            db_session.query(SessionAttendance)
+            .filter_by(shift_signup_id=commitment.id, slot_id=session.id)
+            .one()
+        )
+        assert attendance.status == SignupStatus.attended
         assert _credits(db_session, "period@example.com") == []
 
     def test_checked_in_alone_has_no_credit(self, db_session):
@@ -235,7 +272,10 @@ class TestResolveSlotGrantsCredit:
         _make_template(db_session, slug="crispr")
         event = _make_event(db_session, owner_id=owner.id)
         slot_a = _make_slot(db_session, event_id=event.id)
-        slot_b = _make_slot(db_session, event_id=event.id, slot_type=SlotType.PERIOD)
+        # Two orientation slots: what this checks is that an id from one slot
+        # cannot be resolved against another, which has nothing to do with the
+        # slot type.
+        slot_b = _make_slot(db_session, event_id=event.id)
         s_b = _make_signup(db_session, slot=slot_b)
 
         with pytest.raises(LookupError):
@@ -296,13 +336,29 @@ class TestResolveEventGrants:
         owner = make_user(db_session, role=UserRole.organizer)
         _make_template(db_session, slug="crispr")
         event = _make_event(db_session, owner_id=owner.id)
+        from tests.fixtures.helpers import book_shift, make_shift
+
         orient = _make_slot(db_session, event_id=event.id)
-        period = _make_slot(db_session, event_id=event.id, slot_type=SlotType.PERIOD)
         s_orient = _make_signup(db_session, slot=orient, email="wide-o@example.com")
-        s_period = _make_signup(db_session, slot=period, email="wide-p@example.com")
+        # The classroom half of the same event, as a shift.
+        shift = make_shift(db_session, event.id, name="Tue morning", capacity=5)
+        _make_slot(
+            db_session, event_id=event.id, slot_type=SlotType.PERIOD, shift=shift
+        )
+        period_vol = Volunteer(
+            id=uuid.uuid4(),
+            email="wide-p@example.com",
+            first_name="Wide",
+            last_name="Period",
+        )
+        db_session.add(period_vol)
+        db_session.flush()
+        commitment = book_shift(
+            db_session, shift, period_vol, status=SignupStatus.confirmed
+        )
 
         resolve_event(
-            db_session, event.id, owner.id, [s_orient.id, s_period.id], []
+            db_session, event.id, owner.id, [s_orient.id, commitment.id], []
         )
         db_session.commit()
 

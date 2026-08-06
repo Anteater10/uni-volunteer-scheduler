@@ -134,3 +134,27 @@ def test_unauthenticated_cannot_read_or_write(client):
         ).status_code
         == 401
     )
+
+
+def test_contact_email_round_trip(client, db_session):
+    headers = _admin_headers(client, db_session)
+
+    r = client.get("/api/v1/admin/site-settings", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["contact_email"] is None
+
+    r = client.patch(
+        "/api/v1/admin/site-settings",
+        json={"contact_email": "scitrek@ucsb.edu"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["contact_email"] == "scitrek@ucsb.edu"
+
+    # partial patch of another field leaves it alone
+    r = client.patch(
+        "/api/v1/admin/site-settings",
+        json={"show_audit_logs_tab": True},
+        headers=headers,
+    )
+    assert r.json()["contact_email"] == "scitrek@ucsb.edu"

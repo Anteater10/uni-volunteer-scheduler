@@ -7,6 +7,16 @@ relevant quarter is read-only. reopen additionally 409s when the event was
 never completed. Slot/event resolve (attendance) is explicitly NOT gated —
 organizers must be able to close out attendance right after an event ends.
 """
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
@@ -101,7 +111,7 @@ def _event_in_quarter(db_session, quarter, *, owner, slot_count=1, completed_at=
             event=event,
             start_time=start + timedelta(hours=i),
             end_time=start + timedelta(hours=i + 1),
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
             capacity=5,
         )
         for i in range(slot_count)
@@ -312,7 +322,7 @@ class TestReopenQuarterReadonlyAndCompletionGate:
             event=event,
             start_time=start,
             end_time=start + timedelta(hours=1),
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
             capacity=5,
         )
         db_session.flush()
@@ -382,7 +392,11 @@ def _slot_payload(day: str, start_h: int, end_h: int) -> dict:
         "start_time": f"{day}T{start_h:02d}:00:00Z",
         "end_time": f"{day}T{end_h:02d}:00:00Z",
         "capacity": 5,
-        "slot_type": "period",
+        # 2026-08-05 shifts: POST /slots creates orientation slots only — a
+        # period slot is a session and arrives via POST /shifts. The quarter
+        # gate these cases test runs before that check either way, but the
+        # allowed-in-active-quarter case needs a payload the endpoint accepts.
+        "slot_type": "orientation",
     }
 
 

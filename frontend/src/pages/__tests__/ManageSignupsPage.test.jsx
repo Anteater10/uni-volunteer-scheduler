@@ -1,9 +1,14 @@
 // src/pages/__tests__/ManageSignupsPage.test.jsx
 //
-// Component tests for ManageSignupsPage — 11 test cases.
+// Component tests for ManageSignupsPage — 10 test cases.
+//
+// 2026-08-02 read-only signups: the page no longer supports cancel/move —
+// schedule changes are coordinated by emailing the organizers. Tests that
+// exercised the removed cancel/move/cancel-all controls were deleted; new
+// coverage asserts the controls are gone and the contact notice renders.
 
 import React from "react";
-import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -15,7 +20,6 @@ vi.mock("../../lib/api", () => ({
   default: {
     public: {
       getManageSignups: vi.fn(),
-      cancelSignup: vi.fn(),
     },
   },
 }));
@@ -29,7 +33,6 @@ vi.mock("../../state/toast", () => ({
 }));
 
 import api from "../../lib/api";
-import { toast } from "../../state/toast";
 import ManageSignupsPage from "../public/ManageSignupsPage";
 
 // ---------------------------------------------------------------------------
@@ -63,6 +66,40 @@ const SIGNUP_2 = {
     location: "Room 202",
     capacity: 20,
     filled: 3,
+  },
+};
+
+// A shift commitment: one booking, every session listed under it.
+const SHIFT_COMMITMENT = {
+  shift_signup_id: "ss-001",
+  status: "confirmed",
+  waitlist_position: null,
+  shift: {
+    id: "shift-001",
+    name: "Tue + Wed mornings",
+    sort_order: 0,
+    capacity: 6,
+    filled: 4,
+    sessions: [
+      {
+        id: "sess-001",
+        name: "Period 1",
+        sort_order: 0,
+        date: "2026-04-22",
+        start_time: "2026-04-22T17:00:00Z",
+        end_time: "2026-04-22T19:00:00Z",
+        location: "Room 101",
+      },
+      {
+        id: "sess-002",
+        name: "Period 2",
+        sort_order: 1,
+        date: "2026-04-23",
+        start_time: "2026-04-23T17:00:00Z",
+        end_time: "2026-04-23T19:00:00Z",
+        location: "Room 101",
+      },
+    ],
   },
 };
 
@@ -132,80 +169,7 @@ describe("ManageSignupsPage", () => {
     expect(screen.getByText("Period")).toBeInTheDocument();
   });
 
-  it("2. cancel single — modal opens, signup removed on confirm, toast shown", async () => {
-    api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
-    api.public.cancelSignup.mockResolvedValue({ cancelled: true, signup_id: "sig-001" });
-
-    renderPage();
-
-    // Wait for signups to load
-    await waitFor(() => {
-      expect(screen.getByText("Room 101")).toBeInTheDocument();
-    });
-
-    // Click Cancel on the first signup
-    const cancelButtons = screen.getAllByRole("button", { name: /cancel/i });
-    // The first one is for SIGNUP_1
-    fireEvent.click(cancelButtons[0]);
-
-    // Modal should appear
-    await waitFor(() => {
-      expect(screen.getByText("Cancel this signup?")).toBeInTheDocument();
-    });
-
-    // Confirm cancellation
-    const yesBtn = screen.getByRole("button", { name: /yes, cancel/i });
-    await act(async () => {
-      fireEvent.click(yesBtn);
-    });
-
-    // Signup should be removed from list
-    await waitFor(() => {
-      expect(screen.queryByText("Room 101")).not.toBeInTheDocument();
-    });
-
-    // Phase 15-05: American spelling "canceled" (one L) per UI-SPEC.
-    expect(toast.success).toHaveBeenCalledWith("Signup canceled.");
-  });
-
-  it("3. cancel all — sequential loop removes both signups, success toast shown", async () => {
-    api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
-    api.public.cancelSignup.mockResolvedValue({ cancelled: true });
-
-    renderPage();
-
-    await waitFor(() => {
-      expect(screen.getByText("Room 101")).toBeInTheDocument();
-    });
-
-    // Click "Cancel all signups"
-    const cancelAllBtn = screen.getByRole("button", { name: /cancel all signups/i });
-    fireEvent.click(cancelAllBtn);
-
-    // Modal should appear (Phase 15-05: title is now plain UI-SPEC copy
-    // without the dynamic count, since UI-SPEC mandates exact wording).
-    await waitFor(() => {
-      expect(screen.getByText("Cancel all signups?")).toBeInTheDocument();
-    });
-
-    // Confirm
-    const yesAllBtn = screen.getByRole("button", { name: /yes, cancel all/i });
-    await act(async () => {
-      fireEvent.click(yesAllBtn);
-    });
-
-    // Both signups removed
-    await waitFor(() => {
-      expect(screen.queryByText("Room 101")).not.toBeInTheDocument();
-      expect(screen.queryByText("Room 202")).not.toBeInTheDocument();
-    });
-
-    expect(api.public.cancelSignup).toHaveBeenCalledTimes(2);
-    // Phase 15-05: American spelling.
-    expect(toast.success).toHaveBeenCalledWith("All signups canceled.");
-  });
-
-  it("4. token error — shows 'Link expired or invalid' card", async () => {
+  it("2. token error — shows 'Link expired or invalid' card", async () => {
     const err = new Error("token invalid or expired");
     err.status = 400;
     api.public.getManageSignups.mockRejectedValue(err);
@@ -218,7 +182,7 @@ describe("ManageSignupsPage", () => {
     });
   });
 
-  it("5. loading state — shows skeleton elements", () => {
+  it("3. loading state — shows skeleton elements", () => {
     // Return a promise that never resolves so we stay in loading state
     api.public.getManageSignups.mockReturnValue(new Promise(() => {}));
 
@@ -229,7 +193,7 @@ describe("ManageSignupsPage", () => {
     expect(skeletons.length).toBeGreaterThan(0);
   });
 
-  it("6. empty state — shows 'No upcoming signups' message", async () => {
+  it("4. empty state — shows 'No upcoming signups' message", async () => {
     api.public.getManageSignups.mockResolvedValue({
       volunteer_id: "vol-abc",
       volunteer_first_name: "Hung",
@@ -251,39 +215,7 @@ describe("ManageSignupsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("7. 403 on cancel — shows permission error toast", async () => {
-    api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
-    const err = new Error("token does not own this signup");
-    err.status = 403;
-    api.public.cancelSignup.mockRejectedValue(err);
-
-    renderPage();
-
-    await waitFor(() => {
-      expect(screen.getByText("Room 101")).toBeInTheDocument();
-    });
-
-    // Click Cancel
-    const cancelButtons = screen.getAllByRole("button", { name: /cancel/i });
-    fireEvent.click(cancelButtons[0]);
-
-    await waitFor(() => {
-      expect(screen.getByText("Cancel this signup?")).toBeInTheDocument();
-    });
-
-    const yesBtn = screen.getByRole("button", { name: /yes, cancel/i });
-    await act(async () => {
-      fireEvent.click(yesBtn);
-    });
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        "You don't have permission to cancel this signup."
-      );
-    });
-  });
-
-  it("8. greets the volunteer by first name in the page header", async () => {
+  it("5. greets the volunteer by first name in the page header", async () => {
     api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
 
     renderPage();
@@ -293,7 +225,7 @@ describe("ManageSignupsPage", () => {
     });
   });
 
-  it("9. falls back to 'Your signups' when name fields are absent", async () => {
+  it("6. falls back to 'Your signups' when name fields are absent", async () => {
     api.public.getManageSignups.mockResolvedValue({
       volunteer_id: "vol-abc",
       event_id: "evt-xyz",
@@ -302,13 +234,17 @@ describe("ManageSignupsPage", () => {
 
     renderPage();
 
+    // Kicker copy also reads "Your signups" now, so the heading must be
+    // targeted specifically (by role) to avoid an ambiguous text match.
     await waitFor(() => {
-      expect(screen.getByText("Your signups")).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: "Your signups", level: 1 })
+      ).toBeInTheDocument();
     });
   });
 
   // Phase 25 (WAIT-01) — waitlist position badge renders with the FIFO rank.
-  it("10. shows 'Waitlist #N' badge for waitlisted signups", async () => {
+  it("7. shows 'Waitlist #N' badge for waitlisted signups", async () => {
     const WAITLISTED_SIGNUP = {
       signup_id: "sig-wait",
       status: "waitlisted",
@@ -341,36 +277,83 @@ describe("ManageSignupsPage", () => {
     expect(badge).toHaveTextContent(/Waitlist #3/i);
   });
 
-  // Waitlist-promotion-confirmation (2026-07-28) — promoted signups land in
-  // 'pending' status and must still expose a working Cancel action.
-  it("11. renders a pending signup row with a visible Cancel button", async () => {
-    const PENDING_SIGNUP = {
-      signup_id: "sig-pending",
-      status: "pending",
-      slot: {
-        id: "slot-pending",
-        slot_type: "period",
-        date: "2026-04-25",
-        start_time: "2026-04-25T10:00:00",
-        end_time: "2026-04-25T12:00:00",
-        location: "Room 404",
-        capacity: 5,
-        filled: 4,
-      },
-    };
+  // 2026-08-02 read-only signups — cancel/move controls are gone; schedule
+  // changes are coordinated by emailing the organizers instead.
+  it("8. renders read-only: no cancel or move controls", async () => {
+    api.public.getManageSignups.mockResolvedValue(MANAGE_RESPONSE);
+
+    renderPage();
+
+    await screen.findAllByText(/Confirmed|Pending/);
+    expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /move/i })).toBeNull();
+  });
+
+  it("9. shows the organizer contact notice with the configured address", async () => {
     api.public.getManageSignups.mockResolvedValue({
-      volunteer_id: "vol-abc",
-      volunteer_first_name: "Hung",
-      volunteer_last_name: "Khuu",
-      event_id: "evt-xyz",
-      signups: [PENDING_SIGNUP],
+      ...MANAGE_RESPONSE,
+      contact_email: "scitrek@ucsb.edu",
     });
 
     renderPage();
 
-    await waitFor(() => {
-      expect(screen.getByText("Pending")).toBeInTheDocument();
+    const notice = await screen.findByTestId("contact-notice");
+    expect(notice).toHaveTextContent("scitrek@ucsb.edu");
+  });
+
+  it("10. contact notice falls back when no address configured", async () => {
+    api.public.getManageSignups.mockResolvedValue({
+      ...MANAGE_RESPONSE,
+      contact_email: null,
     });
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+
+    renderPage();
+
+    const notice = await screen.findByTestId("contact-notice");
+    expect(notice).toHaveTextContent(/reply to your confirmation email/i);
+  });
+
+  // 2026-08-05 shifts: a volunteer whose only booking is a shift has no Signup
+  // row at all. Reading `signups` alone showed them the empty state — i.e. the
+  // page told a committed volunteer they had not signed up for anything.
+  it("11. renders a shift commitment with every session under it", async () => {
+    api.public.getManageSignups.mockResolvedValue({
+      ...MANAGE_RESPONSE,
+      signups: [],
+      shift_signups: [SHIFT_COMMITMENT],
+    });
+
+    renderPage();
+
+    const card = await screen.findByTestId(
+      `shift-commitment-${SHIFT_COMMITMENT.shift_signup_id}`
+    );
+    expect(card).toHaveTextContent("Tue + Wed mornings");
+    expect(card).toHaveTextContent(/2 sessions/i);
+    expect(card).toHaveTextContent("Period 1");
+    expect(card).toHaveTextContent("Period 2");
+    expect(card).toHaveTextContent("Confirmed");
+    expect(
+      screen.queryByText(/haven't signed up for anything yet/i)
+    ).toBeNull();
+  });
+
+  it("12. a waitlisted shift commitment shows its queue position", async () => {
+    api.public.getManageSignups.mockResolvedValue({
+      ...MANAGE_RESPONSE,
+      signups: [],
+      shift_signups: [
+        {
+          ...SHIFT_COMMITMENT,
+          status: "waitlisted",
+          waitlist_position: 3,
+        },
+      ],
+    });
+
+    renderPage();
+
+    const badge = await screen.findByTestId("waitlist-badge");
+    expect(badge).toHaveTextContent("Waitlist #3");
   });
 });

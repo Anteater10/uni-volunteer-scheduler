@@ -12,12 +12,13 @@ from ..config import settings
 from ..database import get_db
 from ..magic_link_service import (
     ConsumeResult,
+    anchor_event_id,
     check_rate_limit,
     consume_token,
     dispatch_email,
     zero_confirm_reason,
 )
-from ..models import Event, Signup, SignupStatus
+from ..models import Event, Shift, ShiftSignup, Signup, SignupStatus
 
 router = APIRouter(prefix="/auth/magic", tags=["magic-link"])
 
@@ -44,7 +45,9 @@ def consume_magic_link(token: str, db: Session = Depends(get_db)):
     result, signup, confirmed_count = consume_token(db, token)
     if result == ConsumeResult.ok:
         db.commit()
-        event_id = signup.slot.event_id if signup and signup.slot else ""
+        # The anchor is a Signup (orientation) or a ShiftSignup (a shift
+        # commitment); anchor_event_id resolves either.
+        event_id = anchor_event_id(db, signup) or ""
         if confirmed_count == 0:
             return RedirectResponse(
                 url=(
@@ -88,7 +91,9 @@ def resend_magic_link(
             detail="Too many requests. Please wait a few minutes and try again.",
             headers={"Retry-After": "3600"},
         )
-    # Phase 09: signup.user removed — find by volunteer email
+    # Phase 09: signup.user removed — find by volunteer email.
+    # 2026-08-02 shifts: most pending bookings are now shift commitments, so
+    # look there too. Either anchor re-sends the same batch link.
     from ..models import Volunteer
     signup = (
         db.query(Signup)
@@ -101,9 +106,21 @@ def resend_magic_link(
         .first()
     )
     if signup is None:
+        signup = (
+            db.query(ShiftSignup)
+            .join(Volunteer, Volunteer.id == ShiftSignup.volunteer_id)
+            .join(Shift, Shift.id == ShiftSignup.shift_id)
+            .filter(
+                Volunteer.email == payload.email.lower(),
+                Shift.event_id == payload.event_id,
+                ShiftSignup.status == SignupStatus.pending,
+            )
+            .first()
+        )
+    if signup is None:
         # Do not leak signup existence — return success regardless
         return {"status": "ok"}
-    event = db.query(Event).filter_by(id=signup.slot.event_id).first()
+    event = db.query(Event).filter_by(id=anchor_event_id(db, signup)).first()
     dispatch_email(db, signup, event, settings.backend_base_url)
     db.commit()
     return {"status": "ok"}

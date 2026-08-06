@@ -52,6 +52,12 @@ function formatViolations(violations) {
 }
 
 test.describe('Admin a11y (WCAG 2.1 AA, desktop 1280x800)', () => {
+  // A full axe sweep of an admin page lands within a second or two of the 30s
+  // default under WebKit — /admin/exports measured 30.6s in one full-suite run
+  // and 30.6s again on retry, so this flakes on timing rather than on any real
+  // violation. Give the scan room; a genuine failure still fails fast.
+  test.setTimeout(90_000);
+
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await loginAsAdmin(page);

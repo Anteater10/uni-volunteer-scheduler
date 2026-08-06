@@ -3,8 +3,16 @@
 // Full public volunteer flow:
 //   browse /events -> event detail -> select both slots -> fill form ->
 //   submit (capture confirm_token from API response) -> no orientation modal ->
-//   success card -> confirm via token URL -> manage view shows 2 signups ->
-//   cancel one -> cancel all -> empty state
+//   success card -> confirm via token URL -> manage view shows the signup
+//   list plus the read-only contact-notice card.
+//
+// 2026-08-02 read-only signups: the public self-cancel/self-swap endpoints
+// and every cancel/move control on the magic-link manage page were deleted
+// — staff perform all signup changes now. This file (scoped to the public
+// volunteer surface) no longer exercises cancel flows; see
+// e2e/cross-role.spec.js Scenario 4 for the staff-cancel path (admin roster
+// -> `admin_signup_cancel` audit action) and the volunteer-side read-only
+// assertions this file's "manage view shows signups" test mirrors.
 //
 // REQUIRES: EXPOSE_TOKENS_FOR_TESTING=1 on the backend so confirm_token is
 // returned in the POST /public/signups response. Add to backend/.env for local
@@ -16,6 +24,7 @@ import {
   ephemeralEmail,
   VOLUNTEER_IDENTITY,
   clickSlotByLabel,
+  clickShiftById,
   slotLabel,
 } from './fixtures.js';
 
@@ -71,23 +80,26 @@ test.describe.serial('public volunteer flow', () => {
   });
 
   test('open event detail from card click', async ({ page }) => {
+    const seed = getSeed();
     await page.goto('/events');
     await page.getByText('E2E Seed Event').click();
     await expect(page).toHaveURL(/\/events\//);
-    // Slot labels render in the desktop <table> (md+) or the mobile card list
-    // (<md) — slotLabel resolves whichever layout is visible (fixtures.js).
+    // Orientation slot labels render in the desktop <table> (md+) or the
+    // mobile card list (<md) — slotLabel resolves whichever is visible.
     await expect(slotLabel(page, /orientation/i)).toBeVisible();
-    await expect(slotLabel(page, /^period/i)).toBeVisible();
+    // 2026-08-05 shifts: classroom work is no longer a "Period N" row of its
+    // own — it is a shift card carrying its sessions.
+    await expect(page.getByTestId(`shift-${seed.shift_id}`)).toBeVisible();
   });
 
   test('select both slots, fill form, submit, capture token', async ({ page }) => {
     const seed = getSeed();
     await page.goto(`/events/${seed.event_id}`);
 
-    // Click the "Sign Up" buttons for one orientation + one period slot
-    // (table row on desktop, card on mobile — see fixtures.js).
+    // Click "Sign Up" for one orientation slot (table row on desktop, card on
+    // mobile — see fixtures.js) plus the shift that carries the classroom work.
     await clickSlotByLabel(page, /orientation/i);
-    await clickSlotByLabel(page, /^period/i);
+    await clickShiftById(page, seed.shift_id);
 
     // Identity form should appear
     await expect(page.getByText('Your information')).toBeVisible();
@@ -125,7 +137,7 @@ test.describe.serial('public volunteer flow', () => {
     await page.goto(`/events/${seed.event_id}`);
 
     await clickSlotByLabel(page, /orientation/i);
-    await clickSlotByLabel(page, /^period/i);
+    await clickShiftById(page, seed.shift_id);
 
     await page.locator('#first_name').fill(VOLUNTEER_IDENTITY.first_name);
     await page.locator('#last_name').fill(VOLUNTEER_IDENTITY.last_name);
@@ -174,58 +186,12 @@ test.describe.serial('public volunteer flow', () => {
     // Page header renders "Your signups" (UI-SPEC) or "Signups for {name}" when
     // the backend resolves the volunteer — accept either via the shared /signups/i.
     await expect(page.getByText(/signups/i).first()).toBeVisible({ timeout: 10000 });
-    // At least one signup card
-    const cancelButtons = page.getByRole('button', { name: /^cancel$/i });
-    await expect(cancelButtons.first()).toBeVisible();
-  });
-
-  test('cancel one signup', async ({ page }) => {
-    const resolvedToken = token || getSeed().confirm_token;
-    if (!resolvedToken) {
-      test.skip(true, 'No confirm_token available — EXPOSE_TOKENS_FOR_TESTING must be set');
-    }
-
-    await page.goto(`/signup/manage?token=${resolvedToken}`);
-    await expect(page.getByText(/signups/i).first()).toBeVisible({ timeout: 10000 });
-
-    // Click first Cancel button
-    await page.getByRole('button', { name: /^cancel$/i }).first().click();
-
-    // Confirm in the modal
-    await expect(page.getByText('Cancel this signup?')).toBeVisible();
-    await page.getByRole('button', { name: /yes, cancel/i }).click();
-
-    // Toast confirms cancellation
-    // UI-SPEC toast: "Signup canceled." (American spelling, single L)
-    await expect(page.getByText(/canceled/i)).toBeVisible({ timeout: 5000 });
-  });
-
-  test('cancel all remaining signups', async ({ page }) => {
-    const resolvedToken = token || getSeed().confirm_token;
-    if (!resolvedToken) {
-      test.skip(true, 'No confirm_token available — EXPOSE_TOKENS_FOR_TESTING must be set');
-    }
-
-    await page.goto(`/signup/manage?token=${resolvedToken}`);
-    await expect(page.getByText(/signups/i).first()).toBeVisible({ timeout: 10000 });
-
-    // "Cancel all signups" button appears when activeCount >= 2 (ManageSignupsPage.jsx)
-    // After previous test cancelled one, there may be only 1 left so "cancel all" won't appear.
-    // Use the last remaining "Cancel" button directly instead.
-    const cancelBtn = page.getByRole('button', { name: /^cancel$/i });
-    const count = await cancelBtn.count();
-    if (count > 0) {
-      await cancelBtn.first().click();
-      await expect(page.getByText('Cancel this signup?')).toBeVisible();
-      await page.getByRole('button', { name: /yes, cancel/i }).click();
-      // UI-SPEC toast: "Signup canceled." (American spelling, single L)
-    await expect(page.getByText(/canceled/i)).toBeVisible({ timeout: 5000 });
-    }
-
-    // Empty state when all signups cancelled — UI-SPEC copy is
-    // "You haven't signed up for anything yet" (PART-AUDIT § Copy mismatch).
+    // 2026-08-02 read-only signups: no self-service cancel/move affordance —
+    // the organizer contact-notice card replaces it (mirrors the volunteer-
+    // side checks in cross-role.spec.js Scenario 4).
+    await expect(page.getByTestId('contact-notice')).toBeVisible();
     await expect(
-      page.getByText(/haven't signed up for anything/i).first()
-    ).toBeVisible({ timeout: 8000 });
+      page.getByRole('button', { name: /cancel|move/i }),
+    ).toHaveCount(0);
   });
 });

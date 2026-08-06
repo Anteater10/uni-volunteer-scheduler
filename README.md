@@ -57,16 +57,17 @@ full integration plan.
   weekly kickoff, 24h-pre, 2h-pre. Per-volunteer opt-out + quiet hours
   21:00–07:00 PT + `(signup_id, kind)` idempotency.
   `backend/app/services/reminder_service.py`.
-- **Waitlist + auto-promote (Phase 25)** — at-capacity signups go to
-  `waitlisted`. Cancellation auto-promotes the FIFO head. Organizer
+- **Waitlist + manual promote (Phase 25)** — at-capacity signups go to
+  `waitlisted`, a holding list only: freed seats stay open until staff
+  explicitly promote someone (→ pending + 3-day confirm email). Organizer
   manual promote + admin waitlist reorder.
-  `backend/app/signup_service.py::promote_waitlist_fifo`.
+  `backend/app/services/waitlist_service.py::manual_promote`.
 - **Broadcast messages (Phase 26)** — organizer / admin → email all
   confirmed signups for an event. Rate-limited 5/hr per event. Audit +
   preview. `backend/app/services/broadcast_service.py`.
 - **Slot swap (Phase 29, SWAP-01..04)** — atomic move of a signup to a
-  different slot in the same event. Hard-fail on target full (409),
-  auto-promote source waitlist, audit.
+  different slot in the same event. Hard-fail on target full (409), frees
+  the source seat without promoting anyone, audit.
   `backend/app/services/swap_service.py`.
 - **Signup window lock (Phase 29, LOCK-01/02)** — event-level
   `signup_open_at` / `signup_close_at` gates the public signup path with

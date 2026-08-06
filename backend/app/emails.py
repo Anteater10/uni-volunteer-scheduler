@@ -38,7 +38,23 @@ def _fmt_slot_time(dt) -> str:
         from datetime import timezone
         dt = dt.replace(tzinfo=timezone.utc)
     local = dt.astimezone(VENUE_TZ)
-    return local.strftime("%I:%M %p %Z")
+    # %I zero-pads ("02:00 PM"); lstrip gives the "2:00 PM" a reader expects.
+    return local.strftime("%I:%M %p %Z").lstrip("0")
+
+
+def _fmt_slot_day(dt) -> str:
+    """'Tuesday, Oct 14' in the venue timezone.
+
+    Same UTC-to-venue conversion as _fmt_slot_time: a slot at 5pm Pacific is
+    stored as midnight UTC the following day, so formatting the date before
+    converting names the wrong day for every late-afternoon session.
+    """
+    if dt.tzinfo is None:
+        from datetime import timezone
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(VENUE_TZ)
+    return local.strftime("%A, %b %d").replace(" 0", " ")
+
 
 logger = logging.getLogger(__name__)
 
@@ -66,21 +82,123 @@ def _render_html(template_name: str, **kwargs: str) -> str:
 
 
 def _fmt_when(slot: models.Slot) -> str:
-    return f"{slot.start_time} to {slot.end_time}"
+    """The headline "When:" line for one slot or session.
+
+    This used to interpolate the raw columns, so volunteers were emailed
+    '2026-10-14 14:00:00+00:00 to 2026-10-14 16:00:00+00:00' — a UTC timestamp,
+    for an event that happens in Pacific time, in a field they are meant to read
+    at a glance. It feeds nine builders, and since 2026-08-02 every shift email
+    too via _fmt_shift_when.
+
+    Includes the weekday and date, not just times: this is the one line telling
+    someone which day to turn up, and _fmt_slot_time alone gives clock times
+    with no day attached.
+    """
+    return (
+        f"{_fmt_slot_day(slot.start_time)}, "
+        f"{_fmt_slot_time(slot.start_time)} - {_fmt_slot_time(slot.end_time)}"
+    )
+
+
+def _sessions_in_order(shift: "models.Shift") -> list:
+    return sorted(shift.sessions, key=lambda s: (s.sort_order, s.start_time))
+
+
+def _fmt_shift_when(shift: "models.Shift") -> str:
+    """A shift's "when" is every session in it — the commitment covers all of
+    them, so an email naming only the first would understate what the volunteer
+    agreed to."""
+    return "; ".join(_fmt_when(s) for s in _sessions_in_order(shift))
+
+
+class SessionBooking:
+    """One session of a shift commitment, shaped like a ``Signup``.
+
+    Per-session mail — reminders, reschedule notices — has to name a single day,
+    not the whole bundle: "you're volunteering tomorrow at 9:00" is the point of
+    a 24h reminder. Rather than give every builder below a second code path,
+    this adapter presents ``(volunteer, slot)`` the way a Signup does, so the
+    slot branch of ``_booking_parts`` handles it unchanged.
+
+    Not an ORM row, so ``_orm_row`` exposes the real ``ShiftSignup`` for the
+    handful of helpers that need a live SQLAlchemy session.
+    """
+
+    __slots__ = ("shift_signup", "session")
+
+    def __init__(self, shift_signup: "models.ShiftSignup", session: "models.Slot"):
+        self.shift_signup = shift_signup
+        self.session = session
+
+    @property
+    def _orm_row(self):
+        return self.shift_signup
+
+    @property
+    def volunteer(self):
+        return self.shift_signup.volunteer
+
+    @property
+    def slot(self):
+        return self.session
+
+    @property
+    def status(self):
+        return self.shift_signup.status
+
+
+def _booking_parts(booking) -> tuple:
+    """(volunteer, event, when_text) for either kind of booking.
+
+    2026-08-02 shifts: every builder below used to open with the same three
+    lines off a Signup. A shift commitment has no single slot, so the shape
+    those builders need is produced here once rather than branched in each of
+    them.
+    """
+    v = booking.volunteer
+    if isinstance(booking, models.ShiftSignup):
+        shift = booking.shift
+        return v, shift.event, _fmt_shift_when(shift)
+    slot = booking.slot
+    return v, slot.event, _fmt_when(slot)
+
+
+def _booking_lines(booking, event) -> list[str]:
+    """The itemised "what you booked" lines, unprefixed — the caller adds any
+    bullet. One line per session for a shift, labelled with the shift name so a
+    Tue+Wed bundle reads as one thing rather than two unrelated bookings."""
+    if isinstance(booking, models.ShiftSignup):
+        shift = booking.shift
+        return [
+            f"{shift.name}: {s.date} "
+            f"{_fmt_slot_time(s.start_time)} - {_fmt_slot_time(s.end_time)} "
+            f"@ {s.location or event.school or 'TBD'}"
+            for s in _sessions_in_order(shift)
+        ]
+    slot = booking.slot
+    # A lone session still reads better under its shift's name than under the
+    # bare word "Period", which means nothing to a volunteer.
+    label = (
+        booking.shift_signup.shift.name
+        if isinstance(booking, SessionBooking)
+        else slot.slot_type.value.title()
+    )
+    return [
+        f"{label}: {slot.date} "
+        f"{_fmt_slot_time(slot.start_time)} - {_fmt_slot_time(slot.end_time)} "
+        f"@ {slot.location or event.school or 'TBD'}"
+    ]
 
 
 def send_confirmation(signup: models.Signup) -> dict:
-    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
-    v = signup.volunteer
-    slot = signup.slot
-    event = slot.event
+    v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
     subject = f"Your signup for '{event.title}'"
     text_body = (
         f"Hi {vol_name},\n\n"
         f"You are confirmed for this volunteer slot:\n"
         f"- Event: {event.title}\n"
-        f"- When: {_fmt_when(slot)}\n"
+        f"- When: {when}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
         "Thank you for volunteering!"
     )
@@ -88,24 +206,21 @@ def send_confirmation(signup: models.Signup) -> dict:
         "confirmation.html",
         user_name=vol_name,
         event_title=event.title,
-        slot_when=_fmt_when(slot),
+        slot_when=when,
         event_location=event.location or "TBD",
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
 def send_cancellation(signup: models.Signup) -> dict:
-    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
-    v = signup.volunteer
-    slot = signup.slot
-    event = slot.event
+    v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
     subject = f"Your signup for '{event.title}' was cancelled"
     text_body = (
         f"Hi {vol_name},\n\n"
         f"Your signup for the following volunteer slot has been cancelled:\n"
         f"- Event: {event.title}\n"
-        f"- When: {_fmt_when(slot)}\n"
+        f"- When: {when}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
         "If this is a mistake, you can sign up again if slots are available."
     )
@@ -113,7 +228,7 @@ def send_cancellation(signup: models.Signup) -> dict:
         "cancellation.html",
         user_name=vol_name,
         event_title=event.title,
-        slot_when=_fmt_when(slot),
+        slot_when=when,
         event_location=event.location or "TBD",
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
@@ -129,17 +244,14 @@ def send_waitlist_cancellation(signup: models.Signup) -> dict:
     a distinct kind so a caller's previous_status check at cancel time
     picks the right copy.
     """
-    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
-    v = signup.volunteer
-    slot = signup.slot
-    event = slot.event
+    v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
     subject = f"You've been removed from the waitlist for '{event.title}'"
     text_body = (
         f"Hi {vol_name},\n\n"
         f"You have been removed from the waitlist for the following volunteer slot:\n"
         f"- Event: {event.title}\n"
-        f"- When: {_fmt_when(slot)}\n"
+        f"- When: {when}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
         "If this is a mistake, you can sign up again if slots are available."
     )
@@ -147,24 +259,21 @@ def send_waitlist_cancellation(signup: models.Signup) -> dict:
         "waitlist_cancellation.html",
         user_name=vol_name,
         event_title=event.title,
-        slot_when=_fmt_when(slot),
+        slot_when=when,
         event_location=event.location or "TBD",
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
 def send_reminder_24h(signup: models.Signup) -> dict:
-    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
-    v = signup.volunteer
-    slot = signup.slot
-    event = slot.event
+    v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
     subject = f"Reminder: volunteer slot for '{event.title}'"
     text_body = (
         f"Hi {vol_name},\n\n"
         f"This is a reminder for your volunteer slot:\n"
         f"- Event: {event.title}\n"
-        f"- When: {_fmt_when(slot)}\n"
+        f"- When: {when}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
         "Thank you for volunteering!"
     )
@@ -172,7 +281,7 @@ def send_reminder_24h(signup: models.Signup) -> dict:
         "reminder.html",
         user_name=vol_name,
         event_title=event.title,
-        slot_when=_fmt_when(slot),
+        slot_when=when,
         event_location=event.location or "TBD",
         lead_time="24 hours",
     )
@@ -180,10 +289,7 @@ def send_reminder_24h(signup: models.Signup) -> dict:
 
 
 def send_reminder_1h(signup: models.Signup) -> dict:
-    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
-    v = signup.volunteer
-    slot = signup.slot
-    event = slot.event
+    v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
     # TODO(copy): subject line
     subject = f"Starting soon: volunteer slot for '{event.title}'"
@@ -191,7 +297,7 @@ def send_reminder_1h(signup: models.Signup) -> dict:
         f"Hi {vol_name},\n\n"
         f"Your volunteer slot starts in about 1 hour:\n"
         f"- Event: {event.title}\n"
-        f"- When: {_fmt_when(slot)}\n"
+        f"- When: {when}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
         "See you there!"
     )
@@ -199,7 +305,7 @@ def send_reminder_1h(signup: models.Signup) -> dict:
         "reminder.html",
         user_name=vol_name,
         event_title=event.title,
-        slot_when=_fmt_when(slot),
+        slot_when=when,
         event_location=event.location or "TBD",
         lead_time="1 hour",
     )
@@ -207,29 +313,52 @@ def send_reminder_1h(signup: models.Signup) -> dict:
 
 
 def send_reschedule(signup: models.Signup) -> dict:
-    # Phase 09: use signup.volunteer (signup.user removed in Phase 08)
-    v = signup.volunteer
-    slot = signup.slot
-    event = slot.event
+    v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
+    contact_instruction = _contact_instruction(signup)
     # TODO(copy): subject line
     subject = f"Schedule change: '{event.title}'"
     text_body = (
         f"Hi {vol_name},\n\n"
         f"The time for your volunteer slot has changed:\n"
         f"- Event: {event.title}\n"
-        f"- New time: {_fmt_when(slot)}\n"
+        f"- New time: {when}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
-        "If you can no longer attend, please cancel your signup."
+        f"If you can no longer attend, please {contact_instruction} "
+        "so the organizers can update the schedule."
     )
     html_body = _render_html(
         "reschedule.html",
         user_name=vol_name,
         event_title=event.title,
-        slot_when=_fmt_when(slot),
+        slot_when=when,
         event_location=event.location or "TBD",
+        contact_instruction=contact_instruction,
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+
+
+def _contact_instruction(db_obj) -> str:
+    """How a volunteer reaches the organizers, from site settings.
+
+    2026-08-02 read-only signups: volunteers cannot change their own
+    schedule, so every email points changes at the organizers. ``db_obj``
+    is any session-attached ORM row (signup/volunteer); a detached row
+    falls back to the reply-to instruction.
+    """
+    from sqlalchemy.orm import object_session
+
+    # SessionBooking is a plain adapter, not an ORM row — reach through to the
+    # commitment it wraps so a per-session email still finds the session.
+    db = object_session(getattr(db_obj, "_orm_row", db_obj))
+    contact = None
+    if db is not None:
+        from .services.settings_service import get_app_settings
+
+        contact = (get_app_settings(db).contact_email or "").strip() or None
+    return (
+        f"email the SciTrek organizers at {contact}" if contact else "reply to this email"
+    )
 
 
 def _manage_url_for_signup(signup: "models.Signup") -> str | None:
@@ -262,15 +391,13 @@ def _manage_url_for_signup(signup: "models.Signup") -> str | None:
 
 
 def _reminder_common_context(signup: "models.Signup") -> dict:
-    v = signup.volunteer
-    slot = signup.slot
-    event = slot.event
+    v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
     manage_url = _manage_url_for_signup(signup) or ""
     return {
         "user_name": vol_name,
         "event_title": event.title,
-        "slot_when": _fmt_when(slot),
+        "slot_when": when,
         "event_location": event.location or "TBD",
         "manage_url": manage_url,
         "to": v.email,
@@ -288,7 +415,7 @@ def send_reminder_kickoff(signup: "models.Signup") -> dict:
         f"- When: {ctx['slot_when']}\n"
         f"- Where: {ctx['event_location']}\n\n"
         "Thanks for saying yes. You'll get a 24-hour and 2-hour nudge as the event approaches.\n\n"
-        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}\n"
+        f"{'View your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}\n"
         "You can turn these reminders off from the manage page anytime."
     )
     html_body = _render_html(
@@ -315,8 +442,8 @@ def send_reminder_pre_24h(signup: "models.Signup") -> dict:
         f"- Event: {ctx['event_title']}\n"
         f"- When: {ctx['slot_when']}\n"
         f"- Where: {ctx['event_location']}\n\n"
-        "See you there! If you can no longer attend, please cancel so the spot opens up.\n\n"
-        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
+        f"See you there! If you can no longer attend, please {_contact_instruction(signup)}.\n\n"
+        f"{'View your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
     )
     html_body = _render_html(
         "reminder.html",
@@ -341,7 +468,7 @@ def send_reminder_pre_2h(signup: "models.Signup") -> dict:
         f"- When: {ctx['slot_when']}\n"
         f"- Where: {ctx['event_location']}\n\n"
         "See you there!\n\n"
-        f"{'Manage your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
+        f"{'View your signups: ' + ctx['manage_url'] if ctx['manage_url'] else ''}"
     )
     html_body = _render_html(
         "reminder.html",
@@ -457,14 +584,12 @@ def build_signup_confirmation_email(
 
     confirm_url = f"{settings.frontend_url}/signup/confirm?token={token}"
 
-    slot_lines = []
-    for s in signups:
-        slot = s.slot
-        slot_lines.append(
-            f"- {slot.slot_type.value.title()}: {slot.date} "
-            f"{_fmt_slot_time(slot.start_time)} - {_fmt_slot_time(slot.end_time)} "
-            f"@ {slot.location or event.school or 'TBD'}"
-        )
+    # 2026-08-02 shifts: `signups` is a mixed list — orientation Signups and
+    # shift commitments. A shift contributes one line per session in it, since
+    # what the volunteer needs from this email is the days to show up on.
+    slot_lines = [
+        f"- {line}" for s in signups for line in _booking_lines(s, event)
+    ]
 
     # fix/ux-quarter-batch: the task attaches an all-sessions .ics whenever at
     # least one signup is actually booked — only advertise it then.
@@ -487,6 +612,7 @@ def build_signup_confirmation_email(
         confirm_url=confirm_url,
         slot_list="\n".join(slot_lines),
         calendar_note=calendar_note,
+        contact_instruction=_contact_instruction(volunteer),
     )
     subject = f"Confirm your SciTrek volunteer signup — {event.title}"
     return subject, html
@@ -502,7 +628,7 @@ def build_waitlist_promotion_email(
 
     Unlike the old link-less promotion notification, this carries
     the magic-link confirm URL: the promotee must confirm within 3 days,
-    and the same link is their manage/cancel page.
+    and the same link is their read-only manage page.
 
     Returns:
         (subject, html_body) — HTML only, same as the fresh-signup flow.
@@ -510,18 +636,16 @@ def build_waitlist_promotion_email(
     from .config import settings
 
     confirm_url = f"{settings.frontend_url}/signup/confirm?token={token}"
-    slot = signup.slot
-    slot_line = (
-        f"{slot.slot_type.value.title()}: {slot.date} "
-        f"{_fmt_slot_time(slot.start_time)} - {_fmt_slot_time(slot.end_time)} "
-        f"@ {slot.location or event.school or 'TBD'}"
-    )
+    # A shift promotion offers every session at once, so the "what you're being
+    # offered" block is multi-line; the leading "- " suits a list either way.
+    slot_line = "\n".join(_booking_lines(signup, event))
     html = _render_html(
         "waitlist_promotion.html",
         volunteer_first_name=volunteer.first_name,
         event_title=event.title,
         confirm_url=confirm_url,
         slot_line=slot_line,
+        contact_instruction=_contact_instruction(signup),
     )
     subject = f"A spot opened up — confirm your SciTrek signup for {event.title}"
     return subject, html

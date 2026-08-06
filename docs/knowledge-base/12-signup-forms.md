@@ -36,7 +36,7 @@ per field against their own signup, so you can still see exactly what each perso
 the form that was in force when they signed up.
 
 The volunteer fills the form as part of the signup flow on the event page, after choosing their
-slots. If the orientation requirement stops them at that point, **their slot selection and their
+shifts. If the orientation requirement stops them at that point, **their selection and their
 form answers are preserved** while they go back to add an orientation session — they don't have to
 retype anything.
 

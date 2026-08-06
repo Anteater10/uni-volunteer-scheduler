@@ -7,7 +7,7 @@ include an orientation session in their signup." There is no self-attested bypas
 cannot tick a box claiming they've done it.
 
 On the volunteer's side this appears as a **steering modal**: instead of offering a way through, the
-only action takes them back to the schedule to add an orientation session. Their slot selection and
+only action takes them back to the schedule to add an orientation session. Their selection and
 anything they typed into the form are preserved while they do it.
 
 **The one exception: an event that offers no orientation slots at all is exempt.** Requiring
@@ -22,8 +22,8 @@ event's module family signs up freely, with no extra step.
 **The requirement is checked when the signup is created, and never again.** It looks at what the
 volunteer selected, not at whether they eventually attend — a waitlisted orientation slot satisfies
 it just as well as a seat. The flip side is that a volunteer can end up holding module sessions with
-no orientation behind them: they cancelled the orientation, or it was a waitlist promotion they
-never claimed. Nothing blocks them at the door, so an organizer either runs them through an
+no orientation behind them: staff cancelled the orientation for them, or it was a waitlist promotion
+they never claimed. Nothing blocks them at the door, so an organizer either runs them through an
 orientation or vouches for them from the roster.
 
 **A signup covers one event at a time.** Selecting slots across two different events in a single

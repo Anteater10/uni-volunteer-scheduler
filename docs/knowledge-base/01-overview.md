@@ -10,23 +10,27 @@ participants) are UCSB students who mentor in classrooms; they have no account a
 **Organizers** are staff who run events and rosters. **Admins** are staff with organizer powers
 plus user management, settings, exports, and audit logs.
 
-The core objects in the SciTrek scheduler are quarters, events, slots, and signups. A **quarter**
+The core objects in the SciTrek scheduler are quarters, events, shifts, and signups. A **quarter**
 is an academic quarter an admin has entered by hand. An **event** is one module at one school in
-one week of that quarter. A **slot** is one bookable session inside that event — a specific date
-and time with a capacity. A **signup** is one volunteer holding one slot.
+one week of that quarter. A **shift** is a named bundle of classroom **sessions** inside that
+event, with a capacity; an **orientation slot** is a single orientation session, booked on its own.
+A **signup** is one volunteer holding one shift or one orientation slot.
 
-Volunteers sign up **session by session**, not for a whole module. A volunteer may take as many
-sessions of a module as they want, or just one. Slots are the bookable unit, so "I'll take
-Wednesday only" is completely normal.
+Volunteers sign up **shift by shift**, not session by session and not for a whole module. A shift
+is all or nothing: taking it commits the volunteer to every session in it, because a class needs
+the same mentors back each time. An event can offer several shifts, and a volunteer may take one,
+some, or all of them.
 
-Before a volunteer can sign up for a module's regular sessions, they must have **orientation
+Before a volunteer can sign up for a module's classroom shifts, they must have **orientation
 credit** for that module's family — and if they don't, they must include an orientation session in
 the same signup. This is a hard requirement enforced by the server, not a warning. See the
 orientation document for the cases that pass automatically.
 
-Volunteers never log in. Every action a volunteer takes after signing up — confirming, viewing,
-cancelling, swapping, checking in — happens through a **magic link** emailed to them, or through a
-QR code scanned at the door. Staff, by contrast, do log in with an email and password at `/login`.
+Volunteers never log in. Every action a volunteer takes after signing up — confirming, viewing their
+signups, managing reminder preferences, checking in — happens through a **magic link** emailed to
+them, or through a QR code scanned at the door. A volunteer cannot cancel or move a signup themselves;
+they email the SciTrek organizers and a staff member makes the change. Staff, by contrast, do log in
+with an email and password at `/login`.
 
 The staff side of the SciTrek scheduler lives under `/admin` and is built for desktop screens.
 Below tablet width every page inside the admin shell shows a desktop-only banner instead of the

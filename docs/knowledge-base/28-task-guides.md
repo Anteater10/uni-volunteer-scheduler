@@ -12,8 +12,11 @@ were linked or moved weeks.
 
 Go to Admin → Events and create it. The event needs a **module** and **dates that fall inside an
 entered quarter** — if no quarter covers those dates the save is refused and you'll need to enter the
-quarter first. School is optional. Then add the slots: one per session, each with its own date, time,
-location, and capacity.
+quarter first. School is optional. Then add the bookable units: an **orientation slot** with its
+own date, time, location, and capacity, and one or more **shifts** — each shift named, given a
+capacity, and filled with the sessions it covers. A shift is what volunteers book, and booking it
+commits them to all of its sessions, so put the days a class needs the same mentors for into one
+shift.
 
 If a similar event already exists, **duplicating it is much faster** — see the next guide.
 
@@ -25,7 +28,8 @@ window.
 
 **A duplicate is a prefilled create form, not a one-click copy.** Pick the **target quarter** and
 **target week** at the top, and everything below — title, description, location, school, visibility,
-the per-volunteer cap, the module, and every slot with its type, times, room and capacity — arrives
+the per-volunteer cap, the module, every orientation slot, and every shift with its sessions,
+times, rooms and capacity — arrives
 already filled in from the original, fully editable. Adjust whatever needs adjusting and press
 **Create event**. That's the point of the redesign: rooms and times rarely carry over unchanged, and
 you get to fix them before the event exists rather than after.
@@ -65,8 +69,12 @@ time window:** it opens 30 minutes before a session starts and closes 30 minutes
 
 ## How do I close out a session once it's over?
 
-**End the session from the roster screen** — each slot group has its own **End slot** button (**End
-orientation** for orientation slots), and **End event** at the top does the whole thing at once. The
+**End the session from the roster screen** — each session has its own group with its own **End
+slot** button (**End orientation** for an orientation slot), and **End event** at the top does the
+whole thing at once. Ending one session of a shift leaves that shift's other sessions live, which
+is the point: a volunteer can be attended on Tuesday and a no-show on Thursday. **End event**
+applies the same answer to every session still open, so where the days differed, close those out
+individually first. The
 close-out screen lists everyone not yet resolved, pre-filled from check-in state: checked-in
 volunteers are pre-marked attended, everyone else no-show. Adjust anyone who needs it and save.
 
@@ -108,25 +116,27 @@ everyone marked attended.
 
 ## How do I promote someone off the waitlist?
 
-Usually you don't need to — when a confirmed volunteer cancels, the longest-waiting person is
-promoted automatically.
+You always need to — the waitlist never moves on its own. Cancelling a confirmed volunteer, raising a
+a shift's capacity, and the hourly cleanup all free seats, but none of them promote anyone; the seat
+just sits open until a staff member acts.
 
-To promote one specific person, open the event in Admin → Events and click **Promote** on their row
-in the event page's roster table. Since the slot is normally still full, this asks you to confirm
-going over capacity — that's a real decision about a real room, so it's deliberate rather than
-automatic.
+Open the event in Admin → Events and click **Promote** on the row of the person you want in the event
+page's roster table — usually the longest-waiting person, though you can promote anyone waiting.
+Since the shift is normally still full, this asks you to confirm going over capacity — that's a real
+decision about a real room, so it's deliberate rather than automatic.
 
-**A promotion is an offer, not a seat.** Either way — automatic or manual — the volunteer is moved to
-**pending** and emailed a link with **3 days** to confirm. Their seat is held while they decide, and
-they show on the roster the whole time. If they don't confirm, the signup is removed and the seat
-passes to the next person on the waitlist with a fresh 3-day clock of their own. So a promoted
+**A promotion is an offer, not a seat.** The volunteer is moved to **pending** and emailed a link with
+**3 days** to confirm. Their seat is held while they decide, and they show on the roster the whole
+time. If they don't confirm, the signup is removed and the seat is freed again — it doesn't pass to
+anyone automatically, so promote the next person by hand if the seat should be filled. So a promoted
 volunteer who hasn't clicked yet is expected to look half-finished on the roster; that's the flow
 working, not a fault.
 
 ## How do I email everyone coming to a session?
 
-Use **Message volunteers** on the event page. Leave the picker on **All slots** to email the
-whole event, or pick one slot to email just that session's volunteers. The preview shows the
+Use **Message volunteers** on the event page. Leave the picker on its default to email the whole
+event, or pick one shift (or the orientation slot) to email just those volunteers. Targeting a
+shift reaches everyone committed to it, on all of its sessions. The preview shows the
 recipient count before you send. Confirmed, checked-in, and attended volunteers receive it;
 waitlisted and cancelled people don't. You can send 5 broadcasts per event per clock hour — the count
 resets at the top of the hour rather than an hour after your first send.

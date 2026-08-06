@@ -155,10 +155,14 @@ describe("AdminRemindersPage", () => {
     await userEvent.click(confirmButtons[confirmButtons.length - 1]);
 
     await waitFor(() =>
-      expect(api.admin.reminders.sendNow).toHaveBeenCalledWith(
-        ROW.signup_id,
-        ROW.kind
-      )
+      // 2026-08-05 shifts: sendNow takes the row's whole anchor, because a row
+      // may be a shift session rather than an orientation signup.
+      expect(api.admin.reminders.sendNow).toHaveBeenCalledWith({
+        signupId: ROW.signup_id,
+        shiftSignupId: undefined,
+        slotId: ROW.slot_id,
+        kind: ROW.kind,
+      })
     );
   });
 });

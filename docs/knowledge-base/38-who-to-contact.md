@@ -6,9 +6,12 @@ and no on-call number for volunteers to use.
 
 The one named exception: **for course credit, email Gulistan Tansik at gulistan@ucsb.edu.**
 
-A volunteer does not need to contact anyone to arrange transportation — SciTrek provides it — and does
-not need to contact anyone to cancel, because cancelling is done through the link in their signup
-email.
+A volunteer does not need to contact anyone to arrange transportation — SciTrek provides it.
+Cancelling or changing a signup is different: the magic link in their signup email is read-only — it
+lets them confirm, view their signups, and manage reminder preferences, but not cancel or move
+anything. **A volunteer cannot cancel or move a signup themselves.** For any change they email the
+SciTrek organizers (the address configured in Site settings), and a staff member applies it in the
+app. This is the one thing volunteers do need to contact the office for.
 
 Emails the app sends (signup confirmations, reminders, broadcasts) come from SciTrek's configured
 sending address, and replies go there rather than to an individual organizer.

@@ -13,7 +13,11 @@ Plan-vs-reality:
   for (or ``None`` if no signups exist). The PII schema still names
   ``school`` so the LLM-visible shape matches the plan.
 - ``modules_attended`` is the list of distinct event titles touched
-  by any non-cancelled signup.
+  by any non-cancelled booking — orientation signups and shift commitments
+  alike, via ``_bookings``. Reading ``Signup`` alone omitted every piece of
+  classroom work a volunteer had ever done, which for most volunteers is all
+  of it, so their history came back empty and an organizer looking them up was
+  told "not found".
 """
 from __future__ import annotations
 
@@ -23,8 +27,9 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools import _bookings
 from app.copilot.agent.tools.base import Tool
-from app.models import Event, Signup, SignupStatus, Slot, Volunteer
+from app.models import Volunteer
 
 _PII_SCHEMA = ["participant_id", "name", "school", "modules_attended"]
 
@@ -39,19 +44,11 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     if volunteer is None:
         return dict(_NOT_FOUND)
 
-    q = (
-        db.query(Event, Signup)
-        .join(Slot, Slot.event_id == Event.id)
-        .join(Signup, Signup.slot_id == Slot.id)
-        .filter(
-            Signup.volunteer_id == volunteer.id,
-            Signup.status != SignupStatus.cancelled,
-        )
+    events = _bookings.events_for_volunteer(
+        db,
+        volunteer.id,
+        owner_id=None if scope.see_all else scope.module_owner_id,
     )
-    if not scope.see_all:
-        q = q.filter(Event.owner_id == scope.module_owner_id)
-
-    events = q.all()
     if not scope.see_all and not events:
         # Organizer cannot see this participant at all → not found sentinel.
         return dict(_NOT_FOUND)

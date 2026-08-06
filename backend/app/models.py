@@ -274,12 +274,79 @@ class Event(Base):
     owner = relationship("User", back_populates="events")
     academic_quarter = relationship("AcademicQuarter")
     slots = relationship("Slot", back_populates="event", cascade="all, delete-orphan")
+    # 2026-08-02 shifts: the bookable units for period sessions, in organizer
+    # display order. Orientation slots remain in `slots` only.
+    shifts = relationship(
+        "Shift",
+        back_populates="event",
+        cascade="all, delete-orphan",
+        order_by="Shift.sort_order",
+    )
     questions = relationship("CustomQuestion", back_populates="event", cascade="all, delete-orphan")
 
 
 # -------------------------
 # Slot table (timeslots)
 # -------------------------
+
+
+class Shift(Base):
+    """2026-08-02 shifts design: the bookable unit.
+
+    A shift is an all-or-nothing package of sessions (``Slot`` rows with
+    ``slot_type = PERIOD``). One ``ShiftSignup`` covers every session in the
+    shift; individual sessions are not separately bookable. Capacity and the
+    waitlist live here, one level up from where they used to live on the slot.
+
+    Orientation slots are NOT shift members — they stay individually bookable
+    and keep using ``Signup`` end to end (spec decision 4).
+    """
+
+    __tablename__ = "shifts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Organizer-chosen: "Shift 1", "Morning crew". No module-level templates —
+    # shifts are defined per event (spec decision 2).
+    name = Column(String(255), nullable=False)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+
+    capacity = Column(Integer, nullable=False)
+    # Same counter + SELECT ... FOR UPDATE pattern slots use today.
+    current_count = Column(Integer, nullable=False, server_default="0", default=0)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("capacity > 0", name="ck_shifts_capacity_positive"),
+        Index("ix_shifts_event_id_sort_order", "event_id", "sort_order"),
+    )
+
+    event = relationship("Event", back_populates="shifts")
+    sessions = relationship(
+        "Slot",
+        back_populates="shift",
+        order_by="Slot.sort_order",
+        # 2026-08-05 shifts: without this, deleting a shift whose sessions are
+        # in the identity map made SQLAlchemy NULL out their shift_id first —
+        # and ck_slots_shift_membership_matches_type rejects a period slot with
+        # no shift, so DELETE /shifts/{id} 500'd for every shift that had
+        # sessions, which is all of them. The FK already says ON DELETE
+        # CASCADE; passive_deletes lets the database do what it was told.
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    shift_signups = relationship(
+        "ShiftSignup", back_populates="shift", cascade="all, delete-orphan"
+    )
 
 
 class Slot(Base):
@@ -291,6 +358,9 @@ class Slot(Base):
     start_time = Column(DateTime(timezone=True), nullable=False)
     end_time = Column(DateTime(timezone=True), nullable=False)
 
+    # 2026-08-02 shifts: for a shift member (session) these two are inert —
+    # capacity lives on the owning Shift. Kept non-null for orientation slots,
+    # which are still booked individually and still count here.
     capacity = Column(Integer, nullable=False, default=1)
     current_count = Column(Integer, nullable=False, default=0)
 
@@ -302,11 +372,40 @@ class Slot(Base):
     date = Column(Date, nullable=False, server_default=text("CURRENT_DATE"))
     location = Column(String(255), nullable=True)
 
-    __table_args__ = (Index("ix_slots_start_time", "start_time"),)
+    # 2026-08-02 shifts: a session belongs to a shift. NULL ⇒ orientation slot
+    # (unchanged behavior). After 0037's backfill every PERIOD slot has one.
+    # Sessions keep real date/start_time/end_time/location — check-in windows,
+    # ICS entries and event auto-completion all depend on them.
+    shift_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shifts.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    # Organizer-chosen session label ("Period 1"). Replaces the frontend's
+    # derived _periodLabel numbering, which had no database backing.
+    name = Column(String(255), nullable=True)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+
+    __table_args__ = (
+        Index("ix_slots_start_time", "start_time"),
+        Index("ix_slots_shift_id_sort_order", "shift_id", "sort_order"),
+        # An orientation slot can never be a shift member, and a PERIOD slot
+        # must be one once backfilled. Enforced here so no code path can
+        # create a half-migrated row.
+        CheckConstraint(
+            "(slot_type = 'orientation' AND shift_id IS NULL) OR "
+            "(slot_type = 'period' AND shift_id IS NOT NULL)",
+            name="ck_slots_shift_membership_matches_type",
+        ),
+    )
 
     # Relationships
     event = relationship("Event", back_populates="slots")
     signups = relationship("Signup", back_populates="slot", cascade="all, delete-orphan")
+    shift = relationship("Shift", back_populates="sessions")
+    session_attendance = relationship(
+        "SessionAttendance", back_populates="slot", cascade="all, delete-orphan"
+    )
 
 
 # -------------------------
@@ -354,6 +453,150 @@ class Signup(Base):
         back_populates="signup",
         cascade="all, delete-orphan",
     )
+
+
+# -------------------------
+# Shift signups + per-session attendance (2026-08-02 shifts design)
+# -------------------------
+
+
+class ShiftSignup(Base):
+    """One row per volunteer per shift — the commitment.
+
+    Option B of the design review: the shift signup carries the lifecycle, and
+    per-session attendance is recorded separately in ``SessionAttendance``.
+    No fan-out signup rows, no slot dual-identity.
+
+    ``status`` reuses the ``signupstatus`` Postgres enum (renaming or adding
+    enums carries the known downgrade bug), but only the four lifecycle values
+    are legal here — attendance outcomes live on ``SessionAttendance``. The
+    CHECK constraint enforces that rather than trusting callers.
+    """
+
+    __tablename__ = "shift_signups"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shift_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shifts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    volunteer_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("volunteers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    status = Column(
+        SqlEnum(
+            SignupStatus,
+            values_callable=lambda x: [e.value for e in x],
+            name="signupstatus",
+            create_type=False,
+        ),
+        nullable=False,
+        default=SignupStatus.pending,
+    )
+
+    # Waitlist position is (timestamp ASC, id ASC) within a shift — today's
+    # per-slot rule, one level up.
+    timestamp = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+
+    reminder_24h_sent_at = Column(DateTime(timezone=True), nullable=True)
+    reminder_1h_sent_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "volunteer_id", "shift_id", name="uq_shift_signups_volunteer_id_shift_id"
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'confirmed', 'waitlisted', 'cancelled')",
+            name="ck_shift_signups_status_is_lifecycle",
+        ),
+        Index("ix_shift_signups_shift_id_status", "shift_id", "status"),
+        Index("ix_shift_signups_waitlist_order", "shift_id", "timestamp", "id"),
+    )
+
+    shift = relationship("Shift", back_populates="shift_signups")
+    volunteer = relationship("Volunteer")
+    session_attendance = relationship(
+        "SessionAttendance",
+        back_populates="shift_signup",
+        cascade="all, delete-orphan",
+    )
+    sent_notifications = relationship(
+        "SentNotification",
+        back_populates="shift_signup",
+        cascade="all, delete-orphan",
+    )
+    responses = relationship(
+        "SignupResponse",
+        back_populates="shift_signup",
+        cascade="all, delete-orphan",
+    )
+    # `magic_link_tokens` arrives as a backref from MagicLinkToken.shift_signup.
+
+
+class SessionAttendance(Base):
+    """"Did they actually show up on Tuesday period 1" — one row per session
+    a volunteer was checked in or closed out for.
+
+    Rows are created only when check-in or close-out actually happens. The
+    commitment lives in ``ShiftSignup``; this table records outcomes, so a
+    confirmed shift signup with no rows here simply means nothing has been
+    recorded yet.
+
+    Reuses the ``signupstatus`` enum, restricted by CHECK to the three
+    attendance outcomes.
+    """
+
+    __tablename__ = "session_attendance"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shift_signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shift_signups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    slot_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("slots.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    checked_in_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(
+        SqlEnum(
+            SignupStatus,
+            values_callable=lambda x: [e.value for e in x],
+            name="signupstatus",
+            create_type=False,
+        ),
+        nullable=False,
+    )
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "shift_signup_id", "slot_id", name="uq_session_attendance_signup_slot"
+        ),
+        CheckConstraint(
+            "status IN ('checked_in', 'attended', 'no_show')",
+            name="ck_session_attendance_status_is_outcome",
+        ),
+    )
+
+    shift_signup = relationship("ShiftSignup", back_populates="session_attendance")
+    slot = relationship("Slot", back_populates="session_attendance")
 
 
 # -------------------------
@@ -509,6 +752,11 @@ class SiteSettings(Base):
         Boolean, nullable=False, server_default=text("false"), default=False
     )
 
+    # 2026-08-02 read-only signups: the address volunteers are told to email
+    # for any schedule change. NULL/empty → copy falls back to "reply to
+    # this email".
+    contact_email = Column(String(255), nullable=True)
+
 
 # -------------------------
 # Magic link tokens
@@ -520,7 +768,15 @@ class MagicLinkToken(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token_hash = Column(String, nullable=False, unique=True, index=True)
-    signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id", ondelete="CASCADE"), nullable=False)
+    # 2026-08-02 shifts: nullable now. A shift-only batch has no Signup row to
+    # anchor to, so the anchor is either a Signup (orientation) or a
+    # ShiftSignup — exactly one, enforced by CHECK below.
+    signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id", ondelete="CASCADE"), nullable=True)
+    shift_signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shift_signups.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     email = Column(String, nullable=False)
     purpose = Column(
         SqlEnum(MagicLinkPurpose, values_callable=lambda x: [e.value for e in x], name="magiclinkpurpose"),
@@ -540,9 +796,20 @@ class MagicLinkToken(Base):
     volunteer = relationship("Volunteer")
 
     signup = relationship("Signup", backref=backref("magic_link_tokens", passive_deletes=True))
+    shift_signup = relationship(
+        "ShiftSignup", backref=backref("magic_link_tokens", passive_deletes=True)
+    )
 
     __table_args__ = (
         Index("ix_magic_link_tokens_email_created_at", "email", "created_at"),
+        # Exactly one anchor. Without this, dropping signup_id's NOT NULL would
+        # let an unanchored token exist, and consume() would have nothing to
+        # resolve the batch from.
+        CheckConstraint(
+            "(signup_id IS NOT NULL AND shift_signup_id IS NULL) OR "
+            "(signup_id IS NULL AND shift_signup_id IS NOT NULL)",
+            name="ck_magic_link_tokens_exactly_one_anchor",
+        ),
     )
 
 
@@ -661,23 +928,52 @@ class OrientationCredit(Base):
 class SentNotification(Base):
     """Dedup table for exactly-once email delivery.
 
-    The UNIQUE(signup_id, kind) constraint is the dedup key: Celery tasks
+    The UNIQUE(anchor, kind) constraint is the dedup key: Celery tasks
     INSERT ... ON CONFLICT DO NOTHING before calling the email provider.
     If the insert returns 0 rows, the email was already sent.
+
+    2026-08-02 shifts: exactly one of ``signup_id`` (orientation) or
+    ``shift_signup_id`` (a shift commitment) is set. Each anchor gets its own
+    *partial* unique index — one index across both nullable columns would
+    treat every (NULL, kind) pair as distinct and quietly disable dedup.
     """
     __tablename__ = "sent_notifications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id"), nullable=False)
+    signup_id = Column(UUID(as_uuid=True), ForeignKey("signups.id"), nullable=True)
+    shift_signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shift_signups.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     kind = Column(String(32), nullable=False)  # magic_link|reminder_24h|reminder_1h|cancellation|reschedule
     sent_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     provider_id = Column(String(255), nullable=True)  # Resend message id
 
     __table_args__ = (
-        Index("uq_sent_notifications_signup_kind", "signup_id", "kind", unique=True),
+        Index(
+            "uq_sent_notifications_signup_kind",
+            "signup_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("signup_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_sent_notifications_shift_signup_kind",
+            "shift_signup_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("shift_signup_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(signup_id IS NOT NULL AND shift_signup_id IS NULL) OR "
+            "(signup_id IS NULL AND shift_signup_id IS NOT NULL)",
+            name="ck_sent_notifications_exactly_one_anchor",
+        ),
     )
 
     signup = relationship("Signup", back_populates="sent_notifications")
+    shift_signup = relationship("ShiftSignup", back_populates="sent_notifications")
 
 # -------------------------
 # Signup responses (Phase 22 — custom form fields)
@@ -690,6 +986,11 @@ class SignupResponse(Base):
     lives on the event (``Event.form_schema``) or template
     (``Module.default_form_schema``); responses are snapshotted by
     ``field_id`` so schema edits don't retroactively break old signups.
+
+    2026-08-02 shifts: exactly one of ``signup_id`` (orientation) or
+    ``shift_signup_id`` (a shift commitment) is set. Without the second anchor
+    the custom form would simply stop collecting answers for period signups,
+    since those no longer have a ``Signup`` row to hang off.
     """
 
     __tablename__ = "signup_responses"
@@ -702,7 +1003,12 @@ class SignupResponse(Base):
     signup_id = Column(
         UUID(as_uuid=True),
         ForeignKey("signups.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+    shift_signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("shift_signups.id", ondelete="CASCADE"),
+        nullable=True,
     )
     field_id = Column(String(128), nullable=False)
     value_text = Column(Text, nullable=True)
@@ -718,15 +1024,31 @@ class SignupResponse(Base):
     )
 
     __table_args__ = (
+        # Partial, for the same reason SentNotification's are: a single index
+        # over a nullable anchor would let duplicates through as (NULL, field).
         Index(
             "uq_signup_responses_signup_field",
             "signup_id",
             "field_id",
             unique=True,
+            postgresql_where=text("signup_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_signup_responses_shift_signup_field",
+            "shift_signup_id",
+            "field_id",
+            unique=True,
+            postgresql_where=text("shift_signup_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(signup_id IS NOT NULL AND shift_signup_id IS NULL) OR "
+            "(signup_id IS NULL AND shift_signup_id IS NOT NULL)",
+            name="ck_signup_responses_exactly_one_anchor",
         ),
     )
 
     signup = relationship("Signup", back_populates="responses")
+    shift_signup = relationship("ShiftSignup", back_populates="responses")
 
 
 # Phase 08: PrereqOverride model REMOVED (D-05).

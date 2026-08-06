@@ -15,7 +15,22 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import MagicLinkToken, MagicLinkPurpose, Signup, SignupStatus, Slot
+from .models import (
+    MagicLinkToken,
+    MagicLinkPurpose,
+    Shift,
+    ShiftSignup,
+    Signup,
+    SignupStatus,
+    Slot,
+)
+
+# 2026-08-02 shifts: a token anchors to exactly one of these. Orientation
+# bookings anchor to a Signup, shift commitments to a ShiftSignup. Both carry
+# `status`, `volunteer_id` and a route to an event, which is all the token
+# lifecycle needs — so the flows below are written against "the anchor" rather
+# than against Signup.
+Anchor = Signup | ShiftSignup
 
 
 # Phase 09 (D-06): 14-day TTL for signup-confirm tokens
@@ -36,9 +51,9 @@ CONFIRM_PURPOSES = (
     MagicLinkPurpose.PROMOTION_CONFIRM,
 )
 
-# Purposes that grant token-gated manage access (manage page, swap, cancel,
+# Purposes that grant token-gated manage access (read-only manage page,
 # preferences, reminder manage links). Every confirm link doubles as the
-# volunteer's manage/cancel page — that is the promotion link's whole point.
+# volunteer's read-only manage page — that is the promotion link's whole point.
 MANAGE_PURPOSES = (
     MagicLinkPurpose.SIGNUP_CONFIRM,
     MagicLinkPurpose.SIGNUP_MANAGE,
@@ -57,32 +72,59 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def anchor_event_id(db: Session, anchor: Anchor | None):
+    """The event an anchor belongs to, whichever kind it is."""
+    if anchor is None:
+        return None
+    if isinstance(anchor, ShiftSignup):
+        shift = db.query(Shift).filter_by(id=anchor.shift_id).first()
+        return shift.event_id if shift else None
+    slot = db.query(Slot).filter_by(id=anchor.slot_id).first()
+    return slot.event_id if slot else None
+
+
+def _anchor_column(anchor: Anchor):
+    return (
+        MagicLinkToken.shift_signup_id
+        if isinstance(anchor, ShiftSignup)
+        else MagicLinkToken.signup_id
+    )
+
+
 def issue_token(
     db: Session,
-    signup: Signup,
-    email: str,
+    signup: Signup | None = None,
+    email: str = "",
     *,
+    shift_signup: ShiftSignup | None = None,
     purpose: MagicLinkPurpose = MagicLinkPurpose.SIGNUP_CONFIRM,
     volunteer_id: UUID | None = None,
     ttl_minutes: int | None = None,
 ) -> str:
-    """Create a new magic-link token for a signup. Returns raw token.
+    """Create a new magic-link token for a booking. Returns raw token.
 
     Args:
         db: DB session (caller commits).
-        signup: Anchor signup row (signup_id stored on token).
+        signup: Anchor signup row (orientation booking).
         email: Email address to store on the token (lowercased).
+        shift_signup: Anchor shift-signup row (shift commitment). Exactly one
+            of `signup` / `shift_signup` must be given — the table's CHECK
+            enforces the same thing, and a shift-only batch has no Signup row.
         purpose: Token purpose (default SIGNUP_CONFIRM for Phase 09).
         volunteer_id: Optional volunteer UUID to store on the token; enables batch confirm.
         ttl_minutes: Override TTL in minutes; defaults to settings.magic_link_ttl_minutes.
     """
+    if (signup is None) == (shift_signup is None):
+        raise ValueError("issue_token needs exactly one of signup / shift_signup")
+
     raw = secrets.token_urlsafe(32)
     token_hash = _hash_token(raw)
     ttl = ttl_minutes if ttl_minutes is not None else settings.magic_link_ttl_minutes
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=ttl)
     row = MagicLinkToken(
         token_hash=token_hash,
-        signup_id=signup.id,
+        signup_id=signup.id if signup is not None else None,
+        shift_signup_id=shift_signup.id if shift_signup is not None else None,
         email=email.lower(),
         expires_at=expires_at,
         purpose=purpose,
@@ -122,7 +164,20 @@ def _promotion_pending_exists(db: Session):
     )
 
 
-def _is_promotion_pending(db: Session, signup: Signup) -> bool:
+def _shift_promotion_pending_exists(db: Session):
+    """`_promotion_pending_exists`, correlated to ``ShiftSignup`` instead."""
+    return (
+        db.query(MagicLinkToken.id)
+        .filter(
+            MagicLinkToken.shift_signup_id == ShiftSignup.id,
+            MagicLinkToken.purpose == MagicLinkPurpose.PROMOTION_CONFIRM,
+        )
+        .correlate(ShiftSignup)
+        .exists()
+    )
+
+
+def _is_promotion_pending(db: Session, signup: Anchor) -> bool:
     """True when this pending signup's seat came from a promotion.
 
     INVARIANT this detection depends on: the marker is token *history*, not
@@ -147,7 +202,7 @@ def _is_promotion_pending(db: Session, signup: Signup) -> bool:
     return bool(
         db.query(MagicLinkToken.id)
         .filter(
-            MagicLinkToken.signup_id == signup.id,
+            _anchor_column(signup) == signup.id,
             MagicLinkToken.purpose == MagicLinkPurpose.PROMOTION_CONFIRM,
         )
         .first()
@@ -189,7 +244,10 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
         return ConsumeResult.used, None, 0
     if row.expires_at < datetime.now(timezone.utc):
         return ConsumeResult.expired, None, 0
-    signup = db.query(Signup).filter_by(id=row.signup_id).first()
+    if row.shift_signup_id is not None:
+        signup = db.query(ShiftSignup).filter_by(id=row.shift_signup_id).first()
+    else:
+        signup = db.query(Signup).filter_by(id=row.signup_id).first()
     if signup is None or signup.status == SignupStatus.cancelled:
         return ConsumeResult.not_found, None, 0
     # Atomic update — if another request beat us, updated == 0
@@ -207,25 +265,41 @@ def consume_token(db: Session, raw: str) -> tuple[ConsumeResult, Optional[Signup
         signup.status = SignupStatus.confirmed
     db.flush()
 
-    # Phase 09 (D-06): batch-flip sibling pending signups for same volunteer + event
+    # Phase 09 (D-06): batch-flip sibling pending bookings for same volunteer +
+    # event. 2026-08-02 shifts: the batch spans both kinds — one link confirms
+    # the whole thing the volunteer submitted, orientation and shifts alike.
     sibling_count = 0
     if row.purpose == MagicLinkPurpose.SIGNUP_CONFIRM and row.volunteer_id is not None:
-        anchor_slot = db.query(Slot).filter_by(id=signup.slot_id).first()
-        if anchor_slot is not None:
-            anchor_event_id = anchor_slot.event_id
-            sibling_signups = (
+        event_id = anchor_event_id(db, signup)
+        if event_id is not None:
+            siblings: list[Anchor] = list(
                 db.query(Signup)
                 .join(Slot, Slot.id == Signup.slot_id)
                 .filter(
                     Signup.volunteer_id == row.volunteer_id,
                     Signup.status == SignupStatus.pending,
-                    Slot.event_id == anchor_event_id,
-                    Signup.id != signup.id,
+                    Slot.event_id == event_id,
                     ~_promotion_pending_exists(db),
                 )
                 .all()
             )
-            for s in sibling_signups:
+            siblings += list(
+                db.query(ShiftSignup)
+                .join(Shift, Shift.id == ShiftSignup.shift_id)
+                .filter(
+                    ShiftSignup.volunteer_id == row.volunteer_id,
+                    ShiftSignup.status == SignupStatus.pending,
+                    Shift.event_id == event_id,
+                    ~_shift_promotion_pending_exists(db),
+                )
+                .all()
+            )
+            for s in siblings:
+                # The anchor was already flipped above; skip it so it isn't
+                # counted twice. Identity comparison, because a Signup and a
+                # ShiftSignup can share an id value in principle.
+                if s is signup:
+                    continue
                 s.status = SignupStatus.confirmed
                 sibling_count += 1
             db.flush()
@@ -292,7 +366,7 @@ def check_rate_limit(redis_client, email: str, ip: str) -> bool:
     return True
 
 
-def dispatch_email(db: Session, signup: Signup, event, base_url: str) -> None:
+def dispatch_email(db: Session, signup: Anchor, event, base_url: str) -> None:
     """Issue a token and send the magic-link email. Idempotent within a 60s window.
 
     2026-07-29 sweep remediation, Finding #2: a promotion-pending signup (see
@@ -311,7 +385,7 @@ def dispatch_email(db: Session, signup: Signup, event, base_url: str) -> None:
     existing = (
         db.query(MagicLinkToken)
         .filter(
-            MagicLinkToken.signup_id == signup.id,
+            _anchor_column(signup) == signup.id,
             MagicLinkToken.consumed_at.is_(None),
             MagicLinkToken.expires_at > datetime.now(timezone.utc),
             MagicLinkToken.created_at >= recent_cutoff,
@@ -321,20 +395,25 @@ def dispatch_email(db: Session, signup: Signup, event, base_url: str) -> None:
     if existing is not None:
         return  # A token was just issued; skip duplicate send
 
+    anchor_kwargs = (
+        {"shift_signup": signup}
+        if isinstance(signup, ShiftSignup)
+        else {"signup": signup}
+    )
     if _is_promotion_pending(db, signup):
         raw = issue_token(
             db,
-            signup,
-            email,
+            email=email,
             purpose=MagicLinkPurpose.PROMOTION_CONFIRM,
             volunteer_id=signup.volunteer_id,
             ttl_minutes=PROMOTION_CONFIRM_TTL_MINUTES,
+            **anchor_kwargs,
         )
         from .emails import build_waitlist_promotion_email
 
         build_waitlist_promotion_email(signup.volunteer, signup, raw, event)
     else:
-        raw = issue_token(db, signup, email)
+        raw = issue_token(db, email=email, **anchor_kwargs)
         from .emails import send_magic_link
 
         send_magic_link(email, raw, event, base_url)

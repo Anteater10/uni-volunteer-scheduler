@@ -29,20 +29,46 @@ def _load_event_or_404(db: Session, event_id: str) -> models.Event:
     return event
 
 
-def _ensure_slot_in_event_or_404(
-    db: Session, event: models.Event, slot_id: Optional[UUID]
-) -> Optional[models.Slot]:
-    """Slot scoping is optional; when present the slot must belong to the event.
+def _ensure_scope_in_event_or_404(
+    db: Session,
+    event: models.Event,
+    slot_id: Optional[UUID],
+    shift_id: Optional[UUID] = None,
+) -> None:
+    """Validate optional scoping; the unit must belong to the event.
 
-    Runs before ``send_broadcast`` so a bad slot id 404s without burning
-    a rate-limit token (the service bumps Redis before any DB work).
+    Runs before ``send_broadcast`` so a bad id 404s without burning a
+    rate-limit token (the service bumps Redis before any DB work).
+
+    A session slot is rejected rather than quietly redirected at its shift.
+    Nobody books a session, so its roster is empty and a broadcast scoped to
+    one would report "0 recipients" for a room full of volunteers. Silently
+    widening to the whole shift would be the opposite surprise — mailing
+    Wednesday's volunteers about Tuesday. So we say what to pass instead.
     """
-    if slot_id is None:
-        return None
-    slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
-    if slot is None or slot.event_id != event.id:
-        raise HTTPException(status_code=404, detail="Slot not found for this event")
-    return slot
+    if slot_id is not None and shift_id is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="Pass slot_id or shift_id, not both — the audiences don't overlap.",
+        )
+    if slot_id is not None:
+        slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
+        if slot is None or slot.event_id != event.id:
+            raise HTTPException(status_code=404, detail="Slot not found for this event")
+        if slot.shift_id is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "That slot is a session of a shift and has no roster of its "
+                    "own. Broadcast to the shift with shift_id instead."
+                ),
+            )
+    if shift_id is not None:
+        shift = db.query(models.Shift).filter(models.Shift.id == shift_id).first()
+        if shift is None or shift.event_id != event.id:
+            raise HTTPException(
+                status_code=404, detail="Shift not found for this event"
+            )
 
 
 @router.post(
@@ -60,7 +86,7 @@ def send_event_broadcast(
 ):
     event = _load_event_or_404(db, event_id)
     ensure_event_staff_access(event, actor)
-    _ensure_slot_in_event_or_404(db, event, payload.slot_id)
+    _ensure_scope_in_event_or_404(db, event, payload.slot_id, payload.shift_id)
 
     try:
         result = broadcast_service.send_broadcast(
@@ -71,6 +97,7 @@ def send_event_broadcast(
             actor_user_id=actor.id,
             redis_client=redis_client,
             slot_id=payload.slot_id,
+            shift_id=payload.shift_id,
         )
     except broadcast_service.BroadcastRateLimitError as e:
         # BCAST-02 — 429 with Retry-After header on rate limit exceed.
@@ -119,6 +146,7 @@ def list_event_broadcasts(
 def preview_broadcast_recipients(
     event_id: str,
     slot_id: Optional[UUID] = Query(None),
+    shift_id: Optional[UUID] = Query(None),
     db: Session = Depends(get_db),
     actor: models.User = Depends(
         require_role(models.UserRole.admin, models.UserRole.organizer)
@@ -126,9 +154,9 @@ def preview_broadcast_recipients(
 ):
     event = _load_event_or_404(db, event_id)
     ensure_event_staff_access(event, actor)
-    _ensure_slot_in_event_or_404(db, event, slot_id)
+    _ensure_scope_in_event_or_404(db, event, slot_id, shift_id)
     return schemas.BroadcastRecipientCount(
         recipient_count=broadcast_service.count_recipients(
-            db, event.id, slot_id=slot_id
+            db, event.id, slot_id=slot_id, shift_id=shift_id
         )
     )

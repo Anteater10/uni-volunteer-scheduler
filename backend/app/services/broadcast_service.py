@@ -32,6 +32,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models
+from . import notification_dedup
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,13 @@ RECIPIENT_STATUSES = (
     models.SignupStatus.checked_in,
     models.SignupStatus.attended,
 )
+
+# A ShiftSignup's status is lifecycle-only — ck_shift_signups_status_is_lifecycle
+# permits just pending/confirmed/waitlisted/cancelled, because attendance
+# outcomes live in session_attendance instead. So the checked_in/attended half of
+# RECIPIENT_STATUSES can never match here, and filtering on it would be dead SQL
+# implying a state a shift commitment cannot reach.
+SHIFT_RECIPIENT_STATUSES = (models.SignupStatus.confirmed,)
 
 
 # ------------------------------------------------------------------
@@ -240,39 +248,104 @@ def render_plaintext(html_body: str) -> str:
 # ------------------------------------------------------------------
 
 
-def list_recipients(db: Session, event_id, slot_id=None) -> list[models.Signup]:
-    """Return every signup that currently holds or has completed a spot on the event.
+@dataclass
+class BroadcastRecipient:
+    """One deliverable address, whichever kind of booking earned it.
 
-    ``slot_id`` narrows the roster to a single slot; ``None`` keeps the
-    whole-event behavior. The event filter stays in place either way, so
-    a slot id from another event can never widen the audience.
+    2026-08-02 shifts split "who is on this event" across two tables, and every
+    caller here needs the same three things regardless: an address to send to,
+    and the anchor to dedup and log against. Returning a mixed list of ORM rows
+    would push an isinstance check into all of them, which is how the copilot
+    tools ended up reading only half the roster.
     """
-    q = (
+
+    volunteer: "models.Volunteer"
+    # Exactly one of these is set — the same dual-anchoring sent_notifications
+    # uses, so the dedup call is picked by which one is populated.
+    signup_id: Optional[uuid.UUID] = None
+    shift_signup_id: Optional[uuid.UUID] = None
+
+    @property
+    def is_shift(self) -> bool:
+        return self.shift_signup_id is not None
+
+
+def _signup_recipient_query(db: Session, event_id, slot_id):
+    return (
         db.query(models.Signup)
         .join(models.Slot, models.Slot.id == models.Signup.slot_id)
         .filter(
             models.Slot.event_id == event_id,
             models.Signup.status.in_(list(RECIPIENT_STATUSES)),
         )
-    )
-    if slot_id is not None:
-        q = q.filter(models.Signup.slot_id == slot_id)
-    return q.options(joinedload(models.Signup.volunteer)).all()
+    ).filter(*([models.Signup.slot_id == slot_id] if slot_id is not None else []))
 
 
-def count_recipients(db: Session, event_id, slot_id=None) -> int:
-    """Fast-path count for the modal preview."""
-    q = (
-        db.query(models.Signup.id)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+def _shift_recipient_query(db: Session, event_id, shift_id):
+    return (
+        db.query(models.ShiftSignup)
+        .join(models.Shift, models.Shift.id == models.ShiftSignup.shift_id)
         .filter(
-            models.Slot.event_id == event_id,
-            models.Signup.status.in_(list(RECIPIENT_STATUSES)),
+            models.Shift.event_id == event_id,
+            models.ShiftSignup.status.in_(list(SHIFT_RECIPIENT_STATUSES)),
         )
-    )
-    if slot_id is not None:
-        q = q.filter(models.Signup.slot_id == slot_id)
-    return q.count()
+    ).filter(*([models.ShiftSignup.shift_id == shift_id] if shift_id is not None else []))
+
+
+def list_recipients(
+    db: Session, event_id, slot_id=None, shift_id=None
+) -> list[BroadcastRecipient]:
+    """Everyone holding or having completed a spot on the event, both kinds.
+
+    Until 2026-08-05 this queried ``Signup`` alone. Since shifts landed, the
+    classroom work is booked as a ``ShiftSignup`` and a session slot carries no
+    signup rows at all — so "email everyone on this event" reached only the
+    orientation signups, and the modal's own count preview agreed with it. A
+    silent under-send with a confirming number next to it.
+
+    ``slot_id`` narrows to one slot's roster, ``shift_id`` to one shift's; each
+    therefore excludes the other kind entirely, since scoping to a unit means
+    the people on that unit and nobody else. Passing neither keeps the
+    whole-event behaviour. The event filter stays in place either way, so an id
+    from another event can never widen the audience.
+    """
+    recipients: list[BroadcastRecipient] = []
+
+    if shift_id is None:
+        signups = (
+            _signup_recipient_query(db, event_id, slot_id)
+            .options(joinedload(models.Signup.volunteer))
+            .all()
+        )
+        recipients += [
+            BroadcastRecipient(s.volunteer, signup_id=s.id) for s in signups
+        ]
+
+    if slot_id is None:
+        commitments = (
+            _shift_recipient_query(db, event_id, shift_id)
+            .options(joinedload(models.ShiftSignup.volunteer))
+            .all()
+        )
+        recipients += [
+            BroadcastRecipient(c.volunteer, shift_signup_id=c.id) for c in commitments
+        ]
+
+    return recipients
+
+
+def count_recipients(db: Session, event_id, slot_id=None, shift_id=None) -> int:
+    """Fast-path count for the modal preview.
+
+    Must stay in step with ``list_recipients`` — this number is the only check
+    an organizer has that they are about to reach who they think they are.
+    """
+    total = 0
+    if shift_id is None:
+        total += _signup_recipient_query(db, event_id, slot_id).count()
+    if slot_id is None:
+        total += _shift_recipient_query(db, event_id, shift_id).count()
+    return total
 
 
 # ------------------------------------------------------------------
@@ -290,16 +363,26 @@ def _manage_url_for_volunteer(volunteer: "models.Volunteer") -> Optional[str]:
 
 
 def _dedup_insert_broadcast(db: Session, signup_id, kind: str) -> bool:
-    """Insert into sent_notifications; return True if row was inserted."""
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    """Broadcast dedup — one canonical implementation, see notification_dedup.
 
-    stmt = (
-        pg_insert(models.SentNotification)
-        .values(signup_id=signup_id, kind=kind)
-        .on_conflict_do_nothing(index_elements=["signup_id", "kind"])
-    )
-    result = db.execute(stmt)
-    return result.rowcount == 1
+    This had its own copy of the insert without the partial-index predicate, so
+    every broadcast raised InvalidColumnReference and nothing was sent.
+    """
+    return notification_dedup.dedup_insert_signup(db, signup_id, kind)
+
+
+def _claim_recipient(db: Session, recipient: BroadcastRecipient, kind: str) -> bool:
+    """Claim this delivery, on whichever anchor the recipient has.
+
+    A shift commitment has no ``signup_id``, so routing it through the signup
+    dedup would insert a row with a NULL anchor — which the CHECK constraint
+    rejects, taking the whole broadcast down. It gets its own anchor instead.
+    """
+    if recipient.shift_signup_id is not None:
+        return notification_dedup.dedup_insert_shift_signup(
+            db, recipient.shift_signup_id, kind
+        )
+    return _dedup_insert_broadcast(db, recipient.signup_id, kind)
 
 
 def send_broadcast(
@@ -313,6 +396,7 @@ def send_broadcast(
     now: Optional[datetime] = None,
     broadcast_id: Optional[str] = None,
     slot_id=None,
+    shift_id=None,
 ) -> BroadcastResult:
     """Rate-limit, render, dedup-insert, dispatch, and audit a broadcast.
 
@@ -341,30 +425,32 @@ def send_broadcast(
     kind = f"broadcast_{bid}"
     assert len(kind) <= 32, "broadcast dedup kind would exceed SentNotification.kind width"
 
-    # 3. Recipients — the whole event, or one slot's roster when scoped.
-    signups = list_recipients(db, event_id, slot_id=slot_id)
+    # 3. Recipients — the whole event, or one unit's roster when scoped. Both
+    #    booking kinds, since shifts carry most of the classroom roster now.
+    recipients = list_recipients(db, event_id, slot_id=slot_id, shift_id=shift_id)
 
     # 4. Render bodies once — same copy goes to every recipient.
     manage_url = None
     # Prefer the first recipient for the footer's manage link anchor; the
     # link is a volunteer-generic manage URL so one is sufficient.
-    if signups:
-        manage_url = _manage_url_for_volunteer(signups[0].volunteer)
+    if recipients:
+        manage_url = _manage_url_for_volunteer(recipients[0].volunteer)
     html_body = render_html(body_markdown, event=event, manage_url=manage_url)
     text_body = render_plaintext(html_body)
 
     # 5. Per-recipient dedup + dispatch.
     recipient_count = 0
-    for s in signups:
-        if s.volunteer is None or not s.volunteer.email:
+    for r in recipients:
+        if r.volunteer is None or not r.volunteer.email:
             continue
-        if not _dedup_insert_broadcast(db, s.id, kind):
+        if not _claim_recipient(db, r, kind):
             # Either a retry of the same broadcast_id or a rare row race —
             # either way, some other caller owns this delivery.
             continue
         send_broadcast_email.delay(
-            signup_id=str(s.id),
-            to_email=s.volunteer.email,
+            signup_id=str(r.signup_id) if r.signup_id else None,
+            shift_signup_id=str(r.shift_signup_id) if r.shift_signup_id else None,
+            to_email=r.volunteer.email,
             subject=subject,
             text_body=text_body,
             html_body=html_body,
@@ -388,6 +474,7 @@ def send_broadcast(
             "recipient_count": recipient_count,
             "body_markdown": body_markdown,
             "slot_id": str(slot_id) if slot_id is not None else None,
+            "shift_id": str(shift_id) if shift_id is not None else None,
         },
     )
     db.add(audit)
@@ -446,8 +533,9 @@ def list_recent_broadcasts(
                 "recipient_count": int(extra.get("recipient_count") or 0),
                 "actor_label": actor_label,
                 "sent_at": r.timestamp,
-                # Legacy rows predate slot scoping — .get() yields None.
+                # Legacy rows predate slot/shift scoping — .get() yields None.
                 "slot_id": extra.get("slot_id"),
+                "shift_id": extra.get("shift_id"),
             }
         )
     return out

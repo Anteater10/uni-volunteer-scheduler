@@ -18,10 +18,12 @@ Five things SciTrek asks of every mentor:
 5. **Don't be shy** — share yourself, your interests, background, and feelings — and don't take
    anything personally.
 
-A mentor signs up **session by session** and may take as many sessions as they like — there's no
-requirement to commit to all five sessions of a module. There's no account and no password: signing up
-sends an email, and the same link in it is what a mentor later uses to view, cancel, or swap their
-sessions. That email also carries a calendar file with their booked sessions.
+A mentor signs up **shift by shift**. A shift is a named group of sessions, and taking it commits
+the mentor to all of them — a class needs the same faces back each time. An event can offer several
+shifts, and a mentor may take as many as they like; there's no requirement to cover all five
+sessions of a module. There's no account and no password: signing up
+sends an email, and the same link in it is what a mentor later uses to view their sessions and add
+them to a calendar; changes go through the SciTrek organizers by email.
 
 **Signing up is not finished until the mentor opens that email.** Filling in the form holds the seat
 but does not secure it — the emailed link has to be clicked to confirm, within two weeks, and a signup

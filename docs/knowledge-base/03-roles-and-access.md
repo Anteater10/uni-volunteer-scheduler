@@ -20,7 +20,8 @@ on. The Overview dashboard is admin-only.
 
 **Admins** can do everything an organizer can, plus: manage staff users (invite, change role,
 deactivate, CCPA export and delete), enter and edit quarters, archive quarters, view the quarter
-retrospective, grant and revoke orientation credits from the admin page, reorder a slot's waitlist,
+retrospective, grant and revoke orientation credits from the admin page, reorder a shift's or
+slot's waitlist,
 download the program-wide analytics CSVs, read the audit log, and change site settings.
 
 **Organizers cannot reach admin-only pages.** Users, Audit Logs, Exports, Orientation Credits,

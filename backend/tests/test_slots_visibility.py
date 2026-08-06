@@ -58,7 +58,11 @@ def _make_slot(db_session, event, *, capacity=10, current_count=2, location="Roo
         end_time=event.start_date + timedelta(hours=2),
         capacity=capacity,
         current_count=current_count,
-        slot_type=SlotType.PERIOD,
+        # 2026-08-05 shifts: orientation, not period. What these tests check is
+        # whether a private event's slots leak to anonymous callers, which is a
+        # property of the event, not of the slot type — and a shift-less period
+        # slot can no longer be inserted at all.
+        slot_type=SlotType.ORIENTATION,
         date=date_type.today(),
         location=location,
     )

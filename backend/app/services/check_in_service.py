@@ -5,7 +5,21 @@ Centralizes signup state transitions with:
 - SELECT ... FOR UPDATE row locking
 - Idempotent first-write-wins on concurrent check-in
 - Audit log on every successful transition
+
+2026-08-02 shifts: there are now two kinds of bookable unit a volunteer can
+turn up for, and check-in has to cover both.
+
+- an **orientation slot**, booked with a `Signup` — everything below that
+  reads `Signup.status` is this path, unchanged;
+- a **session** inside a shift. The commitment is a `ShiftSignup` covering
+  every session in the shift, so there is no per-session status to flip.
+  Turning up for Tuesday writes a `session_attendance` row instead (see
+  `session_attendance_service`).
+
+`CheckInOption` is the union the volunteer-facing QR flow speaks in: "one
+thing you could check in for right now", whichever kind it is.
 """
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -17,13 +31,16 @@ from app.models import (
     AuditLog,
     Event,
     OrientationCreditSource,
+    SessionAttendance,
+    Shift,
+    ShiftSignup,
     Signup,
     SignupStatus,
     Slot,
     SlotType,
     Volunteer,
 )
-from app.services import quarter_service
+from app.services import quarter_service, session_attendance_service
 
 # Window widened 15 -> 30 minutes before start (product decision, issue #31
 # UX rework): volunteers arrive early and shouldn't stare at a locked page.
@@ -68,6 +85,62 @@ class VenueCodeError(Exception):
     pass
 
 
+@dataclass
+class CheckInOption:
+    """One thing a volunteer could check in for on this event, right now.
+
+    Exactly one of `signup` / `shift_signup` is set. `slot` is the thing with
+    the clock on it either way — an orientation slot, or the session inside
+    the shift — because the check-in window is a property of the session, not
+    of the commitment.
+    """
+
+    slot: Slot
+    window_state: str
+    window_opens_at: datetime
+    signup: Signup | None = None
+    shift_signup: ShiftSignup | None = None
+    shift: Shift | None = None
+    attendance: SessionAttendance | None = None
+
+    @property
+    def is_session(self) -> bool:
+        return self.shift_signup is not None
+
+    @property
+    def status(self) -> str:
+        """What to show the volunteer for this unit.
+
+        For a session the commitment status ("confirmed") is not the useful
+        answer once they have turned up — the attendance row is. Falling back
+        to the commitment is right before any row exists.
+        """
+        if self.attendance is not None:
+            return self.attendance.status.value
+        if self.shift_signup is not None:
+            return self.shift_signup.status.value
+        return self.signup.status.value
+
+    @property
+    def already_checked_in(self) -> bool:
+        if self.is_session:
+            return self.attendance is not None and self.attendance.status in (
+                SignupStatus.checked_in,
+                SignupStatus.attended,
+            )
+        return self.signup.status in (SignupStatus.checked_in, SignupStatus.attended)
+
+    @property
+    def unit_id(self) -> UUID:
+        """The id the client sends back to select this unit.
+
+        A volunteer holds any given session at most once (one shift signup per
+        shift, one session per shift), so the session's slot id identifies it
+        unambiguously — no need to make the client round-trip a composite key.
+        """
+        return self.slot.id if self.is_session else self.signup.id
+
+
 def ensure_signup_cancellable(signup: Signup) -> None:
     """Raise HTTP 422 if ``signup`` is in a status cancel must never touch.
 
@@ -79,22 +152,20 @@ def ensure_signup_cancellable(signup: Signup) -> None:
     function's own docstring calls it "the one exception" — so cancel must
     not become a second, narrower door out of a resolved status.
 
-    Deliberately actor-independent, unlike swap's participant-only attended
-    guard: swapping an attended signup preserves its status (only the slot
-    pointer moves — a lateral correction), but cancelling one erases the
-    resolved status entirely by turning it into 'cancelled'. Volunteer
+    Deliberately actor-independent: swapping an attended signup preserves
+    its status (only the slot pointer moves — a lateral correction), but
+    cancelling one erases the resolved status entirely by turning it into
+    'cancelled'. Volunteer
     hours (course credit) are summed over attended signups (admin.py), so
     cancelling one destroys the basis for someone's credit; cancelling a
-    no_show erases the audit trail of it. A volunteer's manage link
-    deliberately outlives the confirm deadline, so the participant path is
-    reachable long after the fact — but staff get no carve-out either: the
-    app's own staff-facing undo (undo_check_in) already refuses to reverse
-    attended/no_show ("undo covers the tap-slip, not resolution"), so
-    cancel must not open a backdoor around that.
+    no_show erases the audit trail of it. Staff get no carve-out either:
+    the app's own staff-facing undo (undo_check_in) already refuses to
+    reverse attended/no_show ("undo covers the tap-slip, not resolution"),
+    so cancel must not open a backdoor around that.
 
-    Called by every cancel entry point (participant token cancel, both
-    staff cancel routes) after the already-cancelled idempotency check and
-    before any mutation, so none of them can bypass it.
+    Called by both staff cancel routes (admin.py, signups.py) after the
+    already-cancelled idempotency check and before any mutation, so
+    neither can bypass it.
     """
     if signup.status in (SignupStatus.attended, SignupStatus.no_show):
         raise HTTPException(
@@ -197,6 +268,74 @@ def undo_check_in(
     return signup
 
 
+def _load_session_pair(
+    db: Session, shift_signup_id: UUID, slot_id: UUID
+) -> tuple[ShiftSignup, Slot]:
+    shift_signup = db.execute(
+        select(ShiftSignup)
+        .where(ShiftSignup.id == shift_signup_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if shift_signup is None:
+        raise LookupError(f"Shift signup {shift_signup_id} not found")
+    session = db.get(Slot, slot_id)
+    if session is None or session.shift_id != shift_signup.shift_id:
+        raise LookupError(f"Session {slot_id} is not part of this shift")
+    return shift_signup, session
+
+
+def check_in_session(
+    db: Session,
+    shift_signup_id: UUID,
+    slot_id: UUID,
+    actor_id: UUID | None,
+    via: str = "organizer",
+) -> ShiftSignup:
+    """Organizer one-tap check-in for one session of a shift commitment.
+
+    The shift-side twin of `check_in_signup`: same idempotency and same
+    pending-auto-confirm rule, but the outcome lands on `session_attendance`
+    because the commitment itself has no per-session status.
+    """
+    shift_signup, session = _load_session_pair(db, shift_signup_id, slot_id)
+
+    if shift_signup.status == SignupStatus.pending:
+        _transition_shift_signup(
+            db, shift_signup, SignupStatus.confirmed, actor_id, f"{via}_autoconfirm"
+        )
+    if shift_signup.status != SignupStatus.confirmed:
+        raise InvalidTransitionError(shift_signup.status, SignupStatus.checked_in)
+
+    existing = session_attendance_service.get_attendance(db, shift_signup.id, session.id)
+    if existing is not None and existing.status in (
+        SignupStatus.checked_in,
+        SignupStatus.attended,
+    ):
+        return shift_signup
+
+    session_attendance_service.record(
+        db, shift_signup, session, SignupStatus.checked_in, actor_id, via
+    )
+    return shift_signup
+
+
+def undo_session_check_in(
+    db: Session,
+    shift_signup_id: UUID,
+    slot_id: UUID,
+    actor_id: UUID | None,
+    via: str = "organizer_undo",
+) -> ShiftSignup:
+    """Reverse a mis-tapped session check-in. Idempotent; resolved sessions
+    raise, same rule as `undo_check_in`."""
+    shift_signup, session = _load_session_pair(db, shift_signup_id, slot_id)
+    try:
+        session_attendance_service.undo_check_in(db, shift_signup, session, actor_id, via)
+    except session_attendance_service.InvalidAttendanceTransitionError as exc:
+        raise InvalidTransitionError(exc.from_status, SignupStatus.confirmed) from exc
+    return shift_signup
+
+
 def self_check_in(
     db: Session,
     event_id: UUID,
@@ -270,91 +409,56 @@ def event_check_in_by_email(
     email: str,
     venue_code: str,
     now: datetime | None = None,
-) -> tuple[Volunteer, list[Signup]]:
-    """Event-QR self-check-in. Finds volunteer by email, checks in every
-    confirmed / already checked-in signup they have on this event whose slot
-    is inside the check-in window.
+) -> tuple[Volunteer, list[tuple[CheckInOption, bool]]]:
+    """Event-QR self-check-in. Finds volunteer by email, checks in every unit
+    they hold on this event whose session is inside the check-in window.
 
     Semantics:
       - Venue-code gated: the QR URL carries the code (issue #31 hardening).
-      - Time window is evaluated per-slot (CHECK_IN_WINDOW_BEFORE /
-        _AFTER around that slot's start_time).
-      - Idempotent: already-checked-in signups are returned in the result
+      - Time window is evaluated per session (CHECK_IN_WINDOW_BEFORE /
+        _AFTER around its start_time).
+      - Idempotent: already-checked-in units are returned in the result
         but not re-transitioned.
-      - Raises NoSignupForEmailError if the volunteer has no signups on this
+      - Raises NoSignupForEmailError if the volunteer holds nothing on this
         event.
-      - Raises CheckInWindowError if the volunteer has signups but none are
-        inside any slot's check-in window.
+      - Raises CheckInWindowError if they hold something but nothing is
+        inside a check-in window.
     """
     now = now or datetime.now(timezone.utc)
-    email_norm = email.strip().lower()
+    volunteer = _resolve_volunteer(db, event_id, email, venue_code)
+    options = _options_for_volunteer(db, event_id, volunteer, now, for_update=True)
 
-    event = db.get(Event, event_id)
-    if event is None:
-        raise LookupError(f"Event {event_id} not found")
-
-    _require_venue_code(event, venue_code)
-
-    volunteer = (
-        db.execute(select(Volunteer).where(Volunteer.email == email_norm))
-        .scalar_one_or_none()
-    )
-    if volunteer is None:
-        raise NoSignupForEmailError("No signup found for that email on this event")
-
-    signups = (
-        db.execute(
-            select(Signup)
-            .join(Slot, Slot.id == Signup.slot_id)
-            .where(Slot.event_id == event_id)
-            .where(Signup.volunteer_id == volunteer.id)
-            .with_for_update()
-        )
-        .scalars()
-        .all()
-    )
-    if not signups:
-        raise NoSignupForEmailError("No signup found for that email on this event")
-
-    eligible: list[Signup] = []
-    any_in_window = False
-    for signup in signups:
-        slot = db.get(Slot, signup.slot_id)
-        if slot is None:
-            continue
-        if now < slot.start_time - CHECK_IN_WINDOW_BEFORE or now > slot.start_time + CHECK_IN_WINDOW_AFTER:
-            continue
-        any_in_window = True
-        if signup.status == SignupStatus.checked_in or signup.status == SignupStatus.attended:
-            eligible.append(signup)
-            continue
-        # Pending means the volunteer never clicked the magic link, but
-        # they're physically here scanning the QR — that IS confirmation.
-        # Walk the state machine pending -> confirmed -> checked_in so both
-        # transitions get audited individually.
-        if signup.status == SignupStatus.pending:
-            _transition(db, signup, SignupStatus.confirmed, None, "self_qr_autoconfirm")
-        if signup.status == SignupStatus.confirmed:
-            _transition(db, signup, SignupStatus.checked_in, None, "self_qr")
-            eligible.append(signup)
-
-    if not any_in_window:
+    in_window = [o for o in options if o.window_state == "open"]
+    if not in_window:
         raise CheckInWindowError("No slots are open for check-in right now")
+
+    eligible: list[tuple[CheckInOption, bool]] = []
+    for option in in_window:
+        if option.already_checked_in:
+            eligible.append((option, False))
+            continue
+        if option.shift_signup is not None and option.shift_signup.status not in (
+            SignupStatus.pending,
+            SignupStatus.confirmed,
+        ):
+            # Waitlisted: no seat, so nothing to attend. Silently skipped
+            # rather than 409'd — the volunteer scanned one QR for the whole
+            # event and shouldn't have a valid check-in blocked by an unrelated
+            # waitlisted shift.
+            continue
+        if _check_in_option(db, option, "self_qr"):
+            eligible.append((option, True))
 
     return volunteer, eligible
 
 
-def _volunteer_signups_for_event(
-    db: Session,
-    event_id: UUID,
-    email: str,
-    venue_code: str,
-    *,
-    for_update: bool = False,
-) -> tuple[Volunteer, list[Signup]]:
-    """Resolve (volunteer, their signups on this event) or raise.
+def _resolve_volunteer(
+    db: Session, event_id: UUID, email: str, venue_code: str
+) -> Volunteer:
+    """Venue-gated email -> volunteer lookup for the public QR endpoints.
 
-    Venue-code gated before the volunteer lookup — see _require_venue_code.
+    The code is checked before the email is used at all, so a wrong code can
+    never be used to probe which emails are signed up.
     """
     event = db.get(Event, event_id)
     if event is None:
@@ -368,19 +472,167 @@ def _volunteer_signups_for_event(
     )
     if volunteer is None:
         raise NoSignupForEmailError("No signup found for that email on this event")
+    return volunteer
 
+
+def _volunteer_shift_signups_for_event(
+    db: Session,
+    event_id: UUID,
+    volunteer_id: UUID,
+    *,
+    for_update: bool = False,
+) -> list[ShiftSignup]:
+    """The volunteer's shift commitments on this event.
+
+    Cancelled commitments are excluded — a cancelled seat is not something to
+    turn up for, and unlike the orientation path there is no per-session status
+    that would make the row visibly dead in the roster.
+    """
     q = (
-        select(Signup)
-        .join(Slot, Slot.id == Signup.slot_id)
-        .where(Slot.event_id == event_id)
-        .where(Signup.volunteer_id == volunteer.id)
+        select(ShiftSignup)
+        .join(Shift, Shift.id == ShiftSignup.shift_id)
+        .where(
+            Shift.event_id == event_id,
+            ShiftSignup.volunteer_id == volunteer_id,
+            ShiftSignup.status != SignupStatus.cancelled,
+        )
     )
     if for_update:
-        q = q.with_for_update()
-    signups = db.execute(q).scalars().all()
-    if not signups:
+        # `of=` matters here: the join brings in shifts, and locking those would
+        # block every other volunteer's check-in on the same shift.
+        q = q.with_for_update(of=ShiftSignup)
+    return list(db.execute(q).scalars().all())
+
+
+def _options_for_volunteer(
+    db: Session,
+    event_id: UUID,
+    volunteer: Volunteer,
+    now: datetime,
+    *,
+    for_update: bool = False,
+) -> list[CheckInOption]:
+    """Every unit this volunteer could check in for on this event, in time
+    order — orientation signups and shift sessions merged into one list.
+
+    Raises NoSignupForEmailError when they hold nothing at all here, which is
+    what the QR page needs to distinguish "wrong email" from "too early".
+    """
+    options: list[CheckInOption] = []
+
+    orientation_q = (
+        select(Signup)
+        .join(Slot, Slot.id == Signup.slot_id)
+        .where(Slot.event_id == event_id, Signup.volunteer_id == volunteer.id)
+    )
+    if for_update:
+        orientation_q = orientation_q.with_for_update(of=Signup)
+    for signup in db.execute(orientation_q).scalars().all():
+        slot = db.get(Slot, signup.slot_id)
+        if slot is None:
+            continue
+        state, opens_at = window_state(slot, now)
+        options.append(
+            CheckInOption(
+                slot=slot, window_state=state, window_opens_at=opens_at, signup=signup
+            )
+        )
+
+    for shift_signup in _volunteer_shift_signups_for_event(
+        db, event_id, volunteer.id, for_update=for_update
+    ):
+        attendance = session_attendance_service.attendance_for_shift_signup(
+            db, shift_signup.id
+        )
+        for session in sorted(
+            shift_signup.shift.sessions, key=lambda s: (s.sort_order, s.start_time)
+        ):
+            state, opens_at = window_state(session, now)
+            options.append(
+                CheckInOption(
+                    slot=session,
+                    window_state=state,
+                    window_opens_at=opens_at,
+                    shift_signup=shift_signup,
+                    shift=shift_signup.shift,
+                    attendance=attendance.get(session.id),
+                )
+            )
+
+    if not options:
         raise NoSignupForEmailError("No signup found for that email on this event")
-    return volunteer, signups
+
+    options.sort(key=lambda o: o.slot.start_time)
+    return options
+
+
+def _check_in_option(db: Session, option: CheckInOption, via: str) -> bool:
+    """Move one unit to checked-in. Returns True when something changed.
+
+    The two branches are different mechanisms for the same product event, and
+    both keep the "confirmation is an RSVP, not a gate" rule: a volunteer
+    standing in the room who never clicked the confirm email still gets
+    checked in, with the pending -> confirmed step audited separately.
+    """
+    if option.already_checked_in:
+        return False
+
+    if option.is_session:
+        shift_signup = option.shift_signup
+        if shift_signup.status == SignupStatus.pending:
+            _transition_shift_signup(
+                db, shift_signup, SignupStatus.confirmed, None, f"{via}_autoconfirm"
+            )
+        if shift_signup.status != SignupStatus.confirmed:
+            # waitlisted: they never had a seat, so there is nothing to attend.
+            raise InvalidTransitionError(shift_signup.status, SignupStatus.checked_in)
+        row, changed = session_attendance_service.record(
+            db, shift_signup, option.slot, SignupStatus.checked_in, None, via
+        )
+        option.attendance = row
+        return changed
+
+    signup = option.signup
+    if signup.status == SignupStatus.pending:
+        _transition(db, signup, SignupStatus.confirmed, None, f"{via}_autoconfirm")
+    if signup.status == SignupStatus.confirmed:
+        _transition(db, signup, SignupStatus.checked_in, None, via)
+        return True
+    return False
+
+
+def _transition_shift_signup(
+    db: Session,
+    shift_signup: ShiftSignup,
+    new_status: SignupStatus,
+    actor_id: UUID | None,
+    via: str,
+) -> None:
+    """Lifecycle-only counterpart of `_transition`.
+
+    Reuses ALLOWED_TRANSITIONS, but a shift signup can never reach an
+    attendance status — the CHECK on the table forbids it — so an attendance
+    target here is a bug in the caller, not a rejected user action.
+    """
+    if new_status in session_attendance_service.ATTENDANCE_STATUSES:
+        raise ValueError(
+            f"{new_status.value} belongs on session_attendance, not on a shift signup"
+        )
+    if new_status not in ALLOWED_TRANSITIONS.get(shift_signup.status, set()):
+        raise InvalidTransitionError(shift_signup.status, new_status)
+
+    old = shift_signup.status
+    shift_signup.status = new_status
+    db.add(
+        AuditLog(
+            actor_id=actor_id,
+            action="transition",
+            entity_type="shift_signup",
+            entity_id=str(shift_signup.id),
+            extra={"from": old.value, "to": new_status.value, "via": via},
+        )
+    )
+    db.flush()
 
 
 def window_state(slot: Slot, now: datetime) -> tuple[str, datetime]:
@@ -400,22 +652,18 @@ def lookup_check_in_options(
     email: str,
     venue_code: str,
     now: datetime | None = None,
-) -> tuple[Volunteer, list[tuple[Signup, Slot, str, datetime]]]:
-    """Issue #31 UX rework, step 1: list the volunteer's shifts on this event
-    with each shift's window verdict. Read-only — nothing transitions here;
-    the volunteer picks which shift to check in for.
+) -> tuple[Volunteer, list[CheckInOption]]:
+    """Issue #31 UX rework, step 1: list what the volunteer could check in for
+    on this event, with each unit's window verdict. Read-only — nothing
+    transitions here; the volunteer picks.
+
+    2026-08-02 shifts: the list is now per *session*, not per booking. Someone
+    holding one Tue+Wed shift sees two rows, because they turn up twice and the
+    check-in window is a property of the session.
     """
     now = now or datetime.now(timezone.utc)
-    volunteer, signups = _volunteer_signups_for_event(db, event_id, email, venue_code)
-    rows = []
-    for signup in signups:
-        slot = db.get(Slot, signup.slot_id)
-        if slot is None:
-            continue
-        state, opens_at = window_state(slot, now)
-        rows.append((signup, slot, state, opens_at))
-    rows.sort(key=lambda r: r[1].start_time)
-    return volunteer, rows
+    volunteer = _resolve_volunteer(db, event_id, email, venue_code)
+    return volunteer, _options_for_volunteer(db, event_id, volunteer, now)
 
 
 def check_in_selected(
@@ -423,44 +671,37 @@ def check_in_selected(
     event_id: UUID,
     email: str,
     venue_code: str,
-    signup_ids: list[UUID],
+    unit_ids: list[UUID],
     now: datetime | None = None,
-) -> tuple[Volunteer, list[tuple[Signup, bool]]]:
-    """Issue #31 UX rework, step 2: check in exactly the signups the volunteer
-    tapped. Every selected signup must belong to the email on this event
-    (LookupError otherwise) and be inside its slot's window
-    (CheckInWindowError otherwise). Idempotent per signup.
+) -> tuple[Volunteer, list[tuple[CheckInOption, bool]]]:
+    """Issue #31 UX rework, step 2: check in exactly the units the volunteer
+    tapped. Every id must be one of theirs on this event (LookupError
+    otherwise) and inside its session's window (CheckInWindowError otherwise).
+    Idempotent per unit.
 
-    Returns (volunteer, [(signup, newly_checked_in)]) — the flag is computed
-    per row so the response can distinguish fresh check-ins from repeats.
+    `unit_ids` are whatever `CheckInOption.unit_id` handed out: an orientation
+    signup id, or a session's slot id.
+
+    Returns (volunteer, [(option, newly_checked_in)]) — the flag is per row so
+    the response can distinguish fresh check-ins from repeats.
     """
     now = now or datetime.now(timezone.utc)
-    volunteer, signups = _volunteer_signups_for_event(
-        db, event_id, email, venue_code, for_update=True
-    )
-    by_id = {s.id: s for s in signups}
-    selected = []
-    for sid in signup_ids:
-        signup = by_id.get(sid)
-        if signup is None:
-            raise LookupError(f"Signup {sid} not found for this volunteer/event")
-        selected.append(signup)
+    volunteer = _resolve_volunteer(db, event_id, email, venue_code)
+    options = _options_for_volunteer(db, event_id, volunteer, now, for_update=True)
 
-    results: list[tuple[Signup, bool]] = []
-    for signup in selected:
-        slot = db.get(Slot, signup.slot_id)
-        state, _ = window_state(slot, now)
-        if state != "open":
+    by_id = {o.unit_id: o for o in options}
+    selected = []
+    for uid in unit_ids:
+        option = by_id.get(uid)
+        if option is None:
+            raise LookupError(f"{uid} not found for this volunteer/event")
+        selected.append(option)
+
+    results: list[tuple[CheckInOption, bool]] = []
+    for option in selected:
+        if option.window_state != "open":
             raise CheckInWindowError("That shift is not open for check-in right now")
-        if signup.status in (SignupStatus.checked_in, SignupStatus.attended):
-            results.append((signup, False))
-            continue
-        # Same pending auto-confirm rationale as event_check_in_by_email.
-        if signup.status == SignupStatus.pending:
-            _transition(db, signup, SignupStatus.confirmed, None, "self_qr_autoconfirm")
-        if signup.status == SignupStatus.confirmed:
-            _transition(db, signup, SignupStatus.checked_in, None, "self_qr_selected")
-        results.append((signup, True))
+        results.append((option, _check_in_option(db, option, "self_qr_selected")))
     return volunteer, results
 
 
@@ -556,6 +797,80 @@ def _apply_resolutions(
     return updated
 
 
+def _shift_signups_for_event(
+    db: Session, event_id: UUID, *, for_update: bool = False
+) -> list[ShiftSignup]:
+    q = (
+        select(ShiftSignup)
+        .join(Shift, Shift.id == ShiftSignup.shift_id)
+        .where(Shift.event_id == event_id)
+    )
+    if for_update:
+        q = q.with_for_update(of=ShiftSignup)
+    return list(db.execute(q).scalars().all())
+
+
+def _resolvable_sessions(shift_signup: ShiftSignup, only_slot_id: UUID | None):
+    """Which sessions a resolve call should write attendance for.
+
+    Ending one session touches only that session. Ending the whole event
+    settles every session in the shift at once — that is what "End event"
+    means for an all-or-nothing bundle, and leaving some sessions unrecorded
+    would keep the event permanently incomplete.
+    """
+    sessions = sorted(
+        shift_signup.shift.sessions, key=lambda s: (s.sort_order, s.start_time)
+    )
+    if only_slot_id is None:
+        return sessions
+    return [s for s in sessions if s.id == only_slot_id]
+
+
+def _apply_session_resolutions(
+    db: Session,
+    shift_signup_map: dict[UUID, ShiftSignup],
+    actor_id: UUID | None,
+    attended_ids: list[UUID],
+    no_show_ids: list[UUID],
+    *,
+    only_slot_id: UUID | None,
+    scope_label: str,
+    via: str,
+) -> list[ShiftSignup]:
+    """Close-out for shift commitments: attendance lands on session_attendance.
+
+    A shift signup still sitting at `pending` is auto-confirmed first, same
+    RSVP-is-not-a-gate rule check-in uses — the organizer marking someone
+    attended is stronger evidence they were there than a missing email click.
+    Sessions already carrying a terminal record are left alone so an "End
+    event" after per-session close-outs is a no-op rather than a 409.
+    """
+    updated: list[ShiftSignup] = []
+    for ids, status in ((attended_ids, SignupStatus.attended), (no_show_ids, SignupStatus.no_show)):
+        for sid in ids:
+            shift_signup = shift_signup_map.get(sid)
+            if shift_signup is None:
+                raise LookupError(f"Shift signup {sid} not found for {scope_label}")
+            if shift_signup.status == SignupStatus.pending:
+                _transition_shift_signup(
+                    db, shift_signup, SignupStatus.confirmed, actor_id, f"{via}_autoconfirm"
+                )
+            for session in _resolvable_sessions(shift_signup, only_slot_id):
+                existing = session_attendance_service.get_attendance(
+                    db, shift_signup.id, session.id
+                )
+                if existing is not None and existing.status in (
+                    SignupStatus.attended,
+                    SignupStatus.no_show,
+                ):
+                    continue
+                session_attendance_service.record(
+                    db, shift_signup, session, status, actor_id, via
+                )
+            updated.append(shift_signup)
+    return updated
+
+
 # Statuses that still expect the volunteer on a roster vs. the terminal pair
 # a resolve lands them on. Mirrors _ATTENDEE_STATUSES in routers/roster.py.
 _EXPECTED_STATUSES = (
@@ -588,7 +903,33 @@ def refresh_event_completion(db: Session, event_id: UUID) -> None:
             is not None
         )
 
-    if _exists(_RESOLVED_STATUSES) and not _exists(_EXPECTED_STATUSES):
+    # 2026-08-02 shifts: "still expected" for a commitment is not a status —
+    # it's a session with no terminal attendance record yet. Counting sessions
+    # against records is how a Tue+Wed shift stays open after Tuesday is
+    # closed out but before Wednesday is.
+    shift_signups = _shift_signups_for_event(db, event_id)
+    sessions_expected = False
+    sessions_resolved = False
+    for shift_signup in shift_signups:
+        if shift_signup.status == SignupStatus.cancelled:
+            continue
+        records = session_attendance_service.attendance_for_shift_signup(
+            db, shift_signup.id
+        )
+        if any(r.status in _RESOLVED_STATUSES for r in records.values()):
+            sessions_resolved = True
+        if shift_signup.status == SignupStatus.waitlisted:
+            # Never had a seat, so it can't hold the event open either.
+            continue
+        for session in shift_signup.shift.sessions:
+            record = records.get(session.id)
+            if record is None or record.status not in _RESOLVED_STATUSES:
+                sessions_expected = True
+
+    resolved_anywhere = _exists(_RESOLVED_STATUSES) or sessions_resolved
+    expected_anywhere = _exists(_EXPECTED_STATUSES) or sessions_expected
+
+    if resolved_anywhere and not expected_anywhere:
         if event.completed_at is None:
             event.completed_at = datetime.now(timezone.utc)
     else:
@@ -664,6 +1005,38 @@ def reopen_event(db: Session, event_id: UUID, actor_id: UUID | None) -> list[Sig
             )
         )
 
+    # Shift side: the commitment never left `confirmed`, so there is no status
+    # to walk back — the resolution lives in session_attendance. An attended
+    # session with a real check-in timestamp keeps the check-in (it happened);
+    # everything else goes back to having no record, which is exactly the state
+    # an un-closed-out session is in.
+    for shift_signup in _shift_signups_for_event(db, event_id, for_update=True):
+        for record in list(shift_signup.session_attendance):
+            if record.status not in _RESOLVED_STATUSES:
+                continue
+            old = record.status
+            if old == SignupStatus.attended and record.checked_in_at is not None:
+                record.status = SignupStatus.checked_in
+                new_label = SignupStatus.checked_in.value
+            else:
+                db.delete(record)
+                new_label = None
+            db.add(
+                AuditLog(
+                    actor_id=actor_id,
+                    action="transition",
+                    entity_type="session_attendance",
+                    entity_id=str(shift_signup.id),
+                    extra={
+                        "from": old.value,
+                        "to": new_label,
+                        "via": "reopen_event",
+                        "slot_id": str(record.slot_id),
+                        "shift_id": str(shift_signup.shift_id),
+                    },
+                )
+            )
+
     db.flush()
     refresh_event_completion(db, event_id)
     return resolved
@@ -679,12 +1052,17 @@ def resolve_event(
     """Batch-resolve an event: mark attended/no_show atomically.
 
     Attended signups on ORIENTATION slots earn an orientation credit row —
-    the event-wide "End event" grants exactly like per-slot end.
+    the event-wide "End event" grants exactly like per-slot end. Shift sessions
+    never grant credit (only orientation does), so the shift side just writes
+    attendance.
+
+    The ids may name orientation signups or shift commitments; they are looked
+    up in both sets. An id that is neither raises LookupError, so a typo can
+    never be silently ignored.
 
     All-or-nothing: any InvalidTransitionError propagates and the caller's
     transaction rolls back.
     """
-    # Fetch all signups for the event with FOR UPDATE
     all_signups = (
         db.execute(
             select(Signup)
@@ -695,14 +1073,36 @@ def resolve_event(
         .scalars()
         .all()
     )
-
     signup_map = {s.id: s for s in all_signups}
+    shift_signup_map = {
+        s.id: s for s in _shift_signups_for_event(db, event_id, for_update=True)
+    }
+
+    def _split(ids: list[UUID]) -> tuple[list[UUID], list[UUID]]:
+        mine, theirs = [], []
+        for sid in ids:
+            (theirs if sid in shift_signup_map else mine).append(sid)
+        return mine, theirs
+
+    attended_signups, attended_shifts = _split(attended_ids)
+    no_show_signups, no_show_shifts = _split(no_show_ids)
+
     updated = _apply_resolutions(
         db,
         signup_map,
         actor_id,
-        attended_ids,
-        no_show_ids,
+        attended_signups,
+        no_show_signups,
+        scope_label=f"event {event_id}",
+        via="resolve_event",
+    )
+    _apply_session_resolutions(
+        db,
+        shift_signup_map,
+        actor_id,
+        attended_shifts,
+        no_show_shifts,
+        only_slot_id=None,
         scope_label=f"event {event_id}",
         via="resolve_event",
     )
@@ -723,12 +1123,40 @@ def resolve_slot(
     every signup marked attended earns an ``orientation_credits`` row for the
     event's module family (deduped against active credits).
 
-    Raises LookupError for an unknown slot or a signup outside the slot;
+    2026-08-02 shifts: for a *session* the ids are shift-commitment ids, and
+    only this session's attendance is written — the rest of the shift stays
+    open, which is the whole point of closing out one session at a time.
+
+    Raises LookupError for an unknown slot or an id outside the slot;
     InvalidTransitionError propagates so the caller's transaction rolls back.
     """
     slot = db.get(Slot, slot_id)
     if slot is None:
         raise LookupError(f"Slot {slot_id} not found")
+
+    if slot.shift_id is not None:
+        shift_signup_map = {
+            s.id: s
+            for s in db.execute(
+                select(ShiftSignup)
+                .where(ShiftSignup.shift_id == slot.shift_id)
+                .with_for_update()
+            )
+            .scalars()
+            .all()
+        }
+        _apply_session_resolutions(
+            db,
+            shift_signup_map,
+            actor_id,
+            attended_ids,
+            no_show_ids,
+            only_slot_id=slot.id,
+            scope_label=f"session {slot_id}",
+            via="resolve_slot",
+        )
+        refresh_event_completion(db, slot.event_id)
+        return []
 
     slot_signups = (
         db.execute(

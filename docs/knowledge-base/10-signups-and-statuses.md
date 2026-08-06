@@ -1,7 +1,8 @@
 # Signups and the status lifecycle
 
-A **signup** is one volunteer holding one slot. A volunteer who takes three sessions of a module
-has three signups. From confirmed onward a signup is never deleted — it carries a status instead,
+A **signup** is one volunteer holding one shift, or one volunteer holding one orientation slot. A
+shift is booked all or nothing, so a volunteer committed to a three-session shift has **one**
+signup, not three. From confirmed onward a signup is never deleted — it carries a status instead,
 because attendance history is what hours, credit, and reporting are built on. The one exception is
 an unconfirmed signup that expires; see below.
 
@@ -11,11 +12,13 @@ There are seven signup statuses: **pending**, **confirmed**, **waitlisted**, **c
 - **Pending** — the signup exists but hasn't been confirmed yet. It holds its seat while it waits.
 - **Confirmed** — the volunteer holds the spot. This is the normal state between signing up and
   showing up.
-- **Waitlisted** — the slot was full when they signed up. They're in line for a seat.
+- **Waitlisted** — the shift or orientation slot was full when they signed up. They're in line for
+  a seat.
 - **Checked in** — they've arrived, and the session hasn't been closed out yet.
 - **Attended** — they were present and the organizer has closed out the session.
 - **No-show** — they didn't turn up and the organizer has closed out the session.
-- **Cancelled** — the spot was given up, by the volunteer or by staff.
+- **Cancelled** — the spot was given up. A volunteer never cancels it themselves; they ask staff by
+  email, and staff cancel it in the app.
 
 **Attended, no-show, and cancelled are final.** Check-in, self check-in, and closing out a session
 will never move a signup back out of one of them. Attended and no-show have exactly one deliberate
@@ -29,38 +32,45 @@ Everything before those three can still change:
 - Confirmed can become checked in, attended, no-show, or cancelled.
 - Checked in can go back to confirmed (the organizer's undo for a mis-tap), or forward to attended
   or no-show, or be cancelled.
-- Waitlisted can become pending (when promoted — automatically as a seat frees, or by staff) or
-  cancelled. A promoted volunteer confirms from there; see the waitlist document. Cancelled here can
-  come from the volunteer, from staff, or from the hourly check, which cancels anyone still
-  waitlisted once the session's end time has passed.
+- Waitlisted can become pending (when an admin or organizer promotes them — the waitlist never moves
+  on its own) or cancelled. A promoted volunteer confirms from there; see the waitlist document.
+  Cancelled here comes from staff (a volunteer asks by email) or from the hourly check, which
+  cancels anyone still waitlisted once the session's end time has passed.
+
+**On a shift, the last three statuses are recorded per session rather than on the signup itself.**
+The commitment stays pending, confirmed, waitlisted, or cancelled for its whole life; checked in,
+attended, and no-show are recorded against each session separately, which is what lets a volunteer
+be attended on Tuesday and no-show on Thursday under one booking. An orientation signup, having
+only the one session, carries its outcome directly.
 
 **Confirmed can go straight to attended** without a check-in. That's the walk-in case: the
 volunteer turned up but nobody tapped them in, and the organizer marks them attended while closing
 out the session. Without this the end-of-session screen would offer "attended" on every confirmed
 row and then refuse to save it.
 
-**Cancelling a signup that held a seat frees it and promotes the waitlist.** This is true whether
-the signup was confirmed or still pending, since both hold capacity. The longest-waiting volunteer
-on that slot is promoted to pending and emailed a link to claim the seat within three days. See the
-waitlist document.
+**A volunteer cannot cancel a signup themselves.** They email the SciTrek organizers (the address
+configured in Site settings), and staff cancel it from the roster. **Cancelling a signup that held a
+seat frees it, but nobody is promoted off the waitlist automatically** — this is true whether the
+signup was confirmed or still pending, since both hold capacity. A staff member has to deliberately
+promote someone off the waitlist if the seat should be filled; see the waitlist document.
 
-When a volunteer cancels through their own link, the app emails them a cancellation notice. That's
-deliberate: their link keeps working for a long time, so if someone else ever got hold of it, the
-volunteer finds out immediately rather than discovering it at the door.
+Every cancellation emails the volunteer a cancellation notice, whoever asked for it. That's
+deliberate: it's the volunteer's confirmation that the change they requested actually happened.
 
-**Cancelling a session is one-way for that volunteer.** The cancelled signup stays on the books, and
-a volunteer can only ever hold one signup per session — so someone who cancels and then changes their
-mind cannot re-book that same session. They're turned away with "You've already signed up for this
+**Cancelling is one-way for that volunteer.** The cancelled signup stays on the books, and a
+volunteer can only ever hold one signup per shift — so someone who cancels and then changes their
+mind cannot re-book that same shift. They're turned away with "You've already signed up for this
 session with that email", which is confusing in this situation but is what the app says. They can
-still take a *different* session on the same event, and there's no staff action that reinstates the
-cancelled one. If a volunteer wants to move rather than drop out, the **swap** on their own manage
-link is the better tool — it keeps the one signup and changes which session it points at.
+still take a *different* shift on the same event, and there's no staff action that reinstates the
+cancelled one. If a volunteer wants to move rather than drop out, they should say so in the same
+email — staff can **move** the signup to a different shift on the event instead of cancelling and
+re-signing them up.
 
 ## Confirming, and what happens when nobody does
 
 **A signup submission gets one confirmation link, good for two weeks.** Clicking it confirms every
-pending signup that volunteer has on that event, so a volunteer who took four sessions in one go
-confirms all four with one click. It will **not** confirm a seat that came from a **waitlist
+pending signup that volunteer has on that event, so a volunteer who took an orientation slot and a
+shift in one go confirms both with one click. It will **not** confirm a seat that came from a **waitlist
 promotion** — that seat has its own link in its own promotion email. If a volunteer's only pending
 seat is a promoted one, their original signup link reports that it confirmed nothing and tells them
 to use the promotion email instead.
@@ -71,11 +81,10 @@ matter.
 
 **An unconfirmed signup eventually expires.** An automatic check runs every hour. When a pending
 signup's confirmation link has run out and it has no other live link, the signup is **deleted** and
-its seat is freed — the one case where a signup disappears instead of being cancelled. On an
-upcoming session the freed seat is then offered to the next person on that slot's waitlist; on a
-session that has already happened it just frees up. Nothing tells the volunteer their signup lapsed —
-but because the row is deleted rather than cancelled, they *can* sign up for that same session again,
-unlike someone who cancelled.
+its seat is freed — the one case where a signup disappears instead of being cancelled. Freeing the
+seat does not promote anyone off the waitlist; it simply stays open until a staff member deliberately
+promotes someone. Nothing tells the volunteer their signup lapsed — but because the row is deleted
+rather than cancelled, they *can* sign up for that same session again, unlike someone who cancelled.
 
 **A waitlisted signup on a session that has come and gone is closed out automatically.** The same
 hourly check marks any still-waitlisted signup as **cancelled** once its session's end time has
@@ -83,16 +92,19 @@ passed. No email goes out — they never held a seat, and the session is over. W
 that never drained would leave people sitting in line for a session that already happened. Note the
 difference from an unconfirmed pending signup, which is **deleted** rather than cancelled.
 
-**A multi-session submission only carries one link, and only that one signup is swept.** The other
-slots in the same submission have no link of their own, so if the volunteer never confirms, those
-signups stay pending and keep holding their seats until somebody cancels them by hand. It's worth
-checking for stale pending rows on a full session before concluding the seat count is wrong.
+**A submission covering several units only carries one link, and only that one signup is swept.**
+Where a volunteer took an orientation slot and a shift in one go, the other signup has no link of
+its own, so if the volunteer never confirms it stays pending and keeps holding its seat until
+somebody cancels it by hand. It's worth checking for stale pending rows on a full shift before
+concluding the seat count is wrong.
 
-**Confirmation links stop working for confirming, but keep working for everything else.** Once the
-two weeks are up the volunteer can no longer use the link to confirm, but they can still open it to
-view their signups, swap sessions, and cancel. That's on purpose: someone who confirmed on day one
-shouldn't lose access to their own signups two weeks later. The links are cleaned up quietly much
-later, once the volunteer has no upcoming sessions left.
+**Confirmation links stop working for confirming, but keep working for everything else they do.**
+Once the two weeks are up the volunteer can no longer use the link to confirm, but they can still
+open it to view their signups and manage their reminder preferences. That's on purpose: someone who
+confirmed on day one shouldn't lose access to their own signups two weeks later. Cancelling or moving
+to another session was never something the link itself could do — that always goes through the
+SciTrek organizers by email. The links are cleaned up quietly much later, once the volunteer has no
+upcoming sessions left.
 
 **A pending volunteer keeps an event from being marked complete.** Closing out a session only
 resolves confirmed and checked-in volunteers — a pending one isn't offered on the end-of-session

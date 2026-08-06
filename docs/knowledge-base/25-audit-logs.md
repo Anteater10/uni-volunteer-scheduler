@@ -41,9 +41,10 @@ Exports page all write an entry. That is deliberate for an attendance system hol
 but it means the log is dominated by page views, and a quiet day still produces plenty of rows.
 
 **What gets recorded** includes: signup status changes (check-in, undo, close-out, reopen),
-cancellations, moves between slots, manual waitlist promotions and waitlist reordering, orientation
-credit grants and revocations, broadcasts sent (with the slot when one was targeted), event creation,
-edits, duplication and deletion, slot changes, form-field changes on an event or a module, quarter
+cancellations, moves, manual waitlist promotions and waitlist reordering, orientation
+credit grants and revocations, broadcasts sent (with the shift or slot when one was targeted), event
+creation, edits, duplication and deletion, shift and session changes, slot changes, form-field
+changes on an event or a module, quarter
 creation, edits, archiving, restoring and deletion, site-settings changes, staff invitations, role
 changes, deactivations and reactivations, password changes and first-time password setup, sign-ins,
 and CCPA exports and deletions.

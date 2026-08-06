@@ -1,7 +1,16 @@
 """Canonical signup service operations.
 
 Single source of truth for:
-- promote_waitlist_fifo: promote the oldest waitlisted signup when capacity frees
+- mark_promoted_pending: flip a waitlisted signup to pending and issue its
+  confirm token. This is the ONLY choke point that moves a signup off the
+  waitlist. 2026-08-02 read-only signups: the waitlist is a pure holding
+  list — nothing promotes automatically. A freed seat stays open until an
+  admin/organizer explicitly promotes someone via one of
+  mark_promoted_pending's callers: waitlist_service.manual_promote (the
+  admin/organizer manual-promote endpoints), the admin move endpoint
+  (landing a moved waitlisted signup in an open target seat), and the staff
+  swap of a waitlisted signup (swap_service.swap_signup's self-promotion
+  branch).
 """
 from dataclasses import dataclass
 
@@ -29,9 +38,10 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
 
     Promotion is a system/staff action, not volunteer intent, so the
     volunteer confirms via the emailed magic link (3-day TTL) — the same
-    link is their manage/cancel page. Shared by promote_waitlist_fifo,
-    waitlist_service.manual_promote and the admin move so no promotion path
-    can forget the token. Does NOT touch slot.current_count.
+    link is their read-only manage page. Shared by
+    waitlist_service.manual_promote, the admin move, and the staff swap of a
+    waitlisted signup so no promotion path can forget the token. Does NOT
+    touch slot.current_count.
 
     The token carries PROMOTION_CONFIRM, not SIGNUP_CONFIRM: this seat is
     confirmable only by this link, and consuming it confirms only this signup
@@ -39,9 +49,7 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
 
     Raises SlotEndedError when the signup's slot has already ended. This is
     the choke point every promotion path passes through, so the guard here is
-    unbypassable: promote_waitlist_fifo pre-checks and skips silently instead
-    (auto-promotion is not an error), and the staff paths let it propagate to
-    their 422.
+    unbypassable: every caller lets it propagate to their own 422.
 
     Raises ValueError if ``signup`` is not currently waitlisted. This is a
     self-checking invariant, not just documentation: magic_link_service's
@@ -94,55 +102,70 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
     )
 
 
-# NOTE: current_count is defensively updated by the caller; do not touch here.
+@dataclass(frozen=True)
+class ShiftPromotionResult:
+    """Same contract as PromotionResult, for a shift commitment.
 
-
-def promote_waitlist_fifo(db: Session, slot_id) -> PromotionResult | None:
-    """Promote the first-in waitlisted signup for this slot, if any.
-
-    Canonical ordering: (timestamp ASC, id ASC). Uses SELECT FOR UPDATE
-    SKIP LOCKED on the waitlist row to serialize concurrent cancels.
-
-    2026-07-28 spec: promoted signups go to 'pending' with a fresh 3-day
-    PROMOTION_CONFIRM token — promotion is a system/staff action, not
-    volunteer intent, and the emailed link doubles as the volunteer's
-    manage/cancel page (previously promotees had no link at all).
-
-    Returns None when the slot has already ended: auto-promotion is silent,
-    so the seat simply stays free. Promoting there would mail a "confirm your
-    spot" link for an event that already happened, the token would lapse
-    unconfirmed, and the next hourly reap would repeat the cycle for the next
-    waitlister.
-
-    The caller is responsible for:
-      - Already holding a FOR UPDATE lock on the parent Slot row
-      - Incrementing slot.current_count after a successful promotion
-        (pending holds capacity)
-      - Enqueuing send_waitlist_promotion_email(**result.email_kwargs)
-        AFTER db.commit()
+    Kept as a separate type rather than widening PromotionResult: every caller
+    of the latter reads `.signup` and passes `signup_id=` to the email task, so
+    a union would have silently produced tokens and emails pointing at the
+    wrong kind of booking.
     """
-    # Function-level import: services.waitlist_service imports this module, so
-    # a module-level import would be circular. The guard lives there because
-    # manual_promote shares it.
-    from .services.waitlist_service import slot_has_ended
 
-    slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
-    if slot is None or slot_has_ended(slot):
-        return None
+    shift_signup: models.ShiftSignup
+    raw_token: str
+    email_kwargs: dict
 
-    next_up = (
-        db.query(models.Signup)
-        .filter(
-            models.Signup.slot_id == slot_id,
-            models.Signup.status == models.SignupStatus.waitlisted,
+
+def mark_shift_promoted_pending(
+    db: Session, shift_signup: models.ShiftSignup
+) -> ShiftPromotionResult:
+    """Shift-side twin of `mark_promoted_pending`, and the only choke point
+    that moves a commitment off a shift waitlist.
+
+    "Has it ended" is judged on the shift's *last* session: a Tue+Wed shift is
+    still worth offering on Tuesday evening, and refusing on the first
+    session's end time would make most mid-week promotions impossible. A shift
+    with no sessions can't be represented, so the empty case is only defensive.
+    Does NOT touch shift.current_count — the caller owns capacity, same split
+    as the signup path.
+    """
+    from .services.waitlist_service import SlotEndedError, slot_has_ended
+
+    if shift_signup.status != models.SignupStatus.waitlisted:
+        raise ValueError(
+            "mark_shift_promoted_pending requires a waitlisted shift signup; "
+            f"got status={shift_signup.status!r}"
         )
-        .order_by(models.Signup.timestamp.asc(), models.Signup.id.asc())
-        .with_for_update(skip_locked=True)
-        .first()
+
+    shift = (
+        db.query(models.Shift).filter(models.Shift.id == shift_signup.shift_id).first()
     )
-    if not next_up:
-        return None
-    return mark_promoted_pending(db, next_up)
+    sessions = list(shift.sessions) if shift is not None else []
+    if sessions and all(slot_has_ended(s) for s in sessions):
+        raise SlotEndedError()
+
+    shift_signup.status = models.SignupStatus.pending
+    volunteer = shift_signup.volunteer
+    raw_token = issue_token(
+        db,
+        shift_signup=shift_signup,
+        email=volunteer.email,
+        purpose=models.MagicLinkPurpose.PROMOTION_CONFIRM,
+        volunteer_id=volunteer.id,
+        ttl_minutes=PROMOTION_CONFIRM_TTL_MINUTES,
+    )
+    db.flush()
+    return ShiftPromotionResult(
+        shift_signup=shift_signup,
+        raw_token=raw_token,
+        email_kwargs={
+            "volunteer_id": str(volunteer.id),
+            "shift_signup_id": str(shift_signup.id),
+            "token": raw_token,
+            "event_id": str(shift.event_id),
+        },
+    )
 
 
 # Convenience alias for imports

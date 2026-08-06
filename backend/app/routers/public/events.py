@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ... import models, schemas
 from ...database import get_db
 from ...deps import rate_limit
-from ...services import quarter_service
+from ...services import quarter_service, shift_service
 from ...services.settings_service import get_app_settings
 
 router = APIRouter(prefix="/public", tags=["public"])
@@ -81,8 +81,21 @@ def _get_visible_event_or_404(db: Session, event_id: UUID) -> models.Event:
 
 
 def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEventRead:
-    """Build a PublicEventRead dict for the given event, with slots hydrated."""
-    slots = db.query(models.Slot).filter(models.Slot.event_id == event.id).all()
+    """Build a PublicEventRead for the given event, with slots and shifts hydrated.
+
+    2026-08-02 shifts: `slots` carries orientation slots only — period slots
+    appear as sessions inside `shifts`, which is what a volunteer picks from.
+    Listing a period slot at the top level too would invite the old flow of
+    booking one session by itself, which the signup service now refuses.
+    """
+    slots = (
+        db.query(models.Slot)
+        .filter(
+            models.Slot.event_id == event.id,
+            models.Slot.slot_type == models.SlotType.ORIENTATION,
+        )
+        .all()
+    )
 
     # Batch-load active signups + volunteer names for all slots in one query
     slot_ids = [s.id for s in slots]
@@ -146,6 +159,10 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
         signup_open_at=event.signup_open_at,
         signup_close_at=event.signup_close_at,
         slots=slot_reads,
+        shifts=[
+            shift_service.to_public_shift(sh)
+            for sh in sorted(event.shifts, key=lambda s: (s.sort_order, s.name))
+        ],
     )
 
 

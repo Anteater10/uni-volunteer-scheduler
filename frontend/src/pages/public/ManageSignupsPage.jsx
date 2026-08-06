@@ -1,35 +1,36 @@
 // src/pages/public/ManageSignupsPage.jsx
 //
-// Token-gated manage page for volunteers to view and cancel their signups.
-// Can be rendered standalone at /signup/manage?token= or embedded by
-// ConfirmSignupPage after a successful confirm (via tokenOverride prop).
+// Token-gated read-only view of a volunteer's signups plus their reminder
+// preferences. Can be rendered standalone at /signup/manage?token= or
+// embedded by ConfirmSignupPage after a successful confirm (via
+// tokenOverride prop).
 //
-// Phase 15-05 polish:
+// 2026-08-02 read-only signups: cancel and move-to-another-slot are gone.
+// Schedule changes are now coordinated directly with the SciTrek organizers
+// — the page surfaces an "email the organizers" notice (using the
+// admin-configured contact_email off the manage payload, with a fallback to
+// "reply to your confirmation email" when no address is configured) instead
+// of self-service cancel/swap controls.
+//
+// Carried over from Phase 15-05 polish:
 // - Local ErrorCard deleted; both error branches now use the shared
 //   ErrorState primitive with UI-SPEC network-error copy.
 // - Empty state uses UI-SPEC "You haven't signed up for anything yet"
 //   with a "View events" PRIMARY action navigating to /events.
-// - Cancel-single + Cancel-all Modal copy aligned to UI-SPEC §Destructive
-//   confirmations table EXACTLY (titles, body, button labels).
-// - Toast spelling normalized to American "canceled" (one L).
 // - Status badges carry a lucide icon (CheckCircle / Clock) alongside the
 //   text label so color is not the sole signal.
-// - Page heading uses PageHeader primitive for UI-SPEC Display typography.
 
 import React, { useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle, Clock } from "lucide-react";
 import api from "../../lib/api";
-import { toast } from "../../state/toast";
 import {
   Button,
   Card,
   Skeleton,
   EmptyState,
   ErrorState,
-  Modal,
-  PageHeader,
 } from "../../components/ui";
 import ReminderPreferencesCard from "../../components/ReminderPreferencesCard";
 
@@ -56,21 +57,50 @@ function formatDate(dateString) {
   });
 }
 
+// Status pill shared by slot signups and shift commitments — icon + label so
+// colour is never the sole signal. Waitlisted rows carry their FIFO position;
+// for a shift that position is the one queue for the whole bundle.
+function StatusBadge({ status, waitlistPosition }) {
+  if (status === "waitlisted") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700"
+        data-testid="waitlist-badge"
+      >
+        <Clock size={12} aria-hidden="true" />
+        Waitlist #{waitlistPosition ?? "—"}
+      </span>
+    );
+  }
+  const confirmed = status === "confirmed";
+  return (
+    <span
+      className={
+        confirmed
+          ? "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700"
+          : "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700"
+      }
+    >
+      {confirmed ? (
+        <CheckCircle size={12} aria-hidden="true" />
+      ) : (
+        <Clock size={12} aria-hidden="true" />
+      )}
+      {confirmed ? "Confirmed" : "Pending"}
+    </span>
+  );
+}
+
 export default function ManageSignupsPage({ tokenOverride }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = tokenOverride || searchParams.get("token");
 
   const [signups, setSignups] = useState([]);
-  const [cancelTarget, setCancelTarget] = useState(null); // signup_id
-  const [canceling, setCanceling] = useState(false);
-  const [cancelAllOpen, setCancelAllOpen] = useState(false);
-  const [cancelingAll, setCancelingAll] = useState(false);
-  // Phase 29 (SWAP-02) — swap target state.
-  const [swapSource, setSwapSource] = useState(null); // {signup_id}
-  const [swapping, setSwapping] = useState(false);
-  const [eventSlots, setEventSlots] = useState([]);
-  const [loadingSlots, setLoadingSlots] = useState(false);
+  // 2026-08-05 shifts: classroom work is booked as a shift, so a volunteer can
+  // hold a commitment with no Signup row behind it at all. Reading only
+  // `signups` showed those volunteers the empty state.
+  const [shiftSignups, setShiftSignups] = useState([]);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["manage-signups", token],
@@ -83,6 +113,9 @@ export default function ManageSignupsPage({ tokenOverride }) {
   React.useEffect(() => {
     if (data?.signups) {
       setSignups(data.signups);
+    }
+    if (data?.shift_signups) {
+      setShiftSignups(data.shift_signups);
     }
   }, [data]);
 
@@ -134,91 +167,9 @@ export default function ManageSignupsPage({ tokenOverride }) {
   }
 
   // ------------------------------------------------------------------
-  // Cancel single
-  // ------------------------------------------------------------------
-  async function handleCancelConfirm() {
-    if (!cancelTarget) return;
-    setCanceling(true);
-    try {
-      await api.public.cancelSignup(cancelTarget, token);
-      setSignups((prev) => prev.filter((s) => s.signup_id !== cancelTarget));
-      toast.success("Signup canceled.");
-    } catch (err) {
-      if (err?.status === 403) {
-        toast.error("You don't have permission to cancel this signup.");
-      } else {
-        toast.error(err?.message || "Failed to cancel signup.");
-      }
-    } finally {
-      setCanceling(false);
-      setCancelTarget(null);
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // Swap to different slot (Phase 29 SWAP-02)
-  // ------------------------------------------------------------------
-  async function openSwap(signup) {
-    setSwapSource(signup);
-    setLoadingSlots(true);
-    try {
-      const ev = await api.public.getEvent(data.event_id);
-      setEventSlots(ev.slots || []);
-    } catch (err) {
-      toast.error(err?.message || "Failed to load slots.");
-      setSwapSource(null);
-    } finally {
-      setLoadingSlots(false);
-    }
-  }
-
-  async function handleSwapConfirm(targetSlotId) {
-    if (!swapSource || !targetSlotId) return;
-    setSwapping(true);
-    try {
-      await api.public.swapSignup(swapSource.signup_id, targetSlotId, token);
-      toast.success("Moved to new slot.");
-      setSwapSource(null);
-      refetch();
-    } catch (err) {
-      if (err?.status === 409) {
-        toast.error("That slot is full.");
-      } else if (err?.status === 400) {
-        toast.error(err?.message || "Slot not available for this event.");
-      } else {
-        toast.error(err?.message || "Failed to move signup.");
-      }
-    } finally {
-      setSwapping(false);
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // Cancel all
-  // ------------------------------------------------------------------
-  async function handleCancelAll() {
-    setCancelingAll(true);
-    const active = signups.filter((s) => s.status !== "cancelled");
-    for (const s of active) {
-      try {
-        await api.public.cancelSignup(s.signup_id, token);
-        setSignups((prev) => prev.filter((x) => x.signup_id !== s.signup_id));
-      } catch (err) {
-        toast.error(`Failed to cancel signup: ${err?.message || "Unknown error"}`);
-        setCancelingAll(false);
-        setCancelAllOpen(false);
-        return; // stop on first failure
-      }
-    }
-    setCancelingAll(false);
-    setCancelAllOpen(false);
-    toast.success("All signups canceled.");
-  }
-
-  // ------------------------------------------------------------------
   // Empty state
   // ------------------------------------------------------------------
-  if (signups.length === 0) {
+  if (signups.length === 0 && shiftSignups.length === 0) {
     return (
       <div className="max-w-xl mx-auto mt-8 px-4">
         <EmptyState
@@ -234,8 +185,6 @@ export default function ManageSignupsPage({ tokenOverride }) {
     );
   }
 
-  const activeCount = signups.filter((s) => s.status !== "cancelled").length;
-
   return (
     <div className="max-w-3xl mx-auto mt-6 sm:mt-8 px-1 sm:px-4 space-y-5">
       <section className="relative overflow-hidden rounded-2xl md:rounded-3xl bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-800 text-white p-6 sm:p-8">
@@ -245,7 +194,7 @@ export default function ManageSignupsPage({ tokenOverride }) {
         />
         <div className="relative z-10">
           <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-blue-200">
-            Manage signups
+            Your signups
           </p>
           <h1 className="mt-2 text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight leading-tight">
             {data?.volunteer_first_name
@@ -253,7 +202,7 @@ export default function ManageSignupsPage({ tokenOverride }) {
               : "Your signups"}
           </h1>
           <p className="mt-2 text-sm text-blue-100">
-            View, move, or cancel your volunteer shifts. Times shown in Pacific Time.
+            View your volunteer shifts. Times shown in Pacific Time.
           </p>
         </div>
       </section>
@@ -289,183 +238,91 @@ export default function ManageSignupsPage({ tokenOverride }) {
               {/* Status badge — icon + label so color isn't the sole signal.
                   Phase 25 (WAIT-01): waitlisted rows carry a distinct orange
                   badge with their current FIFO position. */}
-              {signup.status === "waitlisted" ? (
-                <span
-                  className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700"
-                  data-testid="waitlist-badge"
-                >
-                  <Clock size={12} aria-hidden="true" />
-                  Waitlist #{signup.waitlist_position ?? "—"}
-                </span>
-              ) : (
-                <span
-                  className={
-                    signup.status === "confirmed"
-                      ? "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700"
-                      : "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700"
-                  }
-                >
-                  {signup.status === "confirmed" ? (
-                    <CheckCircle size={12} aria-hidden="true" />
-                  ) : (
-                    <Clock size={12} aria-hidden="true" />
-                  )}
-                  {signup.status === "confirmed" ? "Confirmed" : "Pending"}
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2 items-end">
-              {/* Phase 29 (SWAP-02) — move to a different slot in the same event */}
-              {signup.status !== "cancelled" && signup.status !== "waitlisted" && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => openSwap(signup)}
-                  disabled={canceling || cancelingAll || swapping}
-                >
-                  Move
-                </Button>
-              )}
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => setCancelTarget(signup.signup_id)}
-                disabled={canceling || cancelingAll}
-              >
-                Cancel
-              </Button>
+              <StatusBadge
+                status={signup.status}
+                waitlistPosition={signup.waitlist_position}
+              />
             </div>
           </div>
         </Card>
       ))}
 
-      {activeCount >= 2 && (
-        <div className="pt-2">
-          <Button
-            variant="danger"
-            onClick={() => setCancelAllOpen(true)}
-            disabled={cancelingAll}
+      {/* 2026-08-05 shifts: one commitment, one card, every session listed
+          under it — the volunteer agreed to all of them in one press, so
+          splitting them into a card each would misrepresent the deal. */}
+      {shiftSignups.map((commitment) => {
+        const sessions = commitment.shift?.sessions || [];
+        return (
+          <Card
+            key={commitment.shift_signup_id}
+            className="p-4"
+            data-testid={`shift-commitment-${commitment.shift_signup_id}`}
           >
-            {cancelingAll ? "Canceling all…" : "Cancel all signups"}
-          </Button>
-        </div>
-      )}
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-block text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                    Shift
+                  </span>
+                  <StatusBadge
+                    status={commitment.status}
+                    waitlistPosition={commitment.waitlist_position}
+                  />
+                </div>
+
+                <p className="text-sm font-medium text-gray-900">
+                  {commitment.shift?.name}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {sessions.length === 1
+                    ? "1 session"
+                    : `${sessions.length} sessions — you're expected at all of them`}
+                </p>
+
+                <ul className="space-y-1 pt-1">
+                  {sessions.map((session) => (
+                    <li key={session.id} className="text-sm text-gray-600">
+                      <span className="font-medium text-gray-900">
+                        {formatDate(session.date)}
+                      </span>
+                      {session.name ? ` · ${session.name}` : ""} ·{" "}
+                      {formatTime(session.start_time)} –{" "}
+                      {formatTime(session.end_time)}
+                      {session.location ? ` · ${session.location}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+
+      <Card className="p-4" data-testid="contact-notice">
+        <p className="text-sm font-medium text-gray-900">
+          Need to change or cancel a signup?
+        </p>
+        <p className="mt-1 text-sm text-gray-600">
+          Schedule changes are coordinated with the SciTrek organizers —{" "}
+          {data?.contact_email ? (
+            <>
+              email{" "}
+              <a
+                className="font-medium text-blue-700 underline"
+                href={`mailto:${data.contact_email}`}
+              >
+                {data.contact_email}
+              </a>{" "}
+              and they&apos;ll take care of it.
+            </>
+          ) : (
+            <>reply to your confirmation email and they&apos;ll take care of it.</>
+          )}
+        </p>
+      </Card>
 
       {/* Phase 24 — reminder opt-out toggle (REM-03) */}
       <ReminderPreferencesCard manageToken={token} />
-
-      {/* Cancel single modal — UI-SPEC §Destructive confirmations row 1 */}
-      <Modal
-        open={!!cancelTarget}
-        onClose={() => !canceling && setCancelTarget(null)}
-        title="Cancel this signup?"
-      >
-        <p className="text-sm text-gray-600 mb-4">
-          You'll lose your spot. If the event fills up, you may not get it back.
-        </p>
-        <div className="flex gap-3 justify-end">
-          <Button
-            variant="secondary"
-            onClick={() => setCancelTarget(null)}
-            disabled={canceling}
-          >
-            Keep signup
-          </Button>
-          <Button
-            variant="danger"
-            onClick={handleCancelConfirm}
-            disabled={canceling}
-          >
-            {canceling ? "Canceling…" : "Yes, cancel"}
-          </Button>
-        </div>
-      </Modal>
-
-      {/* Phase 29 (SWAP-02) — Move-to-different-slot drawer modal */}
-      <Modal
-        open={!!swapSource}
-        onClose={() => !swapping && setSwapSource(null)}
-        title="Move to different slot"
-      >
-        {loadingSlots ? (
-          <Skeleton className="h-24 rounded" />
-        ) : (
-          <>
-            <p className="text-sm text-gray-600 mb-3">
-              Pick another slot in the same event. Full slots are disabled.
-            </p>
-            <div className="space-y-2 max-h-80 overflow-y-auto">
-              {eventSlots
-                .filter((s) => s.id !== swapSource?.slot?.id)
-                .map((s) => {
-                  const remaining = (s.capacity || 0) - (s.filled || 0);
-                  const disabled = remaining <= 0 || swapping;
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => handleSwapConfirm(s.id)}
-                      className={
-                        "w-full text-left border rounded-lg p-3 transition " +
-                        (disabled
-                          ? "opacity-50 cursor-not-allowed bg-gray-50"
-                          : "hover:border-blue-500 hover:bg-blue-50")
-                      }
-                    >
-                      <div className="text-sm font-medium text-gray-900">
-                        {formatDate(s.date)} · {formatTime(s.start_time)}–
-                        {formatTime(s.end_time)}
-                      </div>
-                      <div className="text-xs text-gray-600">
-                        {s.location || "TBD"} ·{" "}
-                        {disabled ? "Full" : `${remaining} open`}
-                      </div>
-                    </button>
-                  );
-                })}
-            </div>
-            <div className="flex justify-end pt-4">
-              <Button
-                variant="secondary"
-                onClick={() => setSwapSource(null)}
-                disabled={swapping}
-              >
-                Cancel
-              </Button>
-            </div>
-          </>
-        )}
-      </Modal>
-
-      {/* Cancel all modal — UI-SPEC §Destructive confirmations row 2 */}
-      <Modal
-        open={cancelAllOpen}
-        onClose={() => !cancelingAll && setCancelAllOpen(false)}
-        title="Cancel all signups?"
-      >
-        <p className="text-sm text-gray-600 mb-4">
-          You'll lose every spot you've reserved for this event. This can't be
-          undone.
-        </p>
-        <div className="flex gap-3 justify-end">
-          <Button
-            variant="secondary"
-            onClick={() => setCancelAllOpen(false)}
-            disabled={cancelingAll}
-          >
-            Keep my signups
-          </Button>
-          <Button
-            variant="danger"
-            onClick={handleCancelAll}
-            disabled={cancelingAll}
-          >
-            {cancelingAll ? "Canceling all…" : "Yes, cancel all"}
-          </Button>
-        </div>
-      </Modal>
     </div>
   );
 }

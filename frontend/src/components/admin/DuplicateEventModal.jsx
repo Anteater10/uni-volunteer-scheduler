@@ -5,7 +5,11 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
 import { toast } from "../../state/toast";
 import FormModal from "./FormModal";
-import { EventForm, slotFormToApiPayload } from "../../pages/admin/EventsSection";
+import {
+  EventForm,
+  shiftFormToApiPayload,
+  slotFormToApiPayload,
+} from "../../pages/admin/EventsSection";
 import { activeQuarters, findQuarterById } from "../../lib/weekUtils";
 import {
   buildDuplicateInitial,
@@ -112,12 +116,17 @@ export default function DuplicateEventModal({ open, onClose, sourceEvent, quarte
       (!sourceEvent?.module_slug || e.module_slug === sourceEvent.module_slug),
   );
 
+  // `slots` from the form is orientation-only; the classroom work comes back
+  // as `shifts`. Both go up in the one POST — create_event builds the shifts
+  // and their sessions in the same transaction, so a copy is never left as an
+  // event with no bookable work.
   const createM = useMutation({
-    mutationFn: ({ metadata, slots }) =>
+    mutationFn: ({ metadata, slots, shifts }) =>
       api.events.create({
         ...metadata,
         source_event_id: sourceEvent.id,
         slots: slots.map(slotFormToApiPayload),
+        shifts: (shifts || []).map(shiftFormToApiPayload),
       }),
     onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ["adminEventsList"] });

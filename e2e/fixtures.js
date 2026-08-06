@@ -56,6 +56,21 @@ export async function clickSlotByLabel(page, label) {
   await container.getByRole('button', { name: /^sign up$/i }).click();
 }
 
+// 2026-08-05 shifts: classroom work is booked as a shift, not a period slot.
+// EventDetailPage renders shifts as ShiftCard (div.rounded-xl with a
+// data-testid) at every width — a table row cannot hold a shift's sessions —
+// so there is no desktop/mobile split to resolve here. Matching on the card's
+// own testid rather than its name keeps this immune to the seed renaming its
+// shift, and avoids colliding with a session label inside the card.
+export async function clickShiftById(page, shiftId) {
+  const card = page.getByTestId(`shift-${shiftId}`);
+  await card.waitFor({ state: 'visible' });
+  // The card's button reads "Sign up" while seats remain and "Join waitlist"
+  // once the shift is full. A full seed shift is a seed problem, not a spec
+  // problem — match only "Sign up" so the failure says so.
+  await card.getByRole('button', { name: /^sign up$/i }).click();
+}
+
 // Server-enforced orientation requirement: period-only signups from fresh
 // emails 422 with ORIENTATION_REQUIRED unless the email holds orientation
 // credit for the event's module family. Specs that need a bare period-only

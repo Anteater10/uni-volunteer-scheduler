@@ -401,20 +401,41 @@ def _split_value(value: Any) -> tuple[Optional[str], Optional[Any]]:
 
 def persist_responses(
     db: Session,
-    signup_id: UUID | str,
-    responses: Iterable[dict] | None,
+    signup_id: UUID | str | None = None,
+    responses: Iterable[dict] | None = None,
+    *,
+    shift_signup_id: UUID | str | None = None,
 ) -> list[models.SignupResponse]:
-    """Upsert rows for each provided response keyed on (signup_id, field_id).
+    """Upsert rows for each provided response keyed on (anchor, field_id).
+
+    2026-08-02 shifts: the anchor is either a ``Signup`` (orientation) or a
+    ``ShiftSignup`` (a shift commitment) — exactly one, matching the CHECK on
+    the table. Callers pass whichever they hold.
 
     Commits are the caller's responsibility — this function only flushes.
     """
+    if (signup_id is None) == (shift_signup_id is None):
+        raise ValueError("persist_responses needs exactly one of signup_id / shift_signup_id")
+
     responses = list(responses or [])
     if not responses:
         return []
 
+    anchor_column = (
+        models.SignupResponse.signup_id
+        if signup_id is not None
+        else models.SignupResponse.shift_signup_id
+    )
+    anchor_value = signup_id if signup_id is not None else shift_signup_id
+    anchor_kwargs = (
+        {"signup_id": signup_id}
+        if signup_id is not None
+        else {"shift_signup_id": shift_signup_id}
+    )
+
     existing = (
         db.query(models.SignupResponse)
-        .filter(models.SignupResponse.signup_id == signup_id)
+        .filter(anchor_column == anchor_value)
         .all()
     )
     by_field: dict[str, models.SignupResponse] = {
@@ -434,10 +455,10 @@ def persist_responses(
         row = by_field.get(fid)
         if row is None:
             row = models.SignupResponse(
-                signup_id=signup_id,
                 field_id=fid,
                 value_text=value_text,
                 value_json=value_json,
+                **anchor_kwargs,
             )
             db.add(row)
         else:

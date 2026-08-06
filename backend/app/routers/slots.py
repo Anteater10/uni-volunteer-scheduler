@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..celery_app import send_email_notification, send_waitlist_promotion_email
+from ..celery_app import send_email_notification
 from ..database import get_db
 from ..deps import (
     ensure_event_staff_access,
@@ -17,7 +17,6 @@ from ..deps import (
     require_role,
 )
 from ..services import quarter_service
-from ..signup_service import promote_waitlist_fifo
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
@@ -27,6 +26,17 @@ def _normalize_dt(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _reject_session(slot: models.Slot, use_instead: str) -> None:
+    """2026-08-02 shifts: a slot inside a shift is a *session*. Editing or
+    deleting it has shift-level consequences (its commitment covers every
+    session), so it is handled by the shifts router, not here."""
+    if slot.shift_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This slot is a session inside a shift. Use {use_instead}.",
+        )
 
 
 def _event_is_public(db: Session, event_id) -> bool:
@@ -102,6 +112,19 @@ def create_slot(
     ensure_event_staff_access(event, actor)
     quarter_service.ensure_event_quarter_writable(event)
 
+    # 2026-08-02 shifts: this endpoint creates orientation slots only. A period
+    # slot is a session inside a shift, so it comes in through POST /shifts or
+    # POST /shifts/{id}/sessions. The DB CHECK refuses a shift-less period slot
+    # regardless — this makes it a clear 400 rather than a 500.
+    if slot_in.slot_type != models.SlotType.ORIENTATION:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Period sessions belong to a shift. Create the shift instead "
+                "(POST /shifts), or add a session to one."
+            ),
+        )
+
     start_time = _normalize_dt(slot_in.start_time)
     end_time = _normalize_dt(slot_in.end_time)
     event_start = _normalize_dt(event.start_date)
@@ -137,9 +160,10 @@ def update_slot(
     db: Session = Depends(get_db),
     actor: models.User = Depends(require_role(models.UserRole.organizer, models.UserRole.admin)),
 ):
-    # Locked: a capacity raise below may chain-promote the waitlist, which
-    # mutates current_count and must serialize against concurrent cancels/
-    # signups on this same slot (matches every other promotion call site).
+    # Locked: serializes this slot's counter updates against concurrent
+    # signups/cancels — capacity changes here no longer touch current_count
+    # themselves, but the row lock still protects against a racing signup
+    # or cancel reading a stale current_count mid-update.
     slot = (
         db.query(models.Slot)
         .filter(models.Slot.id == slot_id)
@@ -155,7 +179,16 @@ def update_slot(
     ensure_event_staff_access(event, actor)
     quarter_service.ensure_event_quarter_writable(event)
 
+    _reject_session(slot, "PATCH /shifts/sessions/{session_id}")
+
     data = slot_in.model_dump(exclude_unset=True)
+    if data.get("slot_type") is not None and data["slot_type"] != slot.slot_type:
+        # Flipping the type would violate ck_slots_shift_membership_matches_type
+        # in one direction and orphan a session in the other.
+        raise HTTPException(
+            status_code=400,
+            detail="A slot's type cannot be changed. Delete it and create the right kind.",
+        )
     if "start_time" in data and data["start_time"] is not None:
         data["start_time"] = _normalize_dt(data["start_time"])
     if "end_time" in data and data["end_time"] is not None:
@@ -177,24 +210,8 @@ def update_slot(
         ("start_time" in data and data["start_time"] != slot.start_time)
         or ("end_time" in data and data["end_time"] != slot.end_time)
     )
-    old_capacity = slot.capacity
-
     for field, value in data.items():
         setattr(slot, field, value)
-
-    # Sweep remediation task 7 item 5: a capacity raise chain-promotes the
-    # waitlist via the canonical FIFO promotion (2026-07-28 spec: pending +
-    # confirm email, not straight to confirmed), inheriting the centralized
-    # ended-slot guard — an ended slot's promote_waitlist_fifo call returns
-    # None and is skipped silently, same as every other auto-promotion site.
-    promotions: list = []
-    if "capacity" in data and slot.capacity > old_capacity:
-        while slot.current_count < slot.capacity:
-            promo = promote_waitlist_fifo(db, slot.id)
-            if promo is None:
-                break
-            slot.current_count += 1
-            promotions.append(promo)
 
     # Collect confirmed signups before commit (needed for post-commit dispatch)
     confirmed_signups = []
@@ -224,9 +241,6 @@ def update_slot(
             models.Signup.status == models.SignupStatus.confirmed,
         ).all()
 
-    # Capture before commit — expire_on_commit would force refresh queries.
-    promotion_email_kwargs = [p.email_kwargs for p in promotions]
-
     db.add(slot)
     db.commit()
     db.refresh(slot)
@@ -237,11 +251,6 @@ def update_slot(
     if time_changed:
         for s in confirmed_signups:
             send_email_notification.delay(signup_id=str(s.id), kind="reschedule")
-
-    # Promoted volunteers get the confirm-your-spot email — pending status
-    # holds the seat until the volunteer clicks the emailed magic link.
-    for kwargs in promotion_email_kwargs:
-        send_waitlist_promotion_email.delay(**kwargs)
 
     return slot
 
@@ -261,6 +270,8 @@ def delete_slot(
     # ✅ ownership check
     ensure_event_staff_access(event, actor)
     quarter_service.ensure_event_quarter_writable(event)
+
+    _reject_session(slot, "DELETE /shifts/sessions/{session_id}")
 
     existing_signups = (
         db.query(models.Signup)
