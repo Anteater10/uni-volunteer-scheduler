@@ -544,3 +544,94 @@ class TestGrantOrientationForShiftSignup:
             headers=auth_headers(client, participant),
         )
         assert resp.status_code == 403
+
+
+class TestStaffSwap:
+    """POST /shift-signups/{id}/swap — the staff move between shifts.
+
+    The endpoint itself is thin (auth, delegate, commit, mail); the movement
+    rules live in ``swap_service.swap_shift_signup`` and are tested there. What
+    is checked here is the part only the route owns: who may call it, and that
+    a swap which self-promotes actually enqueues the promotion email — the
+    silent-promotion bug the slot twin was fixed for.
+    """
+
+    URL = "/api/v1/shift-signups/{id}/swap"
+
+    def test_staff_move_a_commitment_between_shifts(self, client, db_session):
+        event = _event(db_session)
+        source = _shift_with_sessions(db_session, event, capacity=2, n_sessions=2)
+        target = _shift_with_sessions(db_session, event, capacity=2, n_sessions=1)
+        commitment = book_shift(
+            db_session, source, VolunteerFactory(),
+            status=models.SignupStatus.confirmed,
+        )
+        db_session.commit()
+
+        resp = client.post(
+            self.URL.format(id=commitment.id),
+            json={"target_shift_id": str(target.id)},
+            headers=auth_headers(client, event.owner),
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["shift_id"] == str(target.id)
+
+    def test_a_participant_cannot_swap(self, client, db_session):
+        event = _event(db_session)
+        source = _shift_with_sessions(db_session, event, capacity=2)
+        target = _shift_with_sessions(db_session, event, capacity=2)
+        commitment = book_shift(
+            db_session, source, VolunteerFactory(),
+            status=models.SignupStatus.confirmed,
+        )
+        participant = make_user(db_session, role=models.UserRole.participant)
+        db_session.commit()
+
+        resp = client.post(
+            self.URL.format(id=commitment.id),
+            json={"target_shift_id": str(target.id)},
+            headers=auth_headers(client, participant),
+        )
+
+        assert resp.status_code == 403
+
+    def test_swapping_a_waitlisted_commitment_into_a_seat_mails_them(
+        self, client, db_session, promotion_emails
+    ):
+        """A waitlisted commitment moved into an open shift is a promotion, and
+        a promotion the volunteer is never told about is the bug this guards."""
+        event = _event(db_session)
+        source = _shift_with_sessions(db_session, event, capacity=1)
+        target = _shift_with_sessions(db_session, event, capacity=2)
+        waiting = _waitlisted(db_session, source)
+        db_session.commit()
+
+        resp = client.post(
+            self.URL.format(id=waiting.id),
+            json={"target_shift_id": str(target.id)},
+            headers=auth_headers(client, event.owner),
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "pending"
+        assert promotion_emails
+        assert promotion_emails[-1]["shift_signup_id"] == str(waiting.id)
+
+
+def test_promoting_a_commitment_that_is_not_waitlisted_is_refused(db_session):
+    """`mark_shift_promoted_pending` is the only writer of a PROMOTION_CONFIRM
+    token for a commitment, and magic_link_service's pending-promotion check
+    relies on it never firing on an already-seated one. The guard is that
+    invariant checking itself rather than trusting every caller."""
+    from app.signup_service import mark_shift_promoted_pending
+
+    event = _event(db_session)
+    shift = _shift_with_sessions(db_session, event, capacity=2)
+    seated = book_shift(
+        db_session, shift, VolunteerFactory(), status=models.SignupStatus.confirmed
+    )
+    db_session.flush()
+
+    with pytest.raises(ValueError, match="requires a waitlisted shift signup"):
+        mark_shift_promoted_pending(db_session, seated)
