@@ -33,6 +33,15 @@ vi.mock("../admin/AdminLayout", () => ({
   useAdminPageTitle: () => {},
 }));
 
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock("../../state/toast", () => ({
+  toast: {
+    success: (...a) => toastSuccess(...a),
+    error: (...a) => toastError(...a),
+  },
+}));
+
 import api, { downloadBlob } from "../../lib/api";
 import AuditLogsPage from "../AuditLogsPage";
 
@@ -118,6 +127,8 @@ describe("AuditLogsPage", () => {
     api.admin.auditLogs.mockReset();
     api.admin.users.list.mockReset();
     downloadBlob.mockReset();
+    toastSuccess.mockReset();
+    toastError.mockReset();
     api.admin.auditLogs.mockResolvedValue({
       items: ROWS,
       total: 3,
@@ -212,5 +223,48 @@ describe("AuditLogsPage", () => {
         params: expect.objectContaining({ q: "invite", kind: "user_invite" }),
       }),
     );
+    // The handler is async now (K12) — let its busy state settle before the
+    // test tears the tree down, or React logs an unwrapped-act warning.
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  // K12 — the ninth silent export. downloadBlob throws on any non-2xx and the
+  // click handler neither awaited nor caught it, so a failed audit-log export
+  // was an unhandled rejection and a button that looked broken.
+  it("tells the admin when the export fails instead of swallowing it", async () => {
+    downloadBlob.mockRejectedValueOnce(new Error("403 Forbidden"));
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText("Invited a new user")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Export filtered view/i }),
+    );
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+    expect(toastError.mock.calls[0][0]).toMatch(/403 forbidden/i);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("confirms a started export and re-enables the button afterwards", async () => {
+    let release;
+    downloadBlob.mockImplementationOnce(
+      () => new Promise((res) => { release = res; }),
+    );
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByText("Invited a new user")).toBeInTheDocument(),
+    );
+
+    const btn = screen.getByRole("button", { name: /Export filtered view/i });
+    fireEvent.click(btn);
+    await waitFor(() => expect(btn).toBeDisabled());
+    expect(btn).toHaveTextContent(/preparing/i);
+
+    release();
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastError).not.toHaveBeenCalled();
   });
 });

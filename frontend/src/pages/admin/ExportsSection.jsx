@@ -2,7 +2,8 @@
 import React, { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import api from "../../lib/api";
-import { Card, Button, Skeleton, EmptyState } from "../../components/ui";
+import { Card, Button, Skeleton, ErrorState } from "../../components/ui";
+import { toast } from "../../state/toast";
 import DatePresetPicker, { rangeForPreset } from "../../components/admin/DatePresetPicker";
 import { useQuarters } from "../../lib/useQuarters";
 import AdminPageHeader from "../../components/admin/AdminPageHeader";
@@ -42,6 +43,24 @@ function AnalyticsPanel({
 
   const rows = Array.isArray(q.data) ? q.data : q.data?.rows || [];
 
+  // K12: this used to be `onClick={() => csvFn(params)}` — the promise was
+  // neither awaited nor caught, so a failed export was an unhandled rejection
+  // in the console and, to the admin, a button that does nothing. The download
+  // is a fetch that can 401, 403, 500 or time out; silence is the one response
+  // that gives them nothing to act on.
+  const [downloading, setDownloading] = useState(false);
+  async function handleDownload() {
+    setDownloading(true);
+    try {
+      await csvFn(params);
+      toast.success(`${title} CSV download started.`);
+    } catch (e) {
+      toast.error(e?.message || `Couldn't export ${title}.`);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <Card>
       <h2 className="text-lg font-semibold">{title}</h2>
@@ -57,9 +76,10 @@ function AnalyticsPanel({
       <div className="mt-3 flex justify-end">
         <Button
           aria-label={`Download CSV for ${title}`}
-          onClick={() => csvFn(params)}
+          onClick={handleDownload}
+          disabled={downloading}
         >
-          Download CSV
+          {downloading ? "Preparing…" : "Download CSV"}
         </Button>
       </div>
       <div className="mt-4 overflow-x-auto">
@@ -70,7 +90,14 @@ function AnalyticsPanel({
             ))}
           </div>
         ) : q.error ? (
-          <EmptyState title="Couldn't load data" body={q.error.message} />
+          // Was an EmptyState — which reads as "there is nothing here", not
+          // "we couldn't ask". ErrorState is role="alert" and offers the retry
+          // that a transient failure actually needs.
+          <ErrorState
+            title="Couldn't load data"
+            body={q.error.message}
+            action={<Button onClick={() => q.refetch()}>Try again</Button>}
+          />
         ) : rows.length === 0 ? (
           <p className="text-[var(--color-fg-muted)]">No data in this range.</p>
         ) : (

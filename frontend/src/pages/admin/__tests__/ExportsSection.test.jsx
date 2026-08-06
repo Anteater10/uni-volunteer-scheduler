@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -53,6 +53,15 @@ vi.mock("../../../lib/api", () => ({
   },
 }));
 
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock("../../../state/toast", () => ({
+  toast: {
+    success: (...a) => toastSuccess(...a),
+    error: (...a) => toastError(...a),
+  },
+}));
+
 import ExportsSection from "../ExportsSection";
 
 function renderPage() {
@@ -74,6 +83,8 @@ describe("ExportsSection", () => {
     volunteerHoursCsv.mockClear();
     attendanceRatesCsv.mockClear();
     noShowRatesCsv.mockClear();
+    toastSuccess.mockClear();
+    toastError.mockClear();
   });
 
   it("renders one Download CSV button per analytics panel, three explainers, and no datetime-local inputs", async () => {
@@ -136,5 +147,87 @@ describe("ExportsSection", () => {
     expect(volunteerHours).toHaveBeenCalled();
     expect(attendanceRates).toHaveBeenCalled();
     expect(noShowRates).toHaveBeenCalled();
+  });
+});
+
+// K12 — the download button was `onClick={() => csvFn(params)}`: not awaited,
+// not caught. downloadBlob is async and throws on any non-2xx, so a 401 or a
+// 500 was an unhandled rejection in the console and, to the admin, a button
+// that did nothing at all.
+describe("ExportsSection — a failed export has to say so (K12)", () => {
+  beforeEach(() => {
+    volunteerHours.mockClear();
+    attendanceRates.mockClear();
+    noShowRates.mockClear();
+    volunteerHoursCsv.mockClear();
+    attendanceRatesCsv.mockClear();
+    noShowRatesCsv.mockClear();
+    toastSuccess.mockClear();
+    toastError.mockClear();
+  });
+
+  it("surfaces the server's message instead of failing silently", async () => {
+    const user = userEvent.setup();
+    volunteerHoursCsv.mockRejectedValueOnce(new Error("Export timed out"));
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Download CSV for Volunteer hours" }),
+    );
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+    expect(toastError.mock.calls[0][0]).toMatch(/export timed out/i);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("confirms the download when it starts", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Download CSV for No-show rates" }),
+    );
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledTimes(1));
+    expect(toastSuccess.mock.calls[0][0]).toMatch(/no-show rates/i);
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("disables the button while the export is in flight so it can't be double-fired", async () => {
+    const user = userEvent.setup();
+    let release;
+    attendanceRatesCsv.mockImplementationOnce(
+      () => new Promise((res) => { release = res; }),
+    );
+    renderPage();
+
+    const btn = await screen.findByRole("button", {
+      name: "Download CSV for Attendance rates",
+    });
+    await user.click(btn);
+
+    await waitFor(() => expect(btn).toBeDisabled());
+    expect(btn).toHaveTextContent(/preparing/i);
+
+    release();
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    expect(btn).toHaveTextContent(/download csv/i);
+    expect(attendanceRatesCsv).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a retryable alert when the panel data itself won't load", async () => {
+    volunteerHours.mockRejectedValue(new Error("Analytics service is down"));
+    renderPage();
+
+    const alerts = await screen.findAllByRole("alert");
+    const alert = alerts.find((a) => /couldn't load data/i.test(a.textContent));
+    expect(alert).toBeTruthy();
+    expect(alert).toHaveTextContent(/analytics service is down/i);
+
+    const calls = volunteerHours.mock.calls.length;
+    fireEvent.click(within(alert).getByRole("button", { name: /try again/i }));
+    await waitFor(() =>
+      expect(volunteerHours.mock.calls.length).toBeGreaterThan(calls),
+    );
   });
 });
