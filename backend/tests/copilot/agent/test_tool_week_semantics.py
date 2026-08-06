@@ -179,7 +179,7 @@ class TestWeekLabelsHandedToTheModel:
     def test_understaffed_labels_the_real_week(self, db_session, realistic_week):
         scope = scope_for(role="admin", caller_id=None)
         out = FIND_UNDERSTAFFED_MODULES_TOOL.handler(
-            db_session, scope, {"threshold": 0.5}
+            db_session, scope, {"threshold": 0.5, "include_past": True}
         )
         weeks = [m["week"] for m in out["modules"]]
         assert weeks == ["2026-W22"]

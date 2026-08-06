@@ -5,9 +5,14 @@ Moves a volunteer's non-cancelled signup from one module (Event) to another.
 Plan-vs-reality:
 - Bookings are keyed to a unit, not an event. The handler finds the
   participant's first non-cancelled booking on ``from_module`` and re-points it
-  at any equivalent unit on ``to_module``. The richer "pick a matching unit /
-  capacity" decision is left for the human/UI; the tool returns a not-found
-  sentinel if there is no destination at all.
+  at an equivalent unit on ``to_module``. The tool returns a not-found sentinel
+  if there is no destination of the matching kind at all.
+
+  K27: "an equivalent unit" used to mean an unordered ``.first()`` — so the
+  destination could differ between the preview the admin approved and the move
+  that ran, and a full unit could be picked over an empty one on the same
+  event, waitlisting somebody who should have had a seat. Both queries now
+  prefer a unit with room and order deterministically.
 - Admin only. The plan didn't constrain it further; we still keep the
   audit row + confirmation gate so the action is reviewable.
 - ``status`` in the payload is the resulting Signup.status.
@@ -22,10 +27,9 @@ volunteer intent), so it goes through ``mark_promoted_pending`` — pending
 status + its own promotion confirm email — and inherits the ended-slot
 guard. The shapes genuinely differ from admin_move_signup (that endpoint
 takes an explicit target_slot_id and FastAPI can let an HTTPException abort
-before any commit; this tool picks "any" destination slot and the copilot
-framework commits the transaction itself, in ``update_status``, right after
-the handler returns — see the ended-slot and email handling below), so the
-logic is reimplemented here rather than called directly.
+before any commit; this tool chooses its own destination slot and must commit
+its own work — see the ended-slot and email handling below), so the logic is
+reimplemented here rather than called directly.
 
 2026-08-05 (shifts): there are two kinds of booking now, and this tool could
 only see one. Classroom work is a ``ShiftSignup`` on a ``Shift``, so for a
@@ -91,9 +95,23 @@ def _move_signup(db: Session, participant_id, from_module, to_module, signup_id)
     )
 
     # Shift-less only: a Signup on a session slot is not a bookable state.
+    #
+    # K27: this was a bare ``.first()`` with no ORDER BY. Two things went
+    # wrong with that. Postgres was free to hand back a different row each
+    # time, so the same confirmed move could land somewhere other than the
+    # slot the admin was shown in the preview. And it took whatever came back
+    # even when that slot was full — so a move onto an event with three empty
+    # slots could waitlist the volunteer because the one full slot happened
+    # to sort first. Prefer a slot with room; break ties by start time, then
+    # id, so the choice is reproducible.
     dest_slot_id = (
         db.query(Slot.id)
         .filter(Slot.event_id == to_module, Slot.shift_id.is_(None))
+        .order_by(
+            (Slot.current_count < Slot.capacity).desc(),
+            Slot.start_time.asc(),
+            Slot.id.asc(),
+        )
         .first()
     )
     if dest_slot_id is None:
@@ -142,23 +160,27 @@ def _move_signup(db: Session, participant_id, from_module, to_module, signup_id)
         try:
             promotion = mark_promoted_pending(db, signup)
         except SlotEndedError:
-            # Discard the speculative count/status mutations above — this
-            # handler's transaction is committed by the copilot framework
-            # (update_status, right after we return) regardless of what we
-            # return, unlike an HTTP router where raising simply skips the
-            # router's own later db.commit(). Rolling back here is the
-            # equivalent "nothing persists" guarantee for this framework.
+            # Discard the speculative count/status mutations above. Returning
+            # an error is not enough on its own: unlike an HTTP router, where
+            # raising simply skips the router's own later db.commit(), this
+            # handler commits its own work a few lines down (K27) and used to
+            # have it committed for it by update_status before that. Rolling
+            # back here is what actually makes "nothing persists" true.
             db.rollback()
             return dict(_ENDED_SLOT)
 
     db.flush()
+    # K27: the non-promotion path used to stop at ``flush()`` and rely on
+    # ``audit_log.update_status`` committing on its way past. That function
+    # rolls the session back if it cannot find its own audit row, which
+    # discarded the move while the admin was told it had happened. Commit
+    # unconditionally — the promotion branch always did, for the separate
+    # reason below, and there was never a good argument for the other branch
+    # not to.
+    db.commit()
     if promotion is not None:
-        # No later hook in this framework runs after its own commit, so we
-        # commit here ourselves before enqueuing — matching every other
-        # promotion site's "commit, then email" discipline (the email must
-        # never fire before the pending row is durable). The framework's own
-        # post-handler commit (update_status) becomes a harmless no-op.
-        db.commit()
+        # The email must never fire before the pending row is durable, which
+        # the commit above now guarantees for both branches.
         send_waitlist_promotion_email.delay(**promotion.email_kwargs)
 
     return {
@@ -189,7 +211,19 @@ def _move_shift_signup(
         .first()
     )
 
-    dest_shift_id = db.query(Shift.id).filter(Shift.event_id == to_module).first()
+    # K27: same unordered ``.first()`` as the slot path had, with the same two
+    # consequences — a nondeterministic destination, and a full shift chosen
+    # over an empty one sitting right next to it.
+    dest_shift_id = (
+        db.query(Shift.id)
+        .filter(Shift.event_id == to_module)
+        .order_by(
+            (Shift.current_count < Shift.capacity).desc(),
+            Shift.sort_order.asc(),
+            Shift.id.asc(),
+        )
+        .first()
+    )
     if dest_shift_id is None:
         return dict(_NOT_FOUND_SHIFT)
 
@@ -257,8 +291,10 @@ def _move_shift_signup(
             return dict(_ENDED_SLOT)
 
     db.flush()
+    # K27: see the slot path — commit the move rather than letting the audit
+    # log's own commit be what makes it durable.
+    db.commit()
     if promotion is not None:
-        db.commit()
         send_waitlist_promotion_email.delay(**promotion.email_kwargs)
 
     return {

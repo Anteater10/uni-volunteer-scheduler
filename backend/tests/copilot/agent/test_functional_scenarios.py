@@ -65,7 +65,10 @@ def test_f1_organizer_lists_own_understaffed_modules(db_session, seed_full_world
         [
             {
                 "tool_calls": [
-                    {"name": "find_understaffed_modules", "args": {"threshold": 0.5}}
+                    {
+                        "name": "find_understaffed_modules",
+                        "args": {"threshold": 0.5, "include_past": True},
+                    }
                 ]
             },
             {"final_answer": "Your most understaffed module is A-evt-1."},
@@ -115,7 +118,10 @@ def test_f2_admin_most_understaffed_cross_school(db_session, seed_full_world):
         [
             {
                 "tool_calls": [
-                    {"name": "find_understaffed_modules", "args": {"threshold": 0.5}}
+                    {
+                        "name": "find_understaffed_modules",
+                        "args": {"threshold": 0.5, "include_past": True},
+                    }
                 ]
             },
             {"final_answer": "Across schools, B-evt-1 at Brandon Middle is the most understaffed."},

@@ -75,7 +75,7 @@ def test_admin_sees_all_understaffed(db_session, seed_events):
         db_session,
         tool=FIND_UNDERSTAFFED_MODULES_TOOL,
         scope=scope,
-        args={"threshold": 0.5},
+        args={"threshold": 0.5, "include_past": True},
         session_id=session_id,
     )
     names = sorted(m["name"] for m in out["result"]["modules"])
@@ -93,7 +93,7 @@ def test_organizer_scoped_to_own(db_session, seed_events):
         db_session,
         tool=FIND_UNDERSTAFFED_MODULES_TOOL,
         scope=scope,
-        args={"threshold": 0.5},
+        args={"threshold": 0.5, "include_past": True},
         session_id=session_id,
     )
     names = [m["name"] for m in out["result"]["modules"]]
@@ -110,7 +110,7 @@ def test_pii_schema_strips_owner_id(db_session, seed_events):
         db_session,
         tool=FIND_UNDERSTAFFED_MODULES_TOOL,
         scope=scope,
-        args={"threshold": 0.5},
+        args={"threshold": 0.5, "include_past": True},
         session_id=session_id,
     )
     for m in out["result"]["modules"]:
