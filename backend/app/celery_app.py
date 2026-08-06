@@ -14,7 +14,6 @@ from email.message import EmailMessage
 from celery import Celery
 from celery.schedules import crontab
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -22,7 +21,8 @@ from sendgrid.helpers.mail import Mail
 from .config import settings
 from .database import SessionLocal
 from . import models
-from .emails import BUILDERS
+from .services import notification_dedup
+from .emails import BUILDERS, SessionBooking
 from .magic_link_service import CONFIRM_PURPOSES
 from .observability import init_sentry
 
@@ -56,13 +56,11 @@ celery.conf.update(
 )
 
 
-def _dedup_insert(db: Session, signup_id, kind: str) -> bool:
-    """Insert into sent_notifications; return True if row was inserted (first sender wins)."""
-    stmt = pg_insert(models.SentNotification).values(
-        signup_id=signup_id, kind=kind
-    ).on_conflict_do_nothing(index_elements=["signup_id", "kind"])
-    result = db.execute(stmt)
-    return result.rowcount == 1
+# Thin aliases over the canonical implementations. The statement is subtly
+# conditional (partial indexes need index_where) and had been copy-pasted to
+# four sites, two of them wrong — see services/notification_dedup.py.
+_dedup_insert = notification_dedup.dedup_insert_signup
+_dedup_insert_shift = notification_dedup.dedup_insert_shift_signup
 
 
 def _check_daily_send_limit(db: Session) -> bool:
@@ -239,6 +237,9 @@ def send_email_notification(
     *,
     signup_id: str | None = None,
     kind: str | None = None,
+    shift_signup_id: str | None = None,
+    dedup_kind: str | None = None,
+    session_slot_id: str | None = None,
 ) -> None:
     """Core task: send an email + log to Notification table.
 
@@ -247,10 +248,22 @@ def send_email_notification(
           send_email_notification.delay(user_id, subject, body)
       - Reminder / cancellation / reschedule (deduped):
           send_email_notification.delay(signup_id=signup.id, kind="reminder_24h")
+          send_email_notification.delay(shift_signup_id=ss.id, kind="reschedule")
 
     When ``kind`` is provided, the task uses sent_notifications dedup:
     INSERT ON CONFLICT DO NOTHING before sending. If the insert returns
     0 rows, the email was already sent by another worker.
+
+    2026-08-02 shifts: pass ``shift_signup_id`` instead of ``signup_id`` for a
+    shift commitment. The BUILDERS take either kind of booking (see
+    emails._booking_parts), so the only thing that differs here is which anchor
+    column carries the dedup marker.
+
+    ``dedup_kind`` splits the dedup key from the builder key, and
+    ``session_slot_id`` narrows the email to one session of the shift. Both
+    exist for per-session reminders, where several emails share one builder and
+    one anchor but must each get their own dedup slot (see
+    reminder_service.notification_kind).
     """
     db: Session = SessionLocal()
     try:
@@ -259,11 +272,22 @@ def send_email_notification(
             return
 
         # Resolve volunteer/user + content from signup_id when kind is provided.
-        if kind is not None and signup_id is not None:
+        if kind is not None and (signup_id is not None or shift_signup_id is not None):
             builder = BUILDERS.get(kind)
             if builder is None:
                 raise ValueError(f"Unknown notification kind: {kind}")
-            signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
+            if shift_signup_id is not None:
+                signup = (
+                    db.query(models.ShiftSignup)
+                    .filter(models.ShiftSignup.id == shift_signup_id)
+                    .first()
+                )
+            else:
+                signup = (
+                    db.query(models.Signup)
+                    .filter(models.Signup.id == signup_id)
+                    .first()
+                )
             if not signup:
                 return
 
@@ -271,11 +295,27 @@ def send_email_notification(
             # after a successful send can't roll the marker back and
             # double-send on the autoretry. If the send itself fails, the
             # except branch releases the marker so the retry can send.
-            if not _dedup_insert(db, signup.id, kind):
+            marker_kind = dedup_kind or kind
+            inserted = (
+                _dedup_insert_shift(db, signup.id, marker_kind)
+                if shift_signup_id is not None
+                else _dedup_insert(db, signup.id, marker_kind)
+            )
+            if not inserted:
                 return  # Already sent by another worker
             db.commit()
 
-            payload = builder(signup)
+            # A per-session reminder renders one day of the shift, not all of
+            # them — wrap the commitment so the builder sees a Signup shape.
+            target = signup
+            if session_slot_id is not None:
+                from uuid import UUID
+
+                session = db.get(models.Slot, UUID(str(session_slot_id)))
+                if session is None:
+                    return
+                target = SessionBooking(signup, session)
+            payload = builder(target)
             # Phase 09: signup.user removed — use volunteer
             v = signup.volunteer
             subject = payload["subject"]
@@ -288,9 +328,14 @@ def send_email_notification(
                 _send_email(to_email, subject, body, html_body=html_body)
             except Exception:
                 db.rollback()
+                anchor = (
+                    models.SentNotification.shift_signup_id
+                    if shift_signup_id is not None
+                    else models.SentNotification.signup_id
+                )
                 db.query(models.SentNotification).filter(
-                    models.SentNotification.signup_id == signup.id,
-                    models.SentNotification.kind == kind,
+                    anchor == signup.id,
+                    models.SentNotification.kind == marker_kind,
                 ).delete()
                 db.commit()
                 raise
@@ -322,6 +367,58 @@ def send_email_notification(
             db.commit()
     finally:
         db.close()
+
+
+def _sweep_session_reminders(
+    db: Session,
+    kind: str,
+    window_start: datetime,
+    window_end: datetime,
+    now: datetime,
+    *,
+    require_event_toggle: bool = False,
+) -> int:
+    """Fire ``kind`` for every shift session starting inside the window.
+
+    2026-08-02 shifts: period slots have no ``Signup`` rows, so the signup
+    sweeps these tasks already run reach orientation only. Reminders are per
+    *session* — a Tue+Wed commitment is reminded twice — which is why the
+    ``reminder_*_sent_at`` column on the commitment is deliberately NOT used as
+    the gate here: it can only record one send, so it would silently swallow
+    every session after the first. The session-scoped dedup key is the gate
+    instead, and it is the same mechanism the signup path relies on.
+
+    ``of=`` is required on the row lock: without it Postgres would also lock the
+    joined ``shifts`` and ``events`` rows, which every concurrent public signup
+    for the event needs.
+    """
+    q = (
+        db.query(models.ShiftSignup, models.Slot)
+        .join(models.Shift, models.Shift.id == models.ShiftSignup.shift_id)
+        .join(models.Slot, models.Slot.shift_id == models.Shift.id)
+        .filter(
+            models.ShiftSignup.status == models.SignupStatus.confirmed,
+            models.Slot.start_time.between(window_start, window_end),
+        )
+    )
+    if require_event_toggle:
+        q = q.join(models.Event, models.Event.id == models.Shift.event_id).filter(
+            models.Event.reminder_1h_enabled == True  # noqa: E712
+        )
+    sent = 0
+    for shift_signup, slot in q.with_for_update(
+        skip_locked=True, of=models.ShiftSignup
+    ).all():
+        marker = f"{kind}_s{slot.sort_order}"
+        if _dedup_insert_shift(db, shift_signup.id, marker):
+            send_email_notification.delay(
+                shift_signup_id=str(shift_signup.id),
+                kind=kind,
+                dedup_kind=marker,
+                session_slot_id=str(slot.id),
+            )
+            sent += 1
+    return sent
 
 
 @celery.task(
@@ -363,6 +460,9 @@ def send_reminders_24h(self) -> None:
                 send_email_notification.delay(signup_id=str(s.id), kind="reminder_24h")
                 s.reminder_24h_sent_at = now
 
+        _sweep_session_reminders(
+            db, "reminder_24h", window_start, window_end, now
+        )
         db.commit()
     finally:
         db.close()
@@ -407,6 +507,14 @@ def send_reminders_1h(self) -> None:
                 send_email_notification.delay(signup_id=str(s.id), kind="reminder_1h")
                 s.reminder_1h_sent_at = now
 
+        _sweep_session_reminders(
+            db,
+            "reminder_1h",
+            window_start,
+            window_end,
+            now,
+            require_event_toggle=True,
+        )
         db.commit()
     finally:
         db.close()
@@ -430,10 +538,25 @@ def weekly_digest() -> None:
             .all()
         )
 
+        # 2026-08-02 shifts: the digest is "where do I need to be this week",
+        # so it has to list shift sessions too — they're the bulk of the work.
+        sessions = (
+            db.query(models.ShiftSignup, models.Slot)
+            .join(models.Shift, models.Shift.id == models.ShiftSignup.shift_id)
+            .join(models.Slot, models.Slot.shift_id == models.Shift.id)
+            .filter(
+                models.Slot.start_time.between(now, in_7d),
+                models.ShiftSignup.status == models.SignupStatus.confirmed,
+            )
+            .all()
+        )
+
         # Phase 09: Group by volunteer_id (signup.user removed in Phase 08)
         by_volunteer: dict = {}
         for s in signups:
             by_volunteer.setdefault(s.volunteer_id, []).append(s.slot)
+        for shift_signup, slot in sessions:
+            by_volunteer.setdefault(shift_signup.volunteer_id, []).append(slot)
 
         for volunteer_id, slots in by_volunteer.items():
             v = db.get(models.Volunteer, volunteer_id)
@@ -461,19 +584,23 @@ def weekly_digest() -> None:
 )
 def send_broadcast_email(
     self,
-    signup_id: str,
     to_email: str,
     subject: str,
     text_body: str,
     html_body: str,
+    signup_id: str | None = None,
+    shift_signup_id: str | None = None,
 ) -> None:
     """Phase 26 — deliver a single broadcast message.
 
     The caller (broadcast_service.send_broadcast) has already performed
-    the atomic dedup insert on ``sent_notifications(signup_id, kind)``
-    before enqueuing this task, so we only deliver here. Retries from
-    the Celery framework are worker-level guards; any persistent failure
-    surfaces in docker logs.
+    the atomic dedup insert on ``sent_notifications`` before enqueuing this
+    task, so we only deliver here. Retries from the Celery framework are
+    worker-level guards; any persistent failure surfaces in docker logs.
+
+    Exactly one of ``signup_id`` / ``shift_signup_id`` is set — a broadcast now
+    reaches shift commitments too, and they have no signup row. Both are
+    log-only here; the anchor that matters was already claimed upstream.
 
     Broadcasts are operational — they intentionally bypass
     ``volunteer_preferences.email_reminders_enabled``.
@@ -486,8 +613,9 @@ def send_broadcast_email(
             return
         _send_email(to_email, subject, text_body or "", html_body=html_body)
         logger.info(
-            "broadcast_email_sent signup_id=%s to=%s",
+            "broadcast_email_sent signup_id=%s shift_signup_id=%s to=%s",
             signup_id,
+            shift_signup_id,
             to_email,
         )
     finally:
@@ -500,11 +628,16 @@ def send_signup_confirmation_email(
     signup_ids: list,
     token: str,
     event_id: str,
+    shift_signup_ids: list | None = None,
 ) -> None:
     """Send the signup confirmation email for a public signup batch.
 
     Per D-11: no Notification row created (dedup kind pattern doesn't fit
     one-off confirmation emails). Celery logger only.
+
+    2026-08-02 shifts: a batch is now orientation signups plus shift
+    commitments, and either half may be empty. ``shift_signup_ids`` defaults to
+    None so tasks already sitting in the queue at deploy time still unpack.
     """
     from uuid import UUID
     from .emails import build_signup_confirmation_email
@@ -514,7 +647,17 @@ def send_signup_confirmation_email(
         volunteer = db.get(models.Volunteer, UUID(volunteer_id))
         signups = db.query(models.Signup).filter(
             models.Signup.id.in_([UUID(sid) for sid in signup_ids])
-        ).all()
+        ).all() if signup_ids else []
+        if shift_signup_ids:
+            signups += (
+                db.query(models.ShiftSignup)
+                .filter(
+                    models.ShiftSignup.id.in_(
+                        [UUID(sid) for sid in shift_signup_ids]
+                    )
+                )
+                .all()
+            )
         event = db.get(models.Event, UUID(event_id))
         if not volunteer or not signups or not event:
             logger.warning(
@@ -529,13 +672,20 @@ def send_signup_confirmation_email(
         # Waitlisted signups stay out: they're not on the schedule yet.
         from .calendar_ics import build_signup_ics
 
-        booked_slots = [
-            s.slot
-            for s in signups
-            if s.status
-            not in (models.SignupStatus.waitlisted, models.SignupStatus.cancelled)
-            and s.slot is not None
-        ]
+        # A shift contributes every session in it: the commitment is
+        # all-or-nothing, so a calendar showing only one of its days would be
+        # actively misleading about what the volunteer agreed to.
+        booked_slots = []
+        for s in signups:
+            if s.status in (
+                models.SignupStatus.waitlisted,
+                models.SignupStatus.cancelled,
+            ):
+                continue
+            if isinstance(s, models.ShiftSignup):
+                booked_slots.extend(s.shift.sessions)
+            elif s.slot is not None:
+                booked_slots.append(s.slot)
         attachments = (
             [("scitrek-sessions.ics", build_signup_ics(event, booked_slots))]
             if booked_slots
@@ -565,9 +715,10 @@ def send_signup_confirmation_email(
 @celery.task(name="app.send_waitlist_promotion_email")
 def send_waitlist_promotion_email(
     volunteer_id: str,
-    signup_id: str,
     token: str,
     event_id: str,
+    signup_id: str | None = None,
+    shift_signup_id: str | None = None,
 ) -> None:
     """Send the confirm-your-spot email after a waitlist promotion.
 
@@ -575,6 +726,11 @@ def send_waitlist_promotion_email(
     dedup row, D-11), warn-and-skip on missing entities, debug-only token
     echo. Enqueue strictly AFTER db.commit() — the worker reads rows from
     its own session.
+
+    2026-08-02 shifts: exactly one of ``signup_id`` / ``shift_signup_id``
+    identifies the promoted booking, matching the dual-anchor shape the
+    promotion result types produce. Both are keyword-optional so the two kinds
+    can't be positionally confused at a call site.
     """
     from uuid import UUID
 
@@ -583,14 +739,18 @@ def send_waitlist_promotion_email(
     db: Session = SessionLocal()
     try:
         volunteer = db.get(models.Volunteer, UUID(volunteer_id))
-        signup = db.get(models.Signup, UUID(signup_id))
+        if shift_signup_id:
+            signup = db.get(models.ShiftSignup, UUID(shift_signup_id))
+        else:
+            signup = db.get(models.Signup, UUID(signup_id)) if signup_id else None
         event = db.get(models.Event, UUID(event_id))
         if not volunteer or not signup or not event:
             logger.warning(
                 "send_waitlist_promotion_email: missing entity, skipping "
-                "volunteer_id=%s signup_id=%s event_id=%s",
+                "volunteer_id=%s signup_id=%s shift_signup_id=%s event_id=%s",
                 volunteer_id,
                 signup_id,
+                shift_signup_id,
                 event_id,
             )
             return
@@ -599,9 +759,11 @@ def send_waitlist_promotion_email(
         )
         _send_email(to_email=volunteer.email, subject=subject, body="", html_body=html)
         logger.info(
-            "waitlist_promotion_email_sent volunteer_id=%s signup_id=%s event_id=%s",
+            "waitlist_promotion_email_sent volunteer_id=%s signup_id=%s "
+            "shift_signup_id=%s event_id=%s",
             volunteer_id,
             signup_id,
+            shift_signup_id,
             event_id,
         )
         if getattr(settings, "debug", False):

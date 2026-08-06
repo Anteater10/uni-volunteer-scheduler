@@ -17,6 +17,24 @@ export async function undoCheckInSignup(signupId) {
   return _authedRequest("POST", `/signups/${signupId}/undo-check-in`);
 }
 
+// 2026-08-02 shifts: check-in is keyed on (commitment, session), not on the
+// booking alone. A volunteer holding a Tue+Wed shift is checked in twice, once
+// per day, and can be present Tuesday and absent Wednesday — so there is no
+// single "check in this shift" call to make.
+export async function checkInSession(shiftSignupId, slotId) {
+  return _authedRequest(
+    "POST",
+    `/shift-signups/${shiftSignupId}/sessions/${slotId}/check-in`,
+  );
+}
+
+export async function undoCheckInSession(shiftSignupId, slotId) {
+  return _authedRequest(
+    "POST",
+    `/shift-signups/${shiftSignupId}/sessions/${slotId}/undo-check-in`,
+  );
+}
+
 export async function resolveEvent(eventId, { attended, no_show }) {
   return _authedRequest("POST", `/events/${eventId}/resolve`, { attended, no_show });
 }

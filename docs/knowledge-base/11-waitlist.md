@@ -1,9 +1,10 @@
 # Waitlist and promotion
 
-When a slot is full, further signups for it become **waitlisted** rather than rejected. The
-volunteer has still given their details and consented; they're simply in line. Their position is
-shown to them, counting from 1. A volunteer can still join a waitlist at signup time — that part is
-unchanged and needs no staff action.
+When a shift or an orientation slot is full, further signups for it become **waitlisted** rather
+than rejected. The volunteer has still given their details and consented; they're simply in line.
+Their position is shown to them, counting from 1. A shift has **one waitlist for the whole
+bundle** — the seat being waited for is the shift, so there is no per-session queue. A volunteer
+can still join a waitlist at signup time — that part is unchanged and needs no staff action.
 
 **The waitlist never moves on its own.** Cancels, capacity raises, and the hourly cleanup free seats
 but promote nobody. A volunteer leaves the waitlist only when an admin or organizer promotes them —
@@ -35,7 +36,8 @@ Weeks can pass between joining a waitlist and a seat opening up, and in that tim
 plans. Silently confirming them produced volunteers who were on the roster, counted as coming, and
 had no idea — and organizers who couldn't tell a real attendee from a stale one.
 
-**The pending seat is genuinely held.** It counts against the session's capacity, the volunteer
+**The pending seat is genuinely held.** It counts against the shift's (or orientation slot's)
+capacity, the volunteer
 appears on the roster, and they're listed on the public event page. Nobody else can take the seat
 while the three days run.
 
@@ -80,11 +82,13 @@ answer is almost always that more than three days passed and the offer was withd
 open again, waiting for a staff member to promote someone into it. The volunteer can sign up again —
 they'll take a seat if one is free, or rejoin the waitlist.
 
-**Sessions that have already ended never get anyone promoted into them.** A staff member who tries to
-promote, move, or swap someone onto a session whose end time has passed gets an error instead, rather
-than the volunteer getting a "confirm your spot" email for a session that already happened. This
-holds however the seat came free, including a cancellation entered by hand days later — the seat just
-stays open.
+**Work that has already finished never gets anyone promoted into it.** A staff member who tries to
+promote, move, or swap someone onto an orientation slot whose end time has passed gets an error
+instead, rather than the volunteer getting a "confirm your spot" email for a session that already
+happened. For a shift the test is its **last** session: a shift that met yesterday and meets again
+tomorrow can still be promoted into, because there is still work to turn up for, and the volunteer
+simply misses the day that has gone. This holds however the seat came free, including a
+cancellation entered by hand days later — the seat just stays open.
 
 **A waitlisted signup on a session that has come and gone is closed out automatically.** The hourly
 check marks any still-waitlisted signup as **cancelled** once its session's end time has passed. No
@@ -98,7 +102,8 @@ from an unconfirmed pending signup, which is **deleted** rather than cancelled.
 promotes one specific waitlisted volunteer — there's no default "next in line" the system would
 promote instead. Freed seats sit open until staff act, so promoting into a seat that's already
 free is the normal case. The **over capacity** confirmation only shows up when staff deliberately
-promote into a slot that's still full: putting an extra person in a real room is a real decision,
+promote into a shift or slot that's still full: putting an extra person in a real room is a real
+decision,
 so that has to be made deliberately rather than happening by default.
 
 A manual promotion works the same way as any other staff promotion: the volunteer lands at pending
@@ -109,7 +114,7 @@ checked in doesn't need to find the email first.
 **Admins can reorder a waitlist** from the event page, which rewrites the queue so the order you
 set becomes the position shown to staff and volunteers. Staff still choose who to promote by hand —
 reordering doesn't bind that choice, it just sets what everyone sees. You must submit the whole
-current waitlist for the slot — no additions, no omissions.
+current waitlist for that shift or slot — no additions, no omissions.
 
 ## Other things to know
 

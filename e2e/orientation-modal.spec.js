@@ -17,6 +17,7 @@ import {
   ephemeralEmail,
   VOLUNTEER_IDENTITY,
   clickSlotByLabel,
+  clickShiftById,
 } from './fixtures.js';
 
 async function fillIdentityForm(page, email) {
@@ -35,11 +36,13 @@ test.describe('orientation modal', () => {
   test('Test A: period-only without history is steered to add an orientation session', async ({ page }) => {
     const seed = getSeed();
     expect(seed.event_id, 'E2E seed required').toBeTruthy();
+    expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
 
     await page.goto(`/events/${seed.event_id}`);
 
-    // Select ONLY the period slot (not orientation)
-    await clickSlotByLabel(page, /^period/i);
+    // 2026-08-05 shifts: classroom work is a shift now, so "period-only" means
+    // booking the shift and no orientation slot.
+    await clickShiftById(page, seed.shift_id);
 
     // Identity form appears
     await expect(page.getByText('Your information')).toBeVisible();
@@ -83,11 +86,12 @@ test.describe('orientation modal', () => {
       seed.attended_volunteer_email,
       'attended_volunteer_email required in seed JSON'
     ).toBeTruthy();
+    expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
 
     await page.goto(`/events/${seed.event_id}`);
 
-    // Select ONLY the period slot
-    await clickSlotByLabel(page, /^period/i);
+    // Select ONLY the shift — no orientation slot.
+    await clickShiftById(page, seed.shift_id);
 
     // Identity form appears
     await expect(page.getByText('Your information')).toBeVisible();

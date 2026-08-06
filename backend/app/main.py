@@ -14,7 +14,7 @@ from .observability import configure_logging, init_sentry
 
 configure_logging()
 init_sentry()
-from .routers import auth, users, events, slots, signups, notifications, admin, magic, roster, check_in, organizer
+from .routers import auth, users, events, slots, shifts, signups, notifications, admin, magic, roster, check_in, organizer
 from .routers.public import events as public_events
 from .routers.public import signups as public_signups
 from .routers.public import orientation as public_orientation
@@ -114,7 +114,9 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(events.router, prefix="/api/v1")
 app.include_router(slots.router, prefix="/api/v1")
+app.include_router(shifts.router, prefix="/api/v1")
 app.include_router(signups.router, prefix="/api/v1")
+app.include_router(signups.shift_signups_router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(magic.router, prefix="/api/v1")

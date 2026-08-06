@@ -18,6 +18,12 @@ import { toast } from "../state/toast";
 
 /**
  * Format a slot for display in the success list.
+ *
+ * 2026-08-05 shifts: a session is named by the shift it belongs to. Without
+ * that, a volunteer who booked "Tue morning" saw a bare list of times and was
+ * never told which shift they had committed to, nor that the sessions come as
+ * a package — they are booked and cancelled together. `_shiftName` is set by
+ * the caller that expanded the shift into its sessions.
  */
 function formatSlotLine(slot) {
   if (!slot) return "";
@@ -43,7 +49,8 @@ function formatSlotLine(slot) {
     : "";
 
   const timeRange = start && end ? `${start}–${end}` : start;
-  return [date, timeRange, slot.location].filter(Boolean).join(", ");
+  const when = [date, timeRange, slot.location].filter(Boolean).join(", ");
+  return slot._shiftName ? `${slot._shiftName} — ${when}` : when;
 }
 
 function openGoogleCalendar(event, slot) {
@@ -84,13 +91,23 @@ export default function SignupSuccessCard({
   // to do it. Either shape works now.
   const calendarSlots = slots?.length ? slots : slot ? [slot] : [];
 
-  // Per-slot signup result, keyed by slot_id (Phase 25 result items). Callers
-  // that don't pass `signups` get the old everything-is-booked behavior.
+  // Per-unit signup result (Phase 25 result items). Callers that don't pass
+  // `signups` get the old everything-is-booked behavior.
+  //
+  // Two indexes because a result item is anchored on either a slot or a shift.
+  // A shift's sessions carry no result of their own, so keying on slot_id alone
+  // found nothing for them: a waitlisted shift showed no badge, no warning, and
+  // — worse — every session of it went into the calendar export as if the spot
+  // were theirs.
   const resultBySlot = {};
+  const resultByShift = {};
   (signups || []).forEach((item) => {
     if (item?.slot_id) resultBySlot[item.slot_id] = item;
+    if (item?.shift_id) resultByShift[item.shift_id] = item;
   });
-  const isWaitlisted = (s) => resultBySlot[s.id]?.status === "waitlisted";
+  const resultFor = (s) =>
+    resultBySlot[s.id] || (s._shiftId ? resultByShift[s._shiftId] : undefined);
+  const isWaitlisted = (s) => resultFor(s)?.status === "waitlisted";
   const waitlistedSlots = calendarSlots.filter(isWaitlisted);
 
   // A waitlisted session isn't on the volunteer's schedule yet — keep it out
@@ -123,8 +140,8 @@ export default function SignupSuccessCard({
                 <span>{formatSlotLine(s)}</span>
                 {isWaitlisted(s) ? (
                   <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                    {resultBySlot[s.id]?.position != null
-                      ? `Waitlist #${resultBySlot[s.id].position}`
+                    {resultFor(s)?.position != null
+                      ? `Waitlist #${resultFor(s).position}`
                       : "Waitlist"}
                   </span>
                 ) : canAddToCalendar && bookedSlots.length > 1 && Boolean(event) ? (

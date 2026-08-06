@@ -62,7 +62,16 @@ def _make_volunteer(db, email=None):
 
 
 def _make_event_slot_signup(db, *, venue_code=None, slot_start=None, status=SignupStatus.confirmed, volunteer=None):
-    """Helper: create volunteer + event + slot + signup."""
+    """Helper: create volunteer + event + orientation slot + signup.
+
+    2026-08-05 shifts: orientation, not period. These tests exercise the
+    ``Signup`` half of the check-in state machine, and an orientation slot is
+    exactly the slot that is still booked directly. A period slot now belongs
+    to a shift and is checked in per (commitment, session) through
+    ``check_in_session`` — a different code path with its own tests. Rewriting
+    these as shifts would abandon the signup path while it is still live for
+    every orientation slot in production.
+    """
     if volunteer is None:
         volunteer = _make_volunteer(db)
     owner = _make_user(db, role="organizer")
@@ -85,7 +94,7 @@ def _make_event_slot_signup(db, *, venue_code=None, slot_start=None, status=Sign
         start_time=start,
         end_time=start + timedelta(hours=2),
         capacity=10,
-        slot_type=SlotType.PERIOD,
+        slot_type=SlotType.ORIENTATION,
     )
     db.add(slot)
     db.flush()
@@ -237,7 +246,7 @@ class TestResolveEvent:
             start_time=now,
             end_time=now + timedelta(hours=2),
             capacity=10,
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
         )
         db_session.add(slot)
         db_session.flush()
@@ -291,7 +300,7 @@ class TestResolveEvent:
             start_time=now,
             end_time=now + timedelta(hours=2),
             capacity=10,
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
         )
         db_session.add(slot)
         db_session.flush()
@@ -320,6 +329,18 @@ class TestResolveEvent:
             resolve_event(db_session, event.id, owner.id, [s1.id, s2.id], [])
 
 
+def _signups_of(result):
+    """Unwrap ``event_check_in_by_email``'s result into its Signup rows.
+
+    2026-08-05 shifts: it returns ``(CheckInOption, transitioned)`` pairs
+    rather than a flat list of signups, because a volunteer scanning the event
+    QR can hold a mix of orientation signups and shift sessions, and the caller
+    has to know which units this call actually moved. These tests cover the
+    orientation half, so they read ``option.signup``.
+    """
+    return [option.signup for option, _transitioned in result]
+
+
 class TestEventCheckInByEmail:
     """Event-QR self-check-in: organizer displays QR, volunteer identifies by email."""
 
@@ -339,11 +360,12 @@ class TestEventCheckInByEmail:
         vol, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
-        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
 
         assert volunteer.id == vol.id
-        assert len(signups) == 1
-        assert signups[0].id == signup.id
+        # (option, transitioned) pairs — True means this call moved the unit.
+        assert [(o.signup.id, moved) for o, moved in result] == [(signup.id, True)]
+        signups = _signups_of(result)
         assert signups[0].status == SignupStatus.checked_in
         assert signups[0].checked_in_at is not None
 
@@ -359,11 +381,11 @@ class TestEventCheckInByEmail:
         vol, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
-        volunteer, signups = event_check_in_by_email(
+        volunteer, result = event_check_in_by_email(
             db_session, event.id, vol.email.upper(), "1234"
         )
         assert volunteer.id == vol.id
-        assert len(signups) == 1
+        assert len(result) == 1
 
     def test_outside_window_raises(self, db_session):
         # Slot starts 5 hours from now — well outside check-in window
@@ -379,8 +401,10 @@ class TestEventCheckInByEmail:
         vol, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start, status=SignupStatus.checked_in
         )
-        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email, "1234")
-        assert len(signups) == 1
+        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        # Reported, but flagged as not moved — the idempotent path.
+        assert [moved for _o, moved in result] == [False]
+        signups = _signups_of(result)
         assert signups[0].status == SignupStatus.checked_in
 
         # No new audit log — already-checked-in path doesn't re-transition
@@ -413,7 +437,7 @@ class TestEventCheckInByEmail:
                 start_time=now + timedelta(minutes=5),
                 end_time=now + timedelta(hours=2),
                 capacity=10,
-                slot_type=SlotType.PERIOD,
+                slot_type=SlotType.ORIENTATION,
             )
             db_session.add(slot)
             db_session.flush()
@@ -429,7 +453,8 @@ class TestEventCheckInByEmail:
 
         volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         assert len(result) == 2
-        for s in result:
+        assert all(moved for _o, moved in result)
+        for s in _signups_of(result):
             assert s.status == SignupStatus.checked_in
 
     def test_pending_signup_auto_confirms_then_checks_in(self, db_session):
@@ -438,7 +463,8 @@ class TestEventCheckInByEmail:
         vol, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start, status=SignupStatus.pending
         )
-        volunteer, signups = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        signups = _signups_of(result)
         assert len(signups) == 1
         assert signups[0].status == SignupStatus.checked_in
 
@@ -476,7 +502,7 @@ class TestEventCheckInByEmail:
             start_time=now + timedelta(minutes=5),
             end_time=now + timedelta(hours=2),
             capacity=10,
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
         )
         slot_out = Slot(
             id=uuid.uuid4(),
@@ -484,7 +510,7 @@ class TestEventCheckInByEmail:
             start_time=now + timedelta(hours=6),  # far outside window
             end_time=now + timedelta(hours=8),
             capacity=10,
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
         )
         db_session.add_all([slot_in, slot_out])
         db_session.flush()
@@ -505,9 +531,10 @@ class TestEventCheckInByEmail:
         db_session.flush()
 
         volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
-        assert len(result) == 1
-        assert result[0].id == s_in.id
-        assert result[0].status == SignupStatus.checked_in
+        signups = _signups_of(result)
+        assert len(signups) == 1
+        assert signups[0].id == s_in.id
+        assert signups[0].status == SignupStatus.checked_in
         # Out-of-window signup stays confirmed
         db_session.refresh(s_out)
         assert s_out.status == SignupStatus.confirmed

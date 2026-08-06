@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from .. import models
+from . import notification_dedup
 
 
 PT = ZoneInfo("America/Los_Angeles")
@@ -165,9 +166,22 @@ def compute_reminder_window(
 # ------------------------------------------------------------------
 
 
-def notification_kind(kind: ReminderKind) -> str:
-    """Return the dedup key kind stored in ``sent_notifications.kind``."""
-    return f"reminder_{kind}"
+def notification_kind(kind: ReminderKind, session_sort_order: int | None = None) -> str:
+    """Return the dedup key kind stored in ``sent_notifications.kind``.
+
+    2026-08-02 shifts: a shift commitment covers several sessions but has one
+    ``sent_notifications`` anchor, so a bare ``reminder_pre_24h`` would let a
+    Tue+Wed volunteer be reminded about Tuesday and then silently deduped out of
+    Wednesday. Suffixing the session's ``sort_order`` gives each session its own
+    dedup slot. Worst case, an organizer who reorders sessions mid-week causes
+    one duplicate or one missed reminder — far cheaper than losing per-day
+    reminders altogether. Kept under the column's 32 chars: the longest key is
+    ``reminder_pre_24h_s<n>``.
+    """
+    base = f"reminder_{kind}"
+    if session_sort_order is None:
+        return base
+    return f"{base}_s{session_sort_order}"
 
 
 @dataclass
@@ -181,6 +195,18 @@ def _already_sent(db: Session, signup_id, nk: str) -> bool:
         db.query(models.SentNotification)
         .filter(
             models.SentNotification.signup_id == signup_id,
+            models.SentNotification.kind == nk,
+        )
+        .first()
+        is not None
+    )
+
+
+def _already_sent_shift(db: Session, shift_signup_id, nk: str) -> bool:
+    return (
+        db.query(models.SentNotification)
+        .filter(
+            models.SentNotification.shift_signup_id == shift_signup_id,
             models.SentNotification.kind == nk,
         )
         .first()
@@ -229,18 +255,72 @@ def send_reminder(
     if not force and is_quiet_hours(now):
         return SendResult(sent=False, reason="quiet_hours")
 
-    # Atomic dedup insert — first caller wins.
-    stmt = pg_insert(models.SentNotification).values(
-        signup_id=signup.id, kind=nk
-    ).on_conflict_do_nothing(index_elements=["signup_id", "kind"])
-    result = db.execute(stmt)
-    if result.rowcount != 1:
+    # Atomic dedup insert — first caller wins. This local copy shipped without
+    # the partial-index predicate and raised instead of sending, so it now goes
+    # through the one canonical implementation.
+    if not notification_dedup.dedup_insert_signup(db, signup.id, nk):
         return SendResult(sent=False, reason="already_sent")
     db.flush()
 
     # Delegate the actual email to the Celery task, which routes through
     # BUILDERS[kind]. In eager test mode this fires synchronously.
     send_email_notification.delay(signup_id=str(signup.id), kind=nk)
+    return SendResult(sent=True, reason="ok")
+
+
+def send_session_reminder(
+    db: Session,
+    shift_signup_id,
+    slot_id,
+    kind: ReminderKind,
+    *,
+    now: Optional[datetime] = None,
+    force: bool = False,
+) -> SendResult:
+    """Shift-side twin of :func:`send_reminder`, for one session of a shift.
+
+    Same rule order and same compliance guarantees (opt-out and idempotency
+    survive ``force``); the only differences are which anchor column carries the
+    dedup marker and that the dedup kind is session-scoped, so a multi-session
+    shift produces one reminder per session rather than one per commitment.
+    """
+    from ..celery_app import send_email_notification
+
+    now = now or datetime.now(timezone.utc)
+
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .first()
+    )
+    if not shift_signup:
+        return SendResult(sent=False, reason="no_signup")
+    session = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
+    if not session or session.shift_id != shift_signup.shift_id:
+        return SendResult(sent=False, reason="no_signup")
+
+    volunteer = shift_signup.volunteer
+    if not volunteer or not volunteer.email:
+        return SendResult(sent=False, reason="no_volunteer")
+
+    prefs = get_preferences(db, volunteer.email)
+    if not prefs.email_reminders_enabled:
+        return SendResult(sent=False, reason="opted_out")
+
+    if not force and is_quiet_hours(now):
+        return SendResult(sent=False, reason="quiet_hours")
+
+    nk = notification_kind(kind, session.sort_order)
+    if not notification_dedup.dedup_insert_shift_signup(db, shift_signup.id, nk):
+        return SendResult(sent=False, reason="already_sent")
+    db.flush()
+
+    send_email_notification.delay(
+        shift_signup_id=str(shift_signup.id),
+        kind=notification_kind(kind),
+        dedup_kind=nk,
+        session_slot_id=str(session.id),
+    )
     return SendResult(sent=True, reason="ok")
 
 
@@ -307,6 +387,45 @@ def list_upcoming_reminders(db: Session, days: int = 7) -> List[dict]:
                 }
             )
 
+    # Shift sessions, same shape. The preview is what admins trust to answer
+    # "will this volunteer be reminded?", so leaving sessions out would make it
+    # look like nobody gets reminded about the work itself.
+    for shift_signup, slot in candidate_sessions_for_scan(db, now=now):
+        shift = shift_signup.shift
+        event = shift.event if shift else None
+        vol = shift_signup.volunteer
+        if not event or not vol:
+            continue
+        for k in KINDS:
+            target = scheduled_instant_for_kind(slot, k)
+            if target < now - timedelta(hours=1) or target > horizon:
+                continue
+            nk = notification_kind(k, slot.sort_order)
+            prefs = (
+                db.query(models.VolunteerPreference)
+                .filter(models.VolunteerPreference.volunteer_email == vol.email)
+                .first()
+            )
+            rows.append(
+                {
+                    "signup_id": None,
+                    "shift_signup_id": shift_signup.id,
+                    "shift_id": shift.id,
+                    "shift_name": shift.name,
+                    "volunteer_email": vol.email,
+                    "volunteer_name": f"{vol.first_name} {vol.last_name}".strip(),
+                    "event_id": event.id,
+                    "event_title": event.title,
+                    "slot_id": slot.id,
+                    "slot_start_time": slot.start_time,
+                    "kind": k,
+                    "scheduled_for": target,
+                    "already_sent": _already_sent_shift(db, shift_signup.id, nk),
+                    "opted_out": prefs is not None
+                    and not prefs.email_reminders_enabled,
+                }
+            )
+
     rows.sort(key=lambda r: r["scheduled_for"])
     return rows
 
@@ -335,6 +454,35 @@ def candidate_signups_for_scan(
         .join(models.Slot, models.Slot.id == models.Signup.slot_id)
         .filter(
             models.Signup.status == models.SignupStatus.confirmed,
+            models.Slot.start_time >= lower,
+            models.Slot.start_time <= upper,
+        )
+        .all()
+    )
+
+
+def candidate_sessions_for_scan(
+    db: Session, now: Optional[datetime] = None
+) -> list[tuple[models.ShiftSignup, models.Slot]]:
+    """Yield ``(shift_signup, session)`` pairs due for a reminder check.
+
+    2026-08-02 shifts: period slots no longer carry ``Signup`` rows, so the
+    scan above only ever finds orientation signups. Reminders for the sessions a
+    volunteer actually works come from here. One pair per session, not per
+    commitment — a Tue+Wed volunteer wants reminding on both days.
+
+    Same ~8-day upper bound as the signup scan, for the same reason: kickoff
+    fires Monday 07:00 PT and the session can be as late as Sunday.
+    """
+    now = now or datetime.now(timezone.utc)
+    upper = now + timedelta(days=8)
+    lower = now - timedelta(hours=1)
+    return (
+        db.query(models.ShiftSignup, models.Slot)
+        .join(models.Shift, models.Shift.id == models.ShiftSignup.shift_id)
+        .join(models.Slot, models.Slot.shift_id == models.Shift.id)
+        .filter(
+            models.ShiftSignup.status == models.SignupStatus.confirmed,
             models.Slot.start_time >= lower,
             models.Slot.start_time <= upper,
         )

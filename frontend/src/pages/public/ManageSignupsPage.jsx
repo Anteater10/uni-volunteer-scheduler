@@ -57,12 +57,50 @@ function formatDate(dateString) {
   });
 }
 
+// Status pill shared by slot signups and shift commitments — icon + label so
+// colour is never the sole signal. Waitlisted rows carry their FIFO position;
+// for a shift that position is the one queue for the whole bundle.
+function StatusBadge({ status, waitlistPosition }) {
+  if (status === "waitlisted") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700"
+        data-testid="waitlist-badge"
+      >
+        <Clock size={12} aria-hidden="true" />
+        Waitlist #{waitlistPosition ?? "—"}
+      </span>
+    );
+  }
+  const confirmed = status === "confirmed";
+  return (
+    <span
+      className={
+        confirmed
+          ? "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700"
+          : "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700"
+      }
+    >
+      {confirmed ? (
+        <CheckCircle size={12} aria-hidden="true" />
+      ) : (
+        <Clock size={12} aria-hidden="true" />
+      )}
+      {confirmed ? "Confirmed" : "Pending"}
+    </span>
+  );
+}
+
 export default function ManageSignupsPage({ tokenOverride }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const token = tokenOverride || searchParams.get("token");
 
   const [signups, setSignups] = useState([]);
+  // 2026-08-05 shifts: classroom work is booked as a shift, so a volunteer can
+  // hold a commitment with no Signup row behind it at all. Reading only
+  // `signups` showed those volunteers the empty state.
+  const [shiftSignups, setShiftSignups] = useState([]);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["manage-signups", token],
@@ -75,6 +113,9 @@ export default function ManageSignupsPage({ tokenOverride }) {
   React.useEffect(() => {
     if (data?.signups) {
       setSignups(data.signups);
+    }
+    if (data?.shift_signups) {
+      setShiftSignups(data.shift_signups);
     }
   }, [data]);
 
@@ -128,7 +169,7 @@ export default function ManageSignupsPage({ tokenOverride }) {
   // ------------------------------------------------------------------
   // Empty state
   // ------------------------------------------------------------------
-  if (signups.length === 0) {
+  if (signups.length === 0 && shiftSignups.length === 0) {
     return (
       <div className="max-w-xl mx-auto mt-8 px-4">
         <EmptyState
@@ -197,34 +238,65 @@ export default function ManageSignupsPage({ tokenOverride }) {
               {/* Status badge — icon + label so color isn't the sole signal.
                   Phase 25 (WAIT-01): waitlisted rows carry a distinct orange
                   badge with their current FIFO position. */}
-              {signup.status === "waitlisted" ? (
-                <span
-                  className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700"
-                  data-testid="waitlist-badge"
-                >
-                  <Clock size={12} aria-hidden="true" />
-                  Waitlist #{signup.waitlist_position ?? "—"}
-                </span>
-              ) : (
-                <span
-                  className={
-                    signup.status === "confirmed"
-                      ? "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700"
-                      : "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700"
-                  }
-                >
-                  {signup.status === "confirmed" ? (
-                    <CheckCircle size={12} aria-hidden="true" />
-                  ) : (
-                    <Clock size={12} aria-hidden="true" />
-                  )}
-                  {signup.status === "confirmed" ? "Confirmed" : "Pending"}
-                </span>
-              )}
+              <StatusBadge
+                status={signup.status}
+                waitlistPosition={signup.waitlist_position}
+              />
             </div>
           </div>
         </Card>
       ))}
+
+      {/* 2026-08-05 shifts: one commitment, one card, every session listed
+          under it — the volunteer agreed to all of them in one press, so
+          splitting them into a card each would misrepresent the deal. */}
+      {shiftSignups.map((commitment) => {
+        const sessions = commitment.shift?.sessions || [];
+        return (
+          <Card
+            key={commitment.shift_signup_id}
+            className="p-4"
+            data-testid={`shift-commitment-${commitment.shift_signup_id}`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-block text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                    Shift
+                  </span>
+                  <StatusBadge
+                    status={commitment.status}
+                    waitlistPosition={commitment.waitlist_position}
+                  />
+                </div>
+
+                <p className="text-sm font-medium text-gray-900">
+                  {commitment.shift?.name}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {sessions.length === 1
+                    ? "1 session"
+                    : `${sessions.length} sessions — you're expected at all of them`}
+                </p>
+
+                <ul className="space-y-1 pt-1">
+                  {sessions.map((session) => (
+                    <li key={session.id} className="text-sm text-gray-600">
+                      <span className="font-medium text-gray-900">
+                        {formatDate(session.date)}
+                      </span>
+                      {session.name ? ` · ${session.name}` : ""} ·{" "}
+                      {formatTime(session.start_time)} –{" "}
+                      {formatTime(session.end_time)}
+                      {session.location ? ` · ${session.location}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </Card>
+        );
+      })}
 
       <Card className="p-4" data-testid="contact-notice">
         <p className="text-sm font-medium text-gray-900">

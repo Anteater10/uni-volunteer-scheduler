@@ -5,6 +5,17 @@ cancel were removed 2026-08-02 (read-only signups) — test_swap_route_is_gone
 guards that the route stays gone. Each remaining behavior (manage, swap-gone,
 confirm-rejects) gets its own dedicated test below.
 """
+
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import uuid
 from datetime import date as date_type, datetime, timedelta, timezone
 
@@ -32,7 +43,7 @@ def _confirmed_signup_with_expired_token(db_session):
         end_time=datetime.now(timezone.utc) + timedelta(days=20, hours=2),
         capacity=2,
         current_count=1,
-        slot_type=models.SlotType.PERIOD,
+        slot_type=models.SlotType.ORIENTATION,
         date=date_type.today(),
     )
     db_session.add(slot)
@@ -83,7 +94,7 @@ class TestExpiredTokenStillManages:
             end_time=datetime.now(timezone.utc) + timedelta(days=20, hours=2),
             capacity=2,
             current_count=0,
-            slot_type=models.SlotType.PERIOD,
+            slot_type=models.SlotType.ORIENTATION,
             date=date_type.today(),
         )
         db_session.add(other_slot)

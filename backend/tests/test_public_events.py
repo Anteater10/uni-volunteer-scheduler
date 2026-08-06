@@ -10,6 +10,16 @@ Assertions:
   - 404 on unknown event_id
   - Rate limiting not tested (Redis mock would be needed; tested at unit level)
 """
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import unittest.mock as mock
 import uuid
 from datetime import datetime, timezone, timedelta, date as date_type
@@ -48,7 +58,7 @@ def _make_quarter(db_session, **kwargs):
     return q
 
 
-def _make_slot(db_session, event, *, capacity=10, current_count=2, slot_type=SlotType.PERIOD):
+def _make_slot(db_session, event, *, capacity=10, current_count=2, slot_type=SlotType.ORIENTATION):
     slot = Slot(
         id=uuid.uuid4(),
         event_id=event.id,

@@ -214,3 +214,130 @@ describe("slot mode", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 2026-08-05 shifts — close-out is per (commitment, session).
+//
+// A roster row is one volunteer at one session, and a shift row carries
+// `shift_signup_id` with `signup_id` null. The modal read `signup_id`, so every
+// shift volunteer collapsed onto one undefined key: marking one name enabled
+// Save for the whole list, and the request went out with nulls in it. Nothing
+// caught it because every fixture here was signup-shaped.
+// ---------------------------------------------------------------------------
+
+const TUE = "slot-tue";
+const WED = "slot-wed";
+
+// Ada holds a Tue+Wed shift, so she appears twice. Grace is orientation.
+const SHIFT_ROWS = [
+  {
+    shift_signup_id: "c-1",
+    signup_id: null,
+    slot_id: TUE,
+    shift_name: "Tue morning",
+    session_name: "Period 1",
+    student_name: "Ada Lovelace",
+    status: "checked_in",
+  },
+  {
+    shift_signup_id: "c-1",
+    signup_id: null,
+    slot_id: WED,
+    shift_name: "Tue morning",
+    session_name: "Period 2",
+    student_name: "Ada Lovelace",
+    status: "confirmed",
+  },
+];
+
+describe("shift close-out", () => {
+  it("session mode sends commitment ids for that session only", async () => {
+    const user = userEvent.setup();
+    renderModal({
+      signups: [SHIFT_ROWS[0]],
+      slot: { id: TUE, slot_type: "period" },
+    });
+
+    // Not "End module slot": the rest of the shift stays open.
+    expect(screen.getByText("End session")).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Mark Ada Lovelace attended"));
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() =>
+      expect(resolveSlot).toHaveBeenCalledWith(TUE, {
+        attended: ["c-1"],
+        no_show: [],
+      }),
+    );
+    expect(resolveEvent).not.toHaveBeenCalled();
+  });
+
+  it("gives one volunteer independent decisions per session", async () => {
+    const user = userEvent.setup();
+    renderModal({ signups: SHIFT_ROWS });
+
+    // Both of Ada's sessions are listed, distinguishable by name.
+    expect(screen.getByText("Tue morning · Period 1")).toBeInTheDocument();
+    expect(screen.getByText("Tue morning · Period 2")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByLabelText("Mark Ada Lovelace (Tue morning · Period 1) attended"),
+    );
+    await user.click(
+      screen.getByLabelText("Mark Ada Lovelace (Tue morning · Period 2) no-show"),
+    );
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    // Attended Tuesday, no-show Wednesday — the reason close-out is per
+    // session at all. One event-wide call could only say one of the two.
+    await waitFor(() => expect(resolveSlot).toHaveBeenCalledTimes(2));
+    expect(resolveSlot).toHaveBeenCalledWith(TUE, {
+      attended: ["c-1"],
+      no_show: [],
+    });
+    expect(resolveSlot).toHaveBeenCalledWith(WED, {
+      attended: [],
+      no_show: ["c-1"],
+    });
+  });
+
+  it("End event handles a mixed roster without sending nulls", async () => {
+    const user = userEvent.setup();
+    renderModal({
+      signups: [
+        ...SHIFT_ROWS,
+        {
+          signup_id: "s-9",
+          student_name: "Grace Hopper",
+          status: "confirmed",
+          slot_id: "slot-orient",
+        },
+      ],
+    });
+
+    // Prefill: checked_in -> attended, everyone else -> no_show. Save is
+    // enabled only when every row has a decision, which is the check that used
+    // to pass after one click.
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(resolveEvent).toHaveBeenCalledTimes(1));
+    expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+      attended: [],
+      no_show: ["s-9"],
+    });
+    expect(resolveSlot).toHaveBeenCalledWith(TUE, {
+      attended: ["c-1"],
+      no_show: [],
+    });
+    expect(resolveSlot).toHaveBeenCalledWith(WED, {
+      attended: [],
+      no_show: ["c-1"],
+    });
+    const allIds = [
+      ...resolveEvent.mock.calls,
+      ...resolveSlot.mock.calls,
+    ].flatMap(([, body]) => [...body.attended, ...body.no_show]);
+    expect(allIds.every(Boolean)).toBe(true);
+  });
+
+});

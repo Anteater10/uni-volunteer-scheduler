@@ -18,24 +18,39 @@ from app.schemas import PublicSignupCreate, SignupResponseCreate  # noqa: F401
 from app.services.public_signup_service import create_public_signup
 from tests.fixtures.factories import (
     EventFactory,
+    ShiftFactory,
     SlotFactory,
     UserFactory,
 )
+from tests.fixtures.helpers import _bind_factories
 
 
-def _bind_factories(db):
-    for f in (UserFactory, EventFactory, SlotFactory):
-        f._meta.sqlalchemy_session = db
+def _payload(slot_id=None, email="lock-test@example.com", *, shift_id=None):
+    """2026-08-05 shifts: the endpoint takes two id lists.
 
-
-def _payload(slot_id, email="lock-test@example.com"):
+    ``slot_ids`` is orientation-only now — a bare period slot id is refused,
+    since a period slot is a session inside a shift. The window and visibility
+    rules these tests cover are per *event* and apply to both lists, so most
+    cases book an orientation slot; the orientation-gate case needs a shift,
+    because selecting a shift is what makes orientation credit necessary.
+    """
     return PublicSignupCreate(
         email=email,
         first_name="Test",
         last_name="User",
         phone="(805) 555-1212",
-        slot_ids=[slot_id],
+        slot_ids=[slot_id] if slot_id else [],
+        shift_ids=[shift_id] if shift_id else [],
         responses=[],
+    )
+
+
+def _orientation_slot(event, **kw):
+    return SlotFactory(
+        event=event,
+        event_id=event.id,
+        slot_type=models.SlotType.ORIENTATION,
+        **kw,
     )
 
 
@@ -47,7 +62,7 @@ def test_signup_blocked_before_opens(db_session):
         owner_id=owner.id,
         signup_open_at=datetime.now(timezone.utc) + timedelta(days=3),
     )
-    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    slot = _orientation_slot(event, capacity=5, current_count=0)
     db_session.flush()
 
     with pytest.raises(HTTPException) as exc:
@@ -64,7 +79,7 @@ def test_signup_blocked_after_closes(db_session):
         owner_id=owner.id,
         signup_close_at=datetime.now(timezone.utc) - timedelta(hours=1),
     )
-    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    slot = _orientation_slot(event, capacity=5, current_count=0)
     db_session.flush()
 
     with pytest.raises(HTTPException) as exc:
@@ -83,7 +98,7 @@ def test_signup_allowed_with_null_window(db_session):
         signup_open_at=None,
         signup_close_at=None,
     )
-    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    slot = _orientation_slot(event, capacity=5, current_count=0)
     db_session.flush()
 
     resp = create_public_signup(db_session, _payload(slot.id))
@@ -100,7 +115,7 @@ def test_signup_allowed_within_window(db_session):
         signup_open_at=now - timedelta(hours=1),
         signup_close_at=now + timedelta(days=7),
     )
-    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    slot = _orientation_slot(event, capacity=5, current_count=0)
     db_session.flush()
 
     resp = create_public_signup(db_session, _payload(slot.id))
@@ -114,7 +129,7 @@ def test_signup_rejected_for_private_event(db_session):
     _bind_factories(db_session)
     owner = UserFactory(role=models.UserRole.admin)
     event = EventFactory(owner=owner, owner_id=owner.id, visibility="private")
-    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    slot = _orientation_slot(event, capacity=5, current_count=0)
     db_session.flush()
 
     with pytest.raises(HTTPException) as exc:
@@ -141,17 +156,20 @@ def test_signup_rejected_for_private_event_before_orientation_check(db_session):
         # this alone is enough to make orientation "required" below.
         module_slug="private-orientation-family",
     )
-    period = SlotFactory(
-        event=event, event_id=event.id, slot_type=models.SlotType.PERIOD
-    )
+    shift = ShiftFactory(event=event, event_id=event.id)
     SlotFactory(
-        event=event, event_id=event.id, slot_type=models.SlotType.ORIENTATION
+        event=event,
+        event_id=event.id,
+        shift=shift,
+        shift_id=shift.id,
+        slot_type=models.SlotType.PERIOD,
     )
+    _orientation_slot(event)
     db_session.flush()
 
     with pytest.raises(HTTPException) as exc:
         create_public_signup(
-            db_session, _payload(period.id, email="no-credit@example.com")
+            db_session, _payload(shift_id=shift.id, email="no-credit@example.com")
         )
     assert exc.value.status_code == 404
     # Fix round 2 (Task 2 review): must match the unknown-slot 404's detail
@@ -167,7 +185,7 @@ def test_signup_allowed_for_public_event(db_session):
     _bind_factories(db_session)
     owner = UserFactory(role=models.UserRole.admin)
     event = EventFactory(owner=owner, owner_id=owner.id, visibility="public")
-    slot = SlotFactory(event=event, event_id=event.id, capacity=5, current_count=0)
+    slot = _orientation_slot(event, capacity=5, current_count=0)
     db_session.flush()
 
     resp = create_public_signup(db_session, _payload(slot.id))

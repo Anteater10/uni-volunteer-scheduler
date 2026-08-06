@@ -17,6 +17,9 @@ from app.models import (
     Notification,
     NotificationType,
     Quarter,
+    SessionAttendance,
+    Shift,
+    ShiftSignup,
     Signup,
     SignupStatus,
     Slot,
@@ -63,7 +66,33 @@ class EventFactory(SQLAlchemyModelFactory):
     created_at = factory.LazyFunction(datetime.utcnow)
 
 
+class ShiftFactory(SQLAlchemyModelFactory):
+    """2026-08-02 shifts: the bookable unit. Capacity lives here."""
+
+    class Meta:
+        model = Shift
+        sqlalchemy_session_persistence = "flush"
+
+    id = factory.LazyFunction(uuid.uuid4)
+    event = factory.SubFactory(EventFactory)
+    event_id = factory.LazyAttribute(lambda o: o.event.id)
+    name = factory.Sequence(lambda n: f"Shift {n}")
+    sort_order = 0
+    capacity = 10
+    current_count = 0
+
+
 class SlotFactory(SQLAlchemyModelFactory):
+    """A slot is either an orientation slot (bookable alone) or a *session*
+    inside a shift.
+
+    ``ck_slots_shift_membership_matches_type`` makes a shift-less period slot
+    unrepresentable, so a PERIOD slot here builds its own single-session parent
+    shift — exactly what migration 0037 does to the legacy rows. Pass an
+    explicit ``shift=`` to put several sessions in one bundle, or
+    ``slot_type=SlotType.ORIENTATION`` for a standalone slot.
+    """
+
     class Meta:
         model = Slot
         sqlalchemy_session_persistence = "flush"
@@ -77,6 +106,22 @@ class SlotFactory(SQLAlchemyModelFactory):
     current_count = 0
     # Phase 08: new NOT NULL column (D-02); default to period so existing tests continue to work
     slot_type = SlotType.PERIOD
+    name = None
+    sort_order = 0
+
+    shift = factory.Maybe(
+        factory.LazyAttribute(lambda o: o.slot_type == SlotType.PERIOD),
+        # The parent shift must live on the *same* event as its session, so it
+        # borrows the slot's event rather than building a second one.
+        yes_declaration=factory.SubFactory(
+            ShiftFactory,
+            event=factory.SelfAttribute("..event"),
+            capacity=factory.SelfAttribute("..capacity"),
+            current_count=factory.SelfAttribute("..current_count"),
+        ),
+        no_declaration=None,
+    )
+    shift_id = factory.LazyAttribute(lambda o: o.shift.id if o.shift else None)
 
 
 class VolunteerFactory(SQLAlchemyModelFactory):
@@ -126,3 +171,39 @@ class SignupFactory(SQLAlchemyModelFactory):
     slot_id = factory.LazyAttribute(lambda o: o.slot.id)
     status = SignupStatus.confirmed
     timestamp = factory.LazyFunction(datetime.utcnow)
+
+
+class ShiftSignupFactory(SQLAlchemyModelFactory):
+    """The commitment: one row per volunteer per shift, covering every session.
+
+    ``status`` is restricted by CHECK to the four lifecycle values — attendance
+    outcomes belong on SessionAttendance, not here.
+    """
+
+    class Meta:
+        model = ShiftSignup
+        sqlalchemy_session_persistence = "flush"
+
+    id = factory.LazyFunction(uuid.uuid4)
+    volunteer = factory.SubFactory(VolunteerFactory)
+    volunteer_id = factory.LazyAttribute(lambda o: o.volunteer.id)
+    shift = factory.SubFactory(ShiftFactory)
+    shift_id = factory.LazyAttribute(lambda o: o.shift.id)
+    status = SignupStatus.confirmed
+    timestamp = factory.LazyFunction(datetime.utcnow)
+
+
+class SessionAttendanceFactory(SQLAlchemyModelFactory):
+    """"Did they show up on Tuesday" — one row per session actually resolved."""
+
+    class Meta:
+        model = SessionAttendance
+        sqlalchemy_session_persistence = "flush"
+
+    id = factory.LazyFunction(uuid.uuid4)
+    shift_signup = factory.SubFactory(ShiftSignupFactory)
+    shift_signup_id = factory.LazyAttribute(lambda o: o.shift_signup.id)
+    slot = factory.SubFactory(SlotFactory)
+    slot_id = factory.LazyAttribute(lambda o: o.slot.id)
+    status = SignupStatus.attended
+    checked_in_at = None

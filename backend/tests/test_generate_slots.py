@@ -63,10 +63,18 @@ def _payload(event, **overrides):
     return body
 
 
-def test_generate_slots_defaults_slot_type_to_period(client, db_session):
-    """The bug: models.Slot(...) omitted slot_type (NOT NULL, no default)
-    -> IntegrityError -> 500 for every caller. Omitting slot_type in the
-    payload must succeed and default to period, matching SlotCreate."""
+def test_generate_slots_default_period_recurrence_makes_one_shift_per_occurrence(
+    client, db_session
+):
+    """A period recurrence produces shifts, not bare slots.
+
+    2026-08-05 shifts: the response is now {slots, shifts} rather than a flat
+    list, because the two slot types produce different kinds of bookable unit.
+    Each occurrence becomes its own single-session shift — independently
+    bookable with its own capacity, exactly as the generated slots were.
+    Bundling the occurrences into one all-or-nothing commitment is a different
+    promise, so it is left to the organizer to build by hand.
+    """
     organizer = _organizer(db_session)
     event = _make_event(db_session, owner=organizer)
     db_session.commit()
@@ -79,8 +87,16 @@ def test_generate_slots_defaults_slot_type_to_period(client, db_session):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert len(body) == 4
-    assert all(s["slot_type"] == "period" for s in body)
+    assert body["slots"] == []
+    assert len(body["shifts"]) == 4
+    for shift in body["shifts"]:
+        assert shift["capacity"] == 5
+        # One session each, and it is a period slot belonging to this shift.
+        assert len(shift["sessions"]) == 1
+        assert shift["sessions"][0]["slot_type"] == "period"
+        assert shift["sessions"][0]["shift_id"] == shift["id"]
+    # Distinct occurrences, not four copies of the same week.
+    assert len({sh["sessions"][0]["start_time"] for sh in body["shifts"]}) == 4
 
 
 def test_generate_slots_explicit_orientation_type(client, db_session):
@@ -96,8 +112,11 @@ def test_generate_slots_explicit_orientation_type(client, db_session):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert len(body) == 4
-    assert all(s["slot_type"] == "orientation" for s in body)
+    # Orientation is booked directly, so an orientation recurrence still
+    # produces plain slots and no shift.
+    assert body["shifts"] == []
+    assert len(body["slots"]) == 4
+    assert all(s["slot_type"] == "orientation" for s in body["slots"])
 
 
 def test_generate_slots_date_tracks_each_occurrence_not_today(client, db_session):
@@ -116,7 +135,9 @@ def test_generate_slots_date_tracks_each_occurrence_not_today(client, db_session
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    body = sorted(resp.json(), key=lambda s: s["start_time"])
+    # Each occurrence is its own shift, so the dates live on the sessions.
+    sessions = [sh["sessions"][0] for sh in resp.json()["shifts"]]
+    body = sorted(sessions, key=lambda s: s["start_time"])
     assert len(body) == 4
 
     today = datetime.now(timezone.utc).date().isoformat()
@@ -143,9 +164,9 @@ def test_generate_slots_carries_location(client, db_session):
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert len(body) == 2
-    assert all(s["location"] == "Room 204" for s in body)
+    sessions = [sh["sessions"][0] for sh in resp.json()["shifts"]]
+    assert len(sessions) == 2
+    assert all(s["location"] == "Room 204" for s in sessions)
 
 
 def test_generate_slots_rejects_end_before_start(client, db_session):

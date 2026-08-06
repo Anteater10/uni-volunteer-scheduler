@@ -24,6 +24,7 @@ import {
   ephemeralEmail,
   VOLUNTEER_IDENTITY,
   clickSlotByLabel,
+  clickShiftById,
   slotLabel,
 } from './fixtures.js';
 
@@ -79,23 +80,26 @@ test.describe.serial('public volunteer flow', () => {
   });
 
   test('open event detail from card click', async ({ page }) => {
+    const seed = getSeed();
     await page.goto('/events');
     await page.getByText('E2E Seed Event').click();
     await expect(page).toHaveURL(/\/events\//);
-    // Slot labels render in the desktop <table> (md+) or the mobile card list
-    // (<md) — slotLabel resolves whichever layout is visible (fixtures.js).
+    // Orientation slot labels render in the desktop <table> (md+) or the
+    // mobile card list (<md) — slotLabel resolves whichever is visible.
     await expect(slotLabel(page, /orientation/i)).toBeVisible();
-    await expect(slotLabel(page, /^period/i)).toBeVisible();
+    // 2026-08-05 shifts: classroom work is no longer a "Period N" row of its
+    // own — it is a shift card carrying its sessions.
+    await expect(page.getByTestId(`shift-${seed.shift_id}`)).toBeVisible();
   });
 
   test('select both slots, fill form, submit, capture token', async ({ page }) => {
     const seed = getSeed();
     await page.goto(`/events/${seed.event_id}`);
 
-    // Click the "Sign Up" buttons for one orientation + one period slot
-    // (table row on desktop, card on mobile — see fixtures.js).
+    // Click "Sign Up" for one orientation slot (table row on desktop, card on
+    // mobile — see fixtures.js) plus the shift that carries the classroom work.
     await clickSlotByLabel(page, /orientation/i);
-    await clickSlotByLabel(page, /^period/i);
+    await clickShiftById(page, seed.shift_id);
 
     // Identity form should appear
     await expect(page.getByText('Your information')).toBeVisible();
@@ -133,7 +137,7 @@ test.describe.serial('public volunteer flow', () => {
     await page.goto(`/events/${seed.event_id}`);
 
     await clickSlotByLabel(page, /orientation/i);
-    await clickSlotByLabel(page, /^period/i);
+    await clickShiftById(page, seed.shift_id);
 
     await page.locator('#first_name').fill(VOLUNTEER_IDENTITY.first_name);
     await page.locator('#last_name').fill(VOLUNTEER_IDENTITY.last_name);

@@ -50,6 +50,7 @@ import {
   ephemeralEmail,
   getSeed,
   clickSlotByLabel,
+  clickShiftById,
   grantOrientationCredit,
 } from './fixtures.js';
 
@@ -192,13 +193,16 @@ test.describe.serial('cross-role Scenario 1: canonical admin -> participant -> o
   }) => {
     const seed = getSeed();
     expect(seed.event_id, 'E2E seed required — run seed_e2e.py first').toBeTruthy();
-    expect(seed.period_slot_id, 'period_slot_id required in seed JSON').toBeTruthy();
+    expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
 
     await page.goto(`/events/${seed.event_id}`);
 
-    // Select both slots (orientation + period) so no orientation modal fires.
+    // Take the orientation slot and the shift together so no orientation
+    // modal fires. 2026-08-05 shifts: the classroom work is a shift card, not
+    // a "Period N" row — a period slot is a session inside a shift now and is
+    // not selectable on its own.
     await clickSlotByLabel(page, /orientation/i);
-    await clickSlotByLabel(page, /^period/i);
+    await clickShiftById(page, seed.shift_id);
 
     // Identity form
     await expect(page.getByText('Your information')).toBeVisible();
@@ -313,12 +317,18 @@ test.describe.serial('cross-role Scenario 1: canonical admin -> participant -> o
 });
 
 // Direct-API signup + confirm (copy of the fetch pattern from
-// organizer-check-in.spec.js). Returns { signupId, confirmToken, email }.
-async function apiSignupAndConfirm(tag, slotIds, lastName) {
+// organizer-check-in.spec.js). Returns
+// { signupId, shiftSignupId, confirmToken, email }.
+//
+// 2026-08-05 shifts: the endpoint takes two id lists. `slot_ids` is
+// orientation-only — a bare period id is 422 PERIOD_SLOT_NOT_BOOKABLE now,
+// because a period slot is a session inside a shift and is not bookable on its
+// own — and `shift_ids` books the classroom work.
+async function apiSignupAndConfirm(tag, slotIds, lastName, shiftIds = []) {
   const apiBase = process.env.E2E_BACKEND_URL || 'http://localhost:8000';
   const email = ephemeralEmail(tag);
-  // Callers pass period-only slot lists; the server-enforced orientation
-  // requirement would 422 a fresh email, so grant credit first.
+  // Callers book the shift without an orientation slot; the server-enforced
+  // orientation requirement would 422 a fresh email, so grant credit first.
   await grantOrientationCredit(email);
   const resp = await fetch(`${apiBase}/api/v1/public/signups`, {
     method: 'POST',
@@ -329,6 +339,7 @@ async function apiSignupAndConfirm(tag, slotIds, lastName) {
       email,
       phone: '8055550150',
       slot_ids: slotIds,
+      shift_ids: shiftIds,
     }),
   });
   expect(resp.ok, `POST /public/signups failed: ${resp.status}`).toBeTruthy();
@@ -345,7 +356,8 @@ async function apiSignupAndConfirm(tag, slotIds, lastName) {
   expect(confirmResp.ok, `confirm failed: ${confirmResp.status}`).toBeTruthy();
 
   return {
-    signupId: body.signup_ids[0],
+    signupId: body.signup_ids?.[0] ?? null,
+    shiftSignupId: body.shift_signup_ids?.[0] ?? null,
     confirmToken: body.confirm_token,
     email,
   };
@@ -375,7 +387,7 @@ test('cross-role Scenario 2: admin overview Signups count increments after a par
   installErrorCapture(page, testInfo);
 
   const seed = getSeed();
-  expect(seed.period_slot_id, 'period_slot_id required in seed JSON').toBeTruthy();
+  expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
 
   // Step 1 — admin reads current signups_total. Force desktop viewport so
   // the AdminLayout renders content (DesktopOnlyBanner blocks < 768px).
@@ -386,7 +398,7 @@ test('cross-role Scenario 2: admin overview Signups count increments after a par
   expect(before, 'Signups total must be readable on /admin overview').not.toBeNull();
 
   // Step 2 — direct-API signup + confirm (fastest path, per plan Task 2 hint).
-  await apiSignupAndConfirm('xrole2', [seed.period_slot_id], 'XRole2');
+  await apiSignupAndConfirm('xrole2', [], 'XRole2', [seed.shift_id]);
 
   // Step 3 — reload admin overview and assert the count strictly increased.
   // OverviewSection uses useQuery without auto-refetch interval, so a manual
@@ -421,7 +433,7 @@ test('cross-role Scenario 3: organizer roster reflects a new signup within the 5
   installErrorCapture(page, testInfo);
 
   const seed = getSeed();
-  expect(seed.period_slot_id, 'period_slot_id required in seed JSON').toBeTruthy();
+  expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
 
   // Organizer opens the roster BEFORE the signup is created, so the 5s
   // react-query refetchInterval (verified in OrganizerRosterPage.jsx line 28)
@@ -433,7 +445,7 @@ test('cross-role Scenario 3: organizer roster reflects a new signup within the 5
   });
 
   // Create the signup via direct API while the roster is open.
-  await apiSignupAndConfirm('xrole3', [seed.period_slot_id], 'XRole3');
+  await apiSignupAndConfirm('xrole3', [], 'XRole3', [seed.shift_id]);
 
   // The polling interval is 5000ms; give it 12s of budget to absorb one full
   // cycle + network latency. Match by the distinctive last name.
@@ -466,7 +478,7 @@ test('cross-role Scenario 4: staff cancels a signup from the admin UI; volunteer
 
   const seed = getSeed();
   expect(seed.event_id, 'event_id required in seed JSON').toBeTruthy();
-  expect(seed.period_slot_id, 'period_slot_id required in seed JSON').toBeTruthy();
+  expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
 
   // Unique tag — this scenario runs across 6 browser projects against one
   // shared backend, so the admin roster lookup (Step 3) must isolate THIS
@@ -476,10 +488,11 @@ test('cross-role Scenario 4: staff cancels a signup from the admin UI; volunteer
 
   // Step 1 — direct-API signup + confirm. confirm_token drives /signup/manage
   // in the UI; signupId targets the audit-log row precisely (see below).
-  const { signupId, confirmToken } = await apiSignupAndConfirm(
+  const { shiftSignupId, confirmToken } = await apiSignupAndConfirm(
     'xrole4',
-    [seed.period_slot_id],
+    [],
     lastNameTag,
+    [seed.shift_id],
   );
 
   // Step 2 — volunteer opens the magic-link manage page. 2026-08-02: this
@@ -511,9 +524,12 @@ test('cross-role Scenario 4: staff cancels a signup from the admin UI; volunteer
 
   page.once('dialog', (dialog) => dialog.accept());
   const [cancelResp] = await Promise.all([
+    // 2026-08-05 shifts: a commitment is cancelled one level up, at
+    // /admin/shift-signups/:id/cancel — the slot-level route would 404 on a
+    // shift signup id.
     page.waitForResponse(
       (resp) =>
-        /\/admin\/signups\/.+\/cancel$/.test(new URL(resp.url()).pathname) &&
+        /\/admin\/shift-signups\/.+\/cancel$/.test(new URL(resp.url()).pathname) &&
         resp.request().method() === 'POST',
     ),
     row.getByRole('button', { name: /^cancel$/i }).click(),
@@ -523,26 +539,25 @@ test('cross-role Scenario 4: staff cancels a signup from the admin UI; volunteer
     timeout: 5000,
   });
 
-  // Step 4 — admin filters the audit log by the signup's own id. The `q`
+  // Step 4 — admin filters the audit log by the commitment's own id. The `q`
   // search matches action/entity_type/entity_id/actor_id/extra at the DB
   // level (see _build_audit_log_query in admin.py) — not the humanised
-  // label or the volunteer's email — so the signup UUID (stored verbatim in
-  // `entity_id`) is the reliable needle here. Expect an "Admin cancelled a
-  // signup" row (humanised label for `admin_signup_cancel`, the staff-cancel
-  // action — distinct from the now-deleted public self-cancel
-  // `signup_cancelled` action this scenario used to exercise).
+  // label or the volunteer's email — so the shift-signup UUID (stored
+  // verbatim in `entity_id`) is the reliable needle here. Expect an "Admin
+  // cancelled a shift signup" row (humanised label for
+  // `admin_shift_signup_cancel`, the staff-cancel action for a commitment).
   await page.goto('/admin/audit-logs');
   await page.waitForLoadState('networkidle');
 
   const search = page.locator('#al-search');
   await expect(search).toBeVisible({ timeout: 8000 });
-  await search.fill(signupId);
+  await search.fill(shiftSignupId);
   // Debounce is 300ms; wait for refetch to settle.
   await page.waitForLoadState('networkidle');
 
   const cancelledRow = page
     .locator('table tbody tr')
-    .filter({ hasText: /admin cancelled a signup/i })
+    .filter({ hasText: /admin cancelled a shift signup/i })
     .first();
   await expect(cancelledRow).toBeVisible({ timeout: 10000 });
 
@@ -618,6 +633,237 @@ test('cross-role Scenario 5: organizer RBAC — admin-only pages deny, shared pa
         .first(),
     ).toBeVisible({ timeout: 8000 });
   }
+
+  assertNoErrors(testInfo);
+});
+
+// ---------------------------------------------------------------------------
+// SCENARIO 6 — a shift, end to end
+//   organizer creates a two-session shift
+//   -> volunteer books the shift once (one commitment, both days)
+//   -> organizer sees the volunteer under BOTH sessions on the roster
+//   -> organizer ends the first session; the second stays open
+//
+// 2026-08-05 shifts: this is the property the whole feature turns on. A
+// volunteer commits to a bundle, not to a day, and attendance is still
+// recorded per session — so ending Tuesday must not end Wednesday, and
+// Wednesday must still be answerable afterwards.
+//
+// Unlike Scenarios 1-5 this builds its own event instead of using the seed.
+// The seed shift has one session (that is what the seed event models), and a
+// session cannot be added to a shift that already has signups — the sessions
+// a volunteer committed to are the deal they agreed to, so the backend
+// refuses. Two sessions therefore have to exist from creation.
+// ---------------------------------------------------------------------------
+
+const API_BASE = process.env.E2E_BACKEND_URL || 'http://localhost:8000';
+
+async function apiLogin(who) {
+  const resp = await fetch(`${API_BASE}/api/v1/auth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username: who.email, password: who.password }),
+  });
+  expect(resp.ok, `login for ${who.email} failed: ${resp.status}`).toBeTruthy();
+  const { access_token: token } = await resp.json();
+  return token;
+}
+
+// Create an event owned by the organizer with one orientation slot and one
+// shift holding two sessions on consecutive days. Returns
+// { eventId, shiftId, shiftName }.
+async function apiCreateTwoSessionShiftEvent(tag) {
+  const token = await apiLogin(ORGANIZER);
+
+  // Event create rejects an unknown module_slug and needs the current
+  // quarter/week — both are already set up by the seed, so read them rather
+  // than re-deriving the calendar here.
+  const weekResp = await fetch(`${API_BASE}/api/v1/public/current-week`);
+  expect(weekResp.ok, `current-week failed: ${weekResp.status}`).toBeTruthy();
+  const week = await weekResp.json();
+  expect(
+    week.configured,
+    'no quarter configured — seed_e2e.py must run first',
+  ).toBeTruthy();
+
+  // Anchored a day out so the whole event sits inside its own range whatever
+  // time of day the suite runs at. Nothing here gates on the sessions being
+  // over: closing out early is exactly what an organizer does at the door.
+  const day = (n, hour) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() + n);
+    d.setUTCHours(hour, 0, 0, 0);
+    return d.toISOString();
+  };
+  const shiftName = `XRole6 Shift ${tag}`;
+
+  const resp = await fetch(`${API_BASE}/api/v1/events/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      title: `E2E Cross-Role Shift ${tag}`,
+      description: 'cross-role Scenario 6 — safe to delete',
+      location: 'E2E Hall',
+      visibility: 'public',
+      start_date: day(1, 9),
+      end_date: day(2, 18),
+      quarter: week.quarter,
+      year: week.year,
+      week_number: week.week_number,
+      module_slug: 'e2e-test',
+      school: 'E2E High School',
+      slots: [
+        {
+          slot_type: 'orientation',
+          start_time: day(1, 9),
+          end_time: day(1, 10),
+          capacity: 50,
+          location: 'E2E Hall Room A',
+        },
+      ],
+      shifts: [
+        {
+          name: shiftName,
+          capacity: 50,
+          sort_order: 0,
+          sessions: [
+            {
+              name: 'Period 1',
+              sort_order: 0,
+              start_time: day(1, 10),
+              end_time: day(1, 12),
+              location: 'E2E Hall Room B',
+            },
+            {
+              name: 'Period 2',
+              sort_order: 1,
+              start_time: day(2, 10),
+              end_time: day(2, 12),
+              location: 'E2E Hall Room B',
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  expect(resp.ok, `event create failed: ${resp.status}`).toBeTruthy();
+  const event = await resp.json();
+
+  const shiftsResp = await fetch(
+    `${API_BASE}/api/v1/shifts/?event_id=${event.id}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  expect(shiftsResp.ok, `shift list failed: ${shiftsResp.status}`).toBeTruthy();
+  const shifts = await shiftsResp.json();
+  expect(shifts.length, 'the new event must have exactly one shift').toBe(1);
+  expect(
+    shifts[0].sessions.length,
+    'the shift must have been created with both sessions',
+  ).toBe(2);
+
+  return { eventId: event.id, shiftId: shifts[0].id, shiftName };
+}
+
+test('cross-role Scenario 6: one shift booking spans two sessions, and ending one leaves the other open', async ({
+  page,
+}, testInfo) => {
+  installErrorCapture(page, testInfo);
+
+  const tag = Math.random().toString(36).slice(2, 8);
+  const lastNameTag = `XRole6${tag}`;
+
+  // Step 1 — organizer creates the two-session shift.
+  const { eventId, shiftId, shiftName } = await apiCreateTwoSessionShiftEvent(tag);
+
+  // Step 2 — volunteer books it from the public event page. One press, one
+  // commitment: the card says so, and the confirmation must agree.
+  await page.goto(`/events/${eventId}`);
+  const card = page.getByTestId(`shift-${shiftId}`);
+  await expect(card).toBeVisible({ timeout: 10000 });
+  await expect(
+    card.getByText(/2 sessions — signing up commits you to all of them/i),
+  ).toBeVisible();
+  await clickSlotByLabel(page, /orientation/i);
+  await clickShiftById(page, shiftId);
+
+  await expect(page.getByText('Your information')).toBeVisible();
+  await page.locator('#first_name').fill(VOLUNTEER_IDENTITY.first_name);
+  await page.locator('#last_name').fill(lastNameTag);
+  await page.locator('#email').fill(ephemeralEmail('xrole6'));
+  await page.locator('#phone').fill(VOLUNTEER_IDENTITY.phone);
+
+  const [signupResp] = await Promise.all([
+    page.waitForResponse(
+      (resp) =>
+        resp.url().includes('/public/signups') &&
+        resp.request().method() === 'POST',
+    ),
+    page.locator('form').getByRole('button', { name: /sign up/i }).last().click(),
+  ]);
+  const signupBody = await signupResp.json();
+  expect(
+    signupBody.shift_signup_ids?.length,
+    'one shift booking must produce exactly one commitment, not one per session',
+  ).toBe(1);
+  expect(
+    signupBody.confirm_token,
+    'confirm_token missing — EXPOSE_TOKENS_FOR_TESTING=1 must be set on the backend',
+  ).toBeTruthy();
+
+  await page.goto(`/signup/confirm?token=${signupBody.confirm_token}`);
+  await expect(page.getByText(/your signup is confirmed/i)).toBeVisible({
+    timeout: 10000,
+  });
+
+  // Step 3 — organizer opens the roster. The one commitment shows up under
+  // each session: check-in is keyed on (commitment, session), so there has to
+  // be a row per day to tap.
+  await loginAs(page, ORGANIZER);
+  await page.goto(`/organizer/events/${eventId}/roster`);
+
+  const sessionOne = page
+    .locator('section')
+    .filter({ hasText: new RegExp(`${shiftName} · Period 1`) })
+    .first();
+  const sessionTwo = page
+    .locator('section')
+    .filter({ hasText: new RegExp(`${shiftName} · Period 2`) })
+    .first();
+  await expect(sessionOne).toBeVisible({ timeout: 10000 });
+  await expect(sessionTwo).toBeVisible();
+  await expect(
+    sessionOne.locator('ul li button').filter({ hasText: new RegExp(lastNameTag, 'i') }),
+  ).toHaveCount(1);
+  await expect(
+    sessionTwo.locator('ul li button').filter({ hasText: new RegExp(lastNameTag, 'i') }),
+  ).toHaveCount(1);
+
+  // Step 4 — end the first session only. The modal prefills every unmarked
+  // row (checked-in → attended, everyone else → no-show), so Save is live
+  // straight away.
+  await sessionOne.getByRole('button', { name: /^end slot$/i }).click();
+  const modal = page.getByRole('dialog');
+  await expect(modal.getByText(/^end session$/i).first()).toBeVisible({
+    timeout: 8000,
+  });
+  await modal.getByRole('button', { name: /^save$/i }).click();
+  await expect(page.getByText(/slot resolved successfully/i)).toBeVisible({
+    timeout: 8000,
+  });
+
+  // Step 5 — the ending is per session. Period 1 is spent; Period 2 is still
+  // answerable. If the close-out had settled the whole commitment, the second
+  // section would read "Slot ended" too and Wednesday's attendance would be a
+  // guess the organizer never made.
+  await expect(sessionOne.getByText(/ended/i).first()).toBeVisible({
+    timeout: 8000,
+  });
+  await expect(
+    sessionTwo.getByRole('button', { name: /^end slot$/i }),
+  ).toBeEnabled();
 
   assertNoErrors(testInfo);
 });

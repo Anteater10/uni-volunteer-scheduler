@@ -1,9 +1,15 @@
 """signup_stats_for_week tool.
 
 Aggregate signup counts for a given ISO week. Returns total signups,
-distinct participants, module count, and overall fill rate (sum of
-non-cancelled signups divided by sum of slot capacities). Organizer
-scope restricts the aggregation to events the caller owns.
+distinct participants, module count, and overall fill rate (active bookings
+divided by seats offered). Organizer scope restricts the aggregation to events
+the caller owns.
+
+A booking is a signup on an orientation slot or a commitment to a shift; both
+are counted through ``_bookings``, which is the only place that union lives.
+Before 2026-08-05 this counted ``Signup`` alone, so a week made up of classroom
+work reported zero signups and a zero fill rate — a number an organizer would
+act on.
 """
 from __future__ import annotations
 
@@ -14,8 +20,9 @@ from sqlalchemy.orm import Session
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._iso_week import parse_iso_week
+from app.copilot.agent.tools import _bookings
 from app.copilot.agent.tools.base import Tool
-from app.models import Event, Signup, SignupStatus, Slot
+from app.models import Event
 
 _PII_SCHEMA = [
     "week",
@@ -49,23 +56,12 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         }
         return schema_apply(payload, allowed_fields=_PII_SCHEMA)
 
-    slots = db.query(Slot).filter(Slot.event_id.in_(event_ids)).all()
-    slot_ids = [s.id for s in slots]
-    slots_total = sum(s.capacity or 0 for s in slots)
-
-    if slot_ids:
-        signups = (
-            db.query(Signup)
-            .filter(
-                Signup.slot_id.in_(slot_ids),
-                Signup.status != SignupStatus.cancelled,
-            )
-            .all()
-        )
-    else:
-        signups = []
-    total_signups = len(signups)
-    unique_participants = len({s.volunteer_id for s in signups})
+    slots_total = _bookings.capacity_for_events(db, event_ids)
+    bookings = _bookings.bookings_for_events(db, event_ids)
+    total_signups = len(bookings)
+    # Deliberately per-volunteer, not per-booking: one person on two shifts is
+    # one participant.
+    unique_participants = len({b.volunteer.id for b in bookings})
     fill_rate = (total_signups / slots_total) if slots_total else 0.0
 
     payload = {

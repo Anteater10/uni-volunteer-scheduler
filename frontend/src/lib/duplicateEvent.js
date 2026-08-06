@@ -87,6 +87,17 @@ function shiftIsoDateTime(isoDateTime, days) {
  * The `initial` object for EventForm (mode="create"): the source event with
  * all datetimes shifted, ids and signup counts stripped, slots sorted by
  * start time.
+ *
+ * 2026-08-02 shifts: the classroom work now lives in `sourceEvent.shifts`, so
+ * a copy that only carried `slots` would silently drop it — and could not be
+ * saved anyway, since a period slot without a shift violates
+ * ck_slots_shift_membership_matches_type. Shifts are copied whole (name,
+ * capacity, ordered sessions), which is the point of the feature: the bundle
+ * an admin built once is the thing worth duplicating.
+ *
+ * Ids and counts are stripped from both levels. Copying a shift id would make
+ * EventForm treat the copy as an existing row, and copying `current_count`
+ * would gate deletion on signups that belong to the *source* event.
  */
 export function buildDuplicateInitial(sourceEvent, shiftDays) {
   const slots = (sourceEvent.slots || [])
@@ -100,7 +111,34 @@ export function buildDuplicateInitial(sourceEvent, shiftDays) {
       location: s.location || "",
     }));
 
+  // Session order is the organizer's, so `sort_order` leads and start time
+  // only breaks ties — the same precedence the shift builder and the
+  // volunteer-facing cards use.
+  const shifts = (sourceEvent.shifts || [])
+    .slice()
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((shift, shiftIndex) => ({
+      name: shift.name || "",
+      capacity: shift.capacity,
+      current_count: 0,
+      sort_order: shiftIndex,
+      sessions: [...(shift.sessions || [])]
+        .sort(
+          (a, b) =>
+            (a.sort_order ?? 0) - (b.sort_order ?? 0) ||
+            new Date(a.start_time) - new Date(b.start_time),
+        )
+        .map((s, sessionIndex) => ({
+          name: s.name || "",
+          start_time: shiftIsoDateTime(s.start_time, shiftDays),
+          end_time: shiftIsoDateTime(s.end_time, shiftDays),
+          location: s.location || "",
+          sort_order: sessionIndex,
+        })),
+    }));
+
   return {
+    shifts,
     title: sourceEvent.title || "",
     description: sourceEvent.description || "",
     location: sourceEvent.location || "",

@@ -44,6 +44,7 @@ SEEDED_VOL = {
 }
 
 EVENT_TITLE = "E2E Seed Event"
+SHIFT_NAME = "E2E Shift"
 
 
 # -------------------------
@@ -259,13 +260,26 @@ def _get_or_create_event(
                 "capacity": 200,
                 "location": "E2E Hall Room A",
             },
+        ],
+        # 2026-08-05 shifts: classroom work is a shift now. A bare period slot
+        # is not creatable (POST /events refuses one, and the membership
+        # constraint would reject the row anyway) and would not be bookable if
+        # it were — `slot_ids` takes orientation only.
+        "shifts": [
             {
-                "slot_type": "period",
-                "start_time": period_start.isoformat(),
-                "end_time": period_end.isoformat(),
+                "name": SHIFT_NAME,
                 "capacity": 200,
-                "location": "E2E Hall Room B",
-            },
+                "sort_order": 0,
+                "sessions": [
+                    {
+                        "start_time": period_start.isoformat(),
+                        "end_time": period_end.isoformat(),
+                        "location": "E2E Hall Room B",
+                        "name": "Period 1",
+                        "sort_order": 0,
+                    }
+                ],
+            }
         ],
     }
     s, body = _req("POST", "/events/", token=organizer_token, json_body=payload)
@@ -289,37 +303,61 @@ def _ensure_slot_capacity(admin_token: str, slot_id: str, min_capacity: int = 20
             print(f"[seed] slot {slot_id} capacity set to {min_capacity}", file=sys.stderr)
 
 
-def _get_slots(admin_token: str, event_id: str) -> tuple[str, str]:
-    """Return (orientation_slot_id, period_slot_id) for the event."""
+def _get_units(admin_token: str, event_id: str) -> tuple[str, str, str]:
+    """Return (orientation_slot_id, shift_id, session_slot_id) for the event.
+
+    Two bookable kinds now: an orientation slot, booked on its own through
+    `slot_ids`, and a shift, booked as a bundle through `shift_ids`. The
+    session id is still handed out because check-in and the roster address a
+    session directly — but nothing signs up for one.
+    """
     s, slots = _req("GET", f"/slots/?event_id={event_id}", token=admin_token)
     if s != 200 or not isinstance(slots, list):
         raise RuntimeError(f"slot list failed: {s} {slots}")
 
     orientation_id = None
-    period_id = None
     for slot in slots:
-        st = slot.get("slot_type")
-        if st == "orientation" and orientation_id is None:
+        if slot.get("slot_type") == "orientation":
             orientation_id = slot["id"]
-        elif st == "period" and period_id is None:
-            period_id = slot["id"]
-
+            break
     if not orientation_id:
         raise RuntimeError(f"No orientation slot found for event {event_id}. slots: {slots}")
-    if not period_id:
-        raise RuntimeError(f"No period slot found for event {event_id}. slots: {slots}")
 
-    return orientation_id, period_id
+    hs, shifts = _req("GET", f"/shifts/?event_id={event_id}", token=admin_token)
+    if hs != 200 or not isinstance(shifts, list) or not shifts:
+        raise RuntimeError(f"No shift found for event {event_id}: {hs} {shifts}")
+    shift = shifts[0]
+    sessions = sorted(shift.get("sessions") or [], key=lambda x: x.get("sort_order", 0))
+    if not sessions:
+        raise RuntimeError(f"Shift {shift['id']} has no sessions: {shift}")
+
+    return orientation_id, shift["id"], sessions[0]["id"]
 
 
-def _signup_volunteer(vol: dict, slot_ids: list) -> tuple[int, dict | str]:
-    """Call POST /public/signups and return (status_code, body)."""
+def _ensure_shift_capacity(admin_token: str, shift_id: str, min_capacity: int = 200) -> None:
+    """Capacity lives on the shift, so this is where test exhaustion is kept
+    at bay — the sessions' own capacity column is inert."""
+    ps, pb = _req("PATCH", f"/shifts/{shift_id}", token=admin_token,
+                  json_body={"capacity": min_capacity})
+    if ps not in (200, 201):
+        print(f"[seed] warn: shift capacity update returned {ps} {pb}", file=sys.stderr)
+    else:
+        print(f"[seed] shift {shift_id} capacity set to {min_capacity}", file=sys.stderr)
+
+
+def _signup_volunteer(vol: dict, slot_ids: list, shift_ids: list | None = None) -> tuple[int, dict | str]:
+    """Call POST /public/signups and return (status_code, body).
+
+    Two id lists since 2026-08-05: orientation slots in `slot_ids`, shifts in
+    `shift_ids`. Sending a session id in `slot_ids` is a 422.
+    """
     return _req("POST", "/public/signups", json_body={
         "first_name": vol["first_name"],
         "last_name": vol["last_name"],
         "email": vol["email"],
         "phone": vol["phone"],
         "slot_ids": slot_ids,
+        "shift_ids": shift_ids or [],
     })
 
 
@@ -383,9 +421,19 @@ def _find_signup_in_roster(
     return None
 
 
-def _cancel_signup(signup_id: str, organizer_token: str) -> None:
-    """Cancel a signup via organizer cancel endpoint."""
-    cs, cb = _req("POST", f"/signups/{signup_id}/cancel", token=organizer_token)
+def _cancel_signup(signup_id: str, organizer_token: str, *, is_shift: bool = False) -> None:
+    """Cancel a signup via the staff cancel endpoint.
+
+    A roster row's `signup_id` holds a shift-commitment id when `is_shift` is
+    set — same field name, different table — so the route has to match or the
+    cancel 404s and the seed then trips the unique constraint on re-signup.
+    """
+    path = (
+        f"/admin/shift-signups/{signup_id}/cancel"
+        if is_shift
+        else f"/signups/{signup_id}/cancel"
+    )
+    cs, cb = _req("POST", path, token=organizer_token)
     if cs not in (200, 201, 204):
         print(f"[seed] warn: cancel signup {signup_id} returned {cs} {cb}", file=sys.stderr)
     else:
@@ -506,15 +554,15 @@ def _create_seeded_pending(
     admin_token: str,
     organizer_token: str,
     event_id: str,
-    period_slot_id: str,
+    shift_id: str,
 ) -> str | None:
-    """Create seeded-pending@e2e.example.com with a period slot signup and return the confirm token.
+    """Create seeded-pending@e2e.example.com with a shift signup and return the confirm token.
 
     Returns the raw confirm_token if EXPOSE_TOKENS_FOR_TESTING is set, else None.
     Idempotent: cancels any existing active signup, cleans up cancelled rows, and
     recreates fresh so Playwright always gets a usable token.
 
-    The signup is period-only, so the server-enforced orientation requirement
+    The signup is shift-only, so the server-enforced orientation requirement
     would 422 it — grant orientation credit for the seed family first.
     """
     gs, gb = _req(
@@ -524,7 +572,7 @@ def _create_seeded_pending(
         json_body={
             "volunteer_email": SEEDED_VOL["email"],
             "family_key": "e2e-test",
-            "notes": "e2e seed grant (period-only pending signup)",
+            "notes": "e2e seed grant (shift-only pending signup)",
         },
     )
     if gs not in (200, 201):
@@ -535,13 +583,15 @@ def _create_seeded_pending(
         status = row.get("status")
         if status not in ("cancelled",):
             # Cancel the existing signup so we can recreate fresh
-            _cancel_signup(row["signup_id"], organizer_token)
+            _cancel_signup(
+                row["signup_id"], organizer_token, is_shift=bool(row.get("is_shift"))
+            )
 
     # Always clean up any cancelled rows before re-signing up.
-    # The UNIQUE(volunteer_id, slot_id) constraint blocks re-signup even for cancelled rows.
+    # UNIQUE(volunteer_id, shift_id) blocks re-signup even for cancelled rows.
     _cleanup_cancelled_signups(SEEDED_VOL["email"])
 
-    s, body = _signup_volunteer(SEEDED_VOL, [period_slot_id])
+    s, body = _signup_volunteer(SEEDED_VOL, [], [shift_id])
     if s in (200, 201):
         token = body.get("confirm_token")
         if token:
@@ -592,14 +642,15 @@ def main() -> int:
     event_id = event["id"]
     event_title = event.get("title", EVENT_TITLE)
 
-    # 5. Identify orientation and period slots
-    orientation_slot_id, period_slot_id = _get_slots(admin_token, event_id)
+    # 5. Identify the bookable units: an orientation slot and a shift.
+    orientation_slot_id, shift_id, session_slot_id = _get_units(admin_token, event_id)
     print(
-        f"[seed] slots: orientation={orientation_slot_id} period={period_slot_id}",
+        f"[seed] units: orientation={orientation_slot_id} shift={shift_id} "
+        f"session={session_slot_id}",
         file=sys.stderr,
     )
     _ensure_slot_capacity(admin_token, orientation_slot_id)
-    _ensure_slot_capacity(admin_token, period_slot_id)
+    _ensure_shift_capacity(admin_token, shift_id)
 
     # 5b. Reset extra test signups so slots never fill up from repeated Playwright runs.
     # Keeps only the two named seed volunteers; cancels everything else.
@@ -613,14 +664,18 @@ def main() -> int:
 
     # 7. Create "seeded pending" volunteer with a fresh confirm_token
     confirm_token = _create_seeded_pending(
-        admin_token, organizer_token, event_id, period_slot_id
+        admin_token, organizer_token, event_id, shift_id
     )
 
     out = {
         "event_id": event_id,
         "event_title": event_title,
         "orientation_slot_id": orientation_slot_id,
-        "period_slot_id": period_slot_id,
+        # The bookable classroom unit, and the session the roster + check-in
+        # address inside it. `period_slot_id` is gone: nothing books one.
+        "shift_id": shift_id,
+        "shift_name": SHIFT_NAME,
+        "session_slot_id": session_slot_id,
         "quarter": quarter,
         "year": year,
         "week_number": week_number,

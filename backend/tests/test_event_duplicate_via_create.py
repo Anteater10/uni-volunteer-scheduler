@@ -118,12 +118,21 @@ def _create_payload(module_slug, source_id=None):
         "start_date": "2026-10-14T16:00:00Z",
         "end_date": "2026-10-14T18:00:00Z",
         "module_slug": module_slug,
-        "slots": [
+        # 2026-08-05 shifts: classroom work arrives as a shift. `slots` is
+        # orientation-only now — sending a period slot here is a 400, because a
+        # period slot is a session and has to name the bundle it belongs to.
+        "shifts": [
             {
-                "start_time": "2026-10-14T16:00:00Z",
-                "end_time": "2026-10-14T17:00:00Z",
+                "name": "Tue morning",
                 "capacity": 5,
-                "location": "Room 4",
+                "sort_order": 0,
+                "sessions": [
+                    {
+                        "start_time": "2026-10-14T16:00:00Z",
+                        "end_time": "2026-10-14T17:00:00Z",
+                        "location": "Room 4",
+                    }
+                ],
             }
         ],
     }

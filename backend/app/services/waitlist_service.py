@@ -19,7 +19,12 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..signup_service import PromotionResult, mark_promoted_pending
+from ..signup_service import (
+    PromotionResult,
+    ShiftPromotionResult,
+    mark_promoted_pending,
+    mark_shift_promoted_pending,
+)
 
 
 SLOT_ENDED_CODE = "SLOT_ENDED"
@@ -185,4 +190,91 @@ def manual_promote(
     slot.current_count += 1
     db.flush()
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-02 shifts: the same three operations, one level up.
+#
+# A shift owns its capacity and its waitlist, so these are structurally
+# identical to the slot versions above and deliberately kept that way — the
+# waitlist rules (FIFO by timestamp then id, staff-only movement, explicit
+# opt-in to overfill) are product decisions that must not drift between the
+# orientation and shift halves of the app.
+# ---------------------------------------------------------------------------
+
+
+def list_waitlisted_for_shift(db: Session, shift_id) -> list[models.ShiftSignup]:
+    """The shift's waitlisted commitments in canonical FIFO order."""
+    return (
+        db.query(models.ShiftSignup)
+        .filter(
+            models.ShiftSignup.shift_id == shift_id,
+            models.ShiftSignup.status == models.SignupStatus.waitlisted,
+        )
+        .order_by(models.ShiftSignup.timestamp.asc(), models.ShiftSignup.id.asc())
+        .all()
+    )
+
+
+def compute_shift_waitlist_position(db: Session, shift_id, shift_signup_id) -> int | None:
+    for idx, row in enumerate(list_waitlisted_for_shift(db, shift_id), start=1):
+        if str(row.id) == str(shift_signup_id):
+            return idx
+    return None
+
+
+def reorder_shift_waitlist(
+    db: Session,
+    shift_id,
+    ordered_shift_signup_ids: Iterable[UUID | str],
+) -> list[models.ShiftSignup]:
+    """Rewrite `timestamp` so the given order becomes the FIFO order.
+
+    Same all-or-nothing validation as `reorder_waitlist`: the submitted set must
+    equal the current waitlisted set, so a stale client cannot drop someone out
+    of the queue by omitting them.
+    """
+    ordered_list = [str(s) for s in ordered_shift_signup_ids]
+    current = list_waitlisted_for_shift(db, shift_id)
+    if {str(s.id) for s in current} != set(ordered_list):
+        raise ValueError(
+            "ordered_shift_signup_ids must match the current waitlisted set "
+            "for this shift"
+        )
+
+    by_id = {str(s.id): s for s in current}
+    anchor = datetime.now(timezone.utc) - timedelta(milliseconds=len(ordered_list))
+    result: list[models.ShiftSignup] = []
+    for idx, sid in enumerate(ordered_list):
+        row = by_id[sid]
+        row.timestamp = anchor + timedelta(milliseconds=idx)
+        result.append(row)
+    db.flush()
+    return result
+
+
+def manual_promote_shift(
+    db: Session,
+    shift_signup: models.ShiftSignup,
+    shift: models.Shift,
+    allow_overfill: bool = False,
+) -> ShiftPromotionResult:
+    """Bypass FIFO — promote this commitment specifically.
+
+    Caller must hold FOR UPDATE on the shift row (see
+    `shift_service.lock_shift`) and must have verified the commitment belongs
+    to it. Raises `ValueError` for invalid state and `SlotEndedError` when every
+    session in the shift is already over — judged inside
+    `mark_shift_promoted_pending`, which is where the "last session, not the
+    first" rule lives.
+    """
+    if shift_signup.status != models.SignupStatus.waitlisted:
+        raise ValueError("only waitlisted shift signups can be promoted")
+    if shift.current_count >= shift.capacity and not allow_overfill:
+        raise ValueError("shift is full")
+
+    result = mark_shift_promoted_pending(db, shift_signup)
+    shift.current_count += 1
+    db.flush()
     return result

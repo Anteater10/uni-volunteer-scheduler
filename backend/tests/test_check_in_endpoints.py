@@ -10,7 +10,18 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from tests.fixtures.helpers import auth_headers, make_event_with_slot, make_user
 
-from app.models import AuditLog, Event, Signup, SignupStatus, Slot, SlotType, UserRole, Volunteer
+from app.models import (
+    AuditLog,
+    Event,
+    SessionAttendance,
+    ShiftSignup,
+    Signup,
+    SignupStatus,
+    Slot,
+    SlotType,
+    UserRole,
+    Volunteer,
+)
 
 
 def _make_volunteer(db_session, email=None):
@@ -152,7 +163,11 @@ class TestSelfCheckIn:
             start_time=now,  # starts now, so we're within the window
             end_time=now + timedelta(hours=2),
             capacity=10,
-            slot_type=SlotType.PERIOD,
+            # Orientation, not period: this posts a signup id to self-check-in,
+            # and since the 2026-08-05 shifts work an individually-bookable slot
+            # is exactly what an orientation slot is. Session check-in is keyed
+            # on (commitment, session) and has its own tests.
+            slot_type=SlotType.ORIENTATION,
         )
         db_session.add(slot)
         db_session.flush()
@@ -217,7 +232,13 @@ class TestResolveEndpoint:
 
 
 def _make_in_window_event_with_signup(db_session, *, status=SignupStatus.confirmed, email=None):
-    """Create an event whose slot starts 5 min from now (inside check-in window)."""
+    """Create an event whose slot starts 5 min from now (inside check-in window).
+
+    Orientation: the volunteer holds a plain ``Signup`` against this slot, which
+    after the 2026-08-05 shifts work is only possible for a slot that is booked
+    directly. The event-QR flow over shift sessions is covered in
+    ``TestSelectedForShiftSessions`` and in the service tests.
+    """
     from tests.fixtures.helpers import make_user
     owner = make_user(db_session, role=UserRole.organizer)
     now = datetime.now(timezone.utc)
@@ -237,7 +258,7 @@ def _make_in_window_event_with_signup(db_session, *, status=SignupStatus.confirm
         start_time=now + timedelta(minutes=5),
         end_time=now + timedelta(hours=2),
         capacity=10,
-        slot_type=SlotType.PERIOD,
+        slot_type=SlotType.ORIENTATION,
     )
     db_session.add(slot)
     db_session.flush()
@@ -295,7 +316,7 @@ class TestEventCheckInByEmailEndpoint:
             start_time=now + timedelta(hours=6),
             end_time=now + timedelta(hours=8),
             capacity=10,
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
         )
         db_session.add(slot)
         db_session.flush()
@@ -336,7 +357,7 @@ class TestCheckInByEmailSlotMetadata:
     """Issue #31: the QR result must say WHICH shift was checked in
     (orientation vs module period), not just a time range."""
 
-    def test_response_rows_carry_slot_type_and_location(self, client, db_session):
+    def test_orientation_row_carries_slot_type_and_location(self, client, db_session):
         event, slot, vol, signup = _make_in_window_event_with_signup(
             db_session, email="scan-typed@example.com"
         )
@@ -346,8 +367,62 @@ class TestCheckInByEmailSlotMetadata:
         )
         assert resp.status_code == 200, resp.text
         row = resp.json()["signups"][0]
-        assert row["slot_type"] == "period"
+        assert row["slot_type"] == "orientation"
         assert "slot_location" in row
+
+    def test_session_row_names_its_shift_and_session(self, client, db_session):
+        """The period half of this rule now needs a shift to exist at all.
+
+        2026-08-05 shifts: a period slot is a session of a shift, and "which
+        shift did I just check in for" is answered by the shift's name plus the
+        session's — a bare `slot_type` of "period" tells a volunteer holding
+        Tue and Wed nothing about which day they are looking at.
+        """
+        from tests.fixtures.helpers import make_shift, make_user
+
+        owner = make_user(db_session, role=UserRole.organizer)
+        now = datetime.now(timezone.utc)
+        event = Event(
+            id=uuid.uuid4(),
+            owner_id=owner.id,
+            title="Typed Shift Event",
+            start_date=now,
+            end_date=now + timedelta(days=1),
+            venue_code="4321",
+        )
+        db_session.add(event)
+        db_session.flush()
+        shift = make_shift(db_session, event.id, name="Mornings", capacity=6)
+        session = Slot(
+            id=uuid.uuid4(), event_id=event.id,
+            shift_id=shift.id, sort_order=0, name="Period 1",
+            start_time=now + timedelta(minutes=5),
+            end_time=now + timedelta(hours=2),
+            capacity=6, slot_type=SlotType.PERIOD, location="Room 4",
+        )
+        db_session.add(session)
+        vol = _make_volunteer(db_session, email="scan-shift@example.com")
+        db_session.add(
+            ShiftSignup(
+                id=uuid.uuid4(),
+                volunteer_id=vol.id,
+                shift_id=shift.id,
+                status=SignupStatus.confirmed,
+            )
+        )
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "scan-shift@example.com", "venue_code": "4321"},
+        )
+        assert resp.status_code == 200, resp.text
+        row = resp.json()["signups"][0]
+        assert row["slot_type"] == "period"
+        assert row["slot_location"] == "Room 4"
+        assert row["shift_name"] == "Mornings"
+        assert row["session_name"] == "Period 1"
+        assert row["newly_checked_in"] is True
 
 
 class TestUndoCheckIn:
@@ -416,8 +491,17 @@ class TestUndoCheckIn:
 
 
 def _event_with_two_slots(db_session, *, orient_offset_min, period_offset_min):
-    """Event with an orientation slot and a period slot, offset from now."""
-    from tests.fixtures.helpers import make_user
+    """Event with an orientation slot and a one-session shift, offset from now.
+
+    2026-08-05 shifts: the classroom half is a real shift, not a bare period
+    slot. That is what the volunteer books and what the check-in lookup has to
+    return, and it is the only shape the membership constraint allows. Keeping
+    both kinds is the point of this fixture — the lookup's job is to present a
+    mixed list of units, and its unit ids are of two different kinds.
+
+    Returns (event, orientation_slot, shift, session_slot).
+    """
+    from tests.fixtures.helpers import make_shift, make_user
     owner = make_user(db_session, role=UserRole.organizer)
     now = datetime.now(timezone.utc)
     event = Event(
@@ -436,22 +520,30 @@ def _event_with_two_slots(db_session, *, orient_offset_min, period_offset_min):
         end_time=now + timedelta(minutes=orient_offset_min + 60),
         capacity=10, slot_type=SlotType.ORIENTATION, location="Library",
     )
+    shift = make_shift(db_session, event.id, name="Tue morning", capacity=10)
     period = Slot(
         id=uuid.uuid4(), event_id=event.id,
+        shift_id=shift.id, sort_order=0, name="Period 1",
         start_time=now + timedelta(minutes=period_offset_min),
         end_time=now + timedelta(minutes=period_offset_min + 120),
         capacity=10, slot_type=SlotType.PERIOD, location="Room 4",
     )
     db_session.add_all([orient, period])
     db_session.flush()
-    return event, orient, period
+    return event, orient, shift, period
 
 
 class TestCheckInLookupAndSelected:
     """Issue #31 UX rework: the volunteer picks WHICH shift to check in for.
 
-    Flow: POST check-in-lookup (email -> their shifts + window states, no
-    mutation), then POST check-in-selected with the chosen signup ids.
+    Flow: POST check-in-lookup (email -> their units + window states, no
+    mutation), then POST check-in-selected with the chosen unit ids.
+
+    2026-08-05 shifts: a "unit id" is deliberately not a signup id. Orientation
+    rows send their signup id; a shift row sends the *session's* slot id,
+    because one commitment spans several sessions and each has its own window
+    and its own attendance record. The request field is `unit_ids` for that
+    reason.
     """
 
     def _signed_up(self, db_session, slot, email):
@@ -461,17 +553,28 @@ class TestCheckInLookupAndSelected:
         db_session.flush()
         return vol, s
 
+    def _committed(self, db_session, shift, email, vol=None):
+        """Book the shift itself — the classroom equivalent of `_signed_up`."""
+        vol = vol or _make_volunteer(db_session, email=email)
+        c = ShiftSignup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            shift_id=shift.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add(c)
+        db_session.flush()
+        return vol, c
+
     def test_lookup_lists_shifts_with_window_states_without_checking_in(
         self, client, db_session
     ):
         # Orientation starts in 5 min (open); period in 3 hours (upcoming).
-        event, orient, period = _event_with_two_slots(
+        event, orient, shift, period = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=180
         )
         vol, s1 = self._signed_up(db_session, orient, "pick@example.com")
-        s2 = Signup(volunteer_id=vol.id, slot_id=period.id, status=SignupStatus.confirmed)
-        db_session.add(s2)
-        db_session.flush()
+        self._committed(db_session, shift, "pick@example.com", vol=vol)
 
         resp = client.post(
             f"/api/v1/events/{event.id}/check-in-lookup",
@@ -484,9 +587,16 @@ class TestCheckInLookupAndSelected:
         assert shifts["period"]["window_state"] == "upcoming"
         assert shifts["orientation"]["slot_location"] == "Library"
         assert shifts["period"]["window_opens_at"] is not None
+        # The two kinds identify themselves differently, and the session row
+        # names its shift so the volunteer can tell which day they are tapping.
+        assert shifts["orientation"]["unit_id"] == shifts["orientation"]["signup_id"]
+        assert shifts["period"]["unit_id"] == shifts["period"]["slot_id"]
+        assert shifts["period"]["signup_id"] is None
+        assert shifts["period"]["shift_name"] == "Tue morning"
         # Lookup must not transition anything.
         db_session.expire_all()
         assert db_session.get(Signup, uuid.UUID(shifts["orientation"]["signup_id"])).status == SignupStatus.confirmed
+        assert db_session.query(SessionAttendance).count() == 0
 
     def test_lookup_unknown_email_404(self, client, db_session):
         event, *_ = _event_with_two_slots(db_session, orient_offset_min=5, period_offset_min=180)
@@ -498,68 +608,269 @@ class TestCheckInLookupAndSelected:
         assert resp.json()["code"] == "NO_SIGNUP_FOR_EMAIL"
 
     def test_selected_checks_in_only_the_chosen_shift(self, client, db_session):
-        # BOTH slots open (orientation in 5 min, period in 10) — selecting the
-        # orientation must leave the period signup untouched.
-        event, orient, period = _event_with_two_slots(
+        # BOTH units open (orientation in 5 min, session in 10) — selecting the
+        # orientation must leave the session untouched.
+        event, orient, shift, period = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=10
         )
         vol, s_orient = self._signed_up(db_session, orient, "choosy@example.com")
-        s_period = Signup(volunteer_id=vol.id, slot_id=period.id, status=SignupStatus.confirmed)
-        db_session.add(s_period)
-        db_session.flush()
+        self._committed(db_session, shift, "choosy@example.com", vol=vol)
 
         resp = client.post(
             f"/api/v1/events/{event.id}/check-in-selected",
-            json={"email": "choosy@example.com", "venue_code": "4321", "signup_ids": [str(s_orient.id)]},
+            json={"email": "choosy@example.com", "venue_code": "4321", "unit_ids": [str(s_orient.id)]},
         )
         assert resp.status_code == 200, resp.text
         db_session.expire_all()
         assert db_session.get(Signup, s_orient.id).status == SignupStatus.checked_in
-        assert db_session.get(Signup, s_period.id).status == SignupStatus.confirmed
+        # A session leaves no trace until it is checked in, so "untouched"
+        # means no attendance row exists for it at all.
+        assert db_session.query(SessionAttendance).count() == 0
 
     def test_selected_outside_window_403(self, client, db_session):
-        event, orient, period = _event_with_two_slots(
+        event, orient, shift, period = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=300
         )
         vol, s_orient = self._signed_up(db_session, orient, "early@example.com")
-        s_period = Signup(volunteer_id=vol.id, slot_id=period.id, status=SignupStatus.confirmed)
-        db_session.add(s_period)
-        db_session.flush()
+        self._committed(db_session, shift, "early@example.com", vol=vol)
 
         resp = client.post(
             f"/api/v1/events/{event.id}/check-in-selected",
-            json={"email": "early@example.com", "venue_code": "4321", "signup_ids": [str(s_period.id)]},
+            json={"email": "early@example.com", "venue_code": "4321", "unit_ids": [str(period.id)]},
         )
         assert resp.status_code == 403
         assert resp.json()["code"] == "OUTSIDE_WINDOW"
 
     def test_selected_rejects_other_volunteers_signup(self, client, db_session):
-        event, orient, period = _event_with_two_slots(
+        event, orient, shift, period = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=10
         )
         vol_a, s_a = self._signed_up(db_session, orient, "owner@example.com")
-        vol_b, s_b = self._signed_up(db_session, period, "other@example.com")
+        self._committed(db_session, shift, "other@example.com")
 
+        # A session's unit id is a slot id, i.e. guessable from the public event
+        # page — so the "is this one of yours" check is what stops one volunteer
+        # checking in on another's commitment, and it has to hold for shifts too.
         resp = client.post(
             f"/api/v1/events/{event.id}/check-in-selected",
-            json={"email": "owner@example.com", "venue_code": "4321", "signup_ids": [str(s_b.id)]},
+            json={"email": "owner@example.com", "venue_code": "4321", "unit_ids": [str(period.id)]},
         )
         assert resp.status_code == 404
+        db_session.expire_all()
+        assert db_session.query(SessionAttendance).count() == 0
 
     def test_window_opens_30_minutes_before_start(self, client, db_session):
         """Window widened per product decision: 30 min before start (was 15)."""
-        event, orient, _ = _event_with_two_slots(
+        event, orient, *_ = _event_with_two_slots(
             db_session, orient_offset_min=25, period_offset_min=300
         )
         vol, s_orient = self._signed_up(db_session, orient, "thirty@example.com")
 
         resp = client.post(
             f"/api/v1/events/{event.id}/check-in-selected",
-            json={"email": "thirty@example.com", "venue_code": "4321", "signup_ids": [str(s_orient.id)]},
+            json={"email": "thirty@example.com", "venue_code": "4321", "unit_ids": [str(s_orient.id)]},
         )
         assert resp.status_code == 200, resp.text
         db_session.expire_all()
         assert db_session.get(Signup, s_orient.id).status == SignupStatus.checked_in
+
+
+class TestSelectedForShiftSessions:
+    """2026-08-05 shifts — the QR flow against a multi-session commitment.
+
+    One booking, several days. The volunteer scans on Tuesday and must be
+    checked in for Tuesday only; Wednesday's window is a separate question with
+    a separate answer, and the outcome lives in `session_attendance` rather than
+    on the commitment (whose status stays `confirmed` throughout — it is an
+    RSVP, not an attendance record).
+    """
+
+    def _two_day_shift(self, db_session, email):
+        from tests.fixtures.helpers import make_shift, make_user
+
+        owner = make_user(db_session, role=UserRole.organizer)
+        now = datetime.now(timezone.utc)
+        event = Event(
+            id=uuid.uuid4(),
+            owner_id=owner.id,
+            title="Tue+Wed Event",
+            start_date=now,
+            end_date=now + timedelta(days=2),
+            venue_code="4321",
+        )
+        db_session.add(event)
+        db_session.flush()
+        shift = make_shift(db_session, event.id, name="Mornings", capacity=6)
+        sessions = []
+        # Today's session is open (starts in 5 min); tomorrow's is not.
+        for i, offset in enumerate([timedelta(minutes=5), timedelta(days=1)]):
+            sl = Slot(
+                id=uuid.uuid4(), event_id=event.id,
+                shift_id=shift.id, sort_order=i, name=f"Day {i + 1}",
+                start_time=now + offset, end_time=now + offset + timedelta(hours=2),
+                capacity=6, slot_type=SlotType.PERIOD, location="Room 4",
+            )
+            db_session.add(sl)
+            sessions.append(sl)
+        vol = _make_volunteer(db_session, email=email)
+        commitment = ShiftSignup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            shift_id=shift.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add(commitment)
+        db_session.flush()
+        return event, shift, sessions, vol, commitment
+
+    def _attendance(self, db_session, commitment, session):
+        return (
+            db_session.query(SessionAttendance)
+            .filter_by(shift_signup_id=commitment.id, slot_id=session.id)
+            .one_or_none()
+        )
+
+    def test_lookup_lists_one_row_per_session(self, client, db_session):
+        event, shift, sessions, vol, commitment = self._two_day_shift(
+            db_session, "twoday@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-lookup",
+            json={"email": "twoday@example.com", "venue_code": "4321"},
+        )
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()["shifts"]
+        # One booking, two rows: they turn up twice, and the check-in window is
+        # a property of the session, not of the commitment.
+        assert [r["unit_id"] for r in rows] == [str(s.id) for s in sessions]
+        assert [r["window_state"] for r in rows] == ["open", "upcoming"]
+        assert {r["shift_signup_id"] for r in rows} == {str(commitment.id)}
+        assert [r["session_name"] for r in rows] == ["Day 1", "Day 2"]
+
+    def test_selected_checks_in_only_todays_session(self, client, db_session):
+        event, shift, sessions, vol, commitment = self._two_day_shift(
+            db_session, "today@example.com"
+        )
+        today, tomorrow = sessions
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={
+                "email": "today@example.com",
+                "venue_code": "4321",
+                "unit_ids": [str(today.id)],
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["count_checked_in"] == 1
+        row = body["signups"][0]
+        assert row["shift_signup_id"] == str(commitment.id)
+        assert row["signup_id"] is None
+        assert row["shift_name"] == "Mornings"
+
+        db_session.expire_all()
+        assert (
+            self._attendance(db_session, commitment, today).status
+            == SignupStatus.checked_in
+        )
+        assert self._attendance(db_session, commitment, tomorrow) is None
+        # The commitment is an RSVP; attendance never moves it.
+        assert (
+            db_session.get(ShiftSignup, commitment.id).status
+            == SignupStatus.confirmed
+        )
+
+    def test_selected_is_idempotent_per_session(self, client, db_session):
+        event, shift, sessions, vol, commitment = self._two_day_shift(
+            db_session, "again@example.com"
+        )
+        body = {
+            "email": "again@example.com",
+            "venue_code": "4321",
+            "unit_ids": [str(sessions[0].id)],
+        }
+        first = client.post(f"/api/v1/events/{event.id}/check-in-selected", json=body)
+        assert first.json()["count_checked_in"] == 1
+
+        second = client.post(f"/api/v1/events/{event.id}/check-in-selected", json=body)
+        assert second.status_code == 200, second.text
+        # A volunteer who taps twice must be told they are already in, not
+        # counted twice or handed an error.
+        assert second.json()["count_checked_in"] == 0
+        assert second.json()["count_already_checked_in"] == 1
+        assert second.json()["signups"][0]["newly_checked_in"] is False
+        db_session.expire_all()
+        assert (
+            db_session.query(SessionAttendance)
+            .filter_by(shift_signup_id=commitment.id)
+            .count()
+            == 1
+        )
+
+    def test_selected_rejects_tomorrows_session_today(self, client, db_session):
+        event, shift, sessions, vol, commitment = self._two_day_shift(
+            db_session, "eager@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={
+                "email": "eager@example.com",
+                "venue_code": "4321",
+                "unit_ids": [str(sessions[1].id)],
+            },
+        )
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "OUTSIDE_WINDOW"
+
+    def test_waitlisted_commitment_cannot_check_in(self, client, db_session):
+        event, shift, sessions, vol, commitment = self._two_day_shift(
+            db_session, "wait@example.com"
+        )
+        commitment.status = SignupStatus.waitlisted
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={
+                "email": "wait@example.com",
+                "venue_code": "4321",
+                "unit_ids": [str(sessions[0].id)],
+            },
+        )
+        # They never held a seat, so there is nothing to attend — and recording
+        # attendance would silently hand them one.
+        assert resp.status_code == 409
+        db_session.expire_all()
+        assert self._attendance(db_session, commitment, sessions[0]) is None
+
+    def test_pending_commitment_is_autoconfirmed_on_arrival(self, client, db_session):
+        event, shift, sessions, vol, commitment = self._two_day_shift(
+            db_session, "pend@example.com"
+        )
+        commitment.status = SignupStatus.pending
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={
+                "email": "pend@example.com",
+                "venue_code": "4321",
+                "unit_ids": [str(sessions[0].id)],
+            },
+        )
+        # Confirmation is an RSVP, not a gate: someone standing in the room who
+        # never clicked the confirm email is still here.
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        assert (
+            db_session.get(ShiftSignup, commitment.id).status
+            == SignupStatus.confirmed
+        )
+        assert (
+            self._attendance(db_session, commitment, sessions[0]).status
+            == SignupStatus.checked_in
+        )
 
 
 class TestVenueCodeGate:
@@ -568,7 +879,7 @@ class TestVenueCodeGate:
     code can never be used to probe which emails are signed up."""
 
     def test_lookup_wrong_code_403(self, client, db_session):
-        event, orient, _ = _event_with_two_slots(
+        event, orient, *_ = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=180
         )
         vol = _make_volunteer(db_session, email="gate-l@example.com")
@@ -603,7 +914,7 @@ class TestVenueCodeGate:
         assert resp.json()["code"] == "WRONG_VENUE_CODE"
 
     def test_selected_wrong_code_403_and_no_mutation(self, client, db_session):
-        event, orient, _ = _event_with_two_slots(
+        event, orient, *_ = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=180
         )
         vol = _make_volunteer(db_session, email="gate-s@example.com")
@@ -613,7 +924,7 @@ class TestVenueCodeGate:
 
         resp = client.post(
             f"/api/v1/events/{event.id}/check-in-selected",
-            json={"email": "gate-s@example.com", "venue_code": "0000", "signup_ids": [str(s.id)]},
+            json={"email": "gate-s@example.com", "venue_code": "0000", "unit_ids": [str(s.id)]},
         )
         assert resp.status_code == 403
         assert resp.json()["code"] == "WRONG_VENUE_CODE"
@@ -675,7 +986,7 @@ class TestCheckInRateLimits:
         body = {
             "email": "limit-s@example.com",
             "venue_code": "4321",
-            "signup_ids": [str(uuid.uuid4())],
+            "unit_ids": [str(uuid.uuid4())],
         }
         statuses = [client.post(url, json=body).status_code for _ in range(31)]
         assert 429 not in statuses[:30]
@@ -761,7 +1072,7 @@ class TestSelectedResponseAccuracy:
     and must not leave partial transitions behind on a window error."""
 
     def test_already_checked_in_row_reported_not_new(self, client, db_session):
-        event, orient, _ = _event_with_two_slots(
+        event, orient, *_ = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=180
         )
         vol = _make_volunteer(db_session, email="acc@example.com")
@@ -776,7 +1087,7 @@ class TestSelectedResponseAccuracy:
 
         resp = client.post(
             f"/api/v1/events/{event.id}/check-in-selected",
-            json={"email": "acc@example.com", "venue_code": "4321", "signup_ids": [str(s.id)]},
+            json={"email": "acc@example.com", "venue_code": "4321", "unit_ids": [str(s.id)]},
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -785,7 +1096,7 @@ class TestSelectedResponseAccuracy:
         assert body["count_already_checked_in"] == 1
 
     def test_fresh_row_reported_new(self, client, db_session):
-        event, orient, _ = _event_with_two_slots(
+        event, orient, *_ = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=180
         )
         vol = _make_volunteer(db_session, email="fresh@example.com")
@@ -795,7 +1106,7 @@ class TestSelectedResponseAccuracy:
 
         resp = client.post(
             f"/api/v1/events/{event.id}/check-in-selected",
-            json={"email": "fresh@example.com", "venue_code": "4321", "signup_ids": [str(s.id)]},
+            json={"email": "fresh@example.com", "venue_code": "4321", "unit_ids": [str(s.id)]},
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -806,13 +1117,19 @@ class TestSelectedResponseAccuracy:
     def test_window_error_rolls_back_earlier_transitions(self, client, db_session):
         """Selecting [open, closed] shifts must 403 AND leave the open one
         untouched — no partial check-in."""
-        event, orient, period = _event_with_two_slots(
+        event, orient, shift, period = _event_with_two_slots(
             db_session, orient_offset_min=5, period_offset_min=300
         )
         vol = _make_volunteer(db_session, email="partial@example.com")
         s_open = Signup(volunteer_id=vol.id, slot_id=orient.id, status=SignupStatus.confirmed)
-        s_closed = Signup(volunteer_id=vol.id, slot_id=period.id, status=SignupStatus.confirmed)
-        db_session.add_all([s_open, s_closed])
+        db_session.add(s_open)
+        commitment = ShiftSignup(
+            id=uuid.uuid4(),
+            volunteer_id=vol.id,
+            shift_id=shift.id,
+            status=SignupStatus.confirmed,
+        )
+        db_session.add(commitment)
         db_session.flush()
         db_session.commit()
 
@@ -821,10 +1138,15 @@ class TestSelectedResponseAccuracy:
             json={
                 "email": "partial@example.com",
                 "venue_code": "4321",
-                "signup_ids": [str(s_open.id), str(s_closed.id)],
+                "unit_ids": [str(s_open.id), str(period.id)],
             },
         )
         assert resp.status_code == 403
         db_session.expire_all()
         assert db_session.get(Signup, s_open.id).status == SignupStatus.confirmed
-        assert db_session.get(Signup, s_closed.id).status == SignupStatus.confirmed
+        assert (
+            db_session.query(SessionAttendance)
+            .filter_by(shift_signup_id=commitment.id)
+            .count()
+            == 0
+        )

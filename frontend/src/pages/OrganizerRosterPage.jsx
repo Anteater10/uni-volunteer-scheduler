@@ -6,6 +6,8 @@ import {
   fetchRoster,
   checkInSignup,
   undoCheckInSignup,
+  checkInSession,
+  undoCheckInSession,
   reopenEvent,
 } from "../api/roster";
 import api from "../lib/api";
@@ -210,9 +212,23 @@ export default function OrganizerRosterPage() {
     onError: (err) => toast.error(err?.message || "Couldn't reopen the event"),
   });
 
+  // 2026-08-05 shifts: a card is one volunteer at one *session*, so the
+  // mutations take the whole row. A shift row has no signup_id — passing one
+  // through was a request to /signups/undefined/check-in — and check-in is
+  // keyed on (commitment, session) because a Tue+Wed volunteer is checked in
+  // once per day and can be present Tuesday and absent Wednesday.
+  const rowMatches = (r, target) =>
+    target.shift_signup_id
+      ? r.shift_signup_id === target.shift_signup_id &&
+        r.slot_id === target.slot_id
+      : r.signup_id === target.signup_id;
+
   const checkInMut = useMutation({
-    mutationFn: (signupId) => checkInSignup(signupId),
-    onMutate: async (signupId) => {
+    mutationFn: (row) =>
+      row.shift_signup_id
+        ? checkInSession(row.shift_signup_id, row.slot_id)
+        : checkInSignup(row.signup_id),
+    onMutate: async (row) => {
       // Optimistic update
       await qc.cancelQueries({ queryKey: ["roster", eventId] });
       const prev = qc.getQueryData(["roster", eventId]);
@@ -222,13 +238,13 @@ export default function OrganizerRosterPage() {
           ...old,
           checked_in_count: old.checked_in_count + 1,
           rows: old.rows.map((r) =>
-            r.signup_id === signupId ? { ...r, status: "checked_in" } : r,
+            rowMatches(r, row) ? { ...r, status: "checked_in" } : r,
           ),
         };
       });
       return { prev };
     },
-    onError: (_err, _signupId, context) => {
+    onError: (_err, _row, context) => {
       // Rollback
       if (context?.prev) {
         qc.setQueryData(["roster", eventId], context.prev);
@@ -242,8 +258,11 @@ export default function OrganizerRosterPage() {
 
   // Issue #31 — mis-tap recovery: tapping a checked-in card reverts it.
   const undoMut = useMutation({
-    mutationFn: (signupId) => undoCheckInSignup(signupId),
-    onMutate: async (signupId) => {
+    mutationFn: (row) =>
+      row.shift_signup_id
+        ? undoCheckInSession(row.shift_signup_id, row.slot_id)
+        : undoCheckInSignup(row.signup_id),
+    onMutate: async (row) => {
       await qc.cancelQueries({ queryKey: ["roster", eventId] });
       const prev = qc.getQueryData(["roster", eventId]);
       qc.setQueryData(["roster", eventId], (old) => {
@@ -252,13 +271,13 @@ export default function OrganizerRosterPage() {
           ...old,
           checked_in_count: Math.max(0, old.checked_in_count - 1),
           rows: old.rows.map((r) =>
-            r.signup_id === signupId ? { ...r, status: "confirmed" } : r,
+            rowMatches(r, row) ? { ...r, status: "confirmed" } : r,
           ),
         };
       });
       return { prev };
     },
-    onError: (_err, _signupId, context) => {
+    onError: (_err, _row, context) => {
       if (context?.prev) {
         qc.setQueryData(["roster", eventId], context.prev);
       }
@@ -336,6 +355,11 @@ export default function OrganizerRosterPage() {
         map.set(key, {
           key,
           slotType: r.slot_type || "period",
+          // 2026-08-05 shifts: a session's own name plus the shift it belongs
+          // to. Times alone can't tell "Tue morning · Period 2" from another
+          // shift running the same hour.
+          shiftName: r.shift_name || null,
+          sessionName: r.session_name || null,
           start: r.slot_time,
           end: r.slot_end,
           location: r.slot_location,
@@ -522,6 +546,12 @@ export default function OrganizerRosterPage() {
               >
                 {group.slotType === "orientation" ? "Orientation" : "Module"}
               </span>
+              {group.shiftName ? (
+                <span className="mr-2">
+                  {group.shiftName}
+                  {group.sessionName ? ` · ${group.sessionName}` : ""}
+                </span>
+              ) : null}
               {fmtSlotRange(group.start, group.end)}
               {group.location ? (
                 <span className="ml-2 font-normal text-[var(--color-fg-muted)]">
@@ -587,7 +617,9 @@ export default function OrganizerRosterPage() {
               const done = row.status === "checked_in" || row.status === "attended";
               const busy = checkInMut.isPending || undoMut.isPending;
               return (
-                <li key={row.signup_id}>
+                <li
+                  key={`${row.shift_signup_id || row.signup_id}|${row.slot_id || ""}`}
+                >
                   <button
                     type="button"
                     className={`w-full min-h-[84px] flex items-center justify-between px-5 py-4 rounded-xl border-2 text-left transition-all shadow-sm ${
@@ -606,9 +638,9 @@ export default function OrganizerRosterPage() {
                     disabled={(!active && !canUndo) || busy}
                     onClick={() => {
                       if (active) {
-                        checkInMut.mutate(row.signup_id);
+                        checkInMut.mutate(row);
                       } else if (canUndo) {
-                        undoMut.mutate(row.signup_id);
+                        undoMut.mutate(row);
                       }
                     }}
                   >

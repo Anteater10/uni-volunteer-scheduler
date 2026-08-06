@@ -46,6 +46,19 @@ def check_and_send_reminders(self) -> dict:
                 result = reminder_service.send_reminder(db, signup.id, kind, now=now)
                 key = result.reason if result.reason in counts else "ok"
                 counts[key] = counts.get(key, 0) + 1
+        # 2026-08-02 shifts: the loop above now only reaches orientation
+        # signups. Sessions of a shift are reminded per session, one commitment
+        # contributing as many candidate pairs as it has sessions.
+        for shift_signup, slot in reminder_service.candidate_sessions_for_scan(db, now=now):
+            for kind in reminder_service.KINDS:
+                if not reminder_service.compute_reminder_window(slot, kind, now):
+                    counts["skipped_window"] += 1
+                    continue
+                result = reminder_service.send_session_reminder(
+                    db, shift_signup.id, slot.id, kind, now=now
+                )
+                key = result.reason if result.reason in counts else "ok"
+                counts[key] = counts.get(key, 0) + 1
         db.commit()
         logger.info("check_and_send_reminders counts=%s", counts)
         return counts

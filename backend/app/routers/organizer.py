@@ -21,7 +21,12 @@ from ..services.orientation_service import (
     family_for_event,
     grant_orientation_credit,
 )
-from ..services.waitlist_service import SlotEndedError, manual_promote
+from ..services import shift_service
+from ..services.waitlist_service import (
+    SlotEndedError,
+    manual_promote,
+    manual_promote_shift,
+)
 
 router = APIRouter(prefix="/organizer", tags=["organizer"])
 
@@ -104,6 +109,116 @@ def grant_orientation_for_signup(
             "quarter_id": str(event.quarter_id) if event.quarter_id else None,
             "event_id": str(event.id),
             "signup_id": str(signup.id),
+            "via": "organizer_roster",
+        },
+    )
+    db.commit()
+    db.refresh(credit)
+    quarter = event.academic_quarter
+    return schemas.OrientationCreditRead(
+        id=credit.id,
+        volunteer_email=credit.volunteer_email,
+        family_key=credit.family_key,
+        quarter_id=credit.quarter_id,
+        quarter_label=quarter.display_name if quarter else None,
+        source=credit.source.value,
+        granted_by_user_id=credit.granted_by_user_id,
+        granted_by_label=current_user.name or current_user.email,
+        granted_at=credit.granted_at,
+        revoked_at=credit.revoked_at,
+        notes=credit.notes,
+    )
+
+
+@router.post(
+    "/events/{event_id}/shift-signups/{shift_signup_id}/grant-orientation",
+    response_model=schemas.OrientationCreditRead,
+    status_code=201,
+)
+def grant_orientation_for_shift_signup(
+    event_id: UUID,
+    shift_signup_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.organizer, models.UserRole.admin)
+    ),
+):
+    """2026-08-02 shifts: the same one-tap grant, for a shift commitment.
+
+    Not optional. The shifts design retargets the orientation gate from period
+    slots to shifts, and its stated escape hatch for a volunteer who lacks
+    credit is precisely this: staff vouch at the door from the roster. Since
+    the roster's classroom rows are now commitments, the slot-keyed route
+    404s for every one of them — which would leave the gate with no override
+    at all.
+
+    Only the volunteer's identity is needed to write the credit, so this
+    differs from the slot version just in how it gets there.
+    """
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, current_user)
+
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .first()
+    )
+    if not shift_signup:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+
+    shift = (
+        db.query(models.Shift)
+        .filter(models.Shift.id == shift_signup.shift_id)
+        .first()
+    )
+    if not shift or shift.event_id != event.id:
+        raise HTTPException(
+            status_code=400, detail="Shift signup does not belong to this event"
+        )
+
+    # Same reasoning as the slot route: a cancelled commitment means the
+    # volunteer isn't coming, so there is nothing to credit.
+    if shift_signup.status == models.SignupStatus.cancelled:
+        raise HTTPException(
+            status_code=409,
+            detail="Shift signup is cancelled; cannot grant orientation credit.",
+        )
+
+    volunteer = shift_signup.volunteer
+    if not volunteer:
+        raise HTTPException(status_code=404, detail="Volunteer not found")
+
+    family = family_for_event(db, event_id)
+    if not family:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Event has no module_slug; cannot determine orientation "
+                "family. Set the module on the event first."
+            ),
+        )
+    credit = grant_orientation_credit(
+        db,
+        email=volunteer.email,
+        family_key=family,
+        quarter_id=event.quarter_id,
+        granted_by_user_id=current_user.id,
+        notes=f"Granted from roster for event {event.title}",
+    )
+    log_action(
+        db,
+        current_user,
+        "orientation_credit_grant",
+        "OrientationCredit",
+        str(credit.id),
+        extra={
+            "volunteer_email": volunteer.email,
+            "family_key": family,
+            "quarter_id": str(event.quarter_id) if event.quarter_id else None,
+            "event_id": str(event.id),
+            "shift_signup_id": str(shift_signup.id),
             "via": "organizer_roster",
         },
     )
@@ -250,3 +365,80 @@ def organizer_promote_signup(
     send_waitlist_promotion_email.delay(**promo_kwargs)
 
     return signup
+
+
+@router.post(
+    "/events/{event_id}/shift-signups/{shift_signup_id}/promote",
+    response_model=schemas.ShiftSignupRead,
+)
+def organizer_promote_shift_signup(
+    event_id: UUID,
+    shift_signup_id: UUID,
+    allow_overfill: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(
+        require_role(models.UserRole.organizer, models.UserRole.admin)
+    ),
+):
+    """2026-08-02 shifts: the roster's Promote button, for a shift waitlist.
+
+    Same contract as ``organizer_promote_signup`` — including ``allow_overfill``,
+    which stays opt-in for the same reason: a full shift is usually why the
+    person is waitlisted, so without it the button could never succeed, and
+    going over capacity is a decision about a real room.
+    """
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, current_user)
+
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .with_for_update(of=models.ShiftSignup)
+        .first()
+    )
+    if shift_signup is None:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+
+    shift = shift_service.lock_shift(db, shift_signup.shift_id)
+    if shift is None or shift.event_id != event.id:
+        raise HTTPException(
+            status_code=400, detail="Shift signup does not belong to this event"
+        )
+
+    try:
+        promo = manual_promote_shift(
+            db, shift_signup, shift, allow_overfill=allow_overfill
+        )
+    except SlotEndedError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+    except ValueError as exc:
+        msg = str(exc)
+        if "full" in msg:
+            raise HTTPException(status_code=409, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+
+    log_action(
+        db,
+        current_user,
+        "waitlist_promote_manual",
+        "ShiftSignup",
+        str(shift_signup.id),
+        extra={
+            "event_id": str(event.id),
+            "shift_id": str(shift.id),
+            "shift_signup_id": str(shift_signup.id),
+            "via": "organizer_roster",
+            "allow_overfill": allow_overfill,
+        },
+    )
+    promo_kwargs = promo.email_kwargs
+    db.commit()
+    db.refresh(shift_signup)
+
+    send_waitlist_promotion_email.delay(**promo_kwargs)
+
+    return shift_signup

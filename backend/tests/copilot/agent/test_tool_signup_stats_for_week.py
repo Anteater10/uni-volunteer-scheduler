@@ -9,7 +9,8 @@ from app.copilot.agent.tools.base import invoke
 from app.copilot.agent.tools.signup_stats_for_week import (
     SIGNUP_STATS_FOR_WEEK_TOOL,
 )
-from app.models import Signup, SignupStatus, Slot, SlotType, Volunteer
+from app.models import SignupStatus, Slot, SlotType, Volunteer
+from tests.fixtures.helpers import book_shift, make_shift
 
 
 def _make_session(db_session, user_id):
@@ -27,10 +28,19 @@ def _make_session(db_session, user_id):
 
 
 def _add_slot_with_signups(db_session, event_id, capacity, filled):
+    # A shift, not a bare period slot. These tools are asked about classroom
+    # work, and since the 2026-08-02 shifts work that is booked as a
+    # ShiftSignup — a fixture built from Signup rows is exactly what let the
+    # tools ship reading an empty roster while their tests passed. Capacity
+    # moves up to the shift, so the totals under test are unchanged.
     now = datetime.now(timezone.utc) + timedelta(days=1)
+    shift = make_shift(db_session, event_id, capacity=capacity)
     slot = Slot(
         id=uuid.uuid4(),
         event_id=event_id,
+        shift_id=shift.id,
+        sort_order=0,
+        name="Period 1",
         start_time=now,
         end_time=now + timedelta(hours=1),
         capacity=capacity,
@@ -39,6 +49,7 @@ def _add_slot_with_signups(db_session, event_id, capacity, filled):
     )
     db_session.add(slot)
     db_session.flush()
+    shift.current_count = filled
     for _ in range(filled):
         v = Volunteer(
             id=uuid.uuid4(),
@@ -48,14 +59,7 @@ def _add_slot_with_signups(db_session, event_id, capacity, filled):
         )
         db_session.add(v)
         db_session.flush()
-        db_session.add(
-            Signup(
-                id=uuid.uuid4(),
-                volunteer_id=v.id,
-                slot_id=slot.id,
-                status=SignupStatus.confirmed,
-            )
-        )
+        book_shift(db_session, shift, v, status=SignupStatus.confirmed)
     db_session.flush()
 
 

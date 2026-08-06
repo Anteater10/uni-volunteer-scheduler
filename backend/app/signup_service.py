@@ -102,5 +102,71 @@ def mark_promoted_pending(db: Session, signup: models.Signup) -> PromotionResult
     )
 
 
+@dataclass(frozen=True)
+class ShiftPromotionResult:
+    """Same contract as PromotionResult, for a shift commitment.
+
+    Kept as a separate type rather than widening PromotionResult: every caller
+    of the latter reads `.signup` and passes `signup_id=` to the email task, so
+    a union would have silently produced tokens and emails pointing at the
+    wrong kind of booking.
+    """
+
+    shift_signup: models.ShiftSignup
+    raw_token: str
+    email_kwargs: dict
+
+
+def mark_shift_promoted_pending(
+    db: Session, shift_signup: models.ShiftSignup
+) -> ShiftPromotionResult:
+    """Shift-side twin of `mark_promoted_pending`, and the only choke point
+    that moves a commitment off a shift waitlist.
+
+    "Has it ended" is judged on the shift's *last* session: a Tue+Wed shift is
+    still worth offering on Tuesday evening, and refusing on the first
+    session's end time would make most mid-week promotions impossible. A shift
+    with no sessions can't be represented, so the empty case is only defensive.
+    Does NOT touch shift.current_count — the caller owns capacity, same split
+    as the signup path.
+    """
+    from .services.waitlist_service import SlotEndedError, slot_has_ended
+
+    if shift_signup.status != models.SignupStatus.waitlisted:
+        raise ValueError(
+            "mark_shift_promoted_pending requires a waitlisted shift signup; "
+            f"got status={shift_signup.status!r}"
+        )
+
+    shift = (
+        db.query(models.Shift).filter(models.Shift.id == shift_signup.shift_id).first()
+    )
+    sessions = list(shift.sessions) if shift is not None else []
+    if sessions and all(slot_has_ended(s) for s in sessions):
+        raise SlotEndedError()
+
+    shift_signup.status = models.SignupStatus.pending
+    volunteer = shift_signup.volunteer
+    raw_token = issue_token(
+        db,
+        shift_signup=shift_signup,
+        email=volunteer.email,
+        purpose=models.MagicLinkPurpose.PROMOTION_CONFIRM,
+        volunteer_id=volunteer.id,
+        ttl_minutes=PROMOTION_CONFIRM_TTL_MINUTES,
+    )
+    db.flush()
+    return ShiftPromotionResult(
+        shift_signup=shift_signup,
+        raw_token=raw_token,
+        email_kwargs={
+            "volunteer_id": str(volunteer.id),
+            "shift_signup_id": str(shift_signup.id),
+            "token": raw_token,
+            "event_id": str(shift.event_id),
+        },
+    )
+
+
 # Convenience alias for imports
 SignupStatus = models.SignupStatus

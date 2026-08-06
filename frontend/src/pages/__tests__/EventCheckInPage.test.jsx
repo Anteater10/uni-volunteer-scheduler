@@ -43,11 +43,28 @@ function slotAt(offsetMs, { id, type, location, durMs = 60 * MIN }) {
   };
 }
 
-function shiftFixture({ signupId, type, state, status = "confirmed", location }) {
+// 2026-08-02 shifts: the row the volunteer taps is a "unit" — an orientation
+// signup, or one session of a shift commitment. `unit_id` is what goes back to
+// the server; the page never has to know which kind it held.
+function shiftFixture({
+  unitId,
+  type,
+  state,
+  status = "confirmed",
+  location,
+  shiftName,
+  sessionName,
+}) {
   const start = new Date(Date.now() + 10 * MIN);
+  const isSession = type === "period";
   return {
-    signup_id: signupId,
-    slot_id: `slot-${signupId}`,
+    unit_id: unitId,
+    signup_id: isSession ? null : unitId,
+    shift_signup_id: isSession ? `ss-${unitId}` : null,
+    shift_id: isSession ? `shift-${unitId}` : null,
+    shift_name: isSession ? (shiftName ?? "Tue 1:00pm") : null,
+    session_name: isSession ? (sessionName ?? "Period 1") : null,
+    slot_id: isSession ? unitId : `slot-${unitId}`,
     slot_type: type,
     slot_location: location ?? null,
     slot_start: start.toISOString(),
@@ -106,8 +123,8 @@ describe("EventCheckInPage", () => {
       event_title: "Bio @ Lincoln",
       volunteer_name: "Thanh Khuu",
       shifts: [
-        shiftFixture({ signupId: "su-1", type: "orientation", state: "open", location: "Library" }),
-        shiftFixture({ signupId: "su-2", type: "period", state: "upcoming", location: "Room 4" }),
+        shiftFixture({ unitId: "su-1", type: "orientation", state: "open", location: "Library" }),
+        shiftFixture({ unitId: "su-2", type: "period", state: "upcoming", location: "Room 4" }),
       ],
     });
 
@@ -132,8 +149,8 @@ describe("EventCheckInPage", () => {
       event_title: "Bio @ Lincoln",
       volunteer_name: "Thanh Khuu",
       shifts: [
-        shiftFixture({ signupId: "su-1", type: "orientation", state: "open", location: "Library" }),
-        shiftFixture({ signupId: "su-2", type: "period", state: "open", location: "Room 4" }),
+        shiftFixture({ unitId: "su-1", type: "orientation", state: "open", location: "Library" }),
+        shiftFixture({ unitId: "su-2", type: "period", state: "open", location: "Room 4" }),
       ],
     });
     api.public.checkInSelected.mockResolvedValue({
@@ -144,6 +161,7 @@ describe("EventCheckInPage", () => {
       count_already_checked_in: 0,
       signups: [
         {
+          unit_id: "su-1",
           signup_id: "su-1",
           slot_id: "slot-su-1",
           slot_type: "orientation",

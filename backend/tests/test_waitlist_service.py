@@ -11,6 +11,17 @@ Covers:
 - WAIT-05: admin reorder persists (promotion-order verification via cancel
   is no longer possible now that cancel doesn't promote).
 """
+
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import uuid
 from datetime import date as date_type, datetime, timedelta, timezone
 
@@ -69,7 +80,7 @@ def _make_event_and_slot(db_session, *, capacity):
         end_time=datetime.now(timezone.utc) + timedelta(days=1, hours=2),
         capacity=capacity,
         current_count=0,
-        slot_type=models.SlotType.PERIOD,
+        slot_type=models.SlotType.ORIENTATION,
         date=date_type.today(),
     )
     db_session.add(slot)

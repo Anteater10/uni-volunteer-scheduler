@@ -6,6 +6,17 @@ Uses real Postgres (not SQLite) with separate DB sessions per thread.
 
 Phase 09: Rewired — Signup now uses volunteer_id (D-01).
 """
+
+# 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
+#
+# ck_slots_shift_membership_matches_type makes a shift-less period slot
+# unrepresentable, and a period slot now belongs to a shift — capacity, the
+# waitlist and the commitment all sit one level up on the Shift, reached
+# through the shift-level services. What this file exercises is the Signup
+# path, and an orientation slot is exactly the slot that is still booked
+# directly, so orientation keeps these tests pointed at the code they were
+# written for instead of retargeting them at a different service.
+
 import pytest
 
 import os
@@ -93,7 +104,7 @@ def _create_test_data(engine, venue_code="1234"):
             start_time=now,
             end_time=now + timedelta(hours=2),
             capacity=10,
-            slot_type=SlotType.PERIOD,
+            slot_type=SlotType.ORIENTATION,
         )
         session.add(slot)
         session.flush()

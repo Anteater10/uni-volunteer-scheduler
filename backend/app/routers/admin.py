@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import uuid as uuid_mod
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -21,7 +22,14 @@ from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..signup_service import mark_promoted_pending
 from ..services.check_in_service import ensure_signup_cancellable
 from ..services.waitlist_service import SlotEndedError
-from ..services import module_service, quarter_service
+from ..services import (
+    attendance_facts,
+    module_service,
+    quarter_service,
+    session_attendance_service,
+    shift_service,
+    waitlist_service,
+)
 from ..services.audit_log_humanize import humanize as humanize_audit_log
 from ..schemas import ModuleRead, ModuleCreate, ModuleUpdate, SentNotificationRead
 
@@ -79,6 +87,81 @@ def _volunteer_participant_payload(v: models.Volunteer, privacy: PrivacyMode) ->
         display_name = "".join(p[0].upper() for p in vol_name.split() if p)
         return {"name": display_name, "email": None, "university_id": None}
     return {"name": "Volunteer", "email": None, "university_id": None}
+
+
+@dataclass
+class _ExportBooking:
+    """One person on one slot, for the roster/attendance exports.
+
+    2026-08-02 shifts: the exports used to iterate `slot.signups`, which is now
+    empty for a session — nobody books a session directly. This flattens both
+    kinds of booking into the shape those loops already read, so a session
+    exports the confirmed membership of its owning shift annotated with that
+    session's attendance.
+    """
+
+    id: uuid_mod.UUID
+    volunteer: object | None
+    status: models.SignupStatus
+    checked_in_at: datetime | None
+    timestamp: datetime
+    answers: list
+    responses: list
+    shift_name: str | None = None
+    session_name: str | None = None
+    # Set only for a shift booking. The roster UI needs both: `shift_id` to
+    # group the sessions of one bundle under a single header, and `is_shift` to
+    # pick the right endpoint — promoting or cancelling a commitment is a
+    # different route from promoting a bare slot signup, and `id` alone cannot
+    # tell them apart.
+    shift_id: uuid_mod.UUID | None = None
+    is_shift: bool = False
+
+
+def _bookings_for_slot(db: Session, slot: models.Slot) -> list[_ExportBooking]:
+    if slot.shift_id is None:
+        return [
+            _ExportBooking(
+                id=s.id,
+                volunteer=s.volunteer,
+                status=s.status,
+                checked_in_at=s.checked_in_at,
+                timestamp=s.timestamp,
+                answers=list(s.answers or []),
+                responses=list(s.responses or []),
+            )
+            for s in slot.signups
+        ]
+
+    shift = slot.shift
+    records = {}
+    bookings = []
+    for shift_signup in shift.shift_signups:
+        records = session_attendance_service.attendance_for_shift_signup(
+            db, shift_signup.id
+        )
+        record = records.get(slot.id)
+        bookings.append(
+            _ExportBooking(
+                id=shift_signup.id,
+                volunteer=shift_signup.volunteer,
+                # No attendance record ⇒ the commitment's own status, the same
+                # rule the roster and the analytics union use.
+                status=record.status if record else shift_signup.status,
+                checked_in_at=record.checked_in_at if record else None,
+                timestamp=shift_signup.timestamp,
+                # Legacy per-event custom questions were not carried onto shift
+                # commitments (migration 0037 lists custom_answers as a
+                # casualty); Phase 22 form responses were.
+                answers=[],
+                responses=list(shift_signup.responses or []),
+                shift_name=shift.name,
+                session_name=slot.name,
+                shift_id=shift.id,
+                is_shift=True,
+            )
+        )
+    return bookings
 
 
 # =========================
@@ -143,10 +226,16 @@ def admin_summary(
     )
     events_total = db.query(func.count(models.Event.id)).scalar() or 0
     slots_total = db.query(func.count(models.Slot.id)).scalar() or 0
-    signups_total = db.query(func.count(models.Signup.id)).scalar() or 0
+    # 2026-08-05 shifts: the all-time totals read the same attendance-facts
+    # union the per-quarter ones do. Counting `signups` alone left the headline
+    # "N students have signed up" blind to every shift booking — which, now
+    # that classroom work is booked as a shift, is nearly all of them.
+    af = attendance_facts.facts()
+    signups_total = db.query(func.count()).select_from(af).scalar() or 0
     signups_confirmed_total = (
-        db.query(func.count(models.Signup.id))
-        .filter(models.Signup.status.in_(_CONFIRMED_STATUSES))
+        db.query(func.count())
+        .select_from(af)
+        .filter(af.c.status.in_(_CONFIRMED_STATUSES))
         .scalar()
         or 0
     )
@@ -181,10 +270,15 @@ def admin_summary(
         .scalar()
         or 0
     )
+    # 2026-08-02 shifts: every count below reads the attendance-facts union
+    # (`af`, built with the all-time totals above) instead of `signups`
+    # directly, so a shift commitment contributes one row per session it
+    # covers — which is what these numbers always meant ("bookings to staff",
+    # not "rows in a table").
     signups_quarter = (
-        db.query(func.count(models.Signup.id))
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
+        db.query(func.count())
+        .select_from(af)
+        .join(models.Event, models.Event.id == af.c.event_id)
         .filter(
             models.Event.start_date >= q_start,
             models.Event.start_date < q_end,
@@ -193,13 +287,13 @@ def admin_summary(
         or 0
     )
     signups_confirmed_quarter = (
-        db.query(func.count(models.Signup.id))
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
+        db.query(func.count())
+        .select_from(af)
+        .join(models.Event, models.Event.id == af.c.event_id)
         .filter(
             models.Event.start_date >= q_start,
             models.Event.start_date < q_end,
-            models.Signup.status.in_(_CONFIRMED_STATUSES),
+            af.c.status.in_(_CONFIRMED_STATUSES),
         )
         .scalar()
         or 0
@@ -244,8 +338,16 @@ def admin_summary(
     users_last_week = _count_created_between(models.User, two_weeks_ago, week_ago)
     events_this_week = _count_created_between(models.Event, week_ago, now)
     events_last_week = _count_created_between(models.Event, two_weeks_ago, week_ago)
-    signups_this_week = _count_created_between(models.Signup, week_ago, now)
-    signups_last_week = _count_created_between(models.Signup, two_weeks_ago, week_ago)
+    # Shift commitments are signups too, so the week-over-week trend counts
+    # both kinds — otherwise the arrow points down in a week where every
+    # booking was a shift.
+    def _count_signups_created_between(start_dt, end_dt):
+        return _count_created_between(
+            models.Signup, start_dt, end_dt
+        ) + _count_created_between(models.ShiftSignup, start_dt, end_dt)
+
+    signups_this_week = _count_signups_created_between(week_ago, now)
+    signups_last_week = _count_signups_created_between(two_weeks_ago, week_ago)
 
     # -------- fill-rate attention (next 2 weeks) --------
     upcoming_events = (
@@ -283,32 +385,33 @@ def admin_summary(
 
     # -------- volunteer hours + attendance rate this quarter --------
     vh_rows = (
-        db.query(models.Slot, models.Signup)
-        .join(models.Signup, models.Signup.slot_id == models.Slot.id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
+        db.query(models.Slot)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
         .filter(
             models.Event.start_date >= q_start,
             models.Event.start_date < q_end,
-            models.Signup.status == models.SignupStatus.attended,
+            af.c.status == models.SignupStatus.attended,
         )
         .all()
     )
     volunteer_hours_quarter = round(
         sum(
             (slot.end_time - slot.start_time).total_seconds() / 3600.0
-            for slot, _ in vh_rows
+            for slot in vh_rows
         ),
         2,
     )
 
     att_rows = (
-        db.query(models.Signup.status, func.count(models.Signup.id))
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
+        db.query(af.c.status, func.count())
+        .select_from(af)
+        .join(models.Event, models.Event.id == af.c.event_id)
         .filter(
             models.Event.start_date >= q_start,
             models.Event.start_date < q_end,
-            models.Signup.status.in_(
+            af.c.status.in_(
                 [
                     models.SignupStatus.confirmed,
                     models.SignupStatus.attended,
@@ -316,7 +419,7 @@ def admin_summary(
                 ]
             ),
         )
-        .group_by(models.Signup.status)
+        .group_by(af.c.status)
         .all()
     )
     att_counts = {s: c for s, c in att_rows}
@@ -462,14 +565,15 @@ def event_roster(
     }
 
     for slot in slots_sorted:
+        bookings = _bookings_for_slot(db, slot)
         waitlisted_sorted = sorted(
-            [s for s in slot.signups if s.status == models.SignupStatus.waitlisted],
+            [s for s in bookings if s.status == models.SignupStatus.waitlisted],
             key=lambda s: (s.timestamp, str(s.id)),
         )
         waitlist_positions = {s.id: idx + 1 for idx, s in enumerate(waitlisted_sorted)}
 
         signups_sorted = sorted(
-            slot.signups,
+            bookings,
             key=lambda s: (status_order.get(s.status, 99), s.timestamp, str(s.id)),
         )
 
@@ -497,7 +601,15 @@ def event_roster(
                     "slot_location": slot.location,
                     "slot_capacity": slot.capacity,
                     "slot_current_count": slot.current_count,
+                    # 2026-08-02 shifts: for a session this is the *shift
+                    # signup* id, since nobody books a session directly. The
+                    # key stays `signup_id` so existing consumers keep working;
+                    # `is_shift` says which kind of id it is.
                     "signup_id": str(signup.id),
+                    "is_shift": signup.is_shift,
+                    "shift_id": str(signup.shift_id) if signup.shift_id else None,
+                    "shift_name": signup.shift_name,
+                    "session_name": signup.session_name,
                     "volunteer_id": str(v.id) if v else None,
                     "participant": _volunteer_participant_payload(v, privacy) if v else {},
                     "status": signup.status.value,
@@ -573,15 +685,14 @@ def export_event_csv(
         return ""
 
     for slot in slots_sorted:
+        bookings = _bookings_for_slot(db, slot)
         waitlisted_sorted = sorted(
-            [s for s in slot.signups if s.status == models.SignupStatus.waitlisted],
+            [s for s in bookings if s.status == models.SignupStatus.waitlisted],
             key=lambda s: (s.timestamp, str(s.id)),
         )
         waitlist_positions = {s.id: idx + 1 for idx, s in enumerate(waitlisted_sorted)}
 
-        signups_sorted = sorted(
-            slot.signups, key=lambda s: (s.timestamp, str(s.id))
-        )
+        signups_sorted = sorted(bookings, key=lambda s: (s.timestamp, str(s.id)))
 
         for signup in signups_sorted:
             # Phase 09: signup.user removed; use signup.volunteer
@@ -759,6 +870,170 @@ def admin_promote_signup(
     return signup
 
 
+@router.post(
+    "/shift-signups/{shift_signup_id}/promote", response_model=schemas.ShiftSignupRead
+)
+def admin_promote_shift_signup(
+    shift_signup_id: str,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """2026-08-02 shifts: promote a waitlisted shift commitment.
+
+    Shift twin of ``admin_promote_signup``. Capacity is owned by the shift row,
+    so that is what gets locked — see ``shift_service.lock_shift``. Overfill is
+    refused here exactly as it is for slots: the endpoint is the "there's a free
+    seat" path, not the "squeeze someone in" path.
+    """
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .with_for_update(of=models.ShiftSignup)
+        .first()
+    )
+    if not shift_signup:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+
+    shift = shift_service.lock_shift(db, shift_signup.shift_id)
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, actor)
+
+    if shift_signup.status != models.SignupStatus.waitlisted:
+        raise HTTPException(
+            status_code=400, detail="Only waitlisted shift signups can be promoted"
+        )
+
+    try:
+        promo = waitlist_service.manual_promote_shift(
+            db, shift_signup, shift, allow_overfill=False
+        )
+    except SlotEndedError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    log_action(
+        db, actor, "admin_shift_signup_promote", "ShiftSignup", str(shift_signup.id)
+    )
+    promo_kwargs = promo.email_kwargs
+    db.commit()
+    db.refresh(shift_signup)
+
+    send_waitlist_promotion_email.delay(**promo_kwargs)
+    return shift_signup
+
+
+@router.post(
+    "/shift-signups/{shift_signup_id}/cancel", response_model=schemas.ShiftSignupRead
+)
+def admin_cancel_shift_signup(
+    shift_signup_id: str,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(
+        require_role(models.UserRole.admin, models.UserRole.organizer)
+    ),
+):
+    """2026-08-02 shifts: cancel a whole commitment.
+
+    Shift twin of ``admin_cancel_signup``. A commitment is all-or-nothing, so
+    there is no "cancel Wednesday only" — that is a swap to a different shift
+    (``swap_shift_signup``), not a cancel.
+
+    ``ensure_signup_cancellable`` has no direct twin because a ShiftSignup's
+    status is lifecycle-only by CHECK constraint — attended/no_show live on
+    SessionAttendance. The reason behind that guard still applies, though:
+    volunteer hours are summed over attendance records, so cancelling a
+    commitment that already has any would destroy the basis for someone's
+    credit (or erase the audit trail of a no-show). Refuse the same way, and
+    point staff at the event-wide reopen that is the one sanctioned way back.
+
+    As with slots, cancelling frees the seat but promotes nobody — the waitlist
+    only moves by explicit staff promotion.
+    """
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .with_for_update(of=models.ShiftSignup)
+        .first()
+    )
+    if not shift_signup:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+
+    shift = shift_service.lock_shift(db, shift_signup.shift_id)
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, actor)
+
+    # Idempotent, and checked before the attendance guard so re-clicking Cancel
+    # on an already-cancelled commitment can't start reporting 422.
+    if shift_signup.status == models.SignupStatus.cancelled:
+        db.commit()
+        db.refresh(shift_signup)
+        return shift_signup
+
+    resolved = [
+        record
+        for record in session_attendance_service.attendance_for_shift_signup(
+            db, shift_signup.id
+        ).values()
+        if record.status
+        in (models.SignupStatus.attended, models.SignupStatus.no_show)
+    ]
+    if resolved:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "SHIFT_SIGNUP_NOT_CANCELLABLE",
+                "message": (
+                    "This commitment already has attendance recorded for "
+                    f"{len(resolved)} session(s). Cancelling would erase it — "
+                    "reopen the event if the close-out was wrong."
+                ),
+            },
+        )
+
+    previous_status = shift_signup.status
+    shift_signup.status = models.SignupStatus.cancelled
+
+    # Confirmed and pending both hold a seat, same as on a slot.
+    if (
+        previous_status
+        in (models.SignupStatus.confirmed, models.SignupStatus.pending)
+        and shift.current_count > 0
+    ):
+        shift.current_count -= 1
+
+    log_action(
+        db, actor, "admin_shift_signup_cancel", "ShiftSignup", str(shift_signup.id)
+    )
+    db.commit()
+    db.refresh(shift_signup)
+
+    cancellation_kind = (
+        "cancellation_waitlisted"
+        if previous_status == models.SignupStatus.waitlisted
+        else "cancellation"
+    )
+    send_email_notification.delay(
+        shift_signup_id=str(shift_signup.id), kind=cancellation_kind
+    )
+
+    return shift_signup
+
+
 # =========================
 # PHASE 25 — ADMIN WAITLIST REORDER (WAIT-05)
 # =========================
@@ -822,6 +1097,58 @@ def admin_reorder_waitlist(
         },
     )
     db.commit()
+
+
+@router.patch("/events/{event_id}/shifts/{shift_id}/waitlist-order")
+def admin_reorder_shift_waitlist(
+    event_id: str,
+    shift_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_role(models.UserRole.admin)),
+):
+    """2026-08-02 shifts: rewrite a shift's waitlist FIFO order.
+
+    Body: ``{"ordered_shift_signup_ids": [...]}``, which must be exactly the
+    currently-waitlisted commitments — all-or-nothing, so a stale client cannot
+    drop someone out of the queue by omitting them.
+    """
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    shift = shift_service.lock_shift(db, shift_id)
+    if not shift or str(shift.event_id) != str(event.id):
+        raise HTTPException(status_code=404, detail="Shift not found for this event")
+
+    ordered = (
+        payload.get("ordered_shift_signup_ids") if isinstance(payload, dict) else None
+    )
+    if not isinstance(ordered, list):
+        raise HTTPException(
+            status_code=422,
+            detail="ordered_shift_signup_ids must be a list of UUIDs",
+        )
+
+    try:
+        rows = waitlist_service.reorder_shift_waitlist(db, shift.id, ordered)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    log_action(
+        db,
+        actor,
+        "waitlist_reorder",
+        "Shift",
+        str(shift.id),
+        extra={
+            "event_id": str(event.id),
+            "shift_id": str(shift.id),
+            "ordered_shift_signup_ids": [str(s) for s in ordered],
+        },
+    )
+    db.commit()
+    return {"ordered_shift_signup_ids": [str(r.id) for r in rows]}
 
     return {
         "slot_id": str(slot.id),
@@ -1026,7 +1353,7 @@ def notify_event_participants(
     recipient_volunteers: set = set()
 
     for slot in event.slots:
-        for signup in slot.signups:
+        for signup in _bookings_for_slot(db, slot):
             if signup.status == models.SignupStatus.confirmed and signup.volunteer:
                 recipient_volunteers.add(signup.volunteer)
             elif payload.include_waitlisted and signup.status == models.SignupStatus.waitlisted and signup.volunteer:
@@ -1217,12 +1544,17 @@ def analytics_volunteer_hours(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Volunteer hours grouped by volunteer, joining Signup -> Slot -> Event."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     query = (
-        db.query(models.Signup, models.Slot, models.Event, models.Volunteer)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
-        .filter(models.Signup.status == models.SignupStatus.attended)
+        db.query(af.c.status, models.Slot, models.Event, models.Volunteer)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
+        .filter(af.c.status == models.SignupStatus.attended)
     )
     if from_date:
         query = query.filter(models.Event.start_date >= from_date)
@@ -1234,7 +1566,7 @@ def analytics_volunteer_hours(
     # Aggregate by volunteer_id
     from collections import defaultdict
     vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
-    for signup, slot, event, volunteer in rows:
+    for status, slot, event, volunteer in rows:
         key = volunteer.id
         duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
         vol_hours[key]["hours"] += duration_hours
@@ -1306,12 +1638,17 @@ def analytics_no_show_rates(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """No-show rate per volunteer, joining Signup -> Slot -> Event."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     query = (
-        db.query(models.Signup, models.Volunteer)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
-        .filter(models.Signup.status.in_([
+        db.query(af.c.status, models.Volunteer)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
+        .filter(af.c.status.in_([
             models.SignupStatus.attended,
             models.SignupStatus.no_show,
         ]))
@@ -1325,11 +1662,11 @@ def analytics_no_show_rates(
 
     from collections import defaultdict
     vol_counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
-    for signup, volunteer in rows:
+    for status, volunteer in rows:
         key = volunteer.id
-        if signup.status == models.SignupStatus.attended:
+        if status == models.SignupStatus.attended:
             vol_counts[key]["attended"] += 1
-        elif signup.status == models.SignupStatus.no_show:
+        elif status == models.SignupStatus.no_show:
             vol_counts[key]["no_show"] += 1
         vol_counts[key]["volunteer"] = volunteer
 
@@ -1372,7 +1709,7 @@ def export_event_attendance_csv(
     writer.writerow(["user_name", "email", "status", "checked_in_at", "slot_start", "slot_end"])
 
     for slot in sorted(event.slots, key=lambda s: s.start_time):
-        for signup in slot.signups:
+        for signup in _bookings_for_slot(db, slot):
             # Phase 09: signup.user removed; use signup.volunteer
             v = signup.volunteer
             writer.writerow([
@@ -1397,12 +1734,17 @@ def export_volunteer_hours_csv(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Volunteer hours as CSV, joining Signup -> Slot -> Event -> Volunteer."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     query = (
-        db.query(models.Signup, models.Slot, models.Event, models.Volunteer)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
-        .filter(models.Signup.status == models.SignupStatus.attended)
+        db.query(af.c.status, models.Slot, models.Event, models.Volunteer)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
+        .filter(af.c.status == models.SignupStatus.attended)
     )
     if from_date:
         query = query.filter(models.Event.start_date >= from_date)
@@ -1413,7 +1755,7 @@ def export_volunteer_hours_csv(
 
     from collections import defaultdict
     vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
-    for signup, slot, event, volunteer in rows:
+    for status, slot, event, volunteer in rows:
         key = volunteer.id
         duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
         vol_hours[key]["hours"] += duration_hours
@@ -1499,13 +1841,18 @@ def export_no_show_rates_csv(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """No-show-rate-per-volunteer CSV (mirrors /analytics/no-show-rates JSON)."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     query = (
-        db.query(models.Signup, models.Volunteer)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .join(models.Volunteer, models.Volunteer.id == models.Signup.volunteer_id)
+        db.query(af.c.status, models.Volunteer)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
         .filter(
-            models.Signup.status.in_(
+            af.c.status.in_(
                 [models.SignupStatus.attended, models.SignupStatus.no_show]
             )
         )
@@ -1518,11 +1865,11 @@ def export_no_show_rates_csv(
 
     from collections import defaultdict
     counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
-    for signup, volunteer in rows:
+    for status, volunteer in rows:
         key = volunteer.id
-        if signup.status == models.SignupStatus.attended:
+        if status == models.SignupStatus.attended:
             counts[key]["attended"] += 1
-        elif signup.status == models.SignupStatus.no_show:
+        elif status == models.SignupStatus.no_show:
             counts[key]["no_show"] += 1
         counts[key]["volunteer"] = volunteer
 
@@ -1636,22 +1983,27 @@ def analytics_hours_by_school(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Total attended volunteer hours grouped by partner school."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     q = (
-        db.query(models.Signup, models.Slot, models.Event)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .filter(models.Signup.status == models.SignupStatus.attended)
+        db.query(af.c.volunteer_id, models.Slot, models.Event)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .filter(af.c.status == models.SignupStatus.attended)
     )
     q = _apply_date_filter(q, from_date, to_date)
 
     from collections import defaultdict
     by_school: dict = defaultdict(lambda: {"hours": 0.0, "events": set(), "volunteers": set()})
-    for signup, slot, event in q.all():
+    for volunteer_id, slot, event in q.all():
         school = event.school or event.location or "(unspecified)"
         hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
         by_school[school]["hours"] += hours
         by_school[school]["events"].add(event.id)
-        by_school[school]["volunteers"].add(signup.volunteer_id)
+        by_school[school]["volunteers"].add(volunteer_id)
 
     result = [
         {
@@ -1695,22 +2047,27 @@ def analytics_unique_volunteers(
     admin_user: models.User = Depends(require_role(models.UserRole.admin)),
 ):
     """Unique volunteers per quarter (distinct volunteer_id among attended signups)."""
+    # See services/attendance_facts: one row per (volunteer, slot) with an
+    # effective status, so this report doesn't care whether the booking was an
+    # orientation signup or a session inside a shift.
+    af = attendance_facts.facts()
     q = (
-        db.query(models.Signup, models.Event)
-        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
-        .join(models.Event, models.Event.id == models.Slot.event_id)
-        .filter(models.Signup.status == models.SignupStatus.attended)
+        db.query(af.c.volunteer_id, models.Event)
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .filter(af.c.status == models.SignupStatus.attended)
     )
     q = _apply_date_filter(q, from_date, to_date)
 
     from collections import defaultdict
     by_qtr: dict = defaultdict(set)
-    for signup, event in q.all():
+    for volunteer_id, event in q.all():
         if event.quarter and event.year:
             key = (event.year, event.quarter.value)
         else:
             key = (event.start_date.year if event.start_date else 0, "unknown")
-        by_qtr[key].add(signup.volunteer_id)
+        by_qtr[key].add(volunteer_id)
 
     result = [
         {"year": y, "quarter": qtr, "unique_volunteers": len(vols)}
@@ -2442,20 +2799,47 @@ def admin_send_reminder_now(
     """
     from ..services import reminder_service
 
-    result = reminder_service.send_reminder(
-        db, payload.signup_id, payload.kind, force=True
-    )
+    # 2026-08-05 shifts: a preview row is either an orientation signup or one
+    # session of a shift commitment, so send-now has to dispatch on which
+    # anchor the caller named rather than assuming a Signup.
+    if payload.shift_signup_id is not None:
+        if payload.slot_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="slot_id is required when sending a shift session reminder",
+            )
+        result = reminder_service.send_session_reminder(
+            db,
+            payload.shift_signup_id,
+            payload.slot_id,
+            payload.kind,
+            force=True,
+        )
+        entity_type, entity_id = "ShiftSignup", str(payload.shift_signup_id)
+    elif payload.signup_id is not None:
+        result = reminder_service.send_reminder(
+            db, payload.signup_id, payload.kind, force=True
+        )
+        entity_type, entity_id = "Signup", str(payload.signup_id)
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="either signup_id or shift_signup_id is required",
+        )
+
     log_action(
         db,
         admin_user,
         "admin_reminder_send_now",
-        "Signup",
-        str(payload.signup_id),
+        entity_type,
+        entity_id,
         extra={"kind": payload.kind, "sent": result.sent, "reason": result.reason},
     )
     db.commit()
     return schemas.ReminderSendNowResponse(
         signup_id=payload.signup_id,
+        shift_signup_id=payload.shift_signup_id,
+        slot_id=payload.slot_id,
         kind=payload.kind,
         sent=result.sent,
         reason=result.reason,
