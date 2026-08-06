@@ -15,6 +15,7 @@ from ...database import get_db
 from ...deps import rate_limit
 from ...services import quarter_service, shift_service
 from ...services.settings_service import get_app_settings
+from ...services.waitlist_service import slot_has_ended
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -140,6 +141,7 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
             capacity=slot.capacity,
             filled=slot.current_count,
             signups=signups_by_slot.get(str(slot.id), []),
+            has_ended=slot_has_ended(slot),
         )
         for slot in slots
     ]
