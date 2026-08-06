@@ -7,7 +7,8 @@ from sqlalchemy import text
 
 from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.confirmation import (
-    _PENDING,
+    is_pending,
+    peek,
     execute_after_confirmation,
 )
 from app.copilot.agent.tools import registry
@@ -129,7 +130,7 @@ def test_invoke_returns_pending(db_session):
         session_id=session_id,
     )
     assert out["status"] == "pending_confirmation"
-    assert out["call_id"] in _PENDING
+    assert is_pending(out["call_id"])
     # No move yet — signup still on the source slot.
     db_session.refresh(signup)
     assert signup.slot_id == slot_from.id
@@ -555,7 +556,7 @@ def test_shift_move_is_not_applied_before_confirmation(db_session):
         session_id=session_id,
     )
     assert out["status"] == "pending_confirmation"
-    assert out["call_id"] in _PENDING
+    assert is_pending(out["call_id"])
     db_session.refresh(commitment)
     assert commitment.shift_id == shift_from.id
 

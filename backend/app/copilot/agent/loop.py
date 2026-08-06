@@ -33,6 +33,7 @@ from app.copilot.agent.events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from app.copilot.agent.confirmation import store_pending
 from app.copilot.agent.tools import registry
 from app.copilot.agent.tools.base import _begin, _complete
 from app.copilot.memory.summariser import (
@@ -168,6 +169,20 @@ def run_turn(
             yield ToolCallEvent(call_id=call_id, tool=tool.name, args=call["args"])
 
             if tool.requires_confirmation:
+                # K25: this used to yield the event and return without ever
+                # parking the call. ``store_pending`` was only reachable from
+                # ``tools/base.invoke()``, which the live loop does not use —
+                # it uses the ``_begin``/``_complete`` split. So every
+                # ``POST /confirm`` with approved=True looked up a call_id
+                # that had never been stored and 404'd. Reject appeared to
+                # work only because it stamps the audit row and never
+                # consults the store. Approve had never once succeeded.
+                store_pending(
+                    call_id=call_id,
+                    tool_name=tool.name,
+                    args=call["args"],
+                    session_id=session_id,
+                )
                 yield ConfirmationRequestEvent(
                     call_id=call_id,
                     tool=tool.name,

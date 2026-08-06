@@ -133,12 +133,39 @@ export default function CopilotDrawer({ open, onClose }) {
     setConfirmInFlight((m) => ({ ...m, [callId]: true }));
     setConfirmError(null);
     try {
-      await copilotApi.confirmCall(callId, approved);
+      const outcome = await copilotApi.confirmCall(callId, approved);
       setPendingConfirmations((p) => {
         const next = { ...p };
         delete next[callId];
         return next;
       });
+      // K25: this response used to be discarded, so approving an action
+      // deleted the card and said nothing at all — the user had no way to
+      // tell whether 47 emails had gone out or nothing had happened. The
+      // server now closes out the paused turn and hands back the assistant's
+      // reply; show it as an ordinary bubble.
+      if (approved && outcome?.message?.content) {
+        setMessages((m) => [
+          ...m,
+          {
+            id: outcome.message.id,
+            role: "assistant",
+            content: outcome.message.content,
+            citations: [],
+          },
+        ]);
+      } else if (approved) {
+        // The write landed and is audited, but the model could not be
+        // reached to describe it. Silence would read as "nothing happened".
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            content: "Done — that action has been carried out.",
+            citations: [],
+          },
+        ]);
+      }
     } catch (err) {
       setConfirmError(err);
     } finally {

@@ -7,7 +7,8 @@ from sqlalchemy import text
 
 from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.confirmation import (
-    _PENDING,
+    is_pending,
+    peek,
     execute_after_confirmation,
 )
 from app.copilot.agent.tools import registry
@@ -103,7 +104,7 @@ def test_invoke_returns_pending(db_session, monkeypatch):
         session_id=session_id,
     )
     assert out["status"] == "pending_confirmation"
-    assert out["call_id"] in _PENDING
+    assert is_pending(out["call_id"])
     assert calls == []
 
 
