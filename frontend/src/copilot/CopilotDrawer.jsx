@@ -115,10 +115,16 @@ export default function CopilotDrawer({ open, onClose }) {
     onToolCall: ({ call_id, tool }) => {
       setToolCalls((cs) => ({ ...cs, [call_id]: { tool, status: "running" } }));
     },
-    onToolResult: ({ call_id }) => {
+    onToolResult: ({ call_id, error }) => {
+      // K28: a failed call is still a result — the model gets the error back
+      // and retries. Don't label it "ran"; the indicator has had a "failed"
+      // state all along and nothing was ever sending it.
       setToolCalls((cs) => {
         if (!cs[call_id]) return cs;
-        return { ...cs, [call_id]: { ...cs[call_id], status: "done" } };
+        return {
+          ...cs,
+          [call_id]: { ...cs[call_id], status: error ? "error" : "done" },
+        };
       });
     },
     onConfirmationRequest: ({ call_id, tool, args, preview }) => {

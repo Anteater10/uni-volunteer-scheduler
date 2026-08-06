@@ -15,8 +15,19 @@ Each scripted response is a dict matching the loop's expected shape:
     {"tool_calls": [{"name": "list_modules", "args": {"week": "2026-W22"}}]}
     {"final_answer": "There are 3 modules running."}
 
-If a case's stub runs out of responses, ``chat`` raises ``StopIteration`` so
-the test fails loudly rather than hanging.
+When a case's stub runs out of responses it returns a neutral final answer.
+
+K28 is why. These cases were written when a refused or failed tool call ended
+the turn, so a case that probes the boundary needed exactly one scripted
+response — the call that gets refused. The loop now feeds the refusal back and
+asks the model what it wants to do about it, which is the whole point of the
+change, and every one of those cases came back out as ``RuntimeError:
+generator raised StopIteration``.
+
+The neutral answer is inert on purpose: it contains no sentinel and triggers
+no tool, so the suite's real assertions — no side effect, no redaction, no
+forbidden string in the final answer — still decide the outcome. What the
+suite tests is the boundary, not how many times the model was asked.
 """
 from __future__ import annotations
 
@@ -31,15 +42,19 @@ class RecordedLLM:
     decided the script in advance.
     """
 
+    EXHAUSTED_ANSWER = "I could not complete that."
+
     def __init__(self, responses: list[dict[str, Any]]):
         self._responses = list(responses)
         self._cursor = 0
+        # How many times the loop asked past the end of the script. Exposed
+        # for a case that wants to assert on it; nothing requires it.
+        self.overruns = 0
 
     def chat(self, *, messages, tools):
         if self._cursor >= len(self._responses):
-            raise StopIteration(
-                "RecordedLLM exhausted — case script underprovides responses"
-            )
+            self.overruns += 1
+            return {"final_answer": self.EXHAUSTED_ANSWER}
         r = self._responses[self._cursor]
         self._cursor += 1
         return r

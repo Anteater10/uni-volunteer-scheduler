@@ -118,6 +118,7 @@ CREATE_MODULE_FROM_TEMPLATE_TOOL = Tool(
             },
             "week": {
                 "type": "string",
+                "pattern": "^[0-9]{4}-W[0-9]{1,2}$",
                 "description": "ISO week, e.g. 2026-W22.",
             },
         },

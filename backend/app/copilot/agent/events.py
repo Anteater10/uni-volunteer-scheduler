@@ -22,6 +22,11 @@ class ToolResultEvent(BaseModel):
     call_id: str
     result: Any
     redactions: int
+    # K28: a tool that failed still produces a result — the error, handed
+    # back to the model so it can correct itself. The turn continues, so
+    # this cannot be an ``ErrorEvent``; but the indicator must not claim the
+    # call succeeded either. Defaulted, so existing consumers are unaffected.
+    error: bool = False
 
 
 class ConfirmationRequestEvent(BaseModel):

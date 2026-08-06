@@ -480,6 +480,61 @@ describe("CopilotDrawer", () => {
     });
   });
 
+  // ---- K28: a tool that failed must not be labelled "ran" ----
+  it("labels a failed tool call as failed, not as ran", async () => {
+    const sseText = sseBlob([
+      {
+        event: "meta",
+        data: JSON.stringify({ citations: [], retrieval_latency_ms: 0, rerank_latency_ms: 0 }),
+      },
+      {
+        event: "tool_call",
+        data: JSON.stringify({
+          type: "tool_call",
+          call_id: "call-err",
+          tool: "list_modules",
+          args: { week: "next week" },
+        }),
+      },
+      {
+        event: "tool_result",
+        data: JSON.stringify({
+          type: "tool_result",
+          call_id: "call-err",
+          result: { error: "bad ISO week: 'next week'" },
+          redactions: 0,
+          error: true,
+        }),
+      },
+      // The turn keeps going — that is the K28 change.
+      { event: "token", data: JSON.stringify({ text: "Which week did you mean?" }) },
+      { event: "done", data: JSON.stringify({}) },
+    ]);
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "sess-toolerr" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(streamFrom(sseText), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      );
+
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "modules next week?");
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+
+    await screen.findByRole("status", { name: /failed list_modules/i });
+    expect(screen.queryByRole("status", { name: /ran list_modules/i })).toBeNull();
+  });
+
   it("posts approved=false on Reject click", async () => {
     const sseText = sseBlob([
       {

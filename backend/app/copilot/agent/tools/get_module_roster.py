@@ -29,7 +29,7 @@ from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools import _bookings
 from app.copilot.agent.tools.base import Tool
-from app.models import Event
+from app.models import Event, SignupStatus
 
 _PII_SCHEMA = [
     "module_id",
@@ -91,7 +91,17 @@ GET_MODULE_ROSTER_TOOL = Tool(
         "type": "object",
         "properties": {
             "module_id": {"type": "string", "description": "Event UUID"},
-            "status": {"type": "string", "nullable": True},
+            # K28: this was a bare `{"type": "string"}`, so the model was free
+            # to guess "signed_up" or "going" and the filter silently matched
+            # nothing. Enumerating the real SignupStatus values removes the
+            # guess — and the values come from the enum itself so a new status
+            # cannot drift out of the schema.
+            "status": {
+                "type": "string",
+                "nullable": True,
+                "enum": [s.value for s in SignupStatus],
+                "description": "Optional signup status to filter by.",
+            },
         },
         "required": ["module_id"],
     },
