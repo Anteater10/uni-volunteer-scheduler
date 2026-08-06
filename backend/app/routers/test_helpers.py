@@ -7,7 +7,16 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import CustomAnswer, SentNotification, Signup, Slot, Volunteer, SignupStatus
+from ..models import (
+    CustomAnswer,
+    SentNotification,
+    Shift,
+    ShiftSignup,
+    Signup,
+    Slot,
+    Volunteer,
+    SignupStatus,
+)
 
 router = APIRouter(prefix="/api/v1/test", tags=["test-helpers"])
 
@@ -57,7 +66,31 @@ def seed_cleanup(
         CustomAnswer.signup_id.in_(cancelled_ids)
     ).delete(synchronize_session=False)
     db.query(Signup).filter(Signup.id.in_(cancelled_ids)).delete(synchronize_session=False)
+    _delete_cancelled_shift_signups(db, volunteer_ids)
     db.commit()
+
+
+def _delete_cancelled_shift_signups(db: Session, volunteer_ids) -> None:
+    """2026-08-05 shifts: the same escape hatch, one level up.
+
+    Classroom work is a ShiftSignup now, and its
+    UNIQUE(volunteer_id, shift_id) blocks a re-signup just as the slot one
+    did — so without this the seed can only run once against a database.
+    Every table that references a shift signup does so ON DELETE CASCADE, so
+    a bare DELETE is enough here (unlike the slot side, whose signups
+    predate that).
+    """
+    cancelled_ids = [
+        row.id
+        for row in db.query(ShiftSignup.id).filter(
+            ShiftSignup.volunteer_id.in_(volunteer_ids),
+            ShiftSignup.status == SignupStatus.cancelled,
+        )
+    ]
+    if cancelled_ids:
+        db.query(ShiftSignup).filter(ShiftSignup.id.in_(cancelled_ids)).delete(
+            synchronize_session=False
+        )
 
 
 @router.delete("/event-signups-cleanup", status_code=204)
@@ -118,5 +151,42 @@ def event_signups_cleanup(
             slot = db.query(Slot).filter(Slot.id == slot_id).first()
             if slot:
                 slot.current_count = confirmed_count
+
+    # 2026-08-05 shifts: repeated Playwright runs fill the event's *shifts*
+    # now, not its period slots — the seat counter moved up with the booking.
+    # Left out, the seed event's shift is full after a few runs and every
+    # signup scenario silently lands on the waitlist instead.
+    shift_ids = [
+        row.id for row in db.query(Shift.id).filter(Shift.event_id == event_id).all()
+    ]
+    if shift_ids:
+        to_cancel_shifts = (
+            db.query(ShiftSignup)
+            .filter(
+                ShiftSignup.shift_id.in_(shift_ids),
+                ShiftSignup.status.in_(
+                    [SignupStatus.pending, SignupStatus.confirmed]
+                ),
+                ~ShiftSignup.volunteer_id.in_(keep_vol_ids) if keep_vol_ids else True,
+            )
+            .all()
+        )
+        for shift_signup in to_cancel_shifts:
+            shift_signup.status = SignupStatus.cancelled
+        if to_cancel_shifts:
+            for shift_id in shift_ids:
+                held = (
+                    db.query(ShiftSignup)
+                    .filter(
+                        ShiftSignup.shift_id == shift_id,
+                        ShiftSignup.status.in_(
+                            [SignupStatus.pending, SignupStatus.confirmed]
+                        ),
+                    )
+                    .count()
+                )
+                shift = db.query(Shift).filter(Shift.id == shift_id).first()
+                if shift:
+                    shift.current_count = held
 
     db.commit()

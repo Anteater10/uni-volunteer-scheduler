@@ -289,10 +289,31 @@ The original gap list follows.
 
 ## D — Docs, e2e, knowledge base
 
-### D1 · e2e cross-role scenario · M
-`e2e/cross-role.spec.js` — a volunteer picks a shift, staff sees the
-commitment on the roster, closes out per session. 5 scenarios × 6 browser
-projects today; this adds one.
+### D1 · e2e cross-role scenario · M — **done** (2026-08-05)
+
+**Scoped wrong.** This was written as "add one scenario". In fact the entire
+Playwright global setup was dead: `seed_e2e.py` created its event with a bare
+period slot, which the backend refuses outright now — so *every* spec in the
+suite failed at setup, not just the missing one.
+
+| Piece | What changed |
+|---|---|
+| `backend/tests/fixtures/seed_e2e.py` | Event created with a `shifts` list; `_get_units` reads the shift back; new `_ensure_shift_capacity`; signups send both id lists; cancel routes to `/admin/shift-signups/…`. Output JSON drops `period_slot_id`, adds `shift_id` / `shift_name` / `session_slot_id`. |
+| `backend/app/routers/test_helpers.py` | `seed-cleanup` also deletes cancelled `ShiftSignup`s (its `UNIQUE(volunteer_id, shift_id)` blocks a re-seed exactly as the slot one did); `event-signups-cleanup` cancels shift commitments and recomputes `shift.current_count`, or the seed shift is full after a few runs and every scenario silently lands on the waitlist. |
+| `e2e/fixtures.js` | New `clickShiftById` — a shift renders as a card at every width, so there is no desktop/mobile split to resolve. |
+| `e2e/cross-role.spec.js`, `e2e/organizer-check-in.spec.js` | Every `period_slot_id` / `slot_ids` signup switched to `shift_id` / `shift_ids`; Scenario 4's cancel now expects `/admin/shift-signups/:id/cancel` and searches the audit log by the commitment id. |
+| **Scenario 6 (new)** | Organizer creates a two-session shift → volunteer books it once → both sessions show the commitment on the roster → ending Period 1 leaves Period 2 answerable. Builds its own event: the seed shift has one session, and a session cannot be added to a shift that already has signups. |
+
+**Production bug found:** staff actions on shifts had no audit-log labels and
+no entity resolver, so the audit page rendered "Admin shift signup cancel"
+against "#a1b2c3d4" — the most common staff override, unreadable. Added
+labels for all ten shift actions plus `Shift` / `ShiftSignup` entity
+resolvers in `audit_log_humanize.py` (+3 tests).
+
+**Not run.** The suite cannot be exercised from here: the running backend
+container is a pre-shifts image (no `/shifts` paths in its openapi.json) and
+backend code is not volume-mounted, so verifying means rebuilding the image
+and migrating the dev database. Andy's call.
 
 ### D2 · `docs/smoke-checklist.md` · S
 The ~30-minute three-window pass still describes picking periods.

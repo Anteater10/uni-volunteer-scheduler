@@ -79,6 +79,20 @@ def _make_slot(db_session, event):
     return sl
 
 
+def _make_shift(db_session, event, name="Tue+Wed", capacity=10):
+    sh = models.Shift(
+        id=uuid.uuid4(),
+        event_id=event.id,
+        name=name,
+        sort_order=0,
+        capacity=capacity,
+        current_count=0,
+    )
+    db_session.add(sh)
+    db_session.flush()
+    return sh
+
+
 def _make_signup(db_session, volunteer, slot):
     s = models.Signup(
         id=uuid.uuid4(),
@@ -180,6 +194,68 @@ def test_signup_entity_label_includes_volunteer_event_date(db_session):
     assert "Bob Jones" in out["entity_label"]
     assert "Physics Lab" in out["entity_label"]
     assert "2026-05-01" in out["entity_label"]
+
+
+def test_shift_entity_label_names_the_shift_and_its_event(db_session):
+    """2026-08-05 shifts: staff act on shifts now, and an audit row that reads
+    "#a1b2c3d4" tells whoever is reading the history nothing."""
+    actor = _make_user(db_session, email="admin3@example.com")
+    ev = _make_event(db_session, owner=actor, title="Physics Lab")
+    shift = _make_shift(db_session, ev, name="Tue+Wed")
+
+    log = _make_log(
+        db_session,
+        actor_id=actor.id,
+        action="shift_update",
+        entity_type="Shift",
+        entity_id=str(shift.id),
+    )
+    out = humanize(log, db_session)
+    assert out["action_label"] == "Updated a shift"
+    assert out["entity_label"] == "Tue+Wed in Physics Lab"
+
+
+def test_shift_signup_entity_label_names_the_volunteer_and_shift(db_session):
+    actor = _make_user(db_session, email="admin4@example.com")
+    ev = _make_event(db_session, owner=actor, title="Physics Lab")
+    shift = _make_shift(db_session, ev, name="Tue+Wed")
+    vol = _make_volunteer(db_session, first="Bob", last="Jones", email="bj@example.com")
+    commitment = models.ShiftSignup(
+        id=uuid.uuid4(),
+        volunteer_id=vol.id,
+        shift_id=shift.id,
+        status=models.SignupStatus.confirmed,
+    )
+    db_session.add(commitment)
+    db_session.flush()
+
+    log = _make_log(
+        db_session,
+        actor_id=actor.id,
+        action="admin_shift_signup_cancel",
+        entity_type="ShiftSignup",
+        entity_id=str(commitment.id),
+    )
+    out = humanize(log, db_session)
+    assert out["action_label"] == "Admin cancelled a shift signup"
+    assert out["entity_label"] == "Bob Jones's commitment to Tue+Wed"
+
+
+def test_a_deleted_shift_still_renders_as_tombstoned(db_session):
+    """The shift is gone but the history of who deleted it must survive."""
+    actor = _make_user(db_session, email="admin5@example.com")
+    ghost = uuid.uuid4()
+    log = models.AuditLog(
+        id=uuid.uuid4(),
+        actor_id=actor.id,
+        action="shift_delete",
+        entity_type="Shift",
+        entity_id=str(ghost),
+        timestamp=datetime.now(timezone.utc),
+    )
+    out = humanize(log, db_session)
+    assert out["action_label"] == "Deleted a shift"
+    assert out["entity_label"].startswith("(deleted) #")
 
 
 def test_action_labels_dict_has_canonical_signup_cancelled():
