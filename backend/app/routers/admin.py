@@ -226,10 +226,16 @@ def admin_summary(
     )
     events_total = db.query(func.count(models.Event.id)).scalar() or 0
     slots_total = db.query(func.count(models.Slot.id)).scalar() or 0
-    signups_total = db.query(func.count(models.Signup.id)).scalar() or 0
+    # 2026-08-05 shifts: the all-time totals read the same attendance-facts
+    # union the per-quarter ones do. Counting `signups` alone left the headline
+    # "N students have signed up" blind to every shift booking — which, now
+    # that classroom work is booked as a shift, is nearly all of them.
+    af = attendance_facts.facts()
+    signups_total = db.query(func.count()).select_from(af).scalar() or 0
     signups_confirmed_total = (
-        db.query(func.count(models.Signup.id))
-        .filter(models.Signup.status.in_(_CONFIRMED_STATUSES))
+        db.query(func.count())
+        .select_from(af)
+        .filter(af.c.status.in_(_CONFIRMED_STATUSES))
         .scalar()
         or 0
     )
@@ -265,10 +271,10 @@ def admin_summary(
         or 0
     )
     # 2026-08-02 shifts: every count below reads the attendance-facts union
-    # instead of `signups` directly, so a shift commitment contributes one row
-    # per session it covers — which is what these numbers always meant
-    # ("bookings to staff", not "rows in a table").
-    af = attendance_facts.facts()
+    # (`af`, built with the all-time totals above) instead of `signups`
+    # directly, so a shift commitment contributes one row per session it
+    # covers — which is what these numbers always meant ("bookings to staff",
+    # not "rows in a table").
     signups_quarter = (
         db.query(func.count())
         .select_from(af)
@@ -332,8 +338,16 @@ def admin_summary(
     users_last_week = _count_created_between(models.User, two_weeks_ago, week_ago)
     events_this_week = _count_created_between(models.Event, week_ago, now)
     events_last_week = _count_created_between(models.Event, two_weeks_ago, week_ago)
-    signups_this_week = _count_created_between(models.Signup, week_ago, now)
-    signups_last_week = _count_created_between(models.Signup, two_weeks_ago, week_ago)
+    # Shift commitments are signups too, so the week-over-week trend counts
+    # both kinds — otherwise the arrow points down in a week where every
+    # booking was a shift.
+    def _count_signups_created_between(start_dt, end_dt):
+        return _count_created_between(
+            models.Signup, start_dt, end_dt
+        ) + _count_created_between(models.ShiftSignup, start_dt, end_dt)
+
+    signups_this_week = _count_signups_created_between(week_ago, now)
+    signups_last_week = _count_signups_created_between(two_weeks_ago, week_ago)
 
     # -------- fill-rate attention (next 2 weeks) --------
     upcoming_events = (
@@ -385,7 +399,7 @@ def admin_summary(
     volunteer_hours_quarter = round(
         sum(
             (slot.end_time - slot.start_time).total_seconds() / 3600.0
-            for (slot,) in vh_rows
+            for slot in vh_rows
         ),
         2,
     )
@@ -2785,20 +2799,47 @@ def admin_send_reminder_now(
     """
     from ..services import reminder_service
 
-    result = reminder_service.send_reminder(
-        db, payload.signup_id, payload.kind, force=True
-    )
+    # 2026-08-05 shifts: a preview row is either an orientation signup or one
+    # session of a shift commitment, so send-now has to dispatch on which
+    # anchor the caller named rather than assuming a Signup.
+    if payload.shift_signup_id is not None:
+        if payload.slot_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="slot_id is required when sending a shift session reminder",
+            )
+        result = reminder_service.send_session_reminder(
+            db,
+            payload.shift_signup_id,
+            payload.slot_id,
+            payload.kind,
+            force=True,
+        )
+        entity_type, entity_id = "ShiftSignup", str(payload.shift_signup_id)
+    elif payload.signup_id is not None:
+        result = reminder_service.send_reminder(
+            db, payload.signup_id, payload.kind, force=True
+        )
+        entity_type, entity_id = "Signup", str(payload.signup_id)
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="either signup_id or shift_signup_id is required",
+        )
+
     log_action(
         db,
         admin_user,
         "admin_reminder_send_now",
-        "Signup",
-        str(payload.signup_id),
+        entity_type,
+        entity_id,
         extra={"kind": payload.kind, "sent": result.sent, "reason": result.reason},
     )
     db.commit()
     return schemas.ReminderSendNowResponse(
         signup_id=payload.signup_id,
+        shift_signup_id=payload.shift_signup_id,
+        slot_id=payload.slot_id,
         kind=payload.kind,
         sent=result.sent,
         reason=result.reason,

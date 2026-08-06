@@ -69,6 +69,40 @@ const SIGNUP_2 = {
   },
 };
 
+// A shift commitment: one booking, every session listed under it.
+const SHIFT_COMMITMENT = {
+  shift_signup_id: "ss-001",
+  status: "confirmed",
+  waitlist_position: null,
+  shift: {
+    id: "shift-001",
+    name: "Tue + Wed mornings",
+    sort_order: 0,
+    capacity: 6,
+    filled: 4,
+    sessions: [
+      {
+        id: "sess-001",
+        name: "Period 1",
+        sort_order: 0,
+        date: "2026-04-22",
+        start_time: "2026-04-22T17:00:00Z",
+        end_time: "2026-04-22T19:00:00Z",
+        location: "Room 101",
+      },
+      {
+        id: "sess-002",
+        name: "Period 2",
+        sort_order: 1,
+        date: "2026-04-23",
+        start_time: "2026-04-23T17:00:00Z",
+        end_time: "2026-04-23T19:00:00Z",
+        location: "Room 101",
+      },
+    ],
+  },
+};
+
 const MANAGE_RESPONSE = {
   volunteer_id: "vol-abc",
   volunteer_first_name: "Hung",
@@ -277,5 +311,49 @@ describe("ManageSignupsPage", () => {
 
     const notice = await screen.findByTestId("contact-notice");
     expect(notice).toHaveTextContent(/reply to your confirmation email/i);
+  });
+
+  // 2026-08-05 shifts: a volunteer whose only booking is a shift has no Signup
+  // row at all. Reading `signups` alone showed them the empty state — i.e. the
+  // page told a committed volunteer they had not signed up for anything.
+  it("11. renders a shift commitment with every session under it", async () => {
+    api.public.getManageSignups.mockResolvedValue({
+      ...MANAGE_RESPONSE,
+      signups: [],
+      shift_signups: [SHIFT_COMMITMENT],
+    });
+
+    renderPage();
+
+    const card = await screen.findByTestId(
+      `shift-commitment-${SHIFT_COMMITMENT.shift_signup_id}`
+    );
+    expect(card).toHaveTextContent("Tue + Wed mornings");
+    expect(card).toHaveTextContent(/2 sessions/i);
+    expect(card).toHaveTextContent("Period 1");
+    expect(card).toHaveTextContent("Period 2");
+    expect(card).toHaveTextContent("Confirmed");
+    expect(
+      screen.queryByText(/haven't signed up for anything yet/i)
+    ).toBeNull();
+  });
+
+  it("12. a waitlisted shift commitment shows its queue position", async () => {
+    api.public.getManageSignups.mockResolvedValue({
+      ...MANAGE_RESPONSE,
+      signups: [],
+      shift_signups: [
+        {
+          ...SHIFT_COMMITMENT,
+          status: "waitlisted",
+          waitlist_position: 3,
+        },
+      ],
+    });
+
+    renderPage();
+
+    const badge = await screen.findByTestId("waitlist-badge");
+    expect(badge).toHaveTextContent("Waitlist #3");
   });
 });

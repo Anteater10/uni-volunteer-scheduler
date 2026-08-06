@@ -370,11 +370,47 @@ Ordered by "what is actively wrong" rather than by surface.
 
 Rough total: the better part of a week, with C and A1 the two long poles.
 
-**All eight are done** as of 2026-08-05. The one thing this list called for and
-did not get is a **run** of the Playwright suite: the backend container is a
-pre-shifts image with code not volume-mounted, so exercising the e2e work means
-rebuilding the image and migrating the dev database. Also still open from D3:
-the copilot corpus re-ingest, blocked on the OpenRouter key (PR #54).
+**All eight are done** as of 2026-08-05. Still open from D3: the copilot corpus
+re-ingest, blocked on the OpenRouter key (PR #54).
+
+---
+
+## E2E verification run — 2026-08-05
+
+The backend image was rebuilt, migration `0037_add_shifts` applied to the dev
+database, and the Playwright suite run for the first time. **200 passed across
+all six browser projects.** It found four bugs that no unit test had, because
+each one lives on an *old* admin surface that only misbehaves once shift
+commitments exist next to orientation signups:
+
+| # | Bug | Cause |
+|---|---|---|
+| 1 | `/admin/summary` 500s on any attended session — the whole Overview page dies | the hours query was rewritten to select `Slot` entities but kept unpacking each row as a 1-tuple |
+| 2 | Overview "N students have signed up" ignores every shift booking | only the per-quarter counts were moved to the attendance-facts union; the all-time totals still counted rows in `signups` |
+| 3 | `/admin/reminders/upcoming` 500s once any shift session is in horizon | the service emitted session rows, but the response model still required `signup_id`, which a session row has no value for |
+| 4 | A volunteer who booked only a shift is told "you haven't signed up for anything yet" | the manage page read `signups` and never `shift_signups`; a shift-only volunteer has no `Signup` row at all |
+
+Bug 4 is the one a volunteer would have hit. Bug 1 is the one staff would have
+hit first, and it takes the entire admin landing page with it.
+
+Fixed alongside them: send-now could not address a shift session at all
+(`ReminderSendNowRequest` assumed a `Signup`), and the reminders table built
+React keys from a null `signup_id`, so two sessions of one commitment collided.
+
+Seven regression tests in `backend/tests/test_shift_admin_regressions.py` and
+two in `ManageSignupsPage.test.jsx` now cover all of it. Four e2e specs still
+looking for a bare "Period N" row were converted to the shift card.
+
+Also flushed out by the run, both unrelated to shifts:
+
+- **`docker compose build backend` is not enough.** `migrate` is a separate
+  service built from the same Dockerfile; rebuilding only `backend` leaves it
+  running old code, whereupon it applies nothing and says so only as "will
+  assume transactional DDL". The smoke checklist now says to build both.
+- **`admin-a11y.spec.js` flakes on Mobile Safari** — the axe sweep of
+  `/admin/exports` measured 30.6s against a 30s default. Given a 90s timeout.
+- Pre-existing and **not** touched: `ruff` reports two `F821` undefined names in
+  `admin.py` (lines 1154 and 1374), both inside the 152-error baseline.
 
 ---
 

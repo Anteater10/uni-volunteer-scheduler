@@ -25,10 +25,17 @@ Run these commands in order from the repo root. Each is copy-pasteable.
 
    ```bash
    docker compose down -v
+   docker compose build backend migrate
    docker compose up -d db redis
    docker compose run --rm migrate
    docker compose up -d backend celery_worker celery_beat mailpit
    ```
+
+   Build **both** images. `backend` and `migrate` are separate services built
+   from the same Dockerfile, so rebuilding only `backend` leaves `migrate`
+   running yesterday's code — it then reports "will assume transactional DDL"
+   and applies nothing, and the stack comes up against an un-migrated
+   database with no error anywhere.
 
 2. Seed the E2E data (creates the seed event, admin, organizer, attended
    volunteer):
@@ -48,7 +55,7 @@ Run these commands in order from the repo root. Each is copy-pasteable.
 4. Confirm Mailpit is reachable at http://localhost:8025 (inbox should be
    empty or near-empty).
 
-5. Confirm backend health at http://localhost:8000/api/v1/healthz (or
+5. Confirm backend health at http://localhost:8000/api/v1/health (or
    http://localhost:8000/docs).
 
 6. Open three browser windows / tabs:

@@ -520,10 +520,18 @@ async function publicUpdatePreferences(manageToken, patch) {
 async function adminListUpcomingReminders(days = 7) {
   return request("/admin/reminders/upcoming", { method: "GET", params: { days } });
 }
-async function adminSendReminderNow(signupId, kind) {
+// 2026-08-05 shifts: a preview row is either an orientation signup or one
+// session of a shift commitment. Pass the whole row's anchor through so the
+// server knows which of the two — and, for a session, which day.
+async function adminSendReminderNow({ signupId, shiftSignupId, slotId, kind }) {
   return request("/admin/reminders/send-now", {
     method: "POST",
-    body: { signup_id: signupId, kind },
+    body: {
+      signup_id: signupId ?? null,
+      shift_signup_id: shiftSignupId ?? null,
+      slot_id: shiftSignupId ? slotId ?? null : null,
+      kind,
+    },
   });
 }
 
@@ -913,7 +921,7 @@ export const api = {
     // Phase 24 — scheduled reminder emails
     reminders: {
       listUpcoming: (days = 7) => adminListUpcomingReminders(days),
-      sendNow: (signupId, kind) => adminSendReminderNow(signupId, kind),
+      sendNow: (args) => adminSendReminderNow(args),
     },
     // Phase 26 — broadcast messages
     broadcastRecipientCount: (eventId, params) =>

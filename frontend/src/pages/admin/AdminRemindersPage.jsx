@@ -83,8 +83,7 @@ export default function AdminRemindersPage({ embedded = false }) {
   });
 
   const sendNow = useMutation({
-    mutationFn: ({ signupId, kind }) =>
-      api.admin.reminders.sendNow(signupId, kind),
+    mutationFn: (args) => api.admin.reminders.sendNow(args),
     onSuccess: (res) => {
       if (res?.sent) {
         toast.success("Reminder sent.");
@@ -175,7 +174,9 @@ export default function AdminRemindersPage({ embedded = false }) {
               <tbody>
                 {groupRows.map((r) => (
                   <tr
-                    key={`${r.signup_id}-${r.kind}`}
+                    // A shift commitment has no signup_id and contributes one
+                    // row per session, so the slot id is what separates them.
+                    key={`${r.signup_id || r.shift_signup_id}-${r.slot_id}-${r.kind}`}
                     className="border-t border-gray-100"
                   >
                     <td className="py-2 pr-4 whitespace-nowrap">
@@ -234,7 +235,12 @@ export default function AdminRemindersPage({ embedded = false }) {
             onClick={() => {
               const row = confirmRow;
               setConfirmRow(null);
-              sendNow.mutate({ signupId: row.signup_id, kind: row.kind });
+              sendNow.mutate({
+                signupId: row.signup_id,
+                shiftSignupId: row.shift_signup_id,
+                slotId: row.slot_id,
+                kind: row.kind,
+              });
             }}
             disabled={sendNow.isPending}
           >

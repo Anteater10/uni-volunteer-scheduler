@@ -1183,7 +1183,14 @@ ReminderKind = Literal["kickoff", "pre_24h", "pre_2h"]
 
 
 class UpcomingReminderRow(BaseModel):
-    signup_id: UUID
+    # 2026-08-05 shifts: a preview row is either an orientation signup or a
+    # session of a shift commitment, so exactly one of signup_id /
+    # shift_signup_id is set. Requiring signup_id 500'd the whole endpoint the
+    # moment any shift session fell inside the horizon.
+    signup_id: Optional[UUID] = None
+    shift_signup_id: Optional[UUID] = None
+    shift_id: Optional[UUID] = None
+    shift_name: Optional[str] = None
     volunteer_email: str
     volunteer_name: str
     event_id: UUID
@@ -1197,12 +1204,19 @@ class UpcomingReminderRow(BaseModel):
 
 
 class ReminderSendNowRequest(BaseModel):
-    signup_id: UUID
+    # 2026-08-05 shifts: address either an orientation signup or one session of
+    # a shift commitment. A session needs both ids — the commitment covers
+    # every session, so shift_signup_id alone would not say which day.
+    signup_id: Optional[UUID] = None
+    shift_signup_id: Optional[UUID] = None
+    slot_id: Optional[UUID] = None
     kind: ReminderKind
 
 
 class ReminderSendNowResponse(BaseModel):
-    signup_id: UUID
+    signup_id: Optional[UUID] = None
+    shift_signup_id: Optional[UUID] = None
+    slot_id: Optional[UUID] = None
     kind: ReminderKind
     sent: bool
     reason: Optional[str] = None  # "already_sent" | "opted_out" | "ok"
