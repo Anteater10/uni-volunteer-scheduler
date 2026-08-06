@@ -31,6 +31,7 @@ from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.loop import run_turn
 from app.copilot.agent.tools import registry
 from app.copilot.agent.tools.list_modules import LIST_MODULES_TOOL
+from tests.copilot.prompt_fixture import TEST_SYSTEM_PROMPT
 
 
 class _RecordingStubLLM:
@@ -108,6 +109,7 @@ def test_run_turn_threads_model_and_context_window_through(monkeypatch):
             db=None,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id="s1",
             user_message="hi",
             retrieval_context="",
@@ -142,6 +144,7 @@ def test_run_turn_uses_default_model_when_not_passed(monkeypatch):
             db=None,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id="s2",
             user_message="hi",
             retrieval_context="",
@@ -195,6 +198,7 @@ def test_run_turn_compresses_long_history_before_first_chat(
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="latest question",
             retrieval_context="",
@@ -256,6 +260,7 @@ def test_run_turn_no_compression_for_short_default_conversation(
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="hi",
             retrieval_context="",

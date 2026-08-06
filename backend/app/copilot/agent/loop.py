@@ -12,6 +12,14 @@ SSE events (see :mod:`app.copilot.agent.events`) and is responsible for:
 
 The loop pauses (returns) when a tool requires confirmation; a separate
 ``/confirm`` endpoint resumes the turn later by completing the parked call.
+
+What this module deliberately does *not* own:
+
+- **the system prompt.** It arrives as an argument. See K29 in
+  ``run_turn``'s docstring.
+- **token accounting.** The adapter behind ``llm`` counts its own usage, so
+  the summariser's compression call — which goes through the same ``llm``
+  object — is metered without this module knowing it happened.
 """
 from __future__ import annotations
 
@@ -59,25 +67,30 @@ def run_turn(
     session_id,
     user_message: str,
     retrieval_context: str,
+    system_prompt: str,
+    history: list[dict[str, str]] | None = None,
     model: str | None = None,
     context_window: int = CONTEXT_WINDOW_DEFAULT,
 ) -> Iterator[Any]:
-    tools = registry.get_tools_for_role(scope.role)
-    profile_block = ""
-    try:
-        from app.copilot.memory.profile_block import load_profile_block
+    """Drive one agent turn, yielding typed SSE events.
 
-        profile_block = load_profile_block(db, user_id=scope.caller_id)
-    except Exception:
-        # Profile retrieval is best-effort — never break a turn over it.
-        profile_block = ""
-    messages = [
+    ``system_prompt`` is supplied by the caller and is the prompt persisted
+    on the session row. K29: this function used to build its own three-line
+    prompt, which dropped every guardrail in ``app.copilot.prompts`` — the
+    KB-is-authoritative rule, the don't-invent rule, the be-concise rule —
+    and left ``GET /sessions/{id}`` replaying a system message the model had
+    never seen. The loop no longer has an opinion about the prompt.
+
+    ``history`` is the prior turns of the conversation, excluding the system
+    message and the current ``user_message``.
+    """
+    tools = registry.get_tools_for_role(scope.role)
+    messages: list[dict[str, Any]] = [
         {
             "role": "system",
-            "content": _system_prompt(
-                scope, retrieval_context, profile_block=profile_block
-            ),
+            "content": system_prompt + retrieval_context,
         },
+        *(history or []),
         {"role": "user", "content": user_message},
     ]
     tool_calls_used = 0
@@ -118,6 +131,14 @@ def run_turn(
                 }
             )
             continue
+
+        # Record the model's intent before acting on it. The adapter needs
+        # this turn in the transcript to thread tool_call_ids between the
+        # request and the results; without it the next call would carry
+        # orphaned tool messages, which the API rejects outright.
+        messages.append(
+            {"role": "assistant", "tool_calls": response["tool_calls"]}
+        )
 
         for call in response["tool_calls"]:
             if tool_calls_used >= MAX_TOOL_CALLS_PER_TURN:
@@ -183,25 +204,6 @@ def run_turn(
                     "content": json.dumps(out["result"], default=str),
                 }
             )
-
-
-def _system_prompt(
-    scope, retrieval_context: str, *, profile_block: str = ""
-) -> str:
-    parts = [
-        (
-            f"You are a copilot for a UCSB SciTrek scheduler. "
-            f"Current role: {scope.role}. "
-            f"You may only act within that role's scope."
-        )
-    ]
-    if profile_block:
-        parts.append(profile_block)
-    if retrieval_context:
-        parts.append(
-            f"Retrieved context (use when helpful):\n{retrieval_context}"
-        )
-    return "\n\n".join(parts)
 
 
 def _preview(tool, args) -> str:

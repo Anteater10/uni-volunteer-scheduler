@@ -183,6 +183,7 @@ def test_adversarial(case, db_session, seed_full_world):
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message=case_r["user_message"],
             retrieval_context=case_r.get("retrieval_context", ""),
@@ -205,6 +206,7 @@ import pathlib
 from app import models
 from app.copilot.memory.extractor import run as run_extractor
 from app.copilot.memory.profile_block import load_profile_block
+from tests.copilot.prompt_fixture import TEST_SYSTEM_PROMPT
 
 
 _MEM_CASES = yaml.safe_load(

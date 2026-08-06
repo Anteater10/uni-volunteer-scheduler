@@ -82,25 +82,27 @@ def test_agent_system_prompt_includes_profile_block_when_present(
     )
     db_session.commit()
 
-    from app.copilot.agent.loop import _system_prompt
-    from app.copilot.agent.boundary.role_scope import scope_for
+    # K29: this used to call ``loop._system_prompt``, a three-line prompt the
+    # loop built for itself. That function is gone — the loop is handed the
+    # prompt persisted on the session row, so the profile block now reaches an
+    # agent turn by the same route it reaches a Q&A turn.
+    from app.copilot import prompts
 
-    scope = scope_for(role="admin", caller_id=admin_user.id)
-    prompt = _system_prompt(
-        scope,
-        retrieval_context="",
+    prompt, _ = prompts.render_with_profile(
+        models.UserRole.admin,
         profile_block=load_profile_block(db_session, user_id=admin_user.id),
+        agent=True,
     )
     assert "Runs Forces." in prompt
     assert "## What you know about this user" in prompt
 
 
 def test_agent_system_prompt_omits_section_when_blank(db_session, admin_user):
-    from app.copilot.agent.loop import _system_prompt
-    from app.copilot.agent.boundary.role_scope import scope_for
+    from app.copilot import prompts
 
-    scope = scope_for(role="admin", caller_id=admin_user.id)
-    prompt = _system_prompt(scope, retrieval_context="", profile_block="")
+    prompt, _ = prompts.render_with_profile(
+        models.UserRole.admin, profile_block="", agent=True
+    )
     assert "What you know about this user" not in prompt
 
 

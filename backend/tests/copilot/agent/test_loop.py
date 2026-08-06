@@ -7,6 +7,7 @@ from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.loop import run_turn
 from app.copilot.agent.tools import registry
 from app.copilot.agent.tools.list_modules import LIST_MODULES_TOOL
+from tests.copilot.prompt_fixture import TEST_SYSTEM_PROMPT
 
 
 class _StubLLM:
@@ -53,6 +54,7 @@ def test_loop_emits_tool_call_then_final_answer(db_session, seed_events):
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="how many modules next week?",
             retrieval_context="",
@@ -82,6 +84,7 @@ def test_loop_stops_at_cap(db_session, seed_events):
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="x",
             retrieval_context="",
@@ -101,6 +104,7 @@ def test_loop_retries_then_aborts_on_malformed():
             db=None,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id="s3",
             user_message="x",
             retrieval_context="",

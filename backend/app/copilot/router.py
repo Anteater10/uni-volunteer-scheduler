@@ -172,8 +172,14 @@ def create_session(
     # session is reproducible; mid-session profile rewrites do not affect
     # the running session.
     profile_block = load_profile_block(db, user_id=current_user.id)
+    # K29: the agent variant is resolved once, here, and baked into both the
+    # persisted system message and the hash. Resolving it per-turn instead
+    # would let a mid-session flag flip leave the session row describing a
+    # prompt that never ran.
     prompt, prompt_hash = render_with_profile(
-        current_user.role, profile_block=profile_block
+        current_user.role,
+        profile_block=profile_block,
+        agent=settings.copilot_agent_loop_enabled,
     )
     sess = models.CopilotSession(
         user_id=current_user.id,
@@ -557,12 +563,24 @@ def post_message(
             else str(current_user.role)
         )
         agent_llm = _get_agent_llm()
+        # K29: hand the loop the prompt this session was actually created
+        # with, and the prior turns, rather than letting it improvise both.
+        # chat_messages[0] is the persisted system row; the tail excludes the
+        # user message we just inserted, which run_turn appends itself.
+        agent_system_prompt = (
+            chat_messages[0]["content"].removesuffix(appended_block)
+            if chat_messages and chat_messages[0]["role"] == "system"
+            else system_prompt_for(current_user.role, agent=True)
+        )
+        agent_history = chat_messages[1:-1]
         return StreamingResponse(
             _agent_sse_stream(
                 db=db,
                 sess=sess,
                 user_message=payload.content,
                 retrieval_context=retrieval_text,
+                system_prompt=agent_system_prompt,
+                history=agent_history,
                 role_value=role_value,
                 caller_id=current_user.id,
                 agent_llm=agent_llm,
@@ -580,18 +598,26 @@ def post_message(
 
 
 def _get_agent_llm():
-    """Indirection hook for the ReAct-loop LLM adapter.
+    """Build the ReAct-loop LLM adapter for one request.
 
-    Tests monkeypatch this to inject a scripted stub. The default
-    implementation raises NotImplementedError — production wiring for a
-    structured tool-calling adapter ships in a follow-up sub-phase. The
-    flag ``copilot_agent_loop_enabled`` is off by default so this is not
-    hit in deployed environments.
+    Tests monkeypatch this to inject a scripted stub.
+
+    K23: this used to raise ``NotImplementedError`` unconditionally, and it
+    is called synchronously here — before the ``StreamingResponse`` is even
+    constructed — so turning the flag on produced a bare HTTP 500 on every
+    message and ``Stream failed: HTTP 500`` in the drawer, with nothing to
+    tell the next developer what was missing. A fresh adapter is returned
+    per request because it accumulates that request's token usage (K30).
     """
-    raise NotImplementedError(
-        "agent loop enabled but no structured-LLM adapter is configured; "
-        "monkeypatch app.copilot.router._get_agent_llm in tests"
-    )
+    from .agent.adapter import ToolCallingAdapter, AdapterUnavailable
+
+    try:
+        return ToolCallingAdapter()
+    except AdapterUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"The copilot's agent mode isn't available: {exc}",
+        ) from exc
 
 
 def _agent_sse_stream(
@@ -600,6 +626,8 @@ def _agent_sse_stream(
     sess: models.CopilotSession,
     user_message: str,
     retrieval_context: str,
+    system_prompt: str,
+    history: list[dict[str, str]],
     role_value: str,
     caller_id,
     agent_llm,
@@ -622,6 +650,8 @@ def _agent_sse_stream(
             session_id=sess.id,
             user_message=user_message,
             retrieval_context=retrieval_context,
+            system_prompt=system_prompt,
+            history=history,
         ):
             payload_json = event.model_dump_json()
             yield _sse_format(event.type, payload_json)
@@ -639,12 +669,24 @@ def _agent_sse_stream(
     response_hash = (
         hashlib.sha256(full_text.encode("utf-8")).hexdigest() if full_text else None
     )
+    # K30: the row used to be written with no telemetry at all — no tokens,
+    # no model_id, no latency. ``guardrails.enforce_daily_token_budget`` sums
+    # exactly those columns, so every agent turn (up to six tool calls, plus
+    # the summariser's own compression call) spent the org's free-tier quota
+    # off-books and the daily ceiling metered only the Q&A path. The adapter
+    # accumulates usage across every call it makes during the turn — including
+    # the summariser's, since that goes through the same object.
+    usage = getattr(agent_llm, "usage", None) or {}
     assistant_msg = models.CopilotMessage(
         session_id=sess.id,
         role=models.CopilotMessageRole.assistant,
         content=full_text,
-        prompt_hash=None,
+        prompt_hash=hash_prompt(system_prompt + retrieval_context),
         response_hash=response_hash,
+        model_id=usage.get("model_id"),
+        prompt_tokens=usage.get("prompt_tokens"),
+        completion_tokens=usage.get("completion_tokens"),
+        latency_ms=usage.get("latency_ms"),
     )
     db.add(assistant_msg)
     db.commit()

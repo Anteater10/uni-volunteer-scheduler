@@ -40,6 +40,7 @@ from app.copilot.agent.tools import registry
 from app.copilot.memory.extractor import run as run_extractor
 from app.copilot.memory.profile_block import load_profile_block
 from tests.fixtures.helpers import make_user
+from tests.copilot.prompt_fixture import TEST_SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +128,7 @@ def test_F1_two_turn_session_no_synopsis(db_session, admin_user):
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=str(sess.id),
             user_message="hi 1",
             retrieval_context="",
@@ -137,6 +139,7 @@ def test_F1_two_turn_session_no_synopsis(db_session, admin_user):
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=str(sess.id),
             user_message="hi 2",
             retrieval_context="",
@@ -195,6 +198,7 @@ def test_F2_six_turn_session_compresses(
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=str(sess.id),
             user_message="latest question",
             retrieval_context="",
