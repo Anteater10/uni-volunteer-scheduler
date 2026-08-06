@@ -17,7 +17,7 @@ S (< 1h), M (half day), L (a day or more).
 | 3 | ResolveEventModal close-out | **done** — commit `7890714` (also fixed `OrganizerRosterPage`) |
 | 4 | BroadcastModal | **done** — backend `b340735`, picker `89c32de` |
 | 5 | SignupSuccessCard | **done** — commit `89c32de` |
-| 6 | e2e / smoke / KB | open |
+| 6 | e2e / smoke / KB | **done** — `0f690fc`, `b416be1`, `e7c4db0` |
 
 ---
 
@@ -323,15 +323,34 @@ shows one row per commitment, and the cross-role loop books a shift. Added
 the shift-builder rules (no empty shift; sessions frozen once booked), the
 one-queue-per-bundle waitlist, and the new audit row for a staff cancel.
 
-### D3 · Knowledge base + corpus re-ingest · M
-`06-slots.md` needs a major rewrite; `05-events.md`, `07-modules.md`,
-`02-glossary.md` need shift vocabulary; task guides follow. Then re-ingest.
+### D3 · Knowledge base · M — **done** (2026-08-05); re-ingest still blocked
 
-Until this lands the copilot answers questions about a model the app no
-longer has — which compounds A1: wrong data *and* wrong documentation.
+Rewrote `06-slots.md` from the ground up as *Shifts, sessions, and orientation
+slots* (filename kept so retrieval and the README index stay put). Swept 21
+files in total — the vocabulary had leaked much further than the four the plan
+named. The claims that were actively wrong, not merely stale:
 
-Note: corpus re-ingest is separately blocked — PR #54 hits
-`PermissionDeniedError` on the OpenRouter key.
+| Document | Was telling staff |
+|---|---|
+| `01-overview.md`, `32-scitrek-program.md`, `33-volunteer-guide.md` | "volunteers sign up **session by session**" — the exact opposite of the feature |
+| `10-signups-and-statuses.md` | "a volunteer who takes three sessions has three signups"; no mention that attended / no-show live per session on a shift |
+| `11-waitlist.md` | one waitlist per session, and promotion refused once *a* session has ended (it is the shift's **last** session) |
+| `15-check-in.md`, `18-rosters.md`, `17-ending-a-slot.md` | check-in and close-out described per slot, with no hint that one commitment appears under each session |
+| `21-broadcasts.md` | the picker offers slots (it offers shifts) |
+| `22-calendar-invites.md` | one calendar entry per booking (it is one per session) |
+| `24-exports-and-analytics.md` | nothing about hours coming from sessions attended rather than the size of the commitment |
+
+Also updated: `02-glossary.md` (new **Shift**, **Session**, **Commitment**
+entries; eight existing entries amended), `05-events.md`, `07-modules.md`,
+`03-roles-and-access.md`, `09-orientation.md`, `12-signup-forms.md`,
+`14-operations-console.md`, `19-magic-links.md`, `20-reminders.md`,
+`25-audit-logs.md`, `28-task-guides.md`, `29-troubleshooting.md`,
+`37-mentors-per-session.md`.
+
+**Re-ingest is still blocked** and is not part of this: PR #54 hits
+`PermissionDeniedError` on the OpenRouter key. Until the corpus is rebuilt the
+copilot is still answering from the old text — the documents are right, the
+index is not.
 
 ---
 
@@ -350,6 +369,12 @@ Ordered by "what is actively wrong" rather than by surface.
 8. **D** — docs and e2e last, because they describe whatever 1–7 settle on. · M
 
 Rough total: the better part of a week, with C and A1 the two long poles.
+
+**All eight are done** as of 2026-08-05. The one thing this list called for and
+did not get is a **run** of the Playwright suite: the backend container is a
+pre-shifts image with code not volume-mounted, so exercising the e2e work means
+rebuilding the image and migrating the dev database. Also still open from D3:
+the copilot corpus re-ingest, blocked on the OpenRouter key (PR #54).
 
 ---
 
