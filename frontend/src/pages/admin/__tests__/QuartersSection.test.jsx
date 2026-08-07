@@ -300,3 +300,57 @@ describe("QuartersManager (embedded drawer mode)", () => {
     await waitFor(() => expect(restoreMock).toHaveBeenCalledWith("winter-26"));
   });
 });
+
+// K11 — a failed quarters fetch used to render as "you have no quarters".
+// `rows = listQ.data || []` falls back to [] on error, so the page told an
+// admin whose quarters exist and are merely unreachable to enter them again.
+// Re-entering them produces overlapping rows the server then rejects.
+describe("QuartersManager — the fetch failed, it did not come back empty (K11)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function renderPageOnly(initialEntries = ["/admin/quarters"]) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={initialEntries}>
+          <QuartersSection />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("says it couldn't load, not that there is nothing to load", async () => {
+    listMock.mockRejectedValue(new Error("Network request failed"));
+    renderPageOnly();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/couldn't load quarters/i);
+    expect(alert).toHaveTextContent(/network request failed/i);
+
+    // The two claims that were wrong.
+    expect(screen.queryByText(/no quarters yet/i)).toBeNull();
+    expect(screen.queryByText(/enter your quarters/i)).toBeNull();
+  });
+
+  it("offers a retry that re-asks the server", async () => {
+    listMock.mockRejectedValue(new Error("boom"));
+    renderPageOnly();
+
+    await screen.findByRole("alert");
+    const calls = listMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    await waitFor(() =>
+      expect(listMock.mock.calls.length).toBeGreaterThan(calls),
+    );
+  });
+
+  it("still shows the setup card when the fetch genuinely returns nothing", async () => {
+    listMock.mockResolvedValue([]);
+    renderPageOnly();
+
+    expect(await screen.findByText(/enter your quarters/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});

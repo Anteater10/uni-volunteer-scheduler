@@ -17,7 +17,16 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import api from "../../lib/api";
-import { Button, Card, EmptyState, Input, Label, Modal, Skeleton } from "../../components/ui";
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Input,
+  Label,
+  Modal,
+  Skeleton,
+} from "../../components/ui";
 import SideDrawer from "../../components/admin/SideDrawer";
 import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import { toast } from "../../state/toast";
@@ -216,7 +225,13 @@ export default function QuartersManager({ embedded = false }) {
 
   return (
     <div className="space-y-6">
-      {(setupMode || (!listQ.isPending && rows.length === 0)) && (
+      {/* K11: `!listQ.isPending && rows.length === 0` is also true when the
+          fetch *failed* — `rows` falls back to []. That put a "you have no
+          quarters, here is how to enter them" card in front of an admin whose
+          quarters exist and are simply unreachable. `listQ.isError` has to be
+          excluded explicitly; there is no state that means "loaded and empty"
+          on its own. */}
+      {(setupMode || (!listQ.isPending && !listQ.isError && rows.length === 0)) && (
         <Card>
           <h2 className="text-lg font-semibold">Enter your quarters</h2>
           <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
@@ -260,6 +275,20 @@ export default function QuartersManager({ embedded = false }) {
 
       {listQ.isPending ? (
         <Skeleton className="h-40 rounded-xl" />
+      ) : listQ.isError ? (
+        // Ordered before the empty branch on purpose: a failed fetch and an
+        // empty list are indistinguishable from `rows` alone, and telling an
+        // admin to re-enter quarters they already entered is the worse of the
+        // two mistakes — it invites duplicate rows the server then rejects for
+        // overlapping.
+        <ErrorState
+          title="Couldn't load quarters"
+          body={
+            listQ.error?.message ||
+            "The server didn't answer. Your quarters are still there — this page just can't see them right now."
+          }
+          action={<Button onClick={() => listQ.refetch()}>Try again</Button>}
+        />
       ) : sortedRows.length === 0 ? (
         <EmptyState
           title="No quarters yet"
