@@ -26,6 +26,7 @@ import Pagination from "../components/admin/Pagination";
 import RoleBadge from "../components/admin/RoleBadge";
 import { useQuarters } from "../lib/useQuarters";
 import { useAdminPageTitle } from "./admin/AdminLayout";
+import { toast } from "../state/toast";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -168,8 +169,20 @@ export default function AuditLogsPage() {
     queryFn: () => api.admin.users.list({ include_inactive: true }),
   });
 
-  function handleExport() {
-    downloadBlob("/admin/audit-logs.csv", "audit-logs.csv", { params });
+  // K12: the ninth silent export. `downloadBlob` is async and throws on a
+  // non-2xx, so calling it bare turned every failure into an unhandled
+  // rejection and a button that looked broken.
+  const [exporting, setExporting] = useState(false);
+  async function handleExport() {
+    setExporting(true);
+    try {
+      await downloadBlob("/admin/audit-logs.csv", "audit-logs.csv", { params });
+      toast.success("Audit log CSV download started.");
+    } catch (e) {
+      toast.error(e?.message || "Couldn't export the audit log.");
+    } finally {
+      setExporting(false);
+    }
   }
 
   function handleCopyPayload() {
@@ -273,8 +286,8 @@ export default function AuditLogsPage() {
         </div>
 
         <div className="ml-auto">
-          <Button type="button" onClick={handleExport}>
-            Export filtered view (CSV)
+          <Button type="button" onClick={handleExport} disabled={exporting}>
+            {exporting ? "Preparing…" : "Export filtered view (CSV)"}
           </Button>
         </div>
       </div>

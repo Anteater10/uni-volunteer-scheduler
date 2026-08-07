@@ -293,7 +293,18 @@ export default function EventsBrowsePage() {
     });
   }
 
-  const events = eventsQ.data || [];
+  // K22: OrientationWarningModal's "I haven't — show me orientation events"
+  // used to bounce the volunteer back to the same event page with nothing
+  // highlighted, because that variant only renders when the event has *no*
+  // orientation slots. It now sends them here with ?only=orientation, and
+  // this is the filter that makes the button's promise true.
+  const orientationOnly = searchParams.get("only") === "orientation";
+  const allEvents = eventsQ.data || [];
+  const events = orientationOnly
+    ? allEvents.filter((e) =>
+        (e.slots || []).some((s) => s.slot_type === "orientation"),
+      )
+    : allEvents;
   const grouped = events.reduce((acc, e) => {
     const school = e.school || "Unknown";
     (acc[school] = acc[school] || []).push(e);
@@ -458,6 +469,27 @@ export default function EventsBrowsePage() {
 
       {/* ---- Event list ---- */}
       <section className="mt-6 sm:mt-8">
+        {orientationOnly && (
+          <div
+            role="status"
+            className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-brand-soft)] px-4 py-3 text-sm"
+          >
+            <span className="text-[var(--color-fg)]">
+              Showing only events with an orientation session.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete("only");
+                setSearchParams(next, { replace: true });
+              }}
+              className="min-h-11 rounded-lg px-3 font-semibold text-[var(--color-brand)] underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600"
+            >
+              Show everything
+            </button>
+          </div>
+        )}
         {!allParamsReady || eventsQ.isPending ? (
           <LoadingSkeletons />
         ) : eventsQ.isError ? (
@@ -479,10 +511,14 @@ export default function EventsBrowsePage() {
                 <Calendar size={28} />
               </div>
               <h3 className="text-2xl sm:text-3xl font-bold text-[var(--color-fg)] tracking-tight">
-                Nothing scheduled this week
+                {orientationOnly
+                  ? "No orientation sessions this week"
+                  : "Nothing scheduled this week"}
               </h3>
               <p className="mt-3 text-[var(--color-fg-muted)]">
-                New events go up on Mondays. Check back then, or browse next week's calendar.
+                {orientationOnly
+                  ? "There may be other events this week — clear the filter above to see them, or check another week."
+                  : "New events go up on Mondays. Check back then, or browse next week's calendar."}
               </p>
               <div className="mt-6">
                 <Button variant="primary" onClick={handleNext}>

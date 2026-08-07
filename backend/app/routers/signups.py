@@ -176,7 +176,7 @@ def signup_ics(
         f"DTEND:{dtend}\r\n"
         f"SUMMARY:{summary}\r\n"
         f"LOCATION:{location}\r\n"
-        "DESCRIPTION:Volunteer slot scheduled via University Volunteer Scheduler\r\n"
+        "DESCRIPTION:Volunteer slot scheduled via UCSB SciTrek\r\n"
         "END:VEVENT\r\n"
         "END:VCALENDAR\r\n"
     )

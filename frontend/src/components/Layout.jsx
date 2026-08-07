@@ -98,8 +98,11 @@ export default function Layout() {
     <div className="min-h-screen flex flex-col text-[var(--color-fg)]">
       <header className="sticky top-0 z-30 h-14 border-b border-white/40 bg-white/70 backdrop-blur-md">
         <div className={`mx-auto flex h-full ${containerWidth} items-center justify-between px-4`}>
+          {/* K20: said "Volunteer Scheduler" on every public page. Volunteers
+              arrive from a SciTrek email and a SciTrek flyer; an unfamiliar
+              product name in the header is how a phishing page looks. */}
           <Link to={brandTarget} className="font-semibold">
-            Volunteer Scheduler
+            UCSB SciTrek
           </Link>
           <div className="flex items-center gap-3 text-sm">
             {isAuthed && !isParticipantRoute ? (

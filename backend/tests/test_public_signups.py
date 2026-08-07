@@ -1307,3 +1307,218 @@ class TestShiftBatchConfirm:
         # manage page is where they check what they actually signed up for.
         assert len(row["shift"]["sessions"]) == 2
         assert [s["sort_order"] for s in row["shift"]["sessions"]] == [0, 1]
+
+
+class TestMaxSignupsPerUser:
+    """K8 — ``Event.max_signups_per_user`` is finally enforced.
+
+    The column and the admin form field both shipped in the initial schema.
+    Nothing read the value, so an admin who typed 2 got no cap at all — the
+    worst kind of failure, because the surface said the limit was in force.
+
+    These events carry no orientation slots, so the orientation gate is
+    exempt and each case exercises the cap on its own.
+    """
+
+    EMAIL = "capped@example.com"
+
+    def _mute_email(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.celery_app.send_signup_confirmation_email.delay",
+            lambda *a, **k: None,
+        )
+
+    def _payload(self, *, shift_ids=(), slot_ids=(), email=None):
+        return {
+            "first_name": "Capped",
+            "last_name": "Volunteer",
+            "email": email or self.EMAIL,
+            "phone": GOOD_PHONE,
+            "slot_ids": [str(s) for s in slot_ids],
+            "shift_ids": [str(s) for s in shift_ids],
+        }
+
+    def _event_with_shifts(self, db_session, *, limit, n=3):
+        event = _make_event(db_session)
+        event.max_signups_per_user = limit
+        shifts = [
+            _make_shift(db_session, event.id, name=f"Shift {i + 1}")
+            for i in range(n)
+        ]
+        db_session.commit()
+        return event, shifts
+
+    def test_null_limit_means_no_limit(self, client, db_session, monkeypatch):
+        self._mute_email(monkeypatch)
+        _, shifts = self._event_with_shifts(db_session, limit=None)
+
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[s.id for s in shifts]),
+        )
+        assert resp.status_code == 201, resp.text
+        assert len(resp.json()["shift_signup_ids"]) == 3
+
+    def test_batch_over_the_limit_is_refused_and_writes_nothing(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        _, shifts = self._event_with_shifts(db_session, limit=1)
+
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shifts[0].id, shifts[1].id]),
+        )
+        assert resp.status_code == 422, resp.text
+        body = resp.json()
+        assert body["code"] == "SIGNUP_LIMIT_REACHED"
+        # Singular in the copy when the limit is 1 — the message is shown
+        # verbatim to a volunteer. The global handler flattens a dict detail
+        # to a bare string, so `detail` IS the message.
+        assert "1 shift per volunteer" in body["detail"]
+
+        # Refused before any write, like the orientation gate.
+        db_session.expire_all()
+        assert db_session.query(ShiftSignup).count() == 0
+        assert (
+            db_session.query(Volunteer)
+            .filter(Volunteer.email == self.EMAIL)
+            .count()
+            == 0
+        )
+
+    def test_limit_counts_signups_from_earlier_requests(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        _, shifts = self._event_with_shifts(db_session, limit=2)
+
+        for shift in shifts[:2]:
+            resp = client.post(
+                "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+            )
+            assert resp.status_code == 201, resp.text
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shifts[2].id])
+        )
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert "2 shifts per volunteer" in detail
+        assert "You already have 2" in detail
+
+    def test_partial_headroom_reports_how_many_are_left(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        _, shifts = self._event_with_shifts(db_session, limit=2)
+
+        assert (
+            client.post(
+                "/api/v1/public/signups", json=self._payload(shift_ids=[shifts[0].id])
+            ).status_code
+            == 201
+        )
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shifts[1].id, shifts[2].id]),
+        )
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert "You have 1 already, so you can pick 1 more" in detail
+
+    def test_cancelled_signups_give_the_headroom_back(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        _, shifts = self._event_with_shifts(db_session, limit=1)
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shifts[0].id])
+        )
+        assert resp.status_code == 201, resp.text
+
+        booked = db_session.query(ShiftSignup).one()
+        booked.status = SignupStatus.cancelled
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shifts[1].id])
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_waitlisted_signups_still_count(self, client, db_session, monkeypatch):
+        """Otherwise the cap is bypassed by waitlisting: auto-promotion would
+        carry the volunteer past a limit they were never allowed to reach."""
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        event.max_signups_per_user = 1
+        full = _make_shift(
+            db_session, event.id, capacity=1, current_count=1, name="Full"
+        )
+        other = _make_shift(db_session, event.id, name="Other")
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[full.id])
+        )
+        assert resp.status_code == 201, resp.text
+        assert (
+            db_session.query(ShiftSignup).one().status == SignupStatus.waitlisted
+        )
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[other.id])
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "SIGNUP_LIMIT_REACHED"
+
+    def test_orientation_slots_are_exempt(self, client, db_session, monkeypatch):
+        """A cap of 1 on an event that also requires orientation has to stay
+        bookable — the volunteer needs the orientation *and* the shift."""
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        event.max_signups_per_user = 1
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shift.id], slot_ids=[orient.id]),
+        )
+        assert resp.status_code == 201, resp.text
+        assert len(resp.json()["signup_ids"]) == 1
+        assert len(resp.json()["shift_signup_ids"]) == 1
+
+    def test_a_limit_of_zero_reads_as_no_limit(
+        self, client, db_session, monkeypatch
+    ):
+        """0 is what an admin gets by clearing the field in some browsers.
+        Treating it as "nobody may sign up" would silently close the event."""
+        self._mute_email(monkeypatch)
+        _, shifts = self._event_with_shifts(db_session, limit=0)
+
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shifts[0].id]),
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_the_cap_is_per_volunteer_not_per_event(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        _, shifts = self._event_with_shifts(db_session, limit=1)
+
+        assert (
+            client.post(
+                "/api/v1/public/signups", json=self._payload(shift_ids=[shifts[0].id])
+            ).status_code
+            == 201
+        )
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shifts[1].id], email="someone@example.com"),
+        )
+        assert resp.status_code == 201, resp.text

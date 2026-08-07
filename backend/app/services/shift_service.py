@@ -288,12 +288,17 @@ def sessions_in_display_order(shift: models.Shift) -> Iterable[models.Slot]:
 def to_public_shift(shift: models.Shift) -> schemas.PublicShiftRead:
     """Volunteer-facing shape. One place, so the event page and the manage page
     can never disagree about a shift's session order or seat count."""
+    # Imported here rather than at module scope: waitlist_service reaches back
+    # into signup_service, which imports this module.
+    from .waitlist_service import shift_has_ended, slot_has_ended
+
     return schemas.PublicShiftRead(
         id=shift.id,
         name=shift.name,
         sort_order=shift.sort_order,
         capacity=shift.capacity,
         filled=shift.current_count,
+        has_ended=shift_has_ended(shift),
         sessions=[
             schemas.PublicSessionRead(
                 id=s.id,
@@ -303,6 +308,7 @@ def to_public_shift(shift: models.Shift) -> schemas.PublicShiftRead:
                 start_time=s.start_time,
                 end_time=s.end_time,
                 location=s.location,
+                has_ended=slot_has_ended(s),
             )
             for s in sessions_in_display_order(shift)
         ],

@@ -147,8 +147,8 @@ function slotUidPart(slot, index) {
 function buildVevent({ event, slot, origin, dtstamp, index }) {
   const kind = slotKindLabel(slot)
   const summary = kind
-    ? `Sci Trek: ${event.title} (${kind})`
-    : `Sci Trek: ${event.title}`
+    ? `SciTrek: ${event.title} (${kind})`
+    : `SciTrek: ${event.title}`
   const url = eventUrl(origin, event.id)
 
   const descriptionParts = []
@@ -184,12 +184,12 @@ function buildVevent({ event, slot, origin, dtstamp, index }) {
     'BEGIN:VALARM',
     'ACTION:DISPLAY',
     'TRIGGER:-P1D',
-    'DESCRIPTION:Sci Trek event tomorrow',
+    'DESCRIPTION:SciTrek event tomorrow',
     'END:VALARM',
     'BEGIN:VALARM',
     'ACTION:DISPLAY',
     'TRIGGER:-PT1H',
-    'DESCRIPTION:Sci Trek event reminder',
+    'DESCRIPTION:SciTrek event reminder',
     'END:VALARM',
     'END:VEVENT',
   ]
@@ -257,7 +257,7 @@ export function buildGoogleCalendarUrl({ event, slot, origin }) {
   const kind = slotKindLabel(slot)
   const params = new URLSearchParams({
     action: 'TEMPLATE',
-    text: kind ? `Sci Trek: ${event.title} (${kind})` : `Sci Trek: ${event.title}`,
+    text: kind ? `SciTrek: ${event.title} (${kind})` : `SciTrek: ${event.title}`,
     dates,
     details: (event.description ? `${event.description}\n\n` : '') + url,
     location: resolveLocation(event, slot),

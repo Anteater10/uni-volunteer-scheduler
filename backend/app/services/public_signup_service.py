@@ -20,7 +20,7 @@ confirm_token (dev/test only).
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
@@ -34,12 +34,17 @@ from ..models import (
     SignupStatus,
     Slot,
     SlotType,
+    Volunteer,
 )
 from ..schemas import PublicSignupCreate, PublicSignupResponse, PublicSignupResultItem
 from . import form_schema_service, shift_service
 from .phone_service import InvalidPhoneError, normalize_us_phone
 from .volunteer_service import upsert_volunteer
-from .waitlist_service import compute_waitlist_position
+from .waitlist_service import (
+    compute_waitlist_position,
+    shift_has_ended,
+    slot_has_ended,
+)
 
 
 # Phase 29 (LOCK-01) — PT-localized copy for participant-facing errors. We
@@ -67,6 +72,11 @@ def _fmt_pt(dt: datetime) -> str:
 # "this slot doesn't exist" from "this slot exists but its event is
 # private" — the same leak class as a differing status code.
 _NOT_FOUND_DETAIL = "not found"
+
+# House style for a distinguishable 422, cf. ORIENTATION_REQUIRED and
+# waitlist_service.SLOT_ENDED. Named for the volunteer-facing case (booking)
+# rather than the staff one (promotion) so the two stay tellable apart in logs.
+SESSION_ENDED_CODE = "SESSION_ENDED"
 
 
 def _ensure_event_visible(db: Session, event_id) -> None:
@@ -278,6 +288,142 @@ def _ensure_orientation_requirement(db: Session, email: str, slot_ids, shift_ids
     )
 
 
+def _ensure_units_not_ended(db: Session, slot_ids, shift_ids) -> None:
+    """Refuse a booking for work that has already happened.
+
+    Nothing else in the signup path looks at the clock. The event signup window
+    would cover this, but it is optional and almost no event carries one, so in
+    practice a session that finished last week still rendered a live Sign-up
+    button and the booking succeeded — producing a volunteer the roster expects
+    at a class that is over, and a confirmation email for a date in the past.
+
+    Judged on ``end_time``, not ``start_time``: someone arriving twenty minutes
+    into a two-hour session is late, not barred, and the check-in window is
+    already the thing that decides whether lateness counts. A shift is judged on
+    its last session (see ``waitlist_service.shift_has_ended``) so a Tue+Wed
+    shift stays bookable for Wednesday's classroom.
+
+    Runs before any write, alongside the other pre-flight guards, so a rejected
+    signup leaves no volunteer or signup rows behind.
+    """
+    if slot_ids:
+        for slot in db.query(Slot).filter(Slot.id.in_(set(slot_ids))).all():
+            if slot_has_ended(slot):
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": SESSION_ENDED_CODE,
+                        "message": (
+                            "That orientation session has already finished — "
+                            "pick one that hasn't happened yet."
+                        ),
+                    },
+                )
+
+    if shift_ids:
+        for shift in (
+            db.query(Shift).filter(Shift.id.in_(set(shift_ids))).all()
+        ):
+            if shift_has_ended(shift):
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": SESSION_ENDED_CODE,
+                        "message": (
+                            "That shift has already finished — pick one that "
+                            "hasn't happened yet."
+                        ),
+                    },
+                )
+
+
+def _ensure_signup_cap(db: Session, email: str, slot_ids, shift_ids) -> None:
+    """K8 — enforce ``Event.max_signups_per_user``.
+
+    The column has existed since the initial schema and the admin event form
+    has always offered a "Max signups per volunteer" box, but nothing ever
+    read it: an admin could set 2 and watch one person take all six shifts.
+    A control that silently does nothing is worse than no control, because
+    the admin stops watching the thing they think it is handling.
+
+    Scope: **shifts only**. Orientation slots are exempt. An event that both
+    requires orientation and caps at 1 would otherwise be unbookable — the
+    volunteer has to take the orientation *and* the shift — and orientation
+    is a prerequisite, not one of the work slots the cap exists to ration.
+
+    Counted statuses: everything except ``cancelled``. A cancelled signup
+    gave the seat back, so it should not hold the cap down. ``waitlisted``
+    *is* counted, otherwise the cap is trivially bypassed by waitlisting and
+    letting auto-promotion carry you past it. ``attended``/``no_show`` are
+    counted too: the admin who typed 2 expects this person on at most two of
+    this event's rosters, and a shift already worked was one of them.
+
+    Runs before any write, alongside the other pre-write guards, so a
+    rejected batch leaves no volunteer or signup rows behind.
+    """
+    if not shift_ids:
+        return  # orientation-only batches are never capped
+
+    shifts = (
+        db.execute(select(Shift).where(Shift.id.in_(set(shift_ids))))
+        .scalars()
+        .all()
+    )
+    if not shifts:
+        return  # all ids unknown — the booking loop 404s
+
+    # Batches are single-event (``_ensure_orientation_requirement`` rejects
+    # anything else and runs first), so one lookup settles the limit.
+    event = db.query(Event).filter(Event.id == shifts[0].event_id).first()
+    limit = event.max_signups_per_user if event else None
+    if not limit or limit <= 0:
+        return  # null or 0 means "no limit", matching the admin form's blank
+
+    volunteer_id = db.execute(
+        select(Volunteer.id).where(Volunteer.email == email.lower().strip())
+    ).scalar_one_or_none()
+    existing = 0
+    if volunteer_id is not None:
+        existing = (
+            db.execute(
+                select(func.count(ShiftSignup.id))
+                .join(Shift, Shift.id == ShiftSignup.shift_id)
+                .where(
+                    Shift.event_id == event.id,
+                    ShiftSignup.volunteer_id == volunteer_id,
+                    ShiftSignup.status != SignupStatus.cancelled,
+                )
+            ).scalar_one()
+            or 0
+        )
+
+    requested = len({sh.id for sh in shifts})
+    if existing + requested <= limit:
+        return
+
+    remaining = max(limit - existing, 0)
+    # Everything the volunteer needs goes in the message, not in sibling keys:
+    # the global handler (AUDIT-03) normalizes a dict detail down to
+    # {error, code, detail} and drops any extra fields on the way out.
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": "SIGNUP_LIMIT_REACHED",
+            "message": (
+                f"This event allows {limit} shift"
+                f"{'' if limit == 1 else 's'} per volunteer. "
+                + (
+                    f"You already have {existing} — "
+                    "cancel one if you want a different shift."
+                    if remaining == 0
+                    else f"You have {existing} already, so you can pick "
+                    f"{remaining} more."
+                )
+            ),
+        },
+    )
+
+
 def create_public_signup(
     db: Session,
     payload: PublicSignupCreate,
@@ -310,9 +456,20 @@ def create_public_signup(
     # 1b. A period slot id is a client sending the old shape.
     _reject_bare_period_slots(db, payload.slot_ids)
 
+    # 1b-ii. Nothing that has already happened can be booked. Before the
+    # orientation check below, so a volunteer picking a stale event is told the
+    # session is over rather than being sent to find an orientation for it.
+    _ensure_units_not_ended(db, payload.slot_ids, payload.shift_ids)
+
     # 1c. Orientation requirement — enforced before any write so a rejected
     # signup leaves no volunteer/signup rows behind.
     _ensure_orientation_requirement(
+        db, str(payload.email), payload.slot_ids, payload.shift_ids
+    )
+
+    # 1d. K8: per-volunteer shift cap. After the orientation gate, which is
+    # what guarantees the batch names exactly one event.
+    _ensure_signup_cap(
         db, str(payload.email), payload.slot_ids, payload.shift_ids
     )
 

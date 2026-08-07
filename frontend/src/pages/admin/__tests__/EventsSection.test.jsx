@@ -1276,3 +1276,137 @@ describe("EventsSection — ended quarter history mode", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// K14 — the delete-event dialog
+//
+// This was a bare <div>: no role="dialog", no Escape, no focus trap, and a
+// single click on a red button. It destroys the event, its slots and shifts,
+// and every signup on them — while module *archive*, which is undone with one
+// click, got the real accessible Modal. The guard now matches the damage.
+// ---------------------------------------------------------------------------
+
+describe("EventsSection — deleting an event (K14)", () => {
+  const LIVE_Q = {
+    id: "q-live",
+    display_name: "Fall 2026",
+    season: "fall",
+    year: 2026,
+    start_date: "2026-09-21",
+    end_date: "2026-12-11",
+    archived_at: null,
+  };
+
+  function renderSection() {
+    window.localStorage.setItem("admin.selectedQuarterId", "q-live");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <QuarterSelectionProvider>
+            <EventsSection />
+          </QuarterSelectionProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    api.public.getQuarters.mockResolvedValue([LIVE_Q]);
+    api.events.list.mockResolvedValue([
+      {
+        id: "e-doomed",
+        title: "Germs at Goleta Valley",
+        start_date: "2026-10-06T15:00:00Z",
+        end_date: "2026-10-06T19:00:00Z",
+        completed_at: null,
+        location: "Room 4",
+      },
+    ]);
+    api.admin.modules.list.mockResolvedValue([]);
+    api.events.delete.mockResolvedValue({});
+    // mockResolvedValue does not reset the call log, and "we never deleted"
+    // is the assertion most of these tests turn on.
+    api.events.delete.mockClear();
+  });
+
+  async function openDeleteDialog() {
+    renderSection();
+    await screen.findByText("Germs at Goleta Valley");
+    // findBy, not getBy. The row title arrives on the first events fetch, but
+    // QuarterSelectionProvider resolves its quarter list a tick later and the
+    // list re-queries, so the table is briefly empty again *after* the title
+    // has appeared. A synchronous getBy here landed in that window roughly
+    // one run in six and failed looking for a Delete button that was about
+    // to come back.
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete$/i }));
+    return screen.findByRole("dialog", { name: /delete this event/i });
+  }
+
+  it("opens a real dialog rather than a bare div", async () => {
+    const dialog = await openDeleteDialog();
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(api.events.delete).not.toHaveBeenCalled();
+  });
+
+  it("says what actually goes, including the signups", async () => {
+    const dialog = await openDeleteDialog();
+    expect(dialog).toHaveTextContent("Germs at Goleta Valley");
+    expect(dialog).toHaveTextContent(/every signup/i);
+    expect(dialog).toHaveTextContent(/cannot be undone/i);
+  });
+
+  it("keeps the confirm button disabled until the title is typed exactly", async () => {
+    const dialog = await openDeleteDialog();
+    const confirm = within(dialog).getByRole("button", { name: /delete event/i });
+    expect(confirm).toBeDisabled();
+
+    // A near miss must not arm it — the whole point is that the operator has
+    // to read which event this is.
+    fireEvent.change(within(dialog).getByLabelText(/type the event title/i), {
+      target: { value: "Germs at Goleta" },
+    });
+    expect(confirm).toBeDisabled();
+    expect(api.events.delete).not.toHaveBeenCalled();
+
+    fireEvent.change(within(dialog).getByLabelText(/type the event title/i), {
+      target: { value: "Germs at Goleta Valley" },
+    });
+    expect(confirm).toBeEnabled();
+  });
+
+  it("deletes only after the typed confirmation", async () => {
+    const dialog = await openDeleteDialog();
+    fireEvent.change(within(dialog).getByLabelText(/type the event title/i), {
+      target: { value: "Germs at Goleta Valley" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /delete event/i }));
+
+    await waitFor(() =>
+      expect(api.events.delete).toHaveBeenCalledWith("e-doomed"),
+    );
+  });
+
+  it("forgets what was typed when the dialog is dismissed and reopened", async () => {
+    const dialog = await openDeleteDialog();
+    fireEvent.change(within(dialog).getByLabelText(/type the event title/i), {
+      target: { value: "Germs at Goleta Valley" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /keep it/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: /delete this event/i }),
+      ).toBeNull(),
+    );
+
+    const reopened = await openDeleteDialog();
+    expect(
+      within(reopened).getByRole("button", { name: /delete event/i }),
+    ).toBeDisabled();
+    expect(api.events.delete).not.toHaveBeenCalled();
+  });
+});
