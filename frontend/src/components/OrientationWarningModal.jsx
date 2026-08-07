@@ -27,8 +27,10 @@ import { Modal, Button } from "./ui";
  *   onPickOrientation {function} — required variant: back to schedule to add
  *                                  an orientation session
  *   onYes             {function} — advisory variant: proceed with signup
- *   onNo              {function} — advisory variant / close: see orientation
- *                                  events instead
+ *   onNo              {function} — advisory variant / close: dismiss
+ *   onFindOrientation {function} — advisory variant: go somewhere that lists
+ *                                  events which DO have an orientation
+ *                                  session. Falls back to onNo.
  */
 export default function OrientationWarningModal({
   open,
@@ -36,6 +38,7 @@ export default function OrientationWarningModal({
   onPickOrientation,
   onYes,
   onNo,
+  onFindOrientation,
 }) {
   if (required) {
     return (
@@ -45,7 +48,7 @@ export default function OrientationWarningModal({
         title="Orientation is part of your first signup"
       >
         <p className="text-sm text-[var(--color-fg)]">
-          Looks like you haven't completed a Sci Trek orientation for this
+          Looks like you haven't completed a SciTrek orientation for this
           module yet. Your signup needs to include an orientation session —
           pick one from the schedule and it'll be added alongside the shifts
           you already selected.
@@ -68,11 +71,11 @@ export default function OrientationWarningModal({
     <Modal
       open={open}
       onClose={onNo}
-      title="Have you done a Sci Trek orientation?"
+      title="Have you done a SciTrek orientation?"
     >
       <p className="text-sm text-[var(--color-fg)]">
         This event has period slots but no orientation slot. New volunteers
-        need to complete an orientation with Sci Trek before working a period
+        need to complete an orientation with SciTrek before working a period
         slot.
       </p>
       <div className="flex flex-col gap-2 mt-4">
@@ -84,11 +87,15 @@ export default function OrientationWarningModal({
         >
           {"I've done orientation — continue"}
         </Button>
+        {/* K22: this called onNo, which highlighted orientation slots on the
+            event page behind it — an event that by definition has none, since
+            that is the only condition under which this variant renders. The
+            label promised a search the app then didn't perform. */}
         <Button
           type="button"
           variant="secondary"
           className="w-full min-h-11"
-          onClick={onNo}
+          onClick={onFindOrientation || onNo}
         >
           {"I haven't — show me orientation events"}
         </Button>

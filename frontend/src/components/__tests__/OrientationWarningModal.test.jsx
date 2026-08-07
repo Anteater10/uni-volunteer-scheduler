@@ -24,7 +24,7 @@ describe("OrientationWarningModal", () => {
     renderModal();
 
     expect(
-      screen.getByText(/have you done a sci trek orientation/i)
+      screen.getByText(/have you done a scitrek orientation/i)
     ).toBeInTheDocument();
 
     expect(
@@ -43,7 +43,7 @@ describe("OrientationWarningModal", () => {
     renderModal({ open: false });
 
     expect(
-      screen.queryByText(/have you done a sci trek orientation/i)
+      screen.queryByText(/have you done a scitrek orientation/i)
     ).not.toBeInTheDocument();
 
     expect(

@@ -40,6 +40,15 @@ SIGNUP_CONFIRM_TTL_MINUTES = 20160  # 14 days * 24h * 60min
 # window than fresh signups — a ghost promotee must not block the seat.
 PROMOTION_CONFIRM_TTL_MINUTES = 4320  # 3 days * 24h * 60min
 
+# K20: the default lifetime for each purpose. A caller that omits ttl_minutes
+# gets the one this table names rather than the generic 15-minute setting —
+# see issue_token. SIGNUP_MANAGE and the two legacy purposes are absent on
+# purpose: they keep falling back to settings.magic_link_ttl_minutes.
+_DEFAULT_TTL_MINUTES = {
+    MagicLinkPurpose.SIGNUP_CONFIRM: SIGNUP_CONFIRM_TTL_MINUTES,
+    MagicLinkPurpose.PROMOTION_CONFIRM: PROMOTION_CONFIRM_TTL_MINUTES,
+}
+
 # Purposes that make a pending signup confirmable. PROMOTION_CONFIRM is a
 # separate purpose so consent stays scoped (see consume_token), but for the
 # hourly reap and the stale-token GC a promotion token IS the signup's confirm
@@ -119,6 +128,14 @@ def issue_token(
 
     raw = secrets.token_urlsafe(32)
     token_hash = _hash_token(raw)
+    # K20: the TTL used to fall back to settings.magic_link_ttl_minutes (15
+    # minutes) whenever a caller didn't pass one. Only public_signup_service
+    # passed one, so the *first* confirmation link a volunteer got lasted 14
+    # days and the one they got from "resend" — same purpose, same button —
+    # died in 15 minutes. Defaulting per purpose means no call site can get
+    # this wrong by omission.
+    if ttl_minutes is None:
+        ttl_minutes = _DEFAULT_TTL_MINUTES.get(purpose)
     ttl = ttl_minutes if ttl_minutes is not None else settings.magic_link_ttl_minutes
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=ttl)
     row = MagicLinkToken(
@@ -416,4 +433,6 @@ def dispatch_email(db: Session, signup: Anchor, event, base_url: str) -> None:
         raw = issue_token(db, email=email, **anchor_kwargs)
         from .emails import send_magic_link
 
-        send_magic_link(email, raw, event, base_url)
+        send_magic_link(
+            email, raw, event, base_url, ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES
+        )

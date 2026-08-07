@@ -102,7 +102,9 @@ class TestBuildSignupIcs:
         # on UID, so email-import + in-app download don't double-book.
         for slot in slots:
             assert f"UID:scitrek-{event.id}-slot-{slot.id}@scitrek.ucsb.edu" in ics
-        assert "SUMMARY:Sci Trek: CRISPR at Carpinteria HS" in ics
+        # K20: was "Sci Trek" (two words). The calendar entry a volunteer
+        # keeps for months should spell the programme the way it spells itself.
+        assert "SUMMARY:SciTrek: CRISPR at Carpinteria HS" in ics
 
     def test_no_slots_raises(self, db_session):
         event, _ = _event_with_slots(db_session, n=1)

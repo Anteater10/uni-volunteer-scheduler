@@ -291,7 +291,6 @@ def send_reminder_24h(signup: models.Signup) -> dict:
 def send_reminder_1h(signup: models.Signup) -> dict:
     v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
-    # TODO(copy): subject line
     subject = f"Starting soon: volunteer slot for '{event.title}'"
     text_body = (
         f"Hi {vol_name},\n\n"
@@ -316,7 +315,6 @@ def send_reschedule(signup: models.Signup) -> dict:
     v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
     contact_instruction = _contact_instruction(signup)
-    # TODO(copy): subject line
     subject = f"Schedule change: '{event.title}'"
     text_body = (
         f"Hi {vol_name},\n\n"
@@ -501,20 +499,49 @@ BUILDERS = {
 # -------------------------
 
 
-def send_magic_link(email: str, token: str, event, base_url: str) -> dict:
+def _humanise_minutes(minutes: int) -> str:
+    """Render a token lifetime the way a volunteer would say it.
+
+    Whole days and whole hours read as days and hours; anything else stays in
+    minutes. Used so the email's expiry sentence tracks the TTL the token was
+    actually issued with instead of restating a constant.
+    """
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return "1 day" if days == 1 else f"{days} days"
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return "1 hour" if hours == 1 else f"{hours} hours"
+    return "1 minute" if minutes == 1 else f"{minutes} minutes"
+
+
+def send_magic_link(
+    email: str, token: str, event, base_url: str, ttl_minutes: int | None = None
+) -> dict:
     """Build and return a magic-link confirmation email payload.
 
     The raw token appears ONLY in the URL embedded in the email body.
     Logs redact the token to the first 6 characters.
+
+    ``ttl_minutes`` is the lifetime the token was issued with, so the copy can
+    state it. Defaults to the signup-confirm TTL, which is what every caller
+    mints here.
     """
+    if ttl_minutes is None:
+        from .magic_link_service import SIGNUP_CONFIRM_TTL_MINUTES
+
+        ttl_minutes = SIGNUP_CONFIRM_TTL_MINUTES
     url = f"{base_url.rstrip('/')}/auth/magic/{token}"
     event_name = getattr(event, "title", None) or getattr(event, "name", "your event")
 
-    # TODO(copy): subject line
-    subject = f"Confirm your signup for {event_name}"
+    subject = f"Confirm your SciTrek signup for {event_name}"
 
-    # TODO(brand): replace header color / logo placeholder
-    # TODO(copy): adjust wording as needed
+    # K20: the copy said "expires in 15 minutes" unconditionally. That was the
+    # settings default, but a signup-confirm token is good for 14 days — so the
+    # sentence was wrong on the path it is actually sent from, and it panicked
+    # volunteers into thinking a link they had was already dead. It now states
+    # the lifetime the token was really issued with.
+    expiry_text = _humanise_minutes(ttl_minutes)
     html_content = (
         '<!DOCTYPE html>'
         '<html lang="en">'
@@ -524,9 +551,9 @@ def send_magic_link(email: str, token: str, event, base_url: str) -> dict:
         "<tr><td>"
         '<table width="560" cellpadding="0" cellspacing="0" border="0" role="presentation" style="margin:0 auto;">'
         '<tr><td style="padding:24px;max-width:560px;margin:0 auto;">'
-        # TODO(brand): logo goes here
+        '<div style="font-size:18px;font-weight:bold;color:#0b5ed7;margin:0 0 16px;">UCSB SciTrek</div>'
         '<h1 style="font-size:20px;color:#1a1a1a;margin:0 0 16px;">Confirm your signup</h1>'
-        f'<p style="margin:0 0 16px;">Click the button below to confirm your spot for <strong>{html.escape(event_name)}</strong>. This link expires in 15 minutes.</p>'
+        f'<p style="margin:0 0 16px;">Click the button below to confirm your spot for <strong>{html.escape(event_name)}</strong>. This link expires in {expiry_text}.</p>'
         f'<a href="{html.escape(url)}" style="display:inline-block;background:#0b5ed7;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:4px;font-size:16px;font-weight:bold;">Confirm signup</a>'
         f'<p style="margin:16px 0 0;font-size:14px;color:#555555;">Or copy and paste this link: <br><a href="{html.escape(url)}" style="color:#0b5ed7;">{html.escape(url)}</a></p>'
         '<p style="margin:24px 0 0;font-size:12px;color:#555555;">If you didn\'t register, you can ignore this email.</p>'
@@ -538,12 +565,12 @@ def send_magic_link(email: str, token: str, event, base_url: str) -> dict:
         "</html>"
     )
 
-    # TODO(copy): plain-text wording
     text = (
-        f"Confirm your signup for {event_name}\n\n"
-        f"Click this link to confirm (expires in 15 minutes):\n"
+        f"Confirm your SciTrek signup for {event_name}\n\n"
+        f"Click this link to confirm (expires in {expiry_text}):\n"
         f"{url}\n\n"
-        "If you didn't register, you can ignore this email."
+        "If you didn't register, you can ignore this email.\n\n"
+        "— UCSB SciTrek"
     )
 
     result = {"to": email, "subject": subject, "html": html_content, "text": text}

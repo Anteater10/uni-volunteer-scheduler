@@ -271,3 +271,78 @@ describe("EventsBrowsePage", () => {
     expect(api.public.listEvents).not.toHaveBeenCalled();
   });
 });
+
+// K22 — the destination "show me orientation events" now sends people to.
+// Before this filter existed the button had nowhere honest to go: the modal
+// that offers it only renders on events with no orientation slots, so
+// highlighting orientation slots in place highlighted nothing.
+describe("EventsBrowsePage — ?only=orientation (K22)", () => {
+  const ORIENTATION_EVENT = {
+    ...MOCK_EVENTS[0],
+    id: "evt-orient",
+    title: "Orientation at Adams",
+    school: "Adams Elementary",
+    slots: [{ id: "o1", slot_type: "orientation", capacity: 20, filled: 2 }],
+  };
+  const PERIOD_ONLY_EVENT = {
+    ...MOCK_EVENTS[0],
+    id: "evt-period",
+    title: "Rockets at Brandon",
+    school: "Brandon Middle",
+    slots: [{ id: "p1", slot_type: "period", capacity: 20, filled: 3 }],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.public.getCurrentWeek.mockResolvedValue({ ...CURRENT_WEEK });
+    api.public.getQuarters.mockResolvedValue(QUARTERS);
+    api.public.listEvents.mockResolvedValue([
+      ORIENTATION_EVENT,
+      PERIOD_ONLY_EVENT,
+    ]);
+  });
+
+  it("hides events with no orientation session", async () => {
+    renderPage({ initialEntries: ["/volunteer?only=orientation"] });
+
+    expect(await screen.findByText("Orientation at Adams")).toBeInTheDocument();
+    expect(screen.queryByText("Rockets at Brandon")).toBeNull();
+  });
+
+  it("says the list is filtered rather than looking like the whole week", async () => {
+    renderPage({ initialEntries: ["/volunteer?only=orientation"] });
+
+    await screen.findByText("Orientation at Adams");
+    expect(
+      screen.getByText(/only events with an orientation session/i),
+    ).toBeInTheDocument();
+  });
+
+  it("can be cleared back to the full week", async () => {
+    renderPage({ initialEntries: ["/volunteer?only=orientation"] });
+    await screen.findByText("Orientation at Adams");
+
+    fireEvent.click(screen.getByRole("button", { name: /show everything/i }));
+
+    expect(await screen.findByText("Rockets at Brandon")).toBeInTheDocument();
+    expect(screen.queryByText(/only events with an orientation session/i)).toBeNull();
+  });
+
+  it("doesn't claim nothing is scheduled when the filter is what emptied it", async () => {
+    api.public.listEvents.mockResolvedValue([PERIOD_ONLY_EVENT]);
+    renderPage({ initialEntries: ["/volunteer?only=orientation"] });
+
+    expect(
+      await screen.findByText(/no orientation sessions this week/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/nothing scheduled this week/i)).toBeNull();
+  });
+
+  it("shows everything when the param is absent", async () => {
+    renderPage({ initialEntries: ["/volunteer"] });
+
+    expect(await screen.findByText("Rockets at Brandon")).toBeInTheDocument();
+    expect(screen.getByText("Orientation at Adams")).toBeInTheDocument();
+    expect(screen.queryByText(/only events with an orientation session/i)).toBeNull();
+  });
+});
