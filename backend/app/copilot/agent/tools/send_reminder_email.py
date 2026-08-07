@@ -11,6 +11,14 @@ Plan-vs-reality:
   a module-level ``_dispatch`` hook that tests monkeypatch. Production
   wiring of ``_dispatch`` is a follow-up — leaving a clean seam keeps the
   confirmation gate honest without inventing email plumbing.
+
+  K26: that seam used to ``return True``. So the follow-up never happened and
+  nothing ever noticed, because the tool reported a full ``sent_count`` for
+  a send that did not occur. It now refuses — see ``_outbound`` for why that
+  is a raise and not a False.
+- K26: the id list is bounded. It arrives from a model reading a sentence,
+  so "remind everyone" can become an arbitrarily long array; the cap is
+  checked before a single message is attempted.
 - Organizer scope: only participants who have a non-cancelled booking on the
   organizer's events are reachable. Out-of-scope IDs are counted as failed
   (without leaking which ones).
@@ -27,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
-from app.copilot.agent.tools import _bookings
+from app.copilot.agent.tools import _bookings, _outbound
 from app.copilot.agent.tools.base import Tool
 from app.models import Volunteer
 
@@ -37,10 +45,13 @@ _PII_SCHEMA = ["sent_count", "failed_count"]
 def _dispatch(email: str, template: str) -> bool:
     """Side-effect seam. Tests monkeypatch this; prod wiring is TBD.
 
-    Returns True on success, False on failure.
+    Returns True on success, False on failure — and raises
+    ``OutboundNotWired`` when there is no transport, which is the state
+    today. A False here means "that one address failed"; the raise means
+    "no send happened at all", and reporting those as the same number is
+    the K26 bug.
     """
-    # Phase 33-08: no real email plumbing yet — see module docstring.
-    return True
+    return _outbound.dispatch(email, kind="reminder", context={"template": template})
 
 
 def _reachable_volunteer_ids(db: Session, scope: Scope) -> set:
@@ -53,6 +64,10 @@ def _reachable_volunteer_ids(db: Session, scope: Scope) -> set:
 def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     participant_ids = args["participant_ids"]
     template = args["template"]
+
+    # Before anything is attempted, not after some of it has been: a partial
+    # send is the outcome the cap exists to prevent.
+    _outbound.enforce_recipient_limit(len(participant_ids))
 
     reachable = _reachable_volunteer_ids(db, scope)
     sent = 0
@@ -81,8 +96,10 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
 SEND_REMINDER_EMAIL_TOOL = Tool(
     name="send_reminder_email",
     description=(
-        "Send a reminder email to the given participants using the named template. "
-        "Requires user confirmation before sending."
+        "Send a reminder email to the given participants using the named "
+        "template. Requires user confirmation before sending, and will refuse "
+        "if the list is longer than the recipient cap — narrow it rather than "
+        "retrying."
     ),
     json_schema={
         "type": "object",

@@ -232,14 +232,77 @@ def reachable_volunteer_ids(db: Session, *, owner_id=None) -> set:
     return {row[0] for row in orient_q.all()} | {row[0] for row in shift_q.all()}
 
 
-def volunteers_with_active_bookings(
-    db: Session, *, owner_id=None
+# K26: ``volunteers_with_active_bookings`` used to live here — "every
+# volunteer with an active booking in scope", which for an admin was the
+# entire volunteer table. Its only caller was ``nudge_understaffed_module``,
+# and it is deleted rather than kept, because a helper that returns every
+# address in the system is a loaded gun sitting next to two mail tools. The
+# bounded replacement is :func:`volunteers_active_between`.
+
+
+def volunteer_ids_on_events(db: Session, event_ids: Sequence) -> set:
+    """Volunteers already actively booked on these events."""
+    ids = list(event_ids)
+    if not ids:
+        return set()
+    return {
+        row[0]
+        for row in orientation_signup_query(db, ids)
+        .with_entities(Signup.volunteer_id)
+        .all()
+    } | {
+        row[0]
+        for row in shift_signup_query(db, ids)
+        .with_entities(ShiftSignup.volunteer_id)
+        .all()
+    }
+
+
+def volunteers_active_between(
+    db: Session, *, start, end, owner_id=None, exclude_ids=None
 ) -> list[Volunteer]:
-    """The recipient pool for a nudge, deduped."""
-    ids = reachable_volunteer_ids(db, owner_id=owner_id)
+    """Volunteers with an active booking on an event starting in [start, end).
+
+    The bounded recipient pool for a recruiting nudge (K26). Time-windowed
+    rather than quarter-keyed because ``Event.quarter_id`` is nullable, and a
+    null there must not quietly widen the audience to every volunteer who has
+    ever signed up for anything.
+    """
+    orient_q = (
+        db.query(Signup.volunteer_id)
+        .join(Slot, Slot.id == Signup.slot_id)
+        .join(Event, Event.id == Slot.event_id)
+        .filter(
+            Slot.shift_id.is_(None),
+            _active(Signup.status),
+            Event.start_date >= start,
+            Event.start_date < end,
+        )
+    )
+    shift_q = (
+        db.query(ShiftSignup.volunteer_id)
+        .join(Shift, Shift.id == ShiftSignup.shift_id)
+        .join(Event, Event.id == Shift.event_id)
+        .filter(
+            _active(ShiftSignup.status),
+            Event.start_date >= start,
+            Event.start_date < end,
+        )
+    )
+    if owner_id is not None:
+        orient_q = orient_q.filter(Event.owner_id == owner_id)
+        shift_q = shift_q.filter(Event.owner_id == owner_id)
+
+    ids = {row[0] for row in orient_q.all()} | {row[0] for row in shift_q.all()}
+    ids -= set(exclude_ids or ())
     if not ids:
         return []
-    return db.query(Volunteer).filter(Volunteer.id.in_(list(ids))).all()
+    return (
+        db.query(Volunteer)
+        .filter(Volunteer.id.in_(list(ids)))
+        .order_by(Volunteer.id.asc())
+        .all()
+    )
 
 
 __all__ = [
@@ -252,5 +315,6 @@ __all__ = [
     "reachable_volunteer_ids",
     "shift_signup_query",
     "unit_count_for_events",
-    "volunteers_with_active_bookings",
+    "volunteer_ids_on_events",
+    "volunteers_active_between",
 ]
