@@ -1336,7 +1336,13 @@ describe("EventsSection — deleting an event (K14)", () => {
   async function openDeleteDialog() {
     renderSection();
     await screen.findByText("Germs at Goleta Valley");
-    fireEvent.click(screen.getByRole("button", { name: /^Delete$/i }));
+    // findBy, not getBy. The row title arrives on the first events fetch, but
+    // QuarterSelectionProvider resolves its quarter list a tick later and the
+    // list re-queries, so the table is briefly empty again *after* the title
+    // has appeared. A synchronous getBy here landed in that window roughly
+    // one run in six and failed looking for a Delete button that was about
+    // to come back.
+    fireEvent.click(await screen.findByRole("button", { name: /^Delete$/i }));
     return screen.findByRole("dialog", { name: /delete this event/i });
   }
 
