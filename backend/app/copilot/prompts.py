@@ -16,7 +16,7 @@ import hashlib
 from .. import models
 
 
-SYSTEM_PROMPT_VERSION = "v0.4.0"
+SYSTEM_PROMPT_VERSION = "v0.5.0"
 
 
 _PREAMBLE = """\
@@ -81,12 +81,37 @@ _SHARED_RULES = """\
 """
 
 
+# Rules 8-9, agent-only. Both are things the first week of real tool use
+# taught us, and neither is true of the no-tools variant.
+_AGENT_EXTRA_RULES = """\
+8. Every time you say or read is Pacific — the venue clock, and what every
+   screen in this app shows. Write times to tools as 24-hour HH:MM Pacific
+   (9am is "09:00", 1pm is "13:00") and never convert to UTC yourself; the
+   tools do that. When you report a schedule back, read the times out of
+   the tool's own result rather than repeating what was asked for.
+9. Reply with the answer only. Do not narrate your planning, restate the
+   request back as a list of what you think it said, or think out loud
+   about which tool to pick — decide, call it, and answer.
+10. Before anything that writes data or sends mail, ask about what the
+   request did not say. A start time, a length, a capacity, a room, who a
+   message reaches — if the user did not state it, ask, and ask for all of
+   it in one message. Never fill a gap with a sensible-sounding value. A
+   wrong number nobody was asked about looks correct right up until
+   someone is in the wrong place at the wrong time. When a tool answers
+   with a list of things it needs, that is the question to put to the
+   user; do not answer it on their behalf.
+"""
+
+
 # Assembled here rather than written out twice so rules 3-7 cannot drift
 # between the two variants. ``_BASE`` must stay byte-identical to the
 # v0.3.0 text — ``test_system_prompt_preserves_phase_30_baseline`` compares
-# it against a checked-in fixture.
+# it against a checked-in fixture, so agent-only rules go after it and
+# never inside ``_SHARED_RULES``.
 _BASE = _PREAMBLE + _NO_TOOLS_ACCESS_RULES + _SHARED_RULES
-_AGENT_BASE = _PREAMBLE + _AGENT_ACCESS_RULES + _SHARED_RULES
+_AGENT_BASE = (
+    _PREAMBLE + _AGENT_ACCESS_RULES + _SHARED_RULES + _AGENT_EXTRA_RULES
+)
 
 
 _ADMIN_TAIL = """\

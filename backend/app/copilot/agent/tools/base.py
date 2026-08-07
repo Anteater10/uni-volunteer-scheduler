@@ -15,6 +15,16 @@ class Tool:
     requires_confirmation: bool
     pii_schema: list[str]
     handler: Callable[[Any, Scope, dict[str, Any]], Any]
+    # Optional. Runs BEFORE the confirmation gate; return a payload to stop
+    # the call and hand that payload back to the model, or None to proceed.
+    #
+    # Why it cannot live in the handler: a confirming tool's handler does not
+    # run until the admin has already approved the card. A question raised
+    # there arrives after the decision it was supposed to inform. This is the
+    # hook a tool uses to say "I need one more detail" instead of inventing
+    # it — see create_event_with_schedule, where the missing detail was the
+    # time of day and the invented one put an event at 9am nobody asked for.
+    precheck: Callable[[Any, Scope, dict[str, Any]], Any] | None = None
 
 
 def _begin(
@@ -83,6 +93,25 @@ def invoke(
     reuse the two halves around its own SSE emissions.
     """
     call_id = _begin(db, tool=tool, scope=scope, args=args, session_id=session_id)
+    if tool.precheck is not None:
+        objection = tool.precheck(db, scope, args)
+        if objection is not None:
+            # Audited like any other outcome — a question the tool asked is
+            # part of the record of what happened, and the args that
+            # prompted it are already on the row.
+            scrubbed, events = scrub(objection, declared=True)
+            update_status(
+                db,
+                call_id,
+                status="executed",
+                result=scrubbed,
+                redactions=len(events),
+            )
+            return {
+                "call_id": call_id,
+                "result": scrubbed,
+                "redactions": len(events),
+            }
     if tool.requires_confirmation:
         from app.copilot.agent.confirmation import store_pending
 
