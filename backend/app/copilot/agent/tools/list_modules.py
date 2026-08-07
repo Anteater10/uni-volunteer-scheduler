@@ -57,6 +57,10 @@ LIST_MODULES_TOOL = Tool(
         "properties": {
             "week": {
                 "type": "string",
+                # K28: spelled out so a malformed week is a schema violation the
+                # model can see, not a ValueError out of parse_iso_week that
+                # used to end the turn.
+                "pattern": "^[0-9]{4}-W[0-9]{1,2}$",
                 "description": "ISO week, e.g. 2026-W22",
             },
             "school": {"type": "string", "nullable": True},

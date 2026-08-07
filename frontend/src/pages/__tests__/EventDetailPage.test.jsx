@@ -9,6 +9,7 @@
 // - Orientation warning modal still triggers when period selected without orientation (PART-04 + PART-06)
 
 import React from "react";
+import { vi } from "vitest";
 import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -49,6 +50,15 @@ import api from "../../lib/api";
 import { toast } from "../../state/toast";
 import { downloadIcs } from "../../lib/calendar";
 import EventDetailPage, { isValidPhone } from "../public/EventDetailPage";
+
+// These are user-journey tests, not unit tests: the longest of them render the
+// page, wait for it to load, open a slot, fill four fields, submit, wait for a
+// modal, and then wait for a refetch — eight sequential async waits. That fits
+// comfortably in the 5s default when the file runs alone (~350ms per test), and
+// does not when the whole suite runs in parallel on a busy machine, which is
+// exactly when the two slowest of them were timing out. The work is real, so
+// raise the ceiling rather than trim the journey.
+vi.setConfig({ testTimeout: 20000 });
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -145,11 +155,19 @@ function renderDetailPage(eventId = "evt-1") {
   );
 }
 
+// `userEvent.type` dispatches one keystroke at a time, each inside its own
+// act() cycle. Forty-odd characters across these four fields was several
+// seconds of the 5s test budget on a loaded machine — which is why the two
+// longest tests in this file timed out under a full-suite run while passing
+// in isolation. `delay: null` drops the inter-key wait and keeps the
+// per-keystroke events, so anything depending on incremental onChange (the
+// phone formatter does) still sees exactly what it saw before.
 async function fillIdentityForm() {
-  await userEvent.type(screen.getByLabelText(/^first name$/i), "Alice");
-  await userEvent.type(screen.getByLabelText(/^last name$/i), "Smith");
-  await userEvent.type(screen.getByLabelText(/^email$/i), "alice@example.com");
-  await userEvent.type(screen.getByLabelText(/^phone$/i), "(213) 867-5309");
+  const type = (el, text) => userEvent.type(el, text, { delay: null });
+  await type(screen.getByLabelText(/^first name$/i), "Alice");
+  await type(screen.getByLabelText(/^last name$/i), "Smith");
+  await type(screen.getByLabelText(/^email$/i), "alice@example.com");
+  await type(screen.getByLabelText(/^phone$/i), "(213) 867-5309");
 }
 
 async function clickFirstSignUpButton() {

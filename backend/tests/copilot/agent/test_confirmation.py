@@ -10,7 +10,8 @@ from app.copilot.agent.audit_log import write_call
 from app.copilot.agent.confirmation import (
     ConfirmationExpired,
     ConfirmationNotFound,
-    _PENDING,
+    is_pending,
+    peek,
     execute_after_confirmation,
     resolve,
     store_pending,
@@ -38,7 +39,7 @@ def test_store_then_resolve_approved():
     decision = resolve("c1", approved=True)
     assert decision.approved is True
     assert decision.call_id == "c1"
-    assert "c1" not in _PENDING
+    assert not is_pending("c1")
 
 
 def test_resolve_unknown_raises():
@@ -55,7 +56,7 @@ def test_resolve_after_ttl_raises(monkeypatch):
     )
     with pytest.raises(ConfirmationExpired):
         resolve("c2", approved=True)
-    assert "c2" not in _PENDING
+    assert not is_pending("c2")
 
 
 # ---- Task 31 ----------------------------------------------------------------
@@ -86,8 +87,8 @@ def test_invoke_stores_pending_for_write_tools(db_session, seed_events):
     )
 
     assert out["status"] == "pending_confirmation"
-    assert out["call_id"] in _PENDING
-    p = _PENDING[out["call_id"]]
+    assert is_pending(out["call_id"])
+    p = peek(out["call_id"])
     assert p.tool_name == "fake_write"
     assert p.args == {"x": 1}
 
@@ -135,7 +136,7 @@ def test_execute_after_confirmation_runs_handler(db_session, seed_events):
 
     assert result["result"] == {"sent": 5}
     assert result["redactions"] == 0
-    assert call_id not in _PENDING
+    assert not is_pending(call_id)
 
     row = db_session.execute(
         text(

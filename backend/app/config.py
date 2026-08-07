@@ -104,6 +104,36 @@ class Settings(BaseSettings):
     # Release guardrails (pre-Phase-37 minimum) — see app.copilot.guardrails.
     copilot_rate_limit_messages_per_minute: int = 10
     copilot_daily_token_budget: int = 500_000  # org-wide tokens/day; 0 disables
+    # K26: the copilot's two mail tools have never had a transport behind
+    # them. Their ``_dispatch`` seams returned True and sent nothing, so a
+    # confirmed send reported "sent_count: 47" and the admin believed it.
+    # The seams now refuse unless this is on, and turning it on is a
+    # deliberate act that must be paired with real wiring — there is
+    # intentionally no transport bound to it yet.
+    copilot_outbound_email_enabled: bool = False
+    # K26: a hard ceiling on how many people one copilot-initiated send can
+    # reach. Not a tuning knob — a blast radius. The agent chooses these
+    # recipients from a model's reading of a sentence; the cap is what keeps
+    # a misread from becoming a mass-mail incident.
+    copilot_max_outbound_recipients: int = 200
+    # K31: end-of-session profile extraction is OFF.
+    #
+    # It is an unattended LLM call — one per closed session, plus up to three
+    # Celery retries — drawing on the same OpenRouter account, and therefore
+    # the same free-tier request budget, as the chat a user is waiting on.
+    # An unfunded account has ~50 free-model requests per day in total. A
+    # background job that no user asked for can spend those and leave a real
+    # question answered with a rate-limit error the user cannot explain,
+    # attributable to nothing they did.
+    #
+    # Cross-session memory is a nicety; a copilot that refuses to answer is
+    # not. Off until the request budget is large enough that the extractor
+    # can be given a metered share of it — see the K31 note in
+    # app/tasks/extract_profile.py for what "properly on" would require.
+    #
+    # Turning this on is enough to make it run again: reads of an existing
+    # profile were never gated, so nothing else has to change.
+    copilot_profile_extraction_enabled: bool = False
 
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is

@@ -55,16 +55,28 @@ nothing until the canonical id is available.
 
 ## SessionRatingModal
 
-**Contract.** Coercive 1–5 star modal mounted at the `CopilotDrawer` level.
-Opens when the drawer is about to close AND there has been at least one
-assistant turn in the session. There is no "Skip" button — only "Submit" or
-"Cancel close" (which keeps the drawer open). Response rate is a paper metric
-and we deliberately accept the friction.
+**Contract.** Interrupting 1–5 star modal mounted at the `CopilotDrawer`
+level. Opens when the drawer is about to close AND there has been at least
+one assistant turn in the session.
+
+> **Revised in K32.** This modal originally shipped with no "Skip" button:
+> the only two exits were "Submit" and "Cancel close", and both of them left
+> the drawer open. There was no way to close the copilot without rating it,
+> Escape did nothing, and a failed rating POST never called `onSubmitted`, so
+> a server error locked the one door that led out. It now has an
+> always-available **"Close without rating"** exit. The interruption is kept
+> — Submit is still the primary button and the modal still intercepts the
+> close — but declining is now possible. Expect session-rating response rate
+> to fall from the coercive design's level; see the learning note for why the
+> remaining number is worth more.
 
 **Props.**
 - `sessionId` (string) — the copilot session UUID.
 - `open` (bool) — controlled visibility flag owned by `CopilotDrawer`.
-- `onCancel` (function) — invoked when the user clicks "Cancel close".
+- `onCancel` (function) — invoked when the user clicks "Cancel close", and on
+  Escape. Keeps the drawer open.
+- `onDismiss` (function) — invoked by "Close without rating". Closes the
+  drawer without recording a rating. (K32)
 - `onSubmitted` (function) — invoked after a successful POST; the drawer uses
   this to chain the `POST /sessions/{id}/close` call.
 - `fetcher` (function, optional) — as above.
@@ -76,7 +88,17 @@ and we deliberately accept the friction.
   optional. The Submit button is disabled until both constraints are met.
 - The POST body is `{ value, comment? }`. On success the modal calls
   `onSubmitted`; on failure it shows an `role="alert"` error and stays open
-  so the user can retry.
+  so the user can retry — or leave via "Close without rating", which is
+  never disabled, including while a submit is in flight.
+- Escape backs out one layer at a time: once to leave the rating modal for
+  the drawer, again to close the drawer.
+
+**Accessibility (K32).** `role="dialog"` + `aria-modal="true"`, Tab is
+trapped inside the dialog, and focus is restored to whatever held it when
+the modal opened. The shared implementation is
+`frontend/src/copilot/useFocusTrap.js`, which `CopilotDrawer` uses too;
+only one trap is active at a time (the drawer stands its own down while
+this modal or a citation panel is up).
 
 **Accessibility.**
 - The outer wrapper sets `role="dialog"` and `aria-modal="true"`.

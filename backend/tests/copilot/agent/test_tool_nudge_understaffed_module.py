@@ -7,7 +7,8 @@ from sqlalchemy import text
 
 from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.confirmation import (
-    _PENDING,
+    is_pending,
+    peek,
     execute_after_confirmation,
 )
 from app.copilot.agent.tools import registry
@@ -34,6 +35,15 @@ def _make_session(db_session, user_id):
 
 
 def _seed(db_session, *, owner_id):
+    """The understaffed module, plus one volunteer who could be asked.
+
+    K26: the volunteer's prior work is on a *sibling* event, not on the
+    understaffed one. It used to be booked onto the target itself, which the
+    old "anyone with any booking in scope" pool happily mailed — asking
+    somebody already signed up to please sign up. The recipient pool now
+    excludes people already on the module, so seeding them there would make
+    this fixture describe a nudge nobody should receive.
+    """
     now = datetime.now(timezone.utc) + timedelta(days=1)
     event = Event(
         id=uuid.uuid4(),
@@ -45,21 +55,30 @@ def _seed(db_session, *, owner_id):
         week_number=22,
         school="S",
     )
+    prior = Event(
+        id=uuid.uuid4(),
+        owner_id=owner_id,
+        title="Where they volunteered before",
+        start_date=now + timedelta(days=7),
+        end_date=now + timedelta(days=7, hours=2),
+        year=2026,
+        week_number=23,
+        school="S",
+    )
     vol = Volunteer(
         id=uuid.uuid4(),
         email=f"v-{uuid.uuid4().hex[:8]}@example.com",
         first_name="A",
         last_name="B",
     )
-    db_session.add_all([event, vol])
+    db_session.add_all([event, prior, vol])
     db_session.flush()
-    # The recipient pool is "anyone with prior non-cancelled work", and prior
-    # work is a shift commitment now. Seeding a Signup here would have the test
-    # confirm a nudge that in production reached almost nobody.
-    shift = make_shift(db_session, event.id, capacity=10)
+    # Prior work is a shift commitment now. Seeding a Signup here would have
+    # the test confirm a nudge that in production reached almost nobody.
+    shift = make_shift(db_session, prior.id, capacity=10)
     slot = Slot(
         id=uuid.uuid4(),
-        event_id=event.id,
+        event_id=prior.id,
         shift_id=shift.id,
         sort_order=0,
         name="Period 1",
@@ -103,7 +122,7 @@ def test_invoke_returns_pending(db_session, monkeypatch):
         session_id=session_id,
     )
     assert out["status"] == "pending_confirmation"
-    assert out["call_id"] in _PENDING
+    assert is_pending(out["call_id"])
     assert calls == []
 
 

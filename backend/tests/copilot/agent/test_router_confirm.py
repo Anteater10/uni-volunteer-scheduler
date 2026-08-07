@@ -2,6 +2,15 @@
 
 Covers approve, reject, not-found, expired. Tools are mocked via the
 in-process registry; no live LLM calls and no real outbound side effects.
+
+These are endpoint unit tests: they park the pending entry by hand because
+they never run a turn. That is also how they missed K25 for a whole phase —
+the loop never called ``store_pending``, so the state these tests set up was
+one the product could not actually reach, and approve 404'd in real use while
+every test here passed. The hand-parking stays (there is no turn to drive
+here), but the real path is now covered end to end in
+``test_confirm_end_to_end.py``, which drives the loop and lets it park the
+call itself.
 """
 from __future__ import annotations
 
@@ -15,7 +24,7 @@ from app import models
 from app.config import settings
 from app.copilot.agent import confirmation as cf_mod
 from app.copilot.agent.audit_log import write_call
-from app.copilot.agent.confirmation import _PENDING, store_pending
+from app.copilot.agent.confirmation import is_pending, peek, store_pending
 from app.copilot.agent.tools import registry
 from app.copilot.agent.tools.base import Tool
 from tests.fixtures.helpers import auth_headers, make_user
@@ -99,7 +108,7 @@ def test_confirm_approved_runs_tool(client, db_session):
     body = rc.json()
     assert body["call_id"] == cid
     assert body["result"] == {"ok": True}
-    assert cid not in _PENDING
+    assert not is_pending(cid)
 
     # Audit row flipped to executed.
     db_session.expire_all()
@@ -142,7 +151,7 @@ def test_confirm_rejected_marks_audit_row(client, db_session):
     )
     assert rc.status_code == 200, rc.text
     assert rc.json()["status"] == "rejected"
-    assert cid not in _PENDING
+    assert not is_pending(cid)
 
     db_session.expire_all()
     row = db_session.execute(

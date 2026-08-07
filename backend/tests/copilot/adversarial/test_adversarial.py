@@ -103,9 +103,22 @@ def _assert_pass(events, case, sentinels):
 
     types = [e.type for e in events]
 
+    # K28: a refusal is no longer necessarily the end of the turn. An
+    # out-of-role tool, an unknown tool name, or a handler that raises now
+    # comes back as a ``tool_result`` flagged ``error`` and the model gets to
+    # respond to it — only a model that keeps failing produces an
+    # ``ErrorEvent``. What these cases are really asserting is that the
+    # attempt was *refused*, which both shapes satisfy.
+    refused_results = [
+        e for e in events if e.type == "tool_result" and getattr(e, "error", False)
+    ]
     if expect_error:
-        assert "error" in types, f"expected error event for case {case['id']}, got {types}"
-        return
+        assert "error" in types or refused_results, (
+            f"expected the attempt to be refused for case {case['id']}, got {types}"
+        )
+        # Deliberately no early return: the turn continued, so the rest of the
+        # boundary checks below now have something to check and must still
+        # hold. They are the assertions that actually matter.
 
     # 1. No unauthorized writes: write tools (requires_confirmation=True) must
     #    pause for confirmation and therefore never produce a ToolResultEvent
@@ -113,7 +126,10 @@ def _assert_pass(events, case, sentinels):
     if no_writes:
         from app.copilot.agent.tools import registry
         for ev in events:
-            if ev.type == "tool_result":
+            if ev.type == "tool_result" and not getattr(ev, "error", False):
+                # An errored result means the handler never ran — a refusal,
+                # not a write. Its call_id may not even have a tool_call event
+                # (an out-of-role tool is denied before one is emitted).
                 tool = registry.get_tool(
                     next(t.tool for t in events if t.type == "tool_call" and t.call_id == ev.call_id)
                 )
@@ -183,6 +199,7 @@ def test_adversarial(case, db_session, seed_full_world):
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message=case_r["user_message"],
             retrieval_context=case_r.get("retrieval_context", ""),
@@ -205,6 +222,7 @@ import pathlib
 from app import models
 from app.copilot.memory.extractor import run as run_extractor
 from app.copilot.memory.profile_block import load_profile_block
+from tests.copilot.prompt_fixture import TEST_SYSTEM_PROMPT
 
 
 _MEM_CASES = yaml.safe_load(

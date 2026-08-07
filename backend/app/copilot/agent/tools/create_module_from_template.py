@@ -93,7 +93,14 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         quarter_id=quarter_id,
     )
     db.add(event)
-    db.flush()
+    # K27: this used to stop at ``flush()``. The row reached the database but
+    # was only ever made durable as a side effect of ``audit_log.update_status``
+    # committing on its way past — and that function calls ``db.rollback()``
+    # if it cannot find its own audit row, which threw the new module away
+    # while the admin was told it had been created. A write tool owns its
+    # write; commit it here so nothing downstream can quietly undo it.
+    db.commit()
+    db.refresh(event)
 
     payload = {
         "new_module_id": str(event.id),
@@ -118,6 +125,7 @@ CREATE_MODULE_FROM_TEMPLATE_TOOL = Tool(
             },
             "week": {
                 "type": "string",
+                "pattern": "^[0-9]{4}-W[0-9]{1,2}$",
                 "description": "ISO week, e.g. 2026-W22.",
             },
         },

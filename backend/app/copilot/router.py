@@ -83,6 +83,7 @@ from .agent.boundary.role_scope import scope_for
 from .agent.confirmation import (
     ConfirmationExpired,
     ConfirmationNotFound,
+    discard as discard_pending,
     execute_after_confirmation,
 )
 from .agent.loop import run_turn
@@ -172,8 +173,14 @@ def create_session(
     # session is reproducible; mid-session profile rewrites do not affect
     # the running session.
     profile_block = load_profile_block(db, user_id=current_user.id)
+    # K29: the agent variant is resolved once, here, and baked into both the
+    # persisted system message and the hash. Resolving it per-turn instead
+    # would let a mid-session flag flip leave the session row describing a
+    # prompt that never ran.
     prompt, prompt_hash = render_with_profile(
-        current_user.role, profile_block=profile_block
+        current_user.role,
+        profile_block=profile_block,
+        agent=settings.copilot_agent_loop_enabled,
     )
     sess = models.CopilotSession(
         user_id=current_user.id,
@@ -242,6 +249,10 @@ def close_session(
     Idempotent — subsequent calls see ``closed_at IS NOT NULL`` and
     short-circuit without re-enqueueing. 404s for sessions owned by
     another user so existence is not observable across users.
+
+    K31: the extractor is only enqueued when
+    ``copilot_profile_extraction_enabled`` is on. Closing the session is not
+    conditional — that is the part the caller asked for, and it is free.
     """
     _require_flag_on()
     _require_admin_or_organizer(current_user)
@@ -250,7 +261,8 @@ def close_session(
         return Response(status_code=204)
     sess.closed_at = datetime.now(timezone.utc)
     db.commit()
-    extract_profile_facts.delay(str(sess.id))
+    if settings.copilot_profile_extraction_enabled:
+        extract_profile_facts.delay(str(sess.id))
     return Response(status_code=204)
 
 
@@ -557,12 +569,24 @@ def post_message(
             else str(current_user.role)
         )
         agent_llm = _get_agent_llm()
+        # K29: hand the loop the prompt this session was actually created
+        # with, and the prior turns, rather than letting it improvise both.
+        # chat_messages[0] is the persisted system row; the tail excludes the
+        # user message we just inserted, which run_turn appends itself.
+        agent_system_prompt = (
+            chat_messages[0]["content"].removesuffix(appended_block)
+            if chat_messages and chat_messages[0]["role"] == "system"
+            else system_prompt_for(current_user.role, agent=True)
+        )
+        agent_history = chat_messages[1:-1]
         return StreamingResponse(
             _agent_sse_stream(
                 db=db,
                 sess=sess,
                 user_message=payload.content,
                 retrieval_context=retrieval_text,
+                system_prompt=agent_system_prompt,
+                history=agent_history,
                 role_value=role_value,
                 caller_id=current_user.id,
                 agent_llm=agent_llm,
@@ -580,18 +604,26 @@ def post_message(
 
 
 def _get_agent_llm():
-    """Indirection hook for the ReAct-loop LLM adapter.
+    """Build the ReAct-loop LLM adapter for one request.
 
-    Tests monkeypatch this to inject a scripted stub. The default
-    implementation raises NotImplementedError — production wiring for a
-    structured tool-calling adapter ships in a follow-up sub-phase. The
-    flag ``copilot_agent_loop_enabled`` is off by default so this is not
-    hit in deployed environments.
+    Tests monkeypatch this to inject a scripted stub.
+
+    K23: this used to raise ``NotImplementedError`` unconditionally, and it
+    is called synchronously here — before the ``StreamingResponse`` is even
+    constructed — so turning the flag on produced a bare HTTP 500 on every
+    message and ``Stream failed: HTTP 500`` in the drawer, with nothing to
+    tell the next developer what was missing. A fresh adapter is returned
+    per request because it accumulates that request's token usage (K30).
     """
-    raise NotImplementedError(
-        "agent loop enabled but no structured-LLM adapter is configured; "
-        "monkeypatch app.copilot.router._get_agent_llm in tests"
-    )
+    from .agent.adapter import ToolCallingAdapter, AdapterUnavailable
+
+    try:
+        return ToolCallingAdapter()
+    except AdapterUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"The copilot's agent mode isn't available: {exc}",
+        ) from exc
 
 
 def _agent_sse_stream(
@@ -600,6 +632,8 @@ def _agent_sse_stream(
     sess: models.CopilotSession,
     user_message: str,
     retrieval_context: str,
+    system_prompt: str,
+    history: list[dict[str, str]],
     role_value: str,
     caller_id,
     agent_llm,
@@ -614,6 +648,7 @@ def _agent_sse_stream(
     yield _sse_format("meta", meta_event.model_dump_json())
     scope = scope_for(role=role_value, caller_id=caller_id)
     final_text_parts: list[str] = []
+    paused_for_confirmation = False
     try:
         for event in run_turn(
             db=db,
@@ -622,11 +657,15 @@ def _agent_sse_stream(
             session_id=sess.id,
             user_message=user_message,
             retrieval_context=retrieval_context,
+            system_prompt=system_prompt,
+            history=history,
         ):
             payload_json = event.model_dump_json()
             yield _sse_format(event.type, payload_json)
             if event.type == "final_answer":
                 final_text_parts.append(event.text)
+            elif event.type == "confirmation_request":
+                paused_for_confirmation = True
     except Exception as exc:  # noqa: BLE001
         logger.exception("copilot_agent_stream_failed session_id=%s", sess.id)
         yield _sse_format(
@@ -634,17 +673,38 @@ def _agent_sse_stream(
         )
         return
 
+    # K25: a turn that stopped at a confirmation card has said nothing yet —
+    # the model is mid-sentence, waiting on a human. Persisting an assistant
+    # row here wrote an empty bubble into the history, and ``/sessions/{id}``
+    # replayed a blank turn forever after. The closing message is written by
+    # the ``/confirm`` endpoint instead, once there is something to say.
+    if paused_for_confirmation and not "".join(final_text_parts).strip():
+        yield _sse_format("done", json.dumps({"awaiting_confirmation": True}))
+        return
+
     # Persist the assistant turn so /sessions/{id} replays it like Phase 30.
     full_text = "".join(final_text_parts)
     response_hash = (
         hashlib.sha256(full_text.encode("utf-8")).hexdigest() if full_text else None
     )
+    # K30: the row used to be written with no telemetry at all — no tokens,
+    # no model_id, no latency. ``guardrails.enforce_daily_token_budget`` sums
+    # exactly those columns, so every agent turn (up to six tool calls, plus
+    # the summariser's own compression call) spent the org's free-tier quota
+    # off-books and the daily ceiling metered only the Q&A path. The adapter
+    # accumulates usage across every call it makes during the turn — including
+    # the summariser's, since that goes through the same object.
+    usage = getattr(agent_llm, "usage", None) or {}
     assistant_msg = models.CopilotMessage(
         session_id=sess.id,
         role=models.CopilotMessageRole.assistant,
         content=full_text,
-        prompt_hash=None,
+        prompt_hash=hash_prompt(system_prompt + retrieval_context),
         response_hash=response_hash,
+        model_id=usage.get("model_id"),
+        prompt_tokens=usage.get("prompt_tokens"),
+        completion_tokens=usage.get("completion_tokens"),
+        latency_ms=usage.get("latency_ms"),
     )
     db.add(assistant_msg)
     db.commit()
@@ -761,9 +821,7 @@ def confirm(
     if not body.approved:
         # Drop the pending entry if present; the audit row stamp is the
         # source of truth for "rejected".
-        from .agent.confirmation import _PENDING
-
-        _PENDING.pop(call_id, None)
+        discard_pending(call_id)
         try:
             update_status(db, call_id, status="rejected")
         except CallNotFound:
@@ -776,12 +834,21 @@ def confirm(
         else str(current_user.role)
     )
     try:
-        return execute_after_confirmation(
+        outcome = execute_after_confirmation(
             db,
             call_id,
             scope_role=role_value,
             caller_id=current_user.id,
         )
+        # K25: the turn used to dead-end here. The tool ran, the endpoint
+        # returned its result, and ``CopilotDrawer.decide`` threw the response
+        # away — the card vanished and nothing was ever said about whether it
+        # had worked. The model never learned the outcome either, so it could
+        # not continue. Give the paused turn its closing sentence.
+        message = _finish_confirmed_turn(db, outcome)
+        if message is not None:
+            outcome["message"] = message
+        return outcome
     except ConfirmationExpired:
         try:
             update_status(db, call_id, status="expired")
@@ -790,6 +857,94 @@ def confirm(
         raise HTTPException(status_code=410, detail="confirmation expired")
     except ConfirmationNotFound:
         raise HTTPException(status_code=404, detail="confirmation not found")
+
+
+def _finish_confirmed_turn(db: Session, outcome: dict) -> dict | None:
+    """Close out the turn a confirmation card interrupted.
+
+    The paused turn has an unanswered user question hanging over it. Now that
+    the tool has run we can answer it: replay the conversation, append the
+    tool exchange that just happened, and ask for one closing sentence.
+
+    Best-effort by design. The write already succeeded and is already audited;
+    if the model is unreachable, or the session has gone, the user must still
+    be told the action went through. The caller falls back to reporting the
+    raw result rather than failing a request whose side effect has landed.
+
+    Returns the persisted assistant message as ``{"id", "content"}``, or
+    ``None`` if no narration could be produced.
+    """
+    try:
+        sess = db.get(models.CopilotSession, UUID(str(outcome["session_id"])))
+        if sess is None:
+            return None
+
+        history = (
+            db.query(models.CopilotMessage)
+            .filter(models.CopilotMessage.session_id == sess.id)
+            .order_by(models.CopilotMessage.created_at.asc())
+            .all()
+        )
+        messages: list[dict] = [
+            {"role": m.role.value, "content": m.content}
+            for m in history
+            if m.content
+        ]
+        # The tool exchange is not in copilot_messages — only in the audit
+        # log — so reconstruct it in the loop's neutral dialect. The adapter
+        # translates it onto the wire the same way it would mid-turn.
+        messages.append(
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"name": outcome["tool"], "args": outcome["args"]}
+                ],
+            }
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "name": outcome["tool"],
+                "content": json.dumps(outcome["result"], default=str),
+            }
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "I approved that action and it has now run. Tell me in one "
+                    "or two sentences what happened, using the numbers in the "
+                    "result. Do not offer to do it again."
+                ),
+            }
+        )
+
+        agent_llm = _get_agent_llm()
+        response = agent_llm.chat(messages=messages, tools=None)
+        text = (response or {}).get("final_answer")
+        if not text:
+            return None
+
+        usage = getattr(agent_llm, "usage", None) or {}
+        msg = models.CopilotMessage(
+            session_id=sess.id,
+            role=models.CopilotMessageRole.assistant,
+            content=text,
+            response_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            model_id=usage.get("model_id"),
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            latency_ms=usage.get("latency_ms"),
+        )
+        db.add(msg)
+        db.commit()
+        db.refresh(msg)
+        return {"id": str(msg.id), "content": msg.content}
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "copilot_confirm_narration_failed call_id=%s", outcome.get("call_id")
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------

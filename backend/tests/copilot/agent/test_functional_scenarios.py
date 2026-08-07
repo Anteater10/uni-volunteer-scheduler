@@ -22,6 +22,7 @@ from app.copilot.agent.tools.move_participant import MOVE_PARTICIPANT_TOOL
 from app.copilot.agent.tools.send_reminder_email import SEND_REMINDER_EMAIL_TOOL
 from app.copilot.agent.tools.signup_stats_for_week import SIGNUP_STATS_FOR_WEEK_TOOL
 from app.copilot.agent.tools.signup_trend import SIGNUP_TREND_TOOL
+from tests.copilot.prompt_fixture import TEST_SYSTEM_PROMPT
 
 
 class _StubLLM:
@@ -64,7 +65,10 @@ def test_f1_organizer_lists_own_understaffed_modules(db_session, seed_full_world
         [
             {
                 "tool_calls": [
-                    {"name": "find_understaffed_modules", "args": {"threshold": 0.5}}
+                    {
+                        "name": "find_understaffed_modules",
+                        "args": {"threshold": 0.5, "include_past": True},
+                    }
                 ]
             },
             {"final_answer": "Your most understaffed module is A-evt-1."},
@@ -76,6 +80,7 @@ def test_f1_organizer_lists_own_understaffed_modules(db_session, seed_full_world
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="which of my modules are understaffed?",
             retrieval_context="",
@@ -113,7 +118,10 @@ def test_f2_admin_most_understaffed_cross_school(db_session, seed_full_world):
         [
             {
                 "tool_calls": [
-                    {"name": "find_understaffed_modules", "args": {"threshold": 0.5}}
+                    {
+                        "name": "find_understaffed_modules",
+                        "args": {"threshold": 0.5, "include_past": True},
+                    }
                 ]
             },
             {"final_answer": "Across schools, B-evt-1 at Brandon Middle is the most understaffed."},
@@ -125,6 +133,7 @@ def test_f2_admin_most_understaffed_cross_school(db_session, seed_full_world):
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="what is the most understaffed module across all schools?",
             retrieval_context="",
@@ -196,6 +205,7 @@ def test_f3_organizer_emails_no_shows_with_confirmation(
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="email everyone on A-evt-1",
             retrieval_context="",
@@ -293,6 +303,7 @@ def test_f4_admin_moves_participant_with_confirmation(db_session, seed_full_worl
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="move that volunteer to A-evt-2",
             retrieval_context="",
@@ -374,6 +385,7 @@ def test_f5_admin_4_week_trend_multi_hop(db_session, seed_full_world):
             db=db_session,
             llm=llm,
             scope=scope,
+            system_prompt=TEST_SYSTEM_PROMPT,
             session_id=sess,
             user_message="what's the 4-week signup trend?",
             retrieval_context="",

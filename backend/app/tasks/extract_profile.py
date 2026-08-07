@@ -18,6 +18,40 @@ The pair gives us two routes into the extractor — explicit close via the
 HTTP endpoint, and implicit close via idle sweep — so memory hygiene stays
 reliable even when the frontend never sends a clean close (tab close,
 network loss, drawer re-open behaviour).
+
+K31 — extraction is off by default (``copilot_profile_extraction_enabled``).
+------------------------------------------------------------------------
+
+Both routes reach an LLM call that nobody is waiting for. It shares an
+OpenRouter account, and so a free-tier request budget, with the chat a user
+*is* waiting on — roughly 50 free-model requests a day on an unfunded
+account. Worse, ``autoretry_for=(Exception,)`` turns one rate-limited
+attempt into four, so the failure mode is self-amplifying: the busier the
+provider, the more of the day's budget this spends failing.
+
+The user-visible result is a real question answered with a rate-limit
+error, caused by a background job they never triggered and cannot see. That
+is a bad trade for cross-session memory, which is a nicety.
+
+Three gates, deliberately not one:
+
+* ``sweep_idle_sessions`` still closes idle sessions — that is free hygiene
+  and unrelated to the LLM — but does not enqueue extraction.
+* ``close_session`` in the router does not enqueue either.
+* :func:`extract_profile_facts` short-circuits on entry, because tasks
+  enqueued before the flag was flipped are still sitting in Redis, and a
+  gate at the producer alone would let those through.
+
+Reads are untouched: ``GET /copilot/profile`` and the profile block in the
+system prompt still serve whatever was extracted before. Turning the flag
+back on resumes extraction with no other change.
+
+What "properly on" would need, when there is budget for it: a request
+allowance for the extractor that is separate from the user-facing one, its
+token spend counted against the daily cap (it is off-books today — K30
+metered agent turns, not this), a retry policy that does not multiply
+rate-limit failures, and a user-facing opt-out. None of that is worth
+building against a 50-request day.
 """
 from __future__ import annotations
 
@@ -82,7 +116,17 @@ def extract_profile_facts(self, session_id: str) -> None:
     exponential backoff up to 3 times. After the final failure we log
     and give up — no user-visible error.
     """
+    from app.config import settings
     from app.copilot.memory.extractor import run as extractor_run
+
+    # K31. Checked here as well as at both enqueue sites: tasks queued before
+    # the flag was turned off are still in Redis, and a producer-side gate
+    # would let every one of them spend a request.
+    if not settings.copilot_profile_extraction_enabled:
+        logger.info(
+            "extract_profile_facts_disabled session_id=%s", session_id
+        )
+        return
 
     db = SessionLocal()
     try:
@@ -140,9 +184,14 @@ def sweep_idle_sessions() -> int:
     :data:`IDLE_TIMEOUT_MIN` minutes and not yet closed; enqueue
     :func:`extract_profile_facts` for each newly-closed session.
 
+    K31: the closing still happens when extraction is off — it costs
+    nothing and leaves the session table honest about what is still open.
+    Only the enqueue is skipped.
+
     Returns the number of sessions closed by this sweep (useful for test
     assertions and observability).
     """
+    from app.config import settings
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=IDLE_TIMEOUT_MIN)
     db = SessionLocal()
     closed = 0
@@ -159,11 +208,18 @@ def sweep_idle_sessions() -> int:
             sess.closed_at = now
             session_ids.append(str(sess.id))
         db.commit()
+        extracting = settings.copilot_profile_extraction_enabled
         for sid in session_ids:
-            extract_profile_facts.delay(sid)
+            if extracting:
+                extract_profile_facts.delay(sid)
             closed += 1
         if closed:
-            logger.info("copilot_sweep_idle closed=%d cutoff=%s", closed, cutoff)
+            logger.info(
+                "copilot_sweep_idle closed=%d extraction_enqueued=%s cutoff=%s",
+                closed,
+                extracting,
+                cutoff,
+            )
     finally:
         db.close()
     return closed

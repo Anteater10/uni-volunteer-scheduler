@@ -8,7 +8,8 @@ from sqlalchemy import text
 from app.copilot.agent import confirmation
 from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.confirmation import (
-    _PENDING,
+    is_pending,
+    peek,
     execute_after_confirmation,
     store_pending,
 )
@@ -110,7 +111,7 @@ def test_invoke_returns_pending_confirmation(db_session, monkeypatch):
     )
 
     assert out["status"] == "pending_confirmation"
-    assert out["call_id"] in _PENDING
+    assert is_pending(out["call_id"])
     # Handler did NOT run yet.
     assert calls == []
 

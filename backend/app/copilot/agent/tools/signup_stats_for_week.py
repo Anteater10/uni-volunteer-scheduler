@@ -83,7 +83,11 @@ SIGNUP_STATS_FOR_WEEK_TOOL = Tool(
     json_schema={
         "type": "object",
         "properties": {
-            "week": {"type": "string", "description": "ISO week, e.g. 2026-W22"},
+            "week": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-W[0-9]{1,2}$",
+                "description": "ISO week, e.g. 2026-W22",
+            },
         },
         "required": ["week"],
     },

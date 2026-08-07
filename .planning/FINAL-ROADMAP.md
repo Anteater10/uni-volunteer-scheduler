@@ -233,11 +233,35 @@ Scope: tests that monkeypatch the seam they claim to test; hollow assertions; th
 
 `_get_agent_llm` still raises `NotImplementedError` at `router.py:591`, and `copilot_agent_loop_enabled` is off. The entire tool layer — 12 tools, ~1,200 lines, a confirmation-card flow, an adversarial suite — **has never executed outside a monkeypatch.**
 
-⛔️ **The decision:** ship the copilot as **retrieval-grounded Q&A** (which works today and is production-usable the moment the OpenRouter key is unblocked), or as a **tool-using agent that takes actions**?
+> ## ✅ DECIDED 2026-08-06 — affirm the full agent
+>
+> **The copilot ships as a tool-using agent.** The 2026-07-16 lock stands;
+> this document's own recommendation below is **overruled** and kept only as
+> the record of what the tradeoff looked like at the time.
+>
+> The reasoning: the agent is the paper's headline contribution, and reversing
+> it to protect a deploy date would have spent the contribution to buy time
+> for everything else. The cost is accepted knowingly — W3 was the largest
+> block of work in the milestone, and it is done.
+>
+> **What actually shipped:** K23, K25, K26, K28, K29, K30, K31, K32 are all
+> complete on `feat/phase-b-agent`. B0.1–B0.3 (adapter, write-tool wiring,
+> confirmation store) are built.
+>
+> **The flag stays OFF for the deploy.** `COPILOT_AGENT_LOOP_ENABLED=0` in
+> `.env.production.example`, documented there with the reason. Off is not
+> indecision here — the tool layer has never run against a real model on real
+> data, and the ~50 requests/day ceiling on the unfunded OpenRouter account
+> is not enough to earn that confidence before handoff. K23 is what makes
+> "off" safe rather than a trap: flipping the flag now returns a real 503
+> instead of a bare 500. Turning it on is a deliberate, reversible act taken
+> after the account is funded and the agent has been exercised end to end.
+
+⛔️ ~~**The decision:** ship the copilot as **retrieval-grounded Q&A** (which works today and is production-usable the moment the OpenRouter key is unblocked), or as a **tool-using agent that takes actions**?~~ *(Settled above.)*
 
 `.planning/DEPLOY-ROADMAP-v2.md` locked this on 2026-07-16 as "full tool-using agent — this is the paper's headline contribution." **Three weeks later none of B0.1–B0.3 is built, and you now have one week.** Re-affirm or reverse it deliberately; do not let it decay by default.
 
-### If you reverse to Q&A-only (recommended for the deploy)
+### If you reverse to Q&A-only (~~recommended for the deploy~~ — NOT TAKEN)
 Then W3 is ~1 day:
 - **K23** · S — `router.py:559` calls `_get_agent_llm()` synchronously *before* the `StreamingResponse` is built, so flipping the flag returns a bare **HTTP 500** on every message with `Stream failed: HTTP 500` in the drawer. Return 503 with a real message, or refuse at boot. ~10 lines. **Do this regardless of the decision** — it is the difference between "off by default" and "a trap for the next dev."
 - **K26** · S — `_dispatch()` in `send_reminder_email.py:33` and `nudge_understaffed_module.py:34` still `return True` and send nothing while reporting `sent_count: 47`. **A stub that lies about success is worse than one that raises.** And `nudge_understaffed_module:50-59` builds recipients as "any volunteer with any non-cancelled signup in scope" — for an admin, **the entire volunteer table.** Harmless while `_dispatch` is a no-op; a mass-mail incident the day someone wires SMTP. **Fix the recipient set before any SMTP wiring, or delete the tools.**
@@ -247,7 +271,9 @@ Then W3 is ~1 day:
 ### If you affirm the full agent
 Then B0.1 (adapter, L) + B0.2 (wire write tools, M) + B0.3 (Redis/DB confirmation store, M) + **K25** (approve has literally never worked — `loop.py:149` yields the confirmation event and returns without ever calling `store_pending`, so `POST /confirm` with `approved=True` 404s; and even fixed, the turn dead-ends with an empty assistant message so the user clicks Confirm, the card vanishes, and nothing is ever said) + **K28** (one bad tool argument ends the turn) + **K29** (the agent loop builds its own three-line prompt, dropping every guardrail, and the persisted session history then lies about what the model was told) + **K30** (agent turns spend tokens off-books, so the daily cost cap doesn't meter them).
 
-That is not a one-week item on top of everything else in this document. **Recommendation: reverse to Q&A-only for the deploy, keep the agent as the paper track, hand the branch to Rafael documented.**
+That is not a one-week item on top of everything else in this document. ~~**Recommendation: reverse to Q&A-only for the deploy, keep the agent as the paper track, hand the branch to Rafael documented.**~~
+
+**This is the path taken.** All of it is built — see the DECIDED box at the top of W3. The estimate was right that it was not a one-week item on top of everything else; it took the week, and the runtime-verification items it competed with are the ones that slipped.
 
 **Gate:** flag state matches a written decision; no stub reports success it did not achieve.
 
@@ -357,7 +383,7 @@ Nothing downstream closes without these. Answer them **on day one** — several 
 | # | Question | Blocks | Recommendation |
 |---|---|---|---|
 | 1 | **Does `feat/shifts` ship before handoff, or get parked as a documented branch?** | W1, and the size of W6 | Park it. A booking-model change in the final week doubles the verification surface. |
-| 2 | **Phase B: tool-using agent, or retrieval-grounded Q&A?** The 2026-07-16 "full agent" decision has had three weeks and zero of B0.1–B0.3 built. | W3, W4 flags, K23–K33 | Q&A-only for the deploy; agent stays the paper track. |
+| 2 | **Phase B: tool-using agent, or retrieval-grounded Q&A?** The 2026-07-16 "full agent" decision has had three weeks and zero of B0.1–B0.3 built. | W3, W4 flags, K23–K33 | ✅ **DECIDED 2026-08-06: full agent, affirmed.** Built and merged; ships behind `COPILOT_AGENT_LOOP_ENABLED=0`. This row's original recommendation (Q&A-only) was overruled. |
 | 3 | **Does a late cancellation or no-show carry any consequence for the volunteer?** | K21, and `docs/knowledge-base/35-cancellation-notice.md` — deliberately left silent rather than guessed | — |
 | 4 | **`/admin/imports` — delete the 8 endpoints, or keep them dormant?** PR #50 leaves them unrouted, which answers this implicitly. Make it explicit. | K34, K35, and W5's "live endpoints with no UI" finding | Delete. Dormant endpoints are attack surface with no owner. |
 | 5 | **PII at rest: encrypt `profile_text` + feedback comments, or accept the risk in writing?** | W4 | Accept in writing, given the timeline. |
@@ -406,7 +432,7 @@ Re-verified against the working tree 2026-08-05. `✅fixed` / `⚠️open` / `�
 | K1 | Admin cannot add/edit/delete slots | P0 | ✅ fixed (PR #56) | — |
 | K2 | Default deploy retrieves nothing | P0 | ✅ fixed (`config.py:117`) | — |
 | K3 | Cancel permanently bars re-signup | P0 | ➖ dissolved (PR #55) | — |
-| K4 | Nine emails print raw UTC | P0 | ⚠️ **open** (`emails.py:68`) | W2 |
+| K4 | Nine emails print raw UTC | P0 | ✅ **fixed** — `emails.py` converts to `VENUE_TZ` (`America/Los_Angeles`) in `_fmt_slot_time`/`_fmt_slot_day`. Landed in `a9da85a`; this row said "open" for a week after the fix was on main. | W2 |
 | K5 | Organizer actions unreachable on phone | P0 | ⚠️ **open** (`ui/Modal.jsx:44`) | W2 |
 | K6 | Admin mobile nav has no destination | P0 | ⚠️ open | Backlog |
 | K7 | Copilot week tools ask an impossible question | P1 | ⚠️ **open** (`_iso_week.py`) | W2 |
@@ -425,16 +451,16 @@ Re-verified against the working tree 2026-08-05. `✅fixed` / `⚠️open` / `�
 | K20 | Every email branded for the wrong product | P1 | ⚠️ **open** | W2 |
 | K21 | 2-day cancellation notice doesn't exist | P1 | ⚠️ open ⛔️ | Decision 3 |
 | K22 | Copy contradicts the server | P1 | ⚠️ open | W2 |
-| K23 | Flag-on returns a bare 500 | Phase B | ⚠️ **open** (`router.py:591`) | W3 |
-| K24 | B0.1 the adapter | Phase B | ⚠️ open ⛔️ | Decision 2 |
-| K25 | Confirmation approve has never worked | Phase B | ⚠️ open | W3 |
-| K26 | Write tools report success without acting | Phase B | ⚠️ **open** | W3 |
-| K27 | Tool-layer correctness | Phase B | ⚠️ open | W3 |
-| K28 | One bad tool arg kills the turn | Phase B | ⚠️ open | W3 |
-| K29 | Agent loop drops every guardrail | Phase B | ⚠️ open | W3 |
-| K30 | Token budget doesn't see agent turns | Phase B | ⚠️ open | W3 |
-| K31 | Profile extraction should go off | Phase B | ⚠️ open ⛔️ | W3 |
-| K32 | Copilot drawer can trap the user | Phase B | ⚠️ open | W3 |
+| K23 | Flag-on returns a bare 500 | Phase B | ✅ done | W3 |
+| K24 | B0.1 the adapter | Phase B | ✅ done (full agent affirmed) | W3 |
+| K25 | Confirmation approve has never worked | Phase B | ✅ done | W3 |
+| K26 | Write tools report success without acting | Phase B | ✅ done | W3 |
+| K27 | Tool-layer correctness | Phase B | ✅ done | W3 |
+| K28 | One bad tool arg kills the turn | Phase B | ✅ done | W3 |
+| K29 | Agent loop drops every guardrail | Phase B | ✅ done | W3 |
+| K30 | Token budget doesn't see agent turns | Phase B | ✅ done | W3 |
+| K31 | Profile extraction should go off | Phase B | ✅ done | W3 |
+| K32 | Copilot drawer can trap the user | Phase B | ✅ done | W3 |
 | K33 | `/admin/feedback/*` readable by organizers | Security | ⚠️ **open** (`router.py:938,959`) | W5 |
 | K34 | Delete dead pages | Cleanup | ⚠️ half (portals gone) | Backlog |
 | K35 | Dead client + endpoint surface | Cleanup | ⚠️ open | Backlog |
@@ -459,7 +485,7 @@ Cut from the back, never the front.
 | Backlog items (K35–K42) | Inconsistent and inaccessible, but **correct**. Rafael's problem, documented. |
 | **W6.6** real conditions | Ships; may break on Safari or at quarter-scale. |
 | **W1** shifts (park it) | Ships the current booking model. **Recommended cut** — it buys back the most time for the least loss. |
-| **W3** full agent (ship Q&A) | Copilot answers but cannot act. **Recommended cut.** Do K23/K26/K31 anyway. |
+| ~~**W3** full agent (ship Q&A)~~ **NOT CUT** | ✅ The full agent was built. K23/K26/K28–K32 all done. Ships flag-off, so the copilot answers but cannot act *until someone turns it on* — the capability exists rather than being absent. |
 | **W6.1–W6.5** runtime verification | **Ships with unknown unknowns.** The one cut worth feeling bad about. |
 | **W5** security review | Ships with an unswept authz surface after one was already found open. Do not cut. |
 | **W2** | Ships something that lies to volunteers over email. Do not cut. |
