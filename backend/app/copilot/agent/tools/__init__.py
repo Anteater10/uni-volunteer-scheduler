@@ -20,6 +20,12 @@ from .module_templates import (
 )
 from .move_participant import MOVE_PARTICIPANT_TOOL
 from .nudge_understaffed_module import NUDGE_UNDERSTAFFED_MODULE_TOOL
+from .orientation_credits import (
+    CHECK_ORIENTATION_CREDIT_TOOL,
+    GRANT_ORIENTATION_CREDIT_TOOL,
+    LIST_ORIENTATION_CREDITS_TOOL,
+    REVOKE_ORIENTATION_CREDIT_TOOL,
+)
 from .participant_history import PARTICIPANT_HISTORY_TOOL
 from .quarters import (
     CREATE_QUARTER_TOOL,
@@ -66,3 +72,11 @@ registry.register(LIST_MODULE_TEMPLATES_TOOL)
 registry.register(CREATE_MODULE_TEMPLATE_TOOL)
 registry.register(UPDATE_MODULE_TEMPLATE_TOOL)
 registry.register(ARCHIVE_MODULE_TEMPLATE_TOOL)
+
+# Orientation credits. Eligibility is the question that decides whether a
+# volunteer can sign up at all, and it was the one surface the copilot could
+# neither read nor fix.
+registry.register(CHECK_ORIENTATION_CREDIT_TOOL)
+registry.register(LIST_ORIENTATION_CREDITS_TOOL)
+registry.register(GRANT_ORIENTATION_CREDIT_TOOL)
+registry.register(REVOKE_ORIENTATION_CREDIT_TOOL)
