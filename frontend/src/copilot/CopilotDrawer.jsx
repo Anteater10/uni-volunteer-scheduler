@@ -10,6 +10,7 @@ import ConfirmationCard from "./ConfirmationCard";
 import ToolCallIndicator from "./ToolCallIndicator";
 import MessageRatingButtons from "./MessageRatingButtons";
 import SessionRatingModal from "./SessionRatingModal";
+import useFocusTrap from "./useFocusTrap";
 import authStorage from "../lib/authStorage";
 import { COPILOT_BASE } from "./api";
 
@@ -32,6 +33,7 @@ export default function CopilotDrawer({ open, onClose }) {
   // Phase 35-01-E Task 18: rating modal intercepts the drawer close path.
   const [ratingOpen, setRatingOpen] = useState(false);
   const scrollRef = useRef(null);
+  const asideRef = useRef(null);
 
   // Drawer close intercept (Phase 35-01-E Task 18). If at least one
   // assistant turn has happened in this session, open the rating modal
@@ -65,6 +67,31 @@ export default function CopilotDrawer({ open, onClose }) {
     onClose?.();
   }
 
+  // K32. Focus restore is keyed on `open` rather than left to the trap:
+  // the trap deactivates every time the rating modal opens, and restoring
+  // focus to the FAB at that moment would fling the user out of the dialog
+  // they just opened. It has to be declared ABOVE useFocusTrap — effects
+  // run in declaration order, and the trap moves focus into the drawer on
+  // activation, so capturing later would record the drawer's own close
+  // button as the thing to go back to.
+  useEffect(() => {
+    if (!open) return undefined;
+    const opener = document.activeElement;
+    return () => {
+      if (opener && document.contains(opener) && opener.focus) opener.focus();
+    };
+  }, [open]);
+
+  // The drawer announced itself as a dialog and then behaved like a div:
+  // Tab walked out into the page behind it and Escape did nothing. The
+  // trap stands down while an inner layer is up — the rating modal runs
+  // its own, and the citation panel renders outside this <aside>, so
+  // trapping through it would make its own close button unreachable.
+  useFocusTrap(asideRef, {
+    active: open && !ratingOpen && !activeCitation,
+    onEscape: requestClose,
+  });
+
   // Lazy session creation when the drawer first opens.
   useEffect(() => {
     if (!open || sessionId) return;
@@ -95,7 +122,12 @@ export default function CopilotDrawer({ open, onClose }) {
       if (text) {
         setMessages((m) => [
           ...m,
-          { id: id || null, role: "assistant", content: text, citations: citations || [] },
+          {
+            id: id || null,
+            role: "assistant",
+            content: text,
+            citations: citations || [],
+          },
         ]);
       }
     },
@@ -214,7 +246,9 @@ export default function CopilotDrawer({ open, onClose }) {
         aria-hidden="true"
       />
       <aside
+        ref={asideRef}
         role="dialog"
+        aria-modal="true"
         aria-label="SciTrek Copilot"
         className="fixed right-0 top-0 bottom-0 w-full sm:w-[28rem] bg-white shadow-xl z-50 flex flex-col"
       >
@@ -241,7 +275,10 @@ export default function CopilotDrawer({ open, onClose }) {
           </button>
         </header>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
+        >
           {bootError && (
             <p className="text-sm text-red-600">
               Could not start a copilot session: {bootError.message}
@@ -283,7 +320,11 @@ export default function CopilotDrawer({ open, onClose }) {
             </React.Fragment>
           ))}
           {Object.entries(toolCalls).map(([cid, info]) => (
-            <ToolCallIndicator key={cid} tool={info.tool} status={info.status} />
+            <ToolCallIndicator
+              key={cid}
+              tool={info.tool}
+              status={info.status}
+            />
           ))}
           {Object.entries(pendingConfirmations).map(([cid, info]) => (
             <ConfirmationCard
@@ -305,7 +346,9 @@ export default function CopilotDrawer({ open, onClose }) {
             <MessageBubble role="assistant" content={partial} streaming />
           )}
           {error && !streaming && (
-            <p className="text-sm text-red-600">Stream failed: {error.message}</p>
+            <p className="text-sm text-red-600">
+              Stream failed: {error.message}
+            </p>
           )}
         </div>
 
@@ -345,6 +388,7 @@ export default function CopilotDrawer({ open, onClose }) {
           sessionId={sessionId}
           open={ratingOpen}
           onCancel={() => setRatingOpen(false)}
+          onDismiss={closeAndDismiss}
           onSubmitted={closeAndDismiss}
         />
       )}
@@ -358,8 +402,7 @@ function MessageBubble({ role, content, messageId = null, streaming = false }) {
   // the bubble so the rating UI (35-01-E) can target it directly. User
   // bubbles never carry an id — only the assistant's `copilot_messages`
   // row is rate-able.
-  const stamp =
-    !isUser && messageId ? { "data-message-id": messageId } : {};
+  const stamp = !isUser && messageId ? { "data-message-id": messageId } : {};
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div

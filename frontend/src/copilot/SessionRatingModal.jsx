@@ -2,22 +2,40 @@
 //
 // Behaviour (per spec decisions §5 and resolved Q):
 // - Opens when the drawer is being closed AND there has been at least
-//   one assistant turn. There is intentionally no "Skip" button —
-//   response rate is a paper metric. The user must either submit a
-//   rating OR click "Cancel close" to keep the drawer open.
+//   one assistant turn.
 // - A comment is required when the value is 1 or 2 (low score). For 3+
 //   the comment field is optional.
 // - On submit the modal POSTs the rating, then invokes onSubmitted so
 //   the caller can issue POST /sessions/{id}/close.
 // - `fetcher` is an injectable hook for tests; defaults to window.fetch.
+//
+// K32 — the "no Skip button" decision is reversed, deliberately.
+//
+// The original spec said: no Skip, because response rate is a paper
+// metric; the user must either submit a rating or click "Cancel close"
+// to keep the drawer open. Both of those exits lead back into the app
+// with the drawer still up. There was no way to close the copilot
+// without rating it. Escape did nothing. And when the rating POST
+// failed, `onSubmitted` was never called, so the one door that did lead
+// out was locked by a server error the user could not do anything about.
+//
+// A survey you cannot decline is not a survey, and the response rate it
+// produces is not a measurement — every reluctant user is either a
+// coerced rating or someone who closed the browser tab. So there is now
+// a "Close without rating" exit, always available, which also doubles as
+// the way out of a failed submit. Submit stays the primary button and
+// the modal still interrupts the close: the nudge remains, the trap is
+// gone. Expect the response rate to drop; the number left is worth more.
 import React from "react";
 import authStorage from "../lib/authStorage";
 import { COPILOT_BASE } from "./api";
+import useFocusTrap from "./useFocusTrap";
 
 export default function SessionRatingModal({
   sessionId,
   open,
   onCancel,
+  onDismiss,
   onSubmitted,
   fetcher,
 }) {
@@ -26,6 +44,17 @@ export default function SessionRatingModal({
   const [comment, setComment] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const dialogRef = React.useRef(null);
+
+  // Escape dismisses the topmost layer only, so it returns to the drawer
+  // rather than closing everything: one Escape to back out of the rating,
+  // a second on the drawer to leave. The early return lives below the
+  // hooks because a conditional hook is not a hook.
+  useFocusTrap(dialogRef, {
+    active: !!open,
+    onEscape: onCancel,
+    restoreFocus: true,
+  });
 
   if (!open) return null;
   const commentRequired = value > 0 && value <= 2;
@@ -63,6 +92,7 @@ export default function SessionRatingModal({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label="Rate this session"
@@ -111,26 +141,38 @@ export default function SessionRatingModal({
         />
         {error && (
           <p role="alert" className="text-xs text-red-600 mb-2">
-            {error}
+            {error} — your rating was not saved. You can retry, or close without
+            rating.
           </p>
         )}
-        <div className="flex justify-end gap-2">
+        <div className="flex items-center justify-between gap-2">
+          {/* Never disabled, including mid-submit: a request that hangs is
+              exactly when someone most needs the door to still open. */}
           <button
             type="button"
-            onClick={onCancel}
-            disabled={submitting}
-            className="px-3 py-1 rounded border text-sm"
+            onClick={onDismiss}
+            className="text-xs text-gray-500 underline hover:text-gray-700"
           >
-            Cancel close
+            Close without rating
           </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!canSubmit || submitting}
-            className="px-3 py-1 rounded bg-indigo-600 text-white text-sm disabled:opacity-50"
-          >
-            Submit
-          </button>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={submitting}
+              className="px-3 py-1 rounded border text-sm"
+            >
+              Cancel close
+            </button>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canSubmit || submitting}
+              className="px-3 py-1 rounded bg-indigo-600 text-white text-sm disabled:opacity-50"
+            >
+              Submit
+            </button>
+          </div>
         </div>
       </div>
     </div>

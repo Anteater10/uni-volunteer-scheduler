@@ -1,6 +1,12 @@
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  act,
+  fireEvent,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import CopilotDrawer from "../CopilotDrawer";
@@ -63,7 +69,9 @@ describe("parseSseChunk", () => {
   });
 
   it("parses one full event and keeps remainder", () => {
-    const [evs, rest] = parseSseChunk("event: token\ndata: \"hi\"\n\nevent: done\ndata:");
+    const [evs, rest] = parseSseChunk(
+      'event: token\ndata: "hi"\n\nevent: done\ndata:',
+    );
     expect(evs).toEqual([{ event: "token", data: '"hi"' }]);
     expect(rest).toContain("done");
   });
@@ -85,31 +93,41 @@ describe("parseSseChunk", () => {
 describe("CopilotFab visibility", () => {
   it("renders for admin when flag is on", () => {
     render(<CopilotFab />);
-    expect(screen.getByRole("button", { name: /open scitrek copilot/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /open scitrek copilot/i }),
+    ).toBeInTheDocument();
   });
 
   it("renders for organizer", () => {
     mockAuth = { role: "organizer", isAuthed: true };
     render(<CopilotFab />);
-    expect(screen.getByRole("button", { name: /open scitrek copilot/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /open scitrek copilot/i }),
+    ).toBeInTheDocument();
   });
 
   it("hides for volunteer", () => {
     mockAuth = { role: "volunteer", isAuthed: true };
     render(<CopilotFab />);
-    expect(screen.queryByRole("button", { name: /open scitrek copilot/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /open scitrek copilot/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides when not authed", () => {
     mockAuth = { role: null, isAuthed: false };
     render(<CopilotFab />);
-    expect(screen.queryByRole("button", { name: /open scitrek copilot/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /open scitrek copilot/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides when flag is off", () => {
     vi.stubEnv("VITE_COPILOT_ENABLED", "false");
     render(<CopilotFab />);
-    expect(screen.queryByRole("button", { name: /open scitrek copilot/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /open scitrek copilot/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens the drawer when clicked", async () => {
@@ -120,7 +138,9 @@ describe("CopilotFab visibility", () => {
       }),
     );
     render(<CopilotFab />);
-    await userEvent.click(screen.getByRole("button", { name: /open scitrek copilot/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /open scitrek copilot/i }),
+    );
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 });
@@ -130,7 +150,9 @@ describe("CopilotFab visibility", () => {
 // ---------------------------------------------------------------------------
 describe("CopilotDrawer", () => {
   it("renders nothing when closed", () => {
-    const { container } = render(<CopilotDrawer open={false} onClose={() => {}} />);
+    const { container } = render(
+      <CopilotDrawer open={false} onClose={() => {}} />,
+    );
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -201,7 +223,9 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "hi there");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
 
     // user bubble appears
     expect(await screen.findByText("hi there")).toBeInTheDocument();
@@ -223,7 +247,10 @@ describe("CopilotDrawer", () => {
           streamFrom(
             sseBlob([
               { event: "token", data: '"part"' },
-              { event: "error", data: '{"error":"RuntimeError","message_id":"asst-2"}' },
+              {
+                event: "error",
+                data: '{"error":"RuntimeError","message_id":"asst-2"}',
+              },
             ]),
           ),
           {
@@ -237,7 +264,9 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "hi");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
 
     await screen.findByText(/stream failed: runtimeerror/i);
   });
@@ -245,8 +274,24 @@ describe("CopilotDrawer", () => {
   // ---- Plan 32-06: citation chips wired below assistant messages ----
   it("renders citation chips from a meta event below the assistant message", async () => {
     const citations = [
-      { chunk_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", source_path: "docs/a/01.md", char_start: 0, char_end: 5, quote: "alpha", rrf_score: 0.9, rerank_score: 0.9 },
-      { chunk_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", source_path: "docs/b/02.md", char_start: 0, char_end: 5, quote: "beta",  rrf_score: 0.8, rerank_score: 0.8 },
+      {
+        chunk_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        source_path: "docs/a/01.md",
+        char_start: 0,
+        char_end: 5,
+        quote: "alpha",
+        rrf_score: 0.9,
+        rerank_score: 0.9,
+      },
+      {
+        chunk_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        source_path: "docs/b/02.md",
+        char_start: 0,
+        char_end: 5,
+        quote: "beta",
+        rrf_score: 0.8,
+        rerank_score: 0.8,
+      },
     ];
     global.fetch = vi
       .fn()
@@ -260,9 +305,16 @@ describe("CopilotDrawer", () => {
         new Response(
           streamFrom(
             sseBlob([
-              { event: "meta", data: JSON.stringify({ citations, retrieval_latency_ms: 12, rerank_latency_ms: 34 }) },
+              {
+                event: "meta",
+                data: JSON.stringify({
+                  citations,
+                  retrieval_latency_ms: 12,
+                  rerank_latency_ms: 34,
+                }),
+              },
               { event: "token", data: '"Answer"' },
-              { event: "done",  data: '{"message_id":"asst-chips"}' },
+              { event: "done", data: '{"message_id":"asst-chips"}' },
             ]),
           ),
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -273,13 +325,21 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "hi");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
     await screen.findByText("Answer");
 
-    const list = await screen.findByRole("list", { name: /sources consulted/i });
+    const list = await screen.findByRole("list", {
+      name: /sources consulted/i,
+    });
     expect(list.className).toMatch(/overflow-x-auto/);
-    expect(screen.getByRole("button", { name: /citation 1/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /citation 2/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /citation 1/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /citation 2/i }),
+    ).toBeInTheDocument();
   });
 
   it("caps chips at 5 even when more citations arrive", async () => {
@@ -304,9 +364,16 @@ describe("CopilotDrawer", () => {
         new Response(
           streamFrom(
             sseBlob([
-              { event: "meta", data: JSON.stringify({ citations: many, retrieval_latency_ms: 1, rerank_latency_ms: 1 }) },
+              {
+                event: "meta",
+                data: JSON.stringify({
+                  citations: many,
+                  retrieval_latency_ms: 1,
+                  rerank_latency_ms: 1,
+                }),
+              },
               { event: "token", data: '"ok"' },
-              { event: "done",  data: '{"message_id":"asst-many"}' },
+              { event: "done", data: '{"message_id":"asst-many"}' },
             ]),
           ),
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -316,9 +383,13 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "hi");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
     await screen.findByText("ok");
-    const chips = await screen.findAllByRole("button", { name: /citation \d+/i });
+    const chips = await screen.findAllByRole("button", {
+      name: /citation \d+/i,
+    });
     expect(chips).toHaveLength(5);
   });
 
@@ -335,9 +406,16 @@ describe("CopilotDrawer", () => {
         new Response(
           streamFrom(
             sseBlob([
-              { event: "meta", data: JSON.stringify({ citations: [], retrieval_latency_ms: 1, rerank_latency_ms: 1 }) },
+              {
+                event: "meta",
+                data: JSON.stringify({
+                  citations: [],
+                  retrieval_latency_ms: 1,
+                  rerank_latency_ms: 1,
+                }),
+              },
               { event: "token", data: '"plain"' },
-              { event: "done",  data: '{"message_id":"asst-empty"}' },
+              { event: "done", data: '{"message_id":"asst-empty"}' },
             ]),
           ),
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -347,14 +425,26 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "hi");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
     await screen.findByText("plain");
-    expect(screen.queryByRole("list", { name: /sources consulted/i })).toBeNull();
+    expect(
+      screen.queryByRole("list", { name: /sources consulted/i }),
+    ).toBeNull();
   });
 
   it("clicking a chip opens CitationPanel, closing hides it", async () => {
     const citations = [
-      { chunk_id: "dddddddd-dddd-dddd-dddd-dddddddddddd", source_path: "docs/d.md", char_start: 0, char_end: 3, quote: "delta", rrf_score: 1, rerank_score: 1 },
+      {
+        chunk_id: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+        source_path: "docs/d.md",
+        char_start: 0,
+        char_end: 3,
+        quote: "delta",
+        rrf_score: 1,
+        rerank_score: 1,
+      },
     ];
     global.fetch = vi
       .fn()
@@ -368,9 +458,16 @@ describe("CopilotDrawer", () => {
         new Response(
           streamFrom(
             sseBlob([
-              { event: "meta", data: JSON.stringify({ citations, retrieval_latency_ms: 1, rerank_latency_ms: 1 }) },
+              {
+                event: "meta",
+                data: JSON.stringify({
+                  citations,
+                  retrieval_latency_ms: 1,
+                  rerank_latency_ms: 1,
+                }),
+              },
               { event: "token", data: '"ans"' },
-              { event: "done",  data: '{"message_id":"asst-click"}' },
+              { event: "done", data: '{"message_id":"asst-click"}' },
             ]),
           ),
           { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -393,11 +490,15 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "hi");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
     await screen.findByText("ans");
     await userEvent.click(screen.getByRole("button", { name: /citation 1/i }));
     await screen.findByText(/delta-full-content/);
-    await userEvent.click(screen.getByRole("button", { name: /close source panel/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /close source panel/i }),
+    );
     await waitFor(() => {
       expect(screen.queryByText(/delta-full-content/)).toBeNull();
     });
@@ -408,7 +509,11 @@ describe("CopilotDrawer", () => {
     const sseText = sseBlob([
       {
         event: "meta",
-        data: JSON.stringify({ citations: [], retrieval_latency_ms: 0, rerank_latency_ms: 0 }),
+        data: JSON.stringify({
+          citations: [],
+          retrieval_latency_ms: 0,
+          rerank_latency_ms: 0,
+        }),
       },
       {
         event: "tool_call",
@@ -449,7 +554,11 @@ describe("CopilotDrawer", () => {
       // 3: POST /confirm/call-1
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({ call_id: "call-1", result: { ok: true }, redactions: 0 }),
+          JSON.stringify({
+            call_id: "call-1",
+            result: { ok: true },
+            redactions: 0,
+          }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         ),
       );
@@ -458,7 +567,9 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "do the thing");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
 
     // tool-call indicator
     await screen.findByRole("status", { name: /calling send_reminder_email/i });
@@ -469,7 +580,9 @@ describe("CopilotDrawer", () => {
     // POST hit /confirm/call-1 with approved=true
     await waitFor(() => {
       const calls = global.fetch.mock.calls;
-      const confirmCall = calls.find((c) => String(c[0]).includes("/confirm/call-1"));
+      const confirmCall = calls.find((c) =>
+        String(c[0]).includes("/confirm/call-1"),
+      );
       expect(confirmCall).toBeDefined();
       const body = JSON.parse(confirmCall[1].body);
       expect(body.approved).toBe(true);
@@ -485,7 +598,11 @@ describe("CopilotDrawer", () => {
     const sseText = sseBlob([
       {
         event: "meta",
-        data: JSON.stringify({ citations: [], retrieval_latency_ms: 0, rerank_latency_ms: 0 }),
+        data: JSON.stringify({
+          citations: [],
+          retrieval_latency_ms: 0,
+          rerank_latency_ms: 0,
+        }),
       },
       {
         event: "tool_call",
@@ -507,7 +624,10 @@ describe("CopilotDrawer", () => {
         }),
       },
       // The turn keeps going — that is the K28 change.
-      { event: "token", data: JSON.stringify({ text: "Which week did you mean?" }) },
+      {
+        event: "token",
+        data: JSON.stringify({ text: "Which week did you mean?" }),
+      },
       { event: "done", data: JSON.stringify({}) },
     ]);
     global.fetch = vi
@@ -529,17 +649,25 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "modules next week?");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
 
     await screen.findByRole("status", { name: /failed list_modules/i });
-    expect(screen.queryByRole("status", { name: /ran list_modules/i })).toBeNull();
+    expect(
+      screen.queryByRole("status", { name: /ran list_modules/i }),
+    ).toBeNull();
   });
 
   it("posts approved=false on Reject click", async () => {
     const sseText = sseBlob([
       {
         event: "meta",
-        data: JSON.stringify({ citations: [], retrieval_latency_ms: 0, rerank_latency_ms: 0 }),
+        data: JSON.stringify({
+          citations: [],
+          retrieval_latency_ms: 0,
+          rerank_latency_ms: 0,
+        }),
       },
       {
         event: "confirmation_request",
@@ -567,17 +695,22 @@ describe("CopilotDrawer", () => {
         }),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ call_id: "call-2", status: "rejected" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ call_id: "call-2", status: "rejected" }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
       );
 
     render(<CopilotDrawer open={true} onClose={() => {}} />);
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "x");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
 
     const rejectBtn = await screen.findByText("Reject");
     await userEvent.click(rejectBtn);
@@ -623,7 +756,9 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "hi");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
     await screen.findByText("Answer");
 
     const stamped = container.querySelector(`[data-message-id="${PERSISTED}"]`);
@@ -662,7 +797,9 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "my-question");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
     await screen.findByText("ok");
 
     // Exactly one bubble has the id (the assistant's).
@@ -700,7 +837,9 @@ describe("CopilotDrawer", () => {
     const input = await screen.findByLabelText("Message");
     await waitFor(() => expect(input).not.toBeDisabled());
     await userEvent.type(input, "hi");
-    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
     await screen.findByText("legacy");
     expect(
       container.querySelector('[data-message-id="asst-legacy"]'),
@@ -716,7 +855,134 @@ describe("CopilotDrawer", () => {
       }),
     );
     render(<CopilotDrawer open={true} onClose={onClose} />);
-    await userEvent.click(screen.getByRole("button", { name: /close copilot/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /close copilot/i }),
+    );
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// K32 — the drawer said role="dialog" and behaved like a div, and the rating
+// modal it opens on close had no exit that led out. These are the escapes.
+// ---------------------------------------------------------------------------
+describe("CopilotDrawer — you can always get out", () => {
+  function sessionOnly(id) {
+    return vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ id }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  }
+
+  // Two halves, because the session-create call fires on render: the mock
+  // has to be in place before the component mounts, and the turn has to be
+  // driven after it.
+  function mockTurn(id) {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          streamFrom(
+            sseBlob([
+              { event: "token", data: '"Answer"' },
+              { event: "done", data: '{"message_id":"m1"}' },
+            ]),
+          ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
+      )
+      // the POST /close that closeAndDismiss fires
+      .mockResolvedValue(new Response(null, { status: 204 }));
+  }
+
+  // Drives a full assistant turn, which is what arms the rating intercept.
+  async function doTurn() {
+    const input = await screen.findByLabelText("Message");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, "hi");
+    await userEvent.click(
+      screen.getByRole("button", { name: /send message/i }),
+    );
+    await screen.findByText("Answer");
+  }
+
+  it("announces itself as a modal dialog", async () => {
+    global.fetch = sessionOnly("sess-aria");
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    const aside = screen.getByRole("dialog", { name: /scitrek copilot/i });
+    expect(aside).toHaveAttribute("aria-modal", "true");
+  });
+
+  it("Escape closes a drawer with nothing to rate", async () => {
+    const onClose = vi.fn();
+    global.fetch = sessionOnly("sess-esc");
+    render(<CopilotDrawer open={true} onClose={onClose} />);
+    await screen.findByLabelText("Message");
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("Escape asks for a rating once there has been an answer", async () => {
+    const onClose = vi.fn();
+    mockTurn("sess-esc2");
+    render(<CopilotDrawer open={true} onClose={onClose} />);
+    await doTurn();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await screen.findByRole("dialog", { name: /rate this session/i });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("Close without rating actually dismisses the drawer", async () => {
+    // The trap this whole item is named for: before K32, reaching this
+    // modal meant rating or staying. There was no third answer.
+    const onClose = vi.fn();
+    mockTurn("sess-dismiss");
+    render(<CopilotDrawer open={true} onClose={onClose} />);
+    await doTurn();
+    await userEvent.click(
+      screen.getByRole("button", { name: /close copilot/i }),
+    );
+    await screen.findByRole("dialog", { name: /rate this session/i });
+    await userEvent.click(
+      screen.getByRole("button", { name: /close without rating/i }),
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("keeps Tab inside the drawer", async () => {
+    global.fetch = sessionOnly("sess-tab");
+    render(<CopilotDrawer open={true} onClose={() => {}} />);
+    await screen.findByLabelText("Message");
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(
+      screen.getByRole("dialog", { name: /scitrek copilot/i }),
+    ).toContainElement(document.activeElement);
+    outside.remove();
+  });
+
+  it("hands focus back to the control that opened it", async () => {
+    global.fetch = sessionOnly("sess-restore");
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    const { rerender } = render(
+      <CopilotDrawer open={true} onClose={() => {}} />,
+    );
+    await screen.findByLabelText("Message");
+    expect(document.activeElement).not.toBe(opener);
+    rerender(<CopilotDrawer open={false} onClose={() => {}} />);
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
   });
 });

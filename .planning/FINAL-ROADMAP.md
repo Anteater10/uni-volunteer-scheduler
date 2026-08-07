@@ -425,16 +425,16 @@ Re-verified against the working tree 2026-08-05. `✅fixed` / `⚠️open` / `�
 | K20 | Every email branded for the wrong product | P1 | ⚠️ **open** | W2 |
 | K21 | 2-day cancellation notice doesn't exist | P1 | ⚠️ open ⛔️ | Decision 3 |
 | K22 | Copy contradicts the server | P1 | ⚠️ open | W2 |
-| K23 | Flag-on returns a bare 500 | Phase B | ⚠️ **open** (`router.py:591`) | W3 |
-| K24 | B0.1 the adapter | Phase B | ⚠️ open ⛔️ | Decision 2 |
-| K25 | Confirmation approve has never worked | Phase B | ⚠️ open | W3 |
-| K26 | Write tools report success without acting | Phase B | ⚠️ **open** | W3 |
-| K27 | Tool-layer correctness | Phase B | ⚠️ open | W3 |
-| K28 | One bad tool arg kills the turn | Phase B | ⚠️ open | W3 |
-| K29 | Agent loop drops every guardrail | Phase B | ⚠️ open | W3 |
-| K30 | Token budget doesn't see agent turns | Phase B | ⚠️ open | W3 |
-| K31 | Profile extraction should go off | Phase B | ⚠️ open ⛔️ | W3 |
-| K32 | Copilot drawer can trap the user | Phase B | ⚠️ open | W3 |
+| K23 | Flag-on returns a bare 500 | Phase B | ✅ done | W3 |
+| K24 | B0.1 the adapter | Phase B | ✅ done (full agent affirmed) | W3 |
+| K25 | Confirmation approve has never worked | Phase B | ✅ done | W3 |
+| K26 | Write tools report success without acting | Phase B | ✅ done | W3 |
+| K27 | Tool-layer correctness | Phase B | ✅ done | W3 |
+| K28 | One bad tool arg kills the turn | Phase B | ✅ done | W3 |
+| K29 | Agent loop drops every guardrail | Phase B | ✅ done | W3 |
+| K30 | Token budget doesn't see agent turns | Phase B | ✅ done | W3 |
+| K31 | Profile extraction should go off | Phase B | ✅ done | W3 |
+| K32 | Copilot drawer can trap the user | Phase B | ✅ done | W3 |
 | K33 | `/admin/feedback/*` readable by organizers | Security | ⚠️ **open** (`router.py:938,959`) | W5 |
 | K34 | Delete dead pages | Cleanup | ⚠️ half (portals gone) | Backlog |
 | K35 | Dead client + endpoint surface | Cleanup | ⚠️ open | Backlog |
