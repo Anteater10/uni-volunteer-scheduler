@@ -20,6 +20,7 @@ import { toast } from "../../state/toast";
 import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import FormModal from "../../components/admin/FormModal";
 import DuplicateEventModal from "../../components/admin/DuplicateEventModal";
+import ConfirmDialog from "../../components/ui/ConfirmDialog";
 
 // ---------------------------------------------------------------------------
 // Form styling tokens
@@ -1526,33 +1527,6 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
   );
 }
 
-function ConfirmDialog({ open, title, body, onCancel, onConfirm, confirmLabel = "Delete", busy }) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-lg max-w-md w-full p-6 shadow-xl">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <p className="text-sm text-gray-600 mt-2">{body}</p>
-        <div className="flex justify-end gap-2 mt-4">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={busy}
-            className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg disabled:opacity-50"
-          >
-            {busy ? "…" : confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // Run slot-diff mutations after the metadata update has persisted. Throws
 // with a message listing failing slot indexes when any op rejects.
 async function applySlotDiff(eventId, initialSlots, draftSlots) {
@@ -2014,10 +1988,19 @@ export default function EventsSection() {
         quarters={quarters}
       />
 
+      {/* K14: this destroys the event, its slots and every signup on them, and
+          the row it is launched from sits between Edit and Duplicate. Typing the
+          title is the only thing that makes it impossible to delete the wrong
+          event by muscle memory — the same bar the CCPA delete already sets. */}
       <ConfirmDialog
         open={!!deleting}
-        title="Delete event?"
-        body={`This will permanently delete "${deleting?.title}" and its slots. Existing signups will be removed. This cannot be undone.`}
+        title="Delete this event?"
+        body={`This permanently deletes "${deleting?.title}", its slots and shifts, and every signup on them. Volunteers are not told. This cannot be undone.`}
+        requireTyped={deleting?.title}
+        requireTypedHint="Type the event title to confirm:"
+        confirmLabel="Delete event"
+        busyLabel="Deleting…"
+        cancelLabel="Keep it"
         onCancel={() => setDeleting(null)}
         onConfirm={() => deleteM.mutate(deleting.id)}
         busy={deleteM.isPending}
