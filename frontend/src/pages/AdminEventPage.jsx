@@ -572,7 +572,7 @@ export default function AdminEventPage() {
               <DetailRow label="Starts" value={fmtDateTime(eventQ.data.start_date)} />
               <DetailRow label="Ends" value={fmtDateTime(eventQ.data.end_date)} />
               <DetailRow
-                label="Max signups per user"
+                label="Max shifts per volunteer"
                 value={eventQ.data.max_signups_per_user ?? "No limit"}
               />
               <DetailRow
