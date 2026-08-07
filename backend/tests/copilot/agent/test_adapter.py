@@ -349,3 +349,69 @@ class TestChat:
             ]
         )
         assert a.chat(messages=[])["final_answer"] == "complete answer"
+
+
+class TestToolWireNamesAreReal:
+    """The wire payload must name every tool.
+
+    The loop used to hand the adapter bare ``json_schema`` dicts, which have
+    no name of their own, so all twelve tools went out as
+    ``{"function": {"name": null}}`` and the provider answered 400 on every
+    agent turn. It survived because the stub LLMs in these suites ignore
+    ``tools`` entirely — the only thing that ever read the wire shape was a
+    real model. These two tests read it instead.
+    """
+
+    def test_bare_json_schema_is_refused_rather_than_sent_nameless(self):
+        from app.copilot.agent.adapter import _to_wire_tools
+
+        bare = {"type": "object", "properties": {}, "required": []}
+        with pytest.raises(ValueError, match="no name"):
+            _to_wire_tools([bare])
+
+    def test_loop_sends_every_registered_tool_with_a_name(self, monkeypatch):
+        """End-to-end on the shape: registry -> run_turn -> wire payload."""
+        from app.copilot.agent import loop as loop_mod
+        from app.copilot.agent.adapter import _to_wire_tools
+        from app.copilot.agent.boundary.role_scope import scope_for
+        from app.copilot.agent.tools import registry
+        from app.copilot.agent.tools.base import Tool
+
+        registry._reset_for_tests()
+        registry.register(
+            Tool(
+                name="named_tool",
+                description="d",
+                json_schema={"type": "object", "properties": {}},
+                allowed_roles=["admin"],
+                requires_confirmation=False,
+                pii_schema=[],
+                handler=lambda db, scope, args: {},
+            )
+        )
+
+        seen = {}
+
+        class _Capture:
+            def chat(self, *, messages, tools):
+                # Convert exactly as the real adapter would before the call.
+                seen["wire"] = _to_wire_tools(tools)
+                return {"final_answer": "done"}
+
+        list(
+            loop_mod.run_turn(
+                db=None,
+                llm=_Capture(),
+                scope=scope_for(role="admin", caller_id=None),
+                session_id=None,
+                user_message="hi",
+                retrieval_context="",
+                system_prompt="sys",
+                history=[],
+            )
+        )
+        registry._reset_for_tests()
+
+        names = [w["function"]["name"] for w in seen["wire"]]
+        assert names == ["named_tool"]
+        assert all(n for n in names)

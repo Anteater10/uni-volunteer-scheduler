@@ -124,10 +124,15 @@ def run_turn(
     )
 
     while True:
-        response = llm.chat(
-            messages=messages,
-            tools=[t.json_schema for t in tools],
-        )
+        # Pass the Tool objects, not ``[t.json_schema for t in tools]``. A
+        # bare json_schema is ``{type, properties, required}`` — it carries
+        # no name, so the adapter wrapped all twelve as
+        # ``{"function": {"name": null}}`` and OpenRouter answered 400 on
+        # every single agent turn. Nothing caught it because every test
+        # drives a stub whose ``chat`` ignores ``tools`` altogether; the
+        # wire shape was only ever exercised against a real model, which
+        # this path had never met.
+        response = llm.chat(messages=messages, tools=tools)
 
         if "final_answer" in response:
             yield FinalAnswerEvent(text=response["final_answer"])
