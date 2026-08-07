@@ -219,13 +219,37 @@ describe("ExportsSection — a failed export has to say so (K12)", () => {
     volunteerHours.mockRejectedValue(new Error("Analytics service is down"));
     renderPage();
 
-    const alerts = await screen.findAllByRole("alert");
-    const alert = alerts.find((a) => /couldn't load data/i.test(a.textContent));
-    expect(alert).toBeTruthy();
-    expect(alert).toHaveTextContent(/analytics service is down/i);
+    // Find the alert by its message. Other panels can be in an error state
+    // too depending on what the module mock covers, so match on the text this
+    // test actually set rather than on "couldn't load data".
+    const findOurAlert = async () => {
+      const alerts = await screen.findAllByRole("alert");
+      const hit = alerts.find((a) =>
+        /analytics service is down/i.test(a.textContent),
+      );
+      expect(hit).toBeTruthy();
+      return hit;
+    };
+    expect(await findOurAlert()).toHaveTextContent(/analytics service is down/i);
 
-    const calls = volunteerHours.mock.calls.length;
-    fireEvent.click(within(alert).getByRole("button", { name: /try again/i }));
+    // The panel fetches on mount and again when the quarters query resolves
+    // and moves the date params. Wait for the count to hold steady, so the
+    // click is the only thing that can move it.
+    let calls = -1;
+    await waitFor(() => {
+      const now = volunteerHours.mock.calls.length;
+      const steady = now === calls;
+      calls = now;
+      if (!steady) throw new Error("still settling");
+    });
+
+    // Re-query AFTER settling. That params-driven re-render replaces the
+    // ErrorState node, so an element captured earlier is detached by now, and
+    // clicking a detached node does nothing at all. This test used to hold
+    // the stale reference and pass anyway — the retry it thought it was
+    // measuring was really the quarters refetch arriving on its own.
+    const live = await findOurAlert();
+    fireEvent.click(within(live).getByRole("button", { name: /try again/i }));
     await waitFor(() =>
       expect(volunteerHours.mock.calls.length).toBeGreaterThan(calls),
     );
