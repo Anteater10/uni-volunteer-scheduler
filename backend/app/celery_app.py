@@ -970,14 +970,17 @@ def archive_ended_quarters() -> None:
 # -------------------------
 
 celery.conf.beat_schedule = {
-    "send-reminders-24h-every-5-minutes": {
-        "task": "app.celery_app.send_reminders_24h",
-        "schedule": 300.0,
-    },
-    "send-reminders-1h-every-5-minutes": {
-        "task": "app.celery_app.send_reminders_1h",
-        "schedule": 300.0,
-    },
+    # K9: `send-reminders-24h-every-5-minutes` and `send-reminders-1h-...`
+    # used to sit here alongside `check-reminders` below. Phase 24 replaced
+    # both of them but the old beats were never removed, so every volunteer
+    # got two reminders a day apart — and worse, the legacy tasks write a
+    # different `sent_notifications.kind` (`reminder_24h`) and never consult
+    # `VolunteerPreference.email_reminders_enabled`. Neither the dedup key nor
+    # the opt-out could stop them: turning reminders off in the UI silenced
+    # the Phase 24 send and left the legacy one arriving anyway.
+    #
+    # The tasks themselves stay defined — they are still reachable manually
+    # and are covered by tests — but nothing schedules them any more.
     "weekly-digest-every-monday-8am": {
         "task": "app.celery_app.weekly_digest",
         "schedule": crontab(hour=8, minute=0, day_of_week="monday"),
