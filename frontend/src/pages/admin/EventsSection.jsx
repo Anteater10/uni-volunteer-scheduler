@@ -1038,7 +1038,7 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
             />
           </div>
           <div>
-            <label className={LABEL}>Max signups per volunteer</label>
+            <label className={LABEL}>Max shifts per volunteer</label>
             <input
               type="number"
               min="1"
@@ -1047,6 +1047,13 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
               className={FIELD}
               placeholder="No limit"
             />
+            {/* K8: this box did nothing at all until the backend started
+                reading it. Say what it covers now that it is real —
+                orientation is exempt, or a cap of 1 would make an
+                orientation-required event unbookable. */}
+            <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
+              Leave blank for no limit. Orientation sessions don&apos;t count.
+            </p>
           </div>
           <div>
             <label className={LABEL}>Visibility</label>
