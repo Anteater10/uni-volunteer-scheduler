@@ -1,11 +1,26 @@
 """Fixtures for copilot agent boundary tests."""
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
 from app.models import Event, UserRole
 from tests.fixtures.helpers import make_user
+
+def iso_monday(year: int, week: int, hour: int = 9) -> datetime:
+    """UTC datetime inside ISO week ``year``-W``week``.
+
+    K7: these fixtures used to stamp `week_number=22` on an event whose
+    start_date was "tomorrow", so the week the row claimed and the week it was
+    actually in had nothing to do with each other. The tools matched on
+    week_number, so the tests passed while production — where week_number is
+    the quarter-relative 1..11 cache — returned nothing. Anchoring start_date
+    to the week the fixture names is what makes these tests mean something.
+    """
+    return datetime.combine(
+        date.fromisocalendar(year, week, 1), time(hour, 0), tzinfo=timezone.utc
+    )
+
 
 @pytest.fixture(autouse=True)
 def _reset_registry():
@@ -30,7 +45,7 @@ def seed_events(db_session):
     uuid_a = org_a.id
     uuid_b = org_b.id
 
-    now = datetime.now(timezone.utc) + timedelta(days=1)
+    now = iso_monday(2026, 22)
     e1, e2, e3 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db_session.add_all([
         Event(
@@ -91,8 +106,6 @@ def seed_full_world(db_session):
     org_b = make_user(db_session, role=UserRole.organizer)
     admin = make_user(db_session, role=UserRole.admin)
 
-    base = datetime.now(timezone.utc) + timedelta(days=1)
-
     # (title, owner_id, school, year, week, capacity, num_signups)
     spec = [
         ("A-evt-1", org_a.id, "Adams Elementary", 2026, 22, 5, 1),
@@ -109,6 +122,9 @@ def seed_full_world(db_session):
     volunteer_ids: list = []
 
     for title, owner_id, school, year, wk, capacity, n_signups in spec:
+        # Each event sits in the ISO week its spec row names, rather than all
+        # four sharing one timestamp and disagreeing about it.
+        base = iso_monday(year, wk)
         eid = uuid.uuid4()
         sid = uuid.uuid4()
         event_ids[title] = eid

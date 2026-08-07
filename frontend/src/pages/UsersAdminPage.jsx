@@ -18,6 +18,7 @@ import {
   Input,
   Label,
   Modal,
+  ConfirmDialog,
   EmptyState,
   Skeleton,
 } from "../components/ui";
@@ -70,6 +71,10 @@ export default function UsersAdminPage() {
   const [drawerUser, setDrawerUser] = useState(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [ccpaModal, setCcpaModal] = useState(null); // {type, user}
+  // K13: Deactivate used to fire on one click, from a drawer that also holds a
+  // type-to-confirm CCPA delete — the two most destructive buttons on the page
+  // were a few pixels apart with wildly different guards.
+  const [deactivating, setDeactivating] = useState(null);
 
   const listQ = useQuery({
     queryKey: ["adminUsers", { include_inactive: showDeactivated }],
@@ -107,11 +112,18 @@ export default function UsersAdminPage() {
     mutationFn: (id) => api.admin.users.deactivate(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["adminUsers"] });
+      setDeactivating(null);
       setDrawerUser(null);
       setUpdateError(null);
       toast.success("User deactivated.");
     },
-    onError: (e) => setUpdateError(e?.message || "Failed to deactivate"),
+    onError: (e) => {
+      // Close the dialog on failure: the drawer underneath is where
+      // `updateError` renders, and leaving the dialog up would hide the reason
+      // behind the thing that caused it.
+      setDeactivating(null);
+      setUpdateError(e?.message || "Failed to deactivate");
+    },
   });
 
   const reactivateM = useMutation({
@@ -300,7 +312,7 @@ export default function UsersAdminPage() {
             onSave={(patch) =>
               updateM.mutate({ id: drawerUser.id, patch })
             }
-            onDeactivate={() => deactivateM.mutate(drawerUser.id)}
+            onDeactivate={() => setDeactivating(drawerUser)}
             onReactivate={() => reactivateM.mutate(drawerUser.id)}
             onCcpaExport={() =>
               setCcpaModal({ type: "export", user: drawerUser })
@@ -317,6 +329,21 @@ export default function UsersAdminPage() {
           />
         )}
       </SideDrawer>
+
+      {/* Deactivate confirmation. No type-to-confirm: this is reversible with
+          the Reactivate button right where the Deactivate one was, so the bar
+          is "did you mean to", not "prove it". */}
+      <ConfirmDialog
+        open={!!deactivating}
+        title="Deactivate this account?"
+        body={`${deactivating?.name || deactivating?.email} will be signed out and will not be able to sign in again. Their events, rosters and audit history are kept, and you can reactivate them at any time.`}
+        confirmLabel="Deactivate"
+        busyLabel="Deactivating…"
+        cancelLabel="Cancel"
+        onCancel={() => setDeactivating(null)}
+        onConfirm={() => deactivateM.mutate(deactivating.id)}
+        busy={deactivateM.isPending}
+      />
 
       {/* CCPA Export modal */}
       {ccpaModal?.type === "export" && (

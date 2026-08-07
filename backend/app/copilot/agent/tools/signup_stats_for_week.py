@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
-from app.copilot.agent.tools._iso_week import parse_iso_week
+from app.copilot.agent.tools._iso_week import iso_week_bounds
 from app.copilot.agent.tools import _bookings
 from app.copilot.agent.tools.base import Tool
 from app.models import Event
@@ -35,11 +35,14 @@ _PII_SCHEMA = [
 
 def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     week_str = args["week"]
-    year, week_number = parse_iso_week(week_str)
+    # K7: see _iso_week — Event.week_number counts weeks within a quarter, so
+    # comparing an ISO week against it reported zero for a busy week and
+    # merged same-numbered weeks from different quarters when it did match.
+    week_start, week_end = iso_week_bounds(week_str)
 
     events_q = db.query(Event).filter(
-        Event.year == year,
-        Event.week_number == week_number,
+        Event.start_date >= week_start,
+        Event.start_date < week_end,
     )
     if not scope.see_all:
         events_q = events_q.filter(Event.owner_id == scope.module_owner_id)

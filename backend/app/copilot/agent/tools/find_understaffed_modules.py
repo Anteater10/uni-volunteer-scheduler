@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools import _bookings
+from app.copilot.agent.tools._iso_week import iso_week_label
 from app.copilot.agent.tools.base import Tool
 from app.models import Event
 
@@ -50,11 +51,9 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         slots_filled = _bookings.filled_for_events(db, [event.id])
         fill_rate = (slots_filled / slots_total) if slots_total else 0.0
         if fill_rate < threshold:
-            week_str = (
-                f"{event.year}-W{event.week_number:02d}"
-                if event.year and event.week_number
-                else None
-            )
+            # K7: from the real start_date, not the quarter-relative
+            # week_number — see _iso_week.
+            week_str = iso_week_label(event.start_date)
             rows.append(
                 {
                     "id": str(event.id),

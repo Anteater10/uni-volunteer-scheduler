@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
-from app.copilot.agent.tools._iso_week import parse_iso_week as _parse_iso_week
+from app.copilot.agent.tools._iso_week import iso_week_bounds, iso_week_label
 from app.copilot.agent.tools.base import Tool
 from app.models import Event
 
@@ -21,11 +21,14 @@ _PII_SCHEMA = ["id", "name", "week", "school"]
 
 def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     week_str = args["week"]
-    year, week_number = _parse_iso_week(week_str)
+    # K7: was `Event.year == year, Event.week_number == week_number`, which
+    # compared an ISO week to a quarter-relative one. Match the calendar week
+    # the event actually starts in instead.
+    week_start, week_end = iso_week_bounds(week_str)
 
     q = db.query(Event).filter(
-        Event.year == year,
-        Event.week_number == week_number,
+        Event.start_date >= week_start,
+        Event.start_date < week_end,
     )
     if args.get("school"):
         q = q.filter(Event.school == args["school"])
@@ -36,7 +39,7 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         {
             "id": str(e.id),
             "name": e.title,
-            "week": week_str,
+            "week": iso_week_label(e.start_date),
             "school": e.school,
             "owner_id": str(e.owner_id),
         }

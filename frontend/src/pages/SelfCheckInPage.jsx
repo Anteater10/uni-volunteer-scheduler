@@ -34,8 +34,12 @@ export default function SelfCheckInPage() {
       if (code === "WRONG_VENUE_CODE") {
         setErrorMsg("That's not the right code. Ask an organizer.");
       } else if (code === "OUTSIDE_WINDOW") {
+        // K22: said 15 before / 30 after. check_in_service.py's
+        // CHECK_IN_WINDOW_BEFORE is 30 minutes, same as _AFTER — so a
+        // volunteer who arrived 20 minutes early was told they were outside a
+        // window they were well inside of, and went away.
         setErrorMsg(
-          "Check-in is only open 15 minutes before your slot through 30 minutes after.",
+          "Check-in is only open 30 minutes before your slot through 30 minutes after.",
         );
       } else if (code === "INVALID_TRANSITION") {
         setErrorMsg("This signup can't be checked in right now.");
@@ -137,7 +141,7 @@ export default function SelfCheckInPage() {
       return (
         <ErrorState
           title="Check-in isn't open yet"
-          body="Check-in opens 15 minutes before the event starts"
+          body="Check-in opens 30 minutes before the event starts"
           action={
             <Button
               variant="secondary"

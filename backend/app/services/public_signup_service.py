@@ -40,7 +40,11 @@ from ..schemas import PublicSignupCreate, PublicSignupResponse, PublicSignupResu
 from . import form_schema_service, shift_service
 from .phone_service import InvalidPhoneError, normalize_us_phone
 from .volunteer_service import upsert_volunteer
-from .waitlist_service import compute_waitlist_position
+from .waitlist_service import (
+    compute_waitlist_position,
+    shift_has_ended,
+    slot_has_ended,
+)
 
 
 # Phase 29 (LOCK-01) — PT-localized copy for participant-facing errors. We
@@ -68,6 +72,11 @@ def _fmt_pt(dt: datetime) -> str:
 # "this slot doesn't exist" from "this slot exists but its event is
 # private" — the same leak class as a differing status code.
 _NOT_FOUND_DETAIL = "not found"
+
+# House style for a distinguishable 422, cf. ORIENTATION_REQUIRED and
+# waitlist_service.SLOT_ENDED. Named for the volunteer-facing case (booking)
+# rather than the staff one (promotion) so the two stay tellable apart in logs.
+SESSION_ENDED_CODE = "SESSION_ENDED"
 
 
 def _ensure_event_visible(db: Session, event_id) -> None:
@@ -279,6 +288,55 @@ def _ensure_orientation_requirement(db: Session, email: str, slot_ids, shift_ids
     )
 
 
+def _ensure_units_not_ended(db: Session, slot_ids, shift_ids) -> None:
+    """Refuse a booking for work that has already happened.
+
+    Nothing else in the signup path looks at the clock. The event signup window
+    would cover this, but it is optional and almost no event carries one, so in
+    practice a session that finished last week still rendered a live Sign-up
+    button and the booking succeeded — producing a volunteer the roster expects
+    at a class that is over, and a confirmation email for a date in the past.
+
+    Judged on ``end_time``, not ``start_time``: someone arriving twenty minutes
+    into a two-hour session is late, not barred, and the check-in window is
+    already the thing that decides whether lateness counts. A shift is judged on
+    its last session (see ``waitlist_service.shift_has_ended``) so a Tue+Wed
+    shift stays bookable for Wednesday's classroom.
+
+    Runs before any write, alongside the other pre-flight guards, so a rejected
+    signup leaves no volunteer or signup rows behind.
+    """
+    if slot_ids:
+        for slot in db.query(Slot).filter(Slot.id.in_(set(slot_ids))).all():
+            if slot_has_ended(slot):
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": SESSION_ENDED_CODE,
+                        "message": (
+                            "That orientation session has already finished — "
+                            "pick one that hasn't happened yet."
+                        ),
+                    },
+                )
+
+    if shift_ids:
+        for shift in (
+            db.query(Shift).filter(Shift.id.in_(set(shift_ids))).all()
+        ):
+            if shift_has_ended(shift):
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "code": SESSION_ENDED_CODE,
+                        "message": (
+                            "That shift has already finished — pick one that "
+                            "hasn't happened yet."
+                        ),
+                    },
+                )
+
+
 def _ensure_signup_cap(db: Session, email: str, slot_ids, shift_ids) -> None:
     """K8 — enforce ``Event.max_signups_per_user``.
 
@@ -397,6 +455,11 @@ def create_public_signup(
 
     # 1b. A period slot id is a client sending the old shape.
     _reject_bare_period_slots(db, payload.slot_ids)
+
+    # 1b-ii. Nothing that has already happened can be booked. Before the
+    # orientation check below, so a volunteer picking a stale event is told the
+    # session is over rather than being sent to find an orientation for it.
+    _ensure_units_not_ended(db, payload.slot_ids, payload.shift_ids)
 
     # 1c. Orientation requirement — enforced before any write so a rejected
     # signup leaves no volunteer/signup rows behind.

@@ -137,8 +137,11 @@ describe("SelfCheckInPage", () => {
     await user.click(screen.getByRole("button", { name: /check me in/i }));
 
     await waitFor(() => {
+      // K22: asserted "15 minutes before" — the copy, not the contract.
+      // check_in_service.CHECK_IN_WINDOW_BEFORE is 30 minutes, so this test
+      // was pinning the page's disagreement with the server in place.
       expect(
-        screen.getByText(/15 minutes before/i),
+        screen.getByText(/30 minutes before/i),
       ).toBeInTheDocument();
     });
   });

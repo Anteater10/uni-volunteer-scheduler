@@ -76,7 +76,7 @@ def build_signup_ics(event: "models.Event", slots: list) -> str:
     ]
     for slot in slots:
         kind = _slot_kind(slot)
-        summary = f"Sci Trek: {event.title} ({kind})" if kind else f"Sci Trek: {event.title}"
+        summary = f"SciTrek: {event.title} ({kind})" if kind else f"SciTrek: {event.title}"
         location = slot.location or event.location or event.school or ""
         description = (
             f"{event.description}\n\n{event_url}" if event.description else event_url

@@ -8,6 +8,7 @@ from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.tools.base import invoke
 from app.copilot.agent.tools.signup_trend import SIGNUP_TREND_TOOL
 from app.models import Event, SignupStatus, Slot, SlotType, Volunteer
+from tests.copilot.agent.conftest import iso_monday
 from tests.fixtures.helpers import book_shift, make_shift
 
 
@@ -26,7 +27,10 @@ def _make_session(db_session, user_id):
 
 
 def _add_event_with_slot(db_session, owner_id, year, week, capacity, filled):
-    now = datetime.now(timezone.utc) + timedelta(days=1)
+    # K7: the event has to actually start in the week it is named after. This
+    # used to be `now + 1 day` regardless, and signup_trend grouped on
+    # Event.week_number, so the fixture and the tool agreed on a fiction.
+    now = iso_monday(year, week)
     e = Event(
         id=uuid.uuid4(),
         owner_id=owner_id,
