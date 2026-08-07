@@ -658,7 +658,10 @@ class TestRefusals:
                 ],
             },
         )
-        assert "could not read the schedule" in result["error"]
+        # Names the value and the format it wanted, so the model can fix it
+        # without another round trip to the user.
+        assert "not a 24-hour HH:MM time" in result["error"]
+        assert "five o'clock" in result["error"]
         self._no_events_written(db_session, tpl.slug)
 
     def test_start_outside_any_quarter_names_the_date(self, db_session):

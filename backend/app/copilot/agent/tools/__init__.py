@@ -2,6 +2,12 @@ from . import registry
 from .create_event_with_schedule import CREATE_EVENT_WITH_SCHEDULE_TOOL
 from .create_module_from_template import CREATE_MODULE_FROM_TEMPLATE_TOOL
 from .current_user_context import CURRENT_USER_CONTEXT_TOOL
+from .events_edit import (
+    DELETE_EVENT_TOOL,
+    GET_EVENT_SCHEDULE_TOOL,
+    RESCHEDULE_SLOT_TOOL,
+    UPDATE_EVENT_TOOL,
+)
 from .find_module_by_name import FIND_MODULE_BY_NAME_TOOL
 from .find_understaffed_modules import FIND_UNDERSTAFFED_MODULES_TOOL
 from .get_module_roster import GET_MODULE_ROSTER_TOOL
@@ -38,3 +44,11 @@ registry.register(MOVE_PARTICIPANT_TOOL)
 registry.register(LIST_QUARTERS_TOOL)
 registry.register(CREATE_QUARTER_TOOL)
 registry.register(UPDATE_QUARTER_TOOL)
+
+# Editing. Creating an event the copilot cannot then fix leaves every one of
+# its mistakes as hand work in the UI, which is a worse deal than not asking
+# it at all.
+registry.register(GET_EVENT_SCHEDULE_TOOL)
+registry.register(UPDATE_EVENT_TOOL)
+registry.register(RESCHEDULE_SLOT_TOOL)
+registry.register(DELETE_EVENT_TOOL)
