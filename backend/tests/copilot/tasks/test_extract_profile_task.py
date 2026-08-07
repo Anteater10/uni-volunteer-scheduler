@@ -19,8 +19,21 @@ from datetime import datetime, timezone
 import pytest
 
 from app import models
+from app.config import settings
 from app.tasks import extract_profile as task_mod
 from tests.fixtures.helpers import make_user
+
+
+@pytest.fixture(autouse=True)
+def _enable_profile_extraction(monkeypatch):
+    """K31: extraction now ships off, so these tests must turn it on.
+
+    They are the tests *of* extraction — asserting the machinery works when
+    someone asks for it. The default being off is asserted separately, in
+    tests/copilot/test_profile_extraction_is_off.py, so flipping it here
+    does not hide the shipped state.
+    """
+    monkeypatch.setattr(settings, "copilot_profile_extraction_enabled", True)
 
 
 class _StubLLM:

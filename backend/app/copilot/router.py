@@ -249,6 +249,10 @@ def close_session(
     Idempotent — subsequent calls see ``closed_at IS NOT NULL`` and
     short-circuit without re-enqueueing. 404s for sessions owned by
     another user so existence is not observable across users.
+
+    K31: the extractor is only enqueued when
+    ``copilot_profile_extraction_enabled`` is on. Closing the session is not
+    conditional — that is the part the caller asked for, and it is free.
     """
     _require_flag_on()
     _require_admin_or_organizer(current_user)
@@ -257,7 +261,8 @@ def close_session(
         return Response(status_code=204)
     sess.closed_at = datetime.now(timezone.utc)
     db.commit()
-    extract_profile_facts.delay(str(sess.id))
+    if settings.copilot_profile_extraction_enabled:
+        extract_profile_facts.delay(str(sess.id))
     return Response(status_code=204)
 
 

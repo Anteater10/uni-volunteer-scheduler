@@ -14,6 +14,10 @@ from tests.fixtures.helpers import auth_headers, make_user
 @pytest.fixture(autouse=True)
 def _enable_copilot(monkeypatch):
     monkeypatch.setattr(settings, "copilot_enabled", True)
+    # K31: extraction ships off. These tests assert the enqueue wiring, so
+    # they ask for it explicitly. That the default is off is asserted in
+    # tests/copilot/test_profile_extraction_is_off.py.
+    monkeypatch.setattr(settings, "copilot_profile_extraction_enabled", True)
 
 
 def _admin(db_session, email="close_admin@example.com"):

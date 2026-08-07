@@ -116,6 +116,24 @@ class Settings(BaseSettings):
     # recipients from a model's reading of a sentence; the cap is what keeps
     # a misread from becoming a mass-mail incident.
     copilot_max_outbound_recipients: int = 200
+    # K31: end-of-session profile extraction is OFF.
+    #
+    # It is an unattended LLM call — one per closed session, plus up to three
+    # Celery retries — drawing on the same OpenRouter account, and therefore
+    # the same free-tier request budget, as the chat a user is waiting on.
+    # An unfunded account has ~50 free-model requests per day in total. A
+    # background job that no user asked for can spend those and leave a real
+    # question answered with a rate-limit error the user cannot explain,
+    # attributable to nothing they did.
+    #
+    # Cross-session memory is a nicety; a copilot that refuses to answer is
+    # not. Off until the request budget is large enough that the extractor
+    # can be given a metered share of it — see the K31 note in
+    # app/tasks/extract_profile.py for what "properly on" would require.
+    #
+    # Turning this on is enough to make it run again: reads of an existing
+    # profile were never gated, so nothing else has to change.
+    copilot_profile_extraction_enabled: bool = False
 
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is
