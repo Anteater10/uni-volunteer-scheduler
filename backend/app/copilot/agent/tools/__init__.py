@@ -12,6 +12,12 @@ from .find_module_by_name import FIND_MODULE_BY_NAME_TOOL
 from .find_understaffed_modules import FIND_UNDERSTAFFED_MODULES_TOOL
 from .get_module_roster import GET_MODULE_ROSTER_TOOL
 from .list_modules import LIST_MODULES_TOOL
+from .module_templates import (
+    ARCHIVE_MODULE_TEMPLATE_TOOL,
+    CREATE_MODULE_TEMPLATE_TOOL,
+    LIST_MODULE_TEMPLATES_TOOL,
+    UPDATE_MODULE_TEMPLATE_TOOL,
+)
 from .move_participant import MOVE_PARTICIPANT_TOOL
 from .nudge_understaffed_module import NUDGE_UNDERSTAFFED_MODULE_TOOL
 from .participant_history import PARTICIPANT_HISTORY_TOOL
@@ -52,3 +58,11 @@ registry.register(GET_EVENT_SCHEDULE_TOOL)
 registry.register(UPDATE_EVENT_TOOL)
 registry.register(RESCHEDULE_SLOT_TOOL)
 registry.register(DELETE_EVENT_TOOL)
+
+# Modules. create_event_with_schedule reads a template's capacity and
+# duration as the defaults it offers, so a missing slug used to send the
+# admin back to the UI in the middle of the one task they delegated.
+registry.register(LIST_MODULE_TEMPLATES_TOOL)
+registry.register(CREATE_MODULE_TEMPLATE_TOOL)
+registry.register(UPDATE_MODULE_TEMPLATE_TOOL)
+registry.register(ARCHIVE_MODULE_TEMPLATE_TOOL)
