@@ -255,14 +255,16 @@ export default function CopilotDrawer({ open, onClose }) {
         <header className="flex items-center justify-between px-4 py-3 border-b">
           <div>
             <h2 className="font-semibold">SciTrek Copilot</h2>
-            {/* The old copy said "no live data access yet", which stopped being
-                true once grounded retrieval shipped — answers stream with
-                citations into the knowledge base. Says what it does and, just
-                as usefully, what it doesn't: it explains the app, it can't read
-                today's roster. */}
+            {/* This line has now been wrong twice by outliving the build.
+                It said "no live data access yet" until grounded retrieval
+                shipped, then "can't see live rosters or signups" until the
+                agent loop was turned on (2026-08-07) and it could. It reads
+                live data and proposes changes you approve first — the
+                approval step is the part worth saying out loud, because it
+                is what makes asking it to move someone safe. */}
             <p className="text-xs text-gray-500">
-              Answers from the SciTrek knowledge base, with sources. Can't see
-              live rosters or signups.
+              Answers from the SciTrek knowledge base and live rosters, with
+              sources. Any change it makes waits for your approval.
             </p>
           </div>
           <button
