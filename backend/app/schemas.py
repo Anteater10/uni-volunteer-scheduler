@@ -869,6 +869,10 @@ class PublicSlotRead(BaseModel):
     capacity: int
     filled: int  # = slot.current_count
     signups: List[SlotSignupRead] = []
+    # 2026-08-06 K10: the server refuses a booking for work that is over, so
+    # the page has to stop offering one. Computed, not stored — "past" is a
+    # function of the clock at request time, not a column.
+    has_ended: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -884,6 +888,9 @@ class PublicSessionRead(BaseModel):
     start_time: datetime
     end_time: datetime
     location: Optional[str] = None
+    # Per-session, so a part-finished shift can grey out the days that are gone
+    # while the shift as a whole stays bookable for the days that remain.
+    has_ended: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -896,6 +903,9 @@ class PublicShiftRead(BaseModel):
     capacity: int
     filled: int  # = shift.current_count
     sessions: List[PublicSessionRead] = []
+    # True once every session is over — a shift outlives its first session, so
+    # this is not simply the first session's has_ended.
+    has_ended: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 

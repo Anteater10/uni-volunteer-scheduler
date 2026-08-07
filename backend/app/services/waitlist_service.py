@@ -65,6 +65,27 @@ def slot_has_ended(slot: models.Slot, now: datetime | None = None) -> bool:
     return end_time <= (now or datetime.now(timezone.utc))
 
 
+def shift_has_ended(shift: models.Shift, now: datetime | None = None) -> bool:
+    """True when every session in ``shift`` is over.
+
+    A shift is judged on its **last** session, not its first: a Tue+Wed shift
+    still has Wednesday's classroom to staff on Tuesday evening, so calling it
+    finished at the first session's end would retire it while there is still
+    work to turn up for. This is the same rule
+    ``signup_service.mark_shift_promoted_pending`` applies, extracted here so
+    the promotion path and the public signup path cannot drift apart about what
+    "past" means.
+
+    A shift with no sessions cannot be represented (the API refuses to create
+    one), so the empty case is only defensive — treated as not-ended, which
+    fails toward letting a human decide rather than silently hiding a shift.
+    """
+    sessions = list(shift.sessions)
+    if not sessions:
+        return False
+    return all(slot_has_ended(s, now) for s in sessions)
+
+
 def compute_waitlist_position(
     db: Session, slot_id, signup_id
 ) -> int | None:

@@ -130,7 +130,7 @@ def mark_shift_promoted_pending(
     Does NOT touch shift.current_count — the caller owns capacity, same split
     as the signup path.
     """
-    from .services.waitlist_service import SlotEndedError, slot_has_ended
+    from .services.waitlist_service import SlotEndedError, shift_has_ended
 
     if shift_signup.status != models.SignupStatus.waitlisted:
         raise ValueError(
@@ -141,8 +141,7 @@ def mark_shift_promoted_pending(
     shift = (
         db.query(models.Shift).filter(models.Shift.id == shift_signup.shift_id).first()
     )
-    sessions = list(shift.sessions) if shift is not None else []
-    if sessions and all(slot_has_ended(s) for s in sessions):
+    if shift is not None and shift_has_ended(shift):
         raise SlotEndedError()
 
     shift_signup.status = models.SignupStatus.pending

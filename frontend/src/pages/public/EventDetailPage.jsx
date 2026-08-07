@@ -161,6 +161,11 @@ function VolunteerChip({ firstName, lastInitial }) {
 // Availability is signaled by BOTH text and color (never color alone) so it
 // stays readable for color-blind volunteers (WCAG 1.4.1).
 function slotStatus(slot) {
+  // 2026-08-06 K10: "already happened" outranks every other state — a full
+  // session that is also over should not offer a waitlist, because there is
+  // nothing left to be waiting for. The server refuses these outright, so
+  // anything the page still offers here would be a button that cannot work.
+  if (slot.has_ended) return "ended";
   const capacity = slot.capacity ?? 0;
   const filled = slot.filled ?? 0;
   if (filled >= capacity) return "full";
@@ -180,8 +185,15 @@ function slotDisplayLabel(slot) {
 }
 
 // A shift is all-or-nothing, so its availability is one number, not per session.
+// It ends with its LAST session, not its first: a Tue+Wed shift still has
+// Wednesday's classroom to staff on Tuesday evening. The server decides that —
+// this only passes the flag through.
 function shiftStatus(shift) {
-  return slotStatus({ capacity: shift.capacity, filled: shift.filled });
+  return slotStatus({
+    capacity: shift.capacity,
+    filled: shift.filled,
+    has_ended: shift.has_ended,
+  });
 }
 
 function sessionsInOrder(shift) {
@@ -198,6 +210,14 @@ function AvailabilityBadge({ status, selected }) {
       <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-800">
         <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
         You selected this
+      </span>
+    );
+  }
+  if (status === "ended") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+        <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+        Already happened
       </span>
     );
   }
@@ -234,6 +254,7 @@ function AvailabilityBadge({ status, selected }) {
 function SlotCard({ slot, selected, onToggle, highlight, showDate }) {
   const isFull = slot.filled >= slot.capacity;
   const status = slotStatus(slot);
+  const hasEnded = status === "ended";
   const fillPct =
     slot.capacity > 0 ? Math.min(100, Math.round((slot.filled / slot.capacity) * 100)) : 0;
 
@@ -282,22 +303,29 @@ function SlotCard({ slot, selected, onToggle, highlight, showDate }) {
         <button
           type="button"
           onClick={() => onToggle(slot.id)}
+          disabled={hasEnded}
           className={[
             "shrink-0 min-h-11 min-w-[6.5rem] px-4 rounded-lg text-sm font-semibold transition-all shadow-sm",
-            "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+            hasEnded
+              ? "cursor-not-allowed bg-slate-100 text-slate-500 border border-slate-200"
+              : "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 focus-visible:ring-offset-2",
-            isFull
-              ? selected
-                ? "bg-amber-500 text-white"
-                : "bg-amber-600 text-white hover:bg-amber-700"
-              : selected
-                ? "bg-[var(--color-success)] text-white"
-                : "bg-[var(--color-brand)] text-white hover:brightness-110",
+            hasEnded
+              ? ""
+              : isFull
+                ? selected
+                  ? "bg-amber-500 text-white"
+                  : "bg-amber-600 text-white hover:bg-amber-700"
+                : selected
+                  ? "bg-[var(--color-success)] text-white"
+                  : "bg-[var(--color-brand)] text-white hover:brightness-110",
           ].join(" ")}
         >
-          {isFull
-            ? selected ? "On waitlist" : "Join waitlist"
-            : selected ? "Selected" : "Sign up"}
+          {hasEnded
+            ? "Ended"
+            : isFull
+              ? selected ? "On waitlist" : "Join waitlist"
+              : selected ? "Selected" : "Sign up"}
         </button>
       </div>
 
@@ -311,7 +339,7 @@ function SlotCard({ slot, selected, onToggle, highlight, showDate }) {
             <div
               className={[
                 "h-full rounded-full transition-all",
-                status === "full"
+                status === "full" || status === "ended"
                   ? "bg-slate-400"
                   : status === "few"
                     ? "bg-amber-500"
@@ -346,6 +374,7 @@ function SlotCard({ slot, selected, onToggle, highlight, showDate }) {
 function ShiftCard({ shift, selected, onToggle }) {
   const isFull = (shift.filled ?? 0) >= (shift.capacity ?? 0);
   const status = shiftStatus(shift);
+  const hasEnded = status === "ended";
   const sessions = sessionsInOrder(shift);
   const fillPct =
     shift.capacity > 0
@@ -378,22 +407,29 @@ function ShiftCard({ shift, selected, onToggle }) {
         <button
           type="button"
           onClick={() => onToggle(shift.id)}
+          disabled={hasEnded}
           className={[
             "shrink-0 min-h-11 min-w-[6.5rem] px-4 rounded-lg text-sm font-semibold transition-all shadow-sm",
-            "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+            hasEnded
+              ? "cursor-not-allowed bg-slate-100 text-slate-500 border border-slate-200"
+              : "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 focus-visible:ring-offset-2",
-            isFull
-              ? selected
-                ? "bg-amber-500 text-white"
-                : "bg-amber-600 text-white hover:bg-amber-700"
-              : selected
-                ? "bg-[var(--color-success)] text-white"
-                : "bg-[var(--color-brand)] text-white hover:brightness-110",
+            hasEnded
+              ? ""
+              : isFull
+                ? selected
+                  ? "bg-amber-500 text-white"
+                  : "bg-amber-600 text-white hover:bg-amber-700"
+                : selected
+                  ? "bg-[var(--color-success)] text-white"
+                  : "bg-[var(--color-brand)] text-white hover:brightness-110",
           ].join(" ")}
         >
-          {isFull
-            ? selected ? "On waitlist" : "Join waitlist"
-            : selected ? "Selected" : "Sign up"}
+          {hasEnded
+            ? "Ended"
+            : isFull
+              ? selected ? "On waitlist" : "Join waitlist"
+              : selected ? "Selected" : "Sign up"}
         </button>
       </div>
 
@@ -434,7 +470,7 @@ function ShiftCard({ shift, selected, onToggle }) {
             <div
               className={[
                 "h-full rounded-full transition-all",
-                status === "full"
+                status === "full" || status === "ended"
                   ? "bg-slate-400"
                   : status === "few"
                     ? "bg-amber-500"
@@ -457,26 +493,34 @@ function ShiftCard({ shift, selected, onToggle }) {
 
 function SignUpButton({ slot, selected, onToggle }) {
   const isFull = slot.filled >= slot.capacity;
+  const hasEnded = slotStatus(slot) === "ended";
   return (
     <button
       type="button"
       onClick={() => onToggle(slot.id)}
+      disabled={hasEnded}
       className={[
         "min-h-10 min-w-[6rem] rounded-lg px-4 text-sm font-semibold shadow-sm transition-all",
-        "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
+        hasEnded
+          ? "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-500"
+          : "hover:shadow-md hover:-translate-y-0.5 active:translate-y-0",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 focus-visible:ring-offset-2",
-        isFull
-          ? selected
-            ? "bg-amber-500 text-white"
-            : "bg-amber-600 text-white hover:bg-amber-700"
-          : selected
-            ? "bg-[var(--color-success)] text-white"
-            : "bg-[var(--color-brand)] text-white hover:brightness-110",
+        hasEnded
+          ? ""
+          : isFull
+            ? selected
+              ? "bg-amber-500 text-white"
+              : "bg-amber-600 text-white hover:bg-amber-700"
+            : selected
+              ? "bg-[var(--color-success)] text-white"
+              : "bg-[var(--color-brand)] text-white hover:brightness-110",
       ].join(" ")}
     >
-      {isFull
-        ? selected ? "On waitlist" : "Join waitlist"
-        : selected ? "Selected" : "Sign up"}
+      {hasEnded
+        ? "Ended"
+        : isFull
+          ? selected ? "On waitlist" : "Join waitlist"
+          : selected ? "Selected" : "Sign up"}
     </button>
   );
 }
@@ -497,7 +541,7 @@ function CapacityCell({ slot }) {
             <div
               className={[
                 "h-full rounded-full transition-all",
-                status === "full"
+                status === "full" || status === "ended"
                   ? "bg-slate-400"
                   : status === "few"
                     ? "bg-amber-500"
