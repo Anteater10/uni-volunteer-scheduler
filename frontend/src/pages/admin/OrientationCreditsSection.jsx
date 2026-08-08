@@ -28,17 +28,12 @@ import {
   Skeleton,
 } from "../../components/ui";
 import { toast } from "../../state/toast";
+import { fmtVenueDateTime } from "../../lib/venueTime";
 
+// Venue time, not browser time: see src/lib/venueTime.js for the event that
+// claimed to end on a Saturday.
 function fmtDateTime(iso) {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
+  return fmtVenueDateTime(iso);
 }
 
 function SourceBadge({ source }) {

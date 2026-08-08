@@ -51,21 +51,18 @@ import {
 } from "../../components/ui";
 import OrientationWarningModal from "../../components/OrientationWarningModal";
 import SignupSuccessCard from "../../components/SignupSuccessCard";
+import { fmtVenueDate, fmtVenueWeekday } from "../../lib/venueTime";
 
 // ---------------------------------------------------------------------------
 // Date/time helpers
 // ---------------------------------------------------------------------------
 
 function formatDate(isoString) {
-  if (!isoString) return "";
-  const d = new Date(isoString.includes("T") ? isoString : `${isoString}T00:00:00`);
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  return fmtVenueDate(isoString);
 }
 
 function formatWeekday(isoString) {
-  if (!isoString) return "";
-  const d = new Date(isoString.includes("T") ? isoString : `${isoString}T00:00:00`);
-  return d.toLocaleDateString("en-US", { weekday: "long" });
+  return fmtVenueWeekday(isoString);
 }
 
 function formatShortDate(isoString) {

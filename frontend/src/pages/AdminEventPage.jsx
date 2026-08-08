@@ -32,12 +32,14 @@ import { useQuarters } from "../lib/useQuarters";
 import { findQuarterById } from "../lib/weekUtils";
 import { useAdminPageTitle } from "./admin/AdminLayout";
 import { useAuth } from "../state/useAuth";
+import { VENUE_TZ, fmtVenueDateTime } from "../lib/venueTime";
 
 // Issue #31 — slot headers lead with the weekday ("Tuesday, Sep 29, 2026").
 function fmtSlotDay(iso) {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return new Date(iso).toLocaleDateString("en-US", {
+      timeZone: VENUE_TZ,
       weekday: "long",
       month: "short",
       day: "numeric",
@@ -51,7 +53,8 @@ function fmtSlotDay(iso) {
 function fmtTimeRange(startIso, endIso) {
   const fmt = (iso) =>
     iso
-      ? new Date(iso).toLocaleTimeString(undefined, {
+      ? new Date(iso).toLocaleTimeString("en-US", {
+          timeZone: VENUE_TZ,
           hour: "numeric",
           minute: "2-digit",
         })
@@ -61,16 +64,10 @@ function fmtTimeRange(startIso, endIso) {
   return end ? `${start} – ${end}` : start || "—";
 }
 
+// Venue time, not browser time: see src/lib/venueTime.js for the event that
+// claimed to end on a Saturday.
 function fmtDateTime(iso) {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
+  return fmtVenueDateTime(iso);
 }
 
 // A roster can run to ninety-odd rows across seventeen slots, so status has to
