@@ -318,11 +318,16 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     # event's date range, and in the ``slots.date`` column three screens read.
     first_day = min(s.astimezone(_PT).date() for s in every_start)
     last_day = max(e.astimezone(_PT).date() for e in every_end)
-    # The event spans whole local days, so the public page's "Wed Sep 2 – Fri
-    # Sep 4" is the range a human would write, and every session sits inside
-    # it for shift_service.validate_session_range.
-    starts_at = _at(first_day, "00:00")
-    ends_at = _at(last_day, "23:59")
+    # The event's range is the first session's start and the last one's end,
+    # not midnight-to-midnight. Whole local days read better in principle and
+    # bleed in practice: 23:59 Pacific is 06:59 UTC the next morning, so an
+    # event ending Friday announced itself as ending Saturday on any surface
+    # that formatted the stored instant in anything but Pacific — which the
+    # admin page does. Real session bounds cannot bleed, because they are
+    # nowhere near midnight, and every session still sits inside them for
+    # shift_service.validate_session_range.
+    starts_at = min(every_start)
+    ends_at = max(every_end)
 
     # Same rule as every other write path: the quarter cache derives from the
     # admin-entered quarter ranges, and an event outside them has nowhere to
