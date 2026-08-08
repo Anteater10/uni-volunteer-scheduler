@@ -95,7 +95,13 @@ class Settings(BaseSettings):
     copilot_primary_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
     copilot_fallback_model: str = "google/gemma-4-31b-it:free"
     copilot_request_timeout_seconds: int = 60
-    copilot_max_completion_tokens: int = 1024
+    # 1024 was set when the copilot only answered questions, where it is
+    # generous. An agent turn spends the same budget writing tool arguments,
+    # and a real request — fifteen bookable shifts, each with its own day,
+    # times and capacity — ran out mid-word. The provider still returned a
+    # syntactically whole call, so nothing looked broken until the argument
+    # it truncated turned out to be half a shift list.
+    copilot_max_completion_tokens: int = 8192
     # Phase 33-09: when True the chat endpoint streams ReAct-loop events
     # (tool_call / tool_result / confirmation_request / final_answer)
     # instead of raw token chunks.

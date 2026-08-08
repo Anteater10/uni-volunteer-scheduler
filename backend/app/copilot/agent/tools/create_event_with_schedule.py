@@ -13,11 +13,14 @@ cannot say "Tuesday" cannot answer them.
 
 Shape of the arguments:
 
-- Days are given as an ISO week plus a weekday name, never as a raw date.
-  A language model is reliable at "the Monday of 2026-W34" and unreliable at
-  computing what date that is; the tool does the arithmetic instead. Every
-  day names its own week, so "orientations this week, shifts the next" is
-  two different ``week`` values, not a span the tool has to infer.
+- Days are given as a ``date`` — 2026-08-17. ISO week plus weekday still
+  works and was the original shape, on the theory that a model is better at
+  "the Monday of 2026-W34" than at the date it lands on. That theory did not
+  survive contact: asked for the week of August 17th, a real model produced
+  2026-W33, a valid week exactly seven days early, which no later check
+  could distinguish from the truth. Copying a date is not arithmetic, so
+  ``date`` is what the schema now asks for. A weekday given beside a date is
+  checked against it, and disagreement is refused rather than resolved.
 - Times are ``HH:MM`` **Pacific** — the venue's wall clock, which is what an
   admin types and what every screen in this app displays. They are converted
   to UTC for storage. The first version of this tool stamped them as UTC
@@ -38,7 +41,7 @@ bookable, which is exactly the distinction a demo of this tool should show.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -89,7 +92,13 @@ _parse_when = parse_when
 
 
 def _label(entry: dict[str, Any], fallback: str) -> str:
-    """"Wednesday of 2026-W37", or the fallback when it cannot be read."""
+    """"Wednesday 2026-09-09", or the fallback when it cannot be read."""
+    if entry.get("date"):
+        try:
+            day = date.fromisoformat(str(entry["date"]).strip())
+        except (TypeError, ValueError):
+            return fallback
+        return f"{day.strftime('%A')} {day.isoformat()}"
     week, weekday = entry.get("week"), entry.get("weekday")
     if not week or not weekday:
         return fallback
@@ -464,16 +473,32 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     return schema_apply(payload, allowed_fields=_PII_SCHEMA)
 
 
+# ``date`` first and ``week`` kept only as a fallback. Deriving "the week of
+# August 17th" into 2026-W34 is arithmetic, and a live request came back as
+# 2026-W33 — a real week, seven days early, indistinguishable from the right
+# answer once it reaches the database. A weekday alongside a date is a free
+# check: if they disagree, one of them was a guess.
 _WHEN_PROPERTIES = {
+    "date": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+        "description": (
+            "The calendar day, e.g. 2026-08-17. PREFER THIS. Do not convert "
+            "dates to ISO week numbers yourself."
+        ),
+    },
     "week": {
         "type": "string",
         "pattern": "^[0-9]{4}-W[0-9]{1,2}$",
-        "description": "ISO week, e.g. 2026-W34.",
+        "description": "ISO week, e.g. 2026-W34. Only if no date is known.",
     },
     "weekday": {
         "type": "string",
         "enum": list(WEEKDAYS),
-        "description": "Day of that week.",
+        "description": (
+            "Day of that week. Required with 'week'; optional with 'date', "
+            "where it is checked against the date."
+        ),
     },
 }
 
@@ -489,10 +514,11 @@ CREATE_EVENT_WITH_SCHEDULE_TOOL = Tool(
         "All times are HH:MM 24-hour PACIFIC (the venue clock); do not convert "
         "to UTC yourself.\n"
         "\n"
-        "Every day is an ISO week plus a weekday name, and each day names its "
-        "own week — so a module that runs orientations in 2026-W36 and shifts "
-        "in 2026-W37 is just two different 'week' values in one call. Never "
-        "make two events for one module.\n"
+        "Give every day as a 'date' like 2026-08-17. Do NOT work out ISO week "
+        "numbers — that arithmetic is where this goes wrong. Each day carries "
+        "its own date, so a module with orientations one week and shifts the "
+        "next is one call with different dates. Never make two events for one "
+        "module.\n"
         "\n"
         "A shift is the all-or-nothing package a volunteer signs up for:\n"
         "- 'three shifts a day, Monday to Friday' = 15 shifts, each with ONE "
@@ -553,7 +579,7 @@ CREATE_EVENT_WITH_SCHEDULE_TOOL = Tool(
                         "capacity": {"type": "integer"},
                         "location": {"type": "string"},
                     },
-                    "required": ["week", "weekday"],
+                    "required": [],
                 },
             },
             "shifts": {
@@ -604,7 +630,7 @@ CREATE_EVENT_WITH_SCHEDULE_TOOL = Tool(
                                     },
                                     "location": {"type": "string"},
                                 },
-                                "required": ["week", "weekday"],
+                                "required": [],
                             },
                         },
                     },

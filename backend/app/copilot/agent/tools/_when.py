@@ -87,13 +87,41 @@ def when(moment: datetime) -> str:
 
 
 def parse_when(entry: dict, what: str) -> date:
-    """Pull ``week`` + ``weekday`` off a tool argument into a real date."""
-    week = entry.get("week")
+    """Pull a real date off a tool argument, by whichever route it came.
+
+    ``date`` first, because "the week of August 17th" is a phrase a model
+    can copy and "2026-W34" is a number it has to *derive* — and it derives
+    it wrong. A live request for the week of Aug 17 arrived as 2026-W33,
+    which is a perfectly valid week seven days earlier, so nothing
+    downstream could have known. ``week`` + ``weekday`` still works for
+    callers that genuinely think in weeks.
+
+    Given both, they must agree. A stated weekday is a free check on the
+    arithmetic, and disagreement means one of the two is a guess.
+    """
+    raw_date = entry.get("date")
     weekday = (entry.get("weekday") or "").strip().lower()
+    if raw_date:
+        try:
+            day = date.fromisoformat(str(raw_date).strip())
+        except (TypeError, ValueError) as exc:
+            raise BadArgs(
+                f"could not read {what} date {raw_date!r} — use YYYY-MM-DD"
+            ) from exc
+        if weekday in WEEKDAYS and day.isoweekday() != WEEKDAYS[weekday]:
+            raise BadArgs(
+                f"{what} says {raw_date} and also {weekday}, but "
+                f"{raw_date} is a {day.strftime('%A').lower()}. Check the "
+                "calendar and send the one you meant."
+            )
+        return day
+
+    week = entry.get("week")
     if not week or weekday not in WEEKDAYS:
         raise BadArgs(
-            f"each {what} needs a 'week' like 2026-W34 and a 'weekday' "
-            f"(monday-sunday); got week={entry.get('week')!r} "
+            f"each {what} needs a 'date' like 2026-08-17 (preferred), or "
+            f"else a 'week' like 2026-W34 with a 'weekday' (monday-sunday); "
+            f"got date={entry.get('date')!r} week={entry.get('week')!r} "
             f"weekday={entry.get('weekday')!r}"
         )
     try:
