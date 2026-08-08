@@ -38,14 +38,22 @@ bookable, which is exactly the distinction a demo of this tool should show.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools._ask import ask_for
+from app.copilot.agent.tools._when import PT as _PT
+from app.copilot.agent.tools._when import (
+    WEEKDAYS,
+    BadArgs,
+    at,
+    hhmm,
+    parse_when,
+)
 from app.copilot.agent.tools.base import Tool
 from app.models import (
     Event,
@@ -72,66 +80,12 @@ _PII_SCHEMA = [
     "schedule",
 ]
 
-# The venue's wall clock. Same zone the emails, the reminders and every
-# screen use; see app/emails.py VENUE_TZ.
-_PT = ZoneInfo("America/Los_Angeles")
-
-_WEEKDAYS = {
-    "monday": 1,
-    "tuesday": 2,
-    "wednesday": 3,
-    "thursday": 4,
-    "friday": 5,
-    "saturday": 6,
-    "sunday": 7,
-}
-
-
-def _resolve_day(week: str, weekday: str) -> date:
-    """``("2026-W34", "tuesday")`` -> the date of that Tuesday."""
-    year_part, week_part = week.split("-W")
-    return date.fromisocalendar(
-        int(year_part), int(week_part), _WEEKDAYS[weekday.strip().lower()]
-    )
-
-
-def _at(day: date, hhmm: str) -> datetime:
-    """``HH:MM`` Pacific on ``day`` -> the same instant expressed in UTC.
-
-    The caller says "9:00" meaning nine in the morning at the school.
-    ``zoneinfo`` picks PDT or PST from the date itself, so a September
-    event and a January one both land on the right instant without the
-    model being asked which one is in force.
-    """
-    hour, minute = (int(part) for part in hhmm.split(":"))
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        raise _BadArgs(f"{hhmm!r} is not a 24-hour HH:MM time")
-    local = datetime.combine(day, time(hour, minute), tzinfo=_PT)
-    return local.astimezone(timezone.utc)
-
-
-def _pt(moment: datetime) -> str:
-    """UTC instant -> "09:00" Pacific, for reporting back what was made."""
-    return moment.astimezone(_PT).strftime("%H:%M")
-
-
-class _BadArgs(Exception):
-    """An argument the model got wrong, phrased for the model to correct."""
-
-
-def _parse_when(entry: dict[str, Any], what: str) -> date:
-    week = entry.get("week")
-    weekday = (entry.get("weekday") or "").strip().lower()
-    if not week or weekday not in _WEEKDAYS:
-        raise _BadArgs(
-            f"each {what} needs a 'week' like 2026-W34 and a 'weekday' "
-            f"(monday-sunday); got week={entry.get('week')!r} "
-            f"weekday={entry.get('weekday')!r}"
-        )
-    try:
-        return _resolve_day(week, weekday)
-    except (ValueError, KeyError) as exc:
-        raise _BadArgs(f"could not read {what} week {week!r}: {exc}") from exc
+# Day/time arithmetic lives in _when so a second tool cannot re-derive it
+# differently; see that module for why Pacific is not negotiable here.
+_BadArgs = BadArgs
+_at = at
+_pt = hhmm
+_parse_when = parse_when
 
 
 def _label(entry: dict[str, Any], fallback: str) -> str:
@@ -157,8 +111,25 @@ def _precheck(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]
     """
     orientations_in = args.get("orientations") or []
     shifts_in = args.get("shifts") or []
+
+    # The event's own details first. These used to fall through to the
+    # handler, which meant an empty request reached the confirmation card
+    # and the admin was asked to approve an event with no name.
+    # Note what is NOT demanded here: a title. Falling back to the module's
+    # own name is not an invention — it is the name the module already has,
+    # and every screen shows it.
+    outline: list[str] = []
+    if not args.get("template_id"):
+        outline.append(
+            "which module it runs — the slug, from list_module_templates"
+        )
     if not orientations_in and not shifts_in:
-        return None  # the handler's own refusal says this better
+        outline.append(
+            "when it actually happens — the orientation times and the shifts "
+            "volunteers can book, with the days and times of each"
+        )
+    if outline:
+        return ask_for(outline)
 
     template = (
         db.query(Module).filter(Module.slug == args.get("template_id")).one_or_none()
@@ -501,7 +472,7 @@ _WHEN_PROPERTIES = {
     },
     "weekday": {
         "type": "string",
-        "enum": list(_WEEKDAYS),
+        "enum": list(WEEKDAYS),
         "description": "Day of that week.",
     },
 }

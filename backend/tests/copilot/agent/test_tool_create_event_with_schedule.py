@@ -582,10 +582,17 @@ class TestRefusals:
         assert "template not found" in result["error"]
         self._no_events_written(db_session, "no-such-module")
 
-    def test_nothing_to_schedule(self, db_session):
+    def test_nothing_to_schedule_is_a_question_now(self, db_session):
+        """An event with no times is not a bad request — it is an unfinished
+        one. The precheck catches it before the confirmation card is built,
+        so the admin is asked when it happens rather than shown a card for an
+        event that happens never."""
         tpl = _make_template(db_session)
-        _out, result = _run(db_session, {"template_id": tpl.slug})
-        assert "nothing to schedule" in result["error"]
+        out, result = _run(db_session, {"template_id": tpl.slug})
+        assert result is None
+        asked = out["result"]["needs_answers"]
+        assert asked
+        assert "when" in " ".join(asked).lower()
         self._no_events_written(db_session, tpl.slug)
 
     def test_shift_with_no_sessions(self, db_session):

@@ -26,6 +26,10 @@ from .orientation_credits import (
     LIST_ORIENTATION_CREDITS_TOOL,
     REVOKE_ORIENTATION_CREDIT_TOOL,
 )
+from .operations import (
+    MARK_ATTENDANCE_TOOL,
+    MOVE_VOLUNTEER_TO_SHIFT_TOOL,
+)
 from .participant_history import PARTICIPANT_HISTORY_TOOL
 from .quarters import (
     CREATE_QUARTER_TOOL,
@@ -34,6 +38,12 @@ from .quarters import (
 )
 from .send_reminder_email import SEND_REMINDER_EMAIL_TOOL
 from .signup_stats_for_week import SIGNUP_STATS_FOR_WEEK_TOOL
+from .staff import (
+    INVITE_STAFF_TOOL,
+    LIST_STAFF_TOOL,
+    SET_STAFF_ACTIVE_TOOL,
+    SET_STAFF_ROLE_TOOL,
+)
 from .signup_trend import SIGNUP_TREND_TOOL
 
 registry.register(LIST_MODULES_TOOL)
@@ -80,3 +90,17 @@ registry.register(CHECK_ORIENTATION_CREDIT_TOOL)
 registry.register(LIST_ORIENTATION_CREDITS_TOOL)
 registry.register(GRANT_ORIENTATION_CREDIT_TOOL)
 registry.register(REVOKE_ORIENTATION_CREDIT_TOOL)
+
+# Operations. move_participant covers moves between events; almost all the
+# real churn happens inside one, and marking attendance is where orientation
+# credit is actually earned.
+registry.register(MOVE_VOLUNTEER_TO_SHIFT_TOOL)
+registry.register(MARK_ATTENDANCE_TOOL)
+
+# Users. Staff accounts only — volunteers have none. The last active admin
+# is untouchable in both write paths; losing them locks every human out of
+# the admin surface with no way back in.
+registry.register(LIST_STAFF_TOOL)
+registry.register(INVITE_STAFF_TOOL)
+registry.register(SET_STAFF_ROLE_TOOL)
+registry.register(SET_STAFF_ACTIVE_TOOL)

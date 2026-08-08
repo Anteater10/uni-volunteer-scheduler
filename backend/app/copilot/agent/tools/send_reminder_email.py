@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools import _bookings, _outbound
+from app.copilot.agent.tools._ask import ask_for
 from app.copilot.agent.tools.base import Tool
 from app.models import Volunteer
 
@@ -93,6 +94,26 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     return schema_apply(payload, allowed_fields=_PII_SCHEMA)
 
 
+def _precheck(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any] | None:
+    """Mail is the one action that cannot be taken back.
+
+    A confirmation card the admin approves is only meaningful if it names a
+    real audience and a real template. An empty list confirms a send to
+    nobody; a template nobody chose confirms whichever wording the model
+    liked. Both are asked about here, before the card is built.
+    """
+    missing: list[str] = []
+    ids = args.get("participant_ids")
+    if not isinstance(ids, list) or not ids:
+        missing.append(
+            "who to email — a list of participant ids from get_module_roster. "
+            "Do not send to everyone unless the user said everyone."
+        )
+    if not args.get("template"):
+        missing.append("which reminder template to send")
+    return ask_for(missing)
+
+
 SEND_REMINDER_EMAIL_TOOL = Tool(
     name="send_reminder_email",
     description=(
@@ -120,4 +141,5 @@ SEND_REMINDER_EMAIL_TOOL = Tool(
     requires_confirmation=True,
     pii_schema=_PII_SCHEMA,
     handler=_handler,
+    precheck=_precheck,
 )

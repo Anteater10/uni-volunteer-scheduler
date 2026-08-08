@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools._ask import ask_for
 from app.copilot.agent.tools.base import Tool
 from app.models import Event, Module, Quarter, User, UserRole
 from app.services import quarter_service
@@ -110,6 +111,17 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     return schema_apply(payload, allowed_fields=_PII_SCHEMA)
 
 
+def _precheck(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any] | None:
+    missing: list[str] = []
+    if not args.get("template_id"):
+        missing.append(
+            "which module template — its slug, from list_module_templates"
+        )
+    if not args.get("week"):
+        missing.append("which ISO week to schedule it in, e.g. 2026-W37")
+    return ask_for(missing)
+
+
 CREATE_MODULE_FROM_TEMPLATE_TOOL = Tool(
     name="create_module_from_template",
     description=(
@@ -135,4 +147,5 @@ CREATE_MODULE_FROM_TEMPLATE_TOOL = Tool(
     requires_confirmation=True,
     pii_schema=_PII_SCHEMA,
     handler=_handler,
+    precheck=_precheck,
 )

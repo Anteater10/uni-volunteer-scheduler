@@ -63,6 +63,7 @@ from sqlalchemy.orm import Session
 from app.celery_app import send_waitlist_promotion_email
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
+from app.copilot.agent.tools._ask import ask_for
 from app.copilot.agent.tools.base import Tool
 from app.models import Shift, ShiftSignup, Signup, SignupStatus, Slot
 from app.services.waitlist_service import SlotEndedError
@@ -356,6 +357,29 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     return schema_apply(payload, allowed_fields=_PII_SCHEMA)
 
 
+def _precheck(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any] | None:
+    """Three ids, and none of them are guessable.
+
+    The destination especially: this tool picks its own unit on the
+    destination event, so naming the wrong event moves somebody to a
+    different school on a different day without either end being asked.
+    """
+    missing: list[str] = []
+    if not args.get("participant_id"):
+        missing.append("which volunteer — their id, from get_module_roster")
+    if not args.get("from_module"):
+        missing.append("which event they are on now")
+    if not args.get("to_module"):
+        missing.append("which event to move them to")
+    if missing:
+        return ask_for(missing)
+    if str(args["from_module"]) == str(args["to_module"]):
+        return ask_for(
+            ["a destination event different from the one they are already on"]
+        )
+    return None
+
+
 MOVE_PARTICIPANT_TOOL = Tool(
     name="move_participant",
     description=(
@@ -375,4 +399,5 @@ MOVE_PARTICIPANT_TOOL = Tool(
     requires_confirmation=True,
     pii_schema=_PII_SCHEMA,
     handler=_handler,
+    precheck=_precheck,
 )
