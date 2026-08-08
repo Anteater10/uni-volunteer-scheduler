@@ -248,14 +248,19 @@ Scope: tests that monkeypatch the seam they claim to test; hollow assertions; th
 > complete on `feat/phase-b-agent`. B0.1–B0.3 (adapter, write-tool wiring,
 > confirmation store) are built.
 >
-> **The flag stays OFF for the deploy.** `COPILOT_AGENT_LOOP_ENABLED=0` in
-> `.env.production.example`, documented there with the reason. Off is not
-> indecision here — the tool layer has never run against a real model on real
-> data, and the ~50 requests/day ceiling on the unfunded OpenRouter account
-> is not enough to earn that confidence before handoff. K23 is what makes
-> "off" safe rather than a trap: flipping the flag now returns a real 503
-> instead of a bare 500. Turning it on is a deliberate, reversible act taken
-> after the account is funded and the agent has been exercised end to end.
+> **Superseded 2026-08-08 — the flag ships ON.** This box previously said
+> `COPILOT_AGENT_LOOP_ENABLED=0` for the deploy. That position is withdrawn:
+> a copilot that cannot act is not the feature SciTrek is being given, and
+> shipping it switched off hands them a chatbot and calls it an agent. The
+> production example has read `true` since; this record was the stale half.
+>
+> What the old position was protecting is still real and moves to the
+> prerequisite list rather than disappearing: the tool layer's tests drive it
+> through a monkeypatch, so real-model behaviour has to be established by
+> manual exercise before staff see it, and the OpenRouter account needs a
+> funded request budget — an agent turn spends several of the ~50 free daily
+> requests, so a busy day rate-limits a real question. K23 keeps the rollback
+> honest: setting the flag false returns a real 503, not a bare 500.
 
 ⛔️ ~~**The decision:** ship the copilot as **retrieval-grounded Q&A** (which works today and is production-usable the moment the OpenRouter key is unblocked), or as a **tool-using agent that takes actions**?~~ *(Settled above.)*
 
