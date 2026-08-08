@@ -332,8 +332,11 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     if derived is None:
         return {
             "error": (
-                f"No quarter covers {first_day.isoformat()} — add it in "
-                "Admin → Quarters first, then ask me again"
+                f"No quarter covers {first_day.isoformat()}. Check the "
+                "date is the one the user meant — a year they did not say "
+                "is the usual cause — with list_quarters. If the date is "
+                "right, create_quarter or update_quarter can cover it; "
+                "offer that rather than sending them to a screen"
             )
         }
     season_value, year, week_number, quarter_id = derived
@@ -343,8 +346,9 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         return {
             "error": (
                 f"The schedule runs to {last_day.isoformat()}, which no "
-                "quarter covers — extend the quarter in Admin → Quarters, or "
-                "schedule inside it"
+                "quarter covers. update_quarter can extend the quarter's end "
+                "date to reach it; offer that, or schedule inside the "
+                "quarter"
             )
         }
 

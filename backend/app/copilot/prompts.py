@@ -16,7 +16,7 @@ import hashlib
 from .. import models
 
 
-SYSTEM_PROMPT_VERSION = "v0.5.0"
+SYSTEM_PROMPT_VERSION = "v0.6.0"
 
 
 _PREAMBLE = """\
@@ -100,6 +100,11 @@ _AGENT_EXTRA_RULES = """\
    someone is in the wrong place at the wrong time. When a tool answers
    with a list of things it needs, that is the question to put to the
    user; do not answer it on their behalf.
+11. Today is {today}. Work out every date from that. A month and a day
+   with no year means the next time that day occurs, not a year you
+   remember — "August 17" asked in August 2026 is 2026-08-17. If the year
+   is genuinely unclear, ask; a date in the past is never a guess worth
+   making. Do not convert dates to ISO week numbers: tools take a date.
 """
 
 
@@ -135,6 +140,21 @@ to their event.
 """
 
 
+def _today_pacific() -> str:
+    """"Friday 2026-08-08" — the date the model reasons from.
+
+    Without it, a request for "August 17" resolved to 2025: the model has no
+    clock, so a bare month and day is answered from whatever its training
+    suggests. The tool then refused, correctly, for a date a year in the
+    past that nobody had typed.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("America/Los_Angeles"))
+    return f"{now.strftime('%A')} {now.date().isoformat()}"
+
+
 def system_prompt_for(role: models.UserRole, *, agent: bool = False) -> str:
     """Return the role-appropriate system prompt.
 
@@ -146,7 +166,12 @@ def system_prompt_for(role: models.UserRole, *, agent: bool = False) -> str:
     about whether the model can reach live data, and serving the wrong
     one is not a cosmetic error.
     """
-    base = _AGENT_BASE if agent else _BASE
+    # The date is rendered in, not baked at import: a process that stays up
+    # over midnight would otherwise keep telling the model it is yesterday.
+    # Pacific, because that is the clock the whole app runs on.
+    base = (
+        _AGENT_BASE.replace("{today}", _today_pacific()) if agent else _BASE
+    )
     if role == models.UserRole.admin:
         return base + _ADMIN_TAIL
     if role == models.UserRole.organizer:

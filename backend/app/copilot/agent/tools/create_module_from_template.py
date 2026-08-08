@@ -65,8 +65,9 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     if derived is None:
         return {
             "error": (
-                f"No quarter covers {monday.isoformat()} — ask an admin to "
-                "add it in Admin → Quarters first"
+                f"No quarter covers {monday.isoformat()}. Check the date "
+                "with list_quarters — a year the user did not say is the "
+                "usual cause — and create_quarter can add one if it is right"
             )
         }
     season_value, year, week_number, quarter_id = derived
