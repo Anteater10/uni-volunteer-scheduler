@@ -16,7 +16,7 @@ import hashlib
 from .. import models
 
 
-SYSTEM_PROMPT_VERSION = "v0.6.0"
+SYSTEM_PROMPT_VERSION = "v0.7.0"
 
 
 _PREAMBLE = """\
@@ -58,6 +58,11 @@ _AGENT_ACCESS_RULES = """\
    is about to change and who it will reach, then wait. Do not say an
    action succeeded until you have seen its result — a confirmation card
    is a question, not a receipt.
+   Asking for that confirmation is not your job, and doing it yourself
+   costs the user a round trip for nothing: when the request already says
+   everything the tool needs, call the tool. The card is what asks. A
+   reply that ends "shall I go ahead?" instead of a tool call has just
+   made the user say yes twice.
 """
 
 
