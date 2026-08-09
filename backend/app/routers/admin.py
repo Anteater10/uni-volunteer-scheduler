@@ -486,41 +486,61 @@ def event_analytics(
     ensure_event_staff_access(event, actor)
 
     total_slots = len(event.slots)
-    total_capacity = sum(s.capacity for s in event.slots)
+
+    # Capacity lives in two places and summing one of them is not a smaller
+    # number, it is a wrong one. An orientation slot carries its own
+    # capacity; a shift's session slots carry a placeholder 1 each while the
+    # real limit sits on the Shift, because the shift is what a volunteer
+    # books. A fifteen-shift event of six seats each reported 65 instead of
+    # 140 — low enough to read as a quiet week rather than as a bug.
+    total_capacity = sum(
+        slot.capacity for slot in event.slots if slot.shift_id is None
+    ) + sum(shift.capacity for shift in event.shifts)
 
     # Count anyone still holding a seat: pending + confirmed + checked_in
     # + attended. Pending holds capacity (just hasn't clicked the magic link
     # yet). Otherwise the "Confirmed" card drops when someone checks in or
     # when staff manually promote a waitlisted person into pending — both
     # misread the state (they're more present, not less).
-    confirmed = (
-        db.query(func.count(models.Signup.id))
-        .join(models.Slot)
-        .filter(
-            models.Slot.event_id == event.id,
-            models.Signup.status.in_(
-                [
-                    models.SignupStatus.pending,
-                    models.SignupStatus.confirmed,
-                    models.SignupStatus.checked_in,
-                    models.SignupStatus.attended,
-                ]
-            ),
-        )
-        .scalar()
-        or 0
-    )
+    _HOLDING_A_SEAT = [
+        models.SignupStatus.pending,
+        models.SignupStatus.confirmed,
+        models.SignupStatus.checked_in,
+        models.SignupStatus.attended,
+    ]
 
-    waitlisted = (
-        db.query(func.count(models.Signup.id))
-        .join(models.Slot)
-        .filter(
-            models.Slot.event_id == event.id,
-            models.Signup.status == models.SignupStatus.waitlisted,
+    def _count(statuses):
+        """Both kinds of booking, because the page shows one number.
+
+        An orientation booking is a Signup against a slot; a shift booking
+        is a ShiftSignup against the shift. Counting only the first left
+        every classroom shift reading zero signups on the admin dashboard
+        while the roster underneath it listed people by name.
+        """
+        orientations = (
+            db.query(func.count(models.Signup.id))
+            .join(models.Slot)
+            .filter(
+                models.Slot.event_id == event.id,
+                models.Signup.status.in_(statuses),
+            )
+            .scalar()
+            or 0
         )
-        .scalar()
-        or 0
-    )
+        shifts = (
+            db.query(func.count(models.ShiftSignup.id))
+            .join(models.Shift)
+            .filter(
+                models.Shift.event_id == event.id,
+                models.ShiftSignup.status.in_(statuses),
+            )
+            .scalar()
+            or 0
+        )
+        return orientations + shifts
+
+    confirmed = _count(_HOLDING_A_SEAT)
+    waitlisted = _count([models.SignupStatus.waitlisted])
 
     log_action(db, actor, "admin_event_analytics", "Event", str(event.id))
 

@@ -38,6 +38,7 @@ from app.copilot.agent.events import (
 )
 from app.copilot.agent.audit_log import update_status
 from app.copilot.agent.confirmation import store_pending
+from app.copilot.agent.tools._coerce import CoercionError, coerce_args
 from app.copilot.agent.tools import registry
 from app.copilot.agent.tools.base import _begin, _complete
 from app.copilot.memory.summariser import (
@@ -124,10 +125,15 @@ def run_turn(
     )
 
     while True:
-        response = llm.chat(
-            messages=messages,
-            tools=[t.json_schema for t in tools],
-        )
+        # Pass the Tool objects, not ``[t.json_schema for t in tools]``. A
+        # bare json_schema is ``{type, properties, required}`` — it carries
+        # no name, so the adapter wrapped all twelve as
+        # ``{"function": {"name": null}}`` and OpenRouter answered 400 on
+        # every single agent turn. Nothing caught it because every test
+        # drives a stub whose ``chat`` ignores ``tools`` altogether; the
+        # wire shape was only ever exercised against a real model, which
+        # this path had never met.
+        response = llm.chat(messages=messages, tools=tools)
 
         if "final_answer" in response:
             yield FinalAnswerEvent(text=response["final_answer"])
@@ -215,6 +221,21 @@ def run_turn(
                         f"{scope.role}. Do not try it again this turn.",
                     )
                 )
+                continue
+
+            # Before anything is written down. A model that double-encoded a
+            # list, or ran out of tokens partway through one, produces a call
+            # that parses at the outer level and is rubble underneath; caught
+            # here it is one more retry, caught in the handler it is a 500
+            # behind a confirmation card the admin has already approved.
+            try:
+                call["args"] = coerce_args(tool.json_schema, call["args"])
+            except CoercionError as exc:
+                tool_errors += 1
+                if tool_errors > MAX_TOOL_ERRORS_PER_TURN:
+                    yield ErrorEvent(message="too many failed tool calls")
+                    return
+                messages.append(_error_result(tool.name, str(exc)))
                 continue
 
             call_id = _begin(

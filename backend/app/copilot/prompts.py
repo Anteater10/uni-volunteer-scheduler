@@ -16,7 +16,7 @@ import hashlib
 from .. import models
 
 
-SYSTEM_PROMPT_VERSION = "v0.4.0"
+SYSTEM_PROMPT_VERSION = "v0.7.0"
 
 
 _PREAMBLE = """\
@@ -58,6 +58,11 @@ _AGENT_ACCESS_RULES = """\
    is about to change and who it will reach, then wait. Do not say an
    action succeeded until you have seen its result — a confirmation card
    is a question, not a receipt.
+   Asking for that confirmation is not your job, and doing it yourself
+   costs the user a round trip for nothing: when the request already says
+   everything the tool needs, call the tool. The card is what asks. A
+   reply that ends "shall I go ahead?" instead of a tool call has just
+   made the user say yes twice.
 """
 
 
@@ -81,12 +86,42 @@ _SHARED_RULES = """\
 """
 
 
+# Rules 8-9, agent-only. Both are things the first week of real tool use
+# taught us, and neither is true of the no-tools variant.
+_AGENT_EXTRA_RULES = """\
+8. Every time you say or read is Pacific — the venue clock, and what every
+   screen in this app shows. Write times to tools as 24-hour HH:MM Pacific
+   (9am is "09:00", 1pm is "13:00") and never convert to UTC yourself; the
+   tools do that. When you report a schedule back, read the times out of
+   the tool's own result rather than repeating what was asked for.
+9. Reply with the answer only. Do not narrate your planning, restate the
+   request back as a list of what you think it said, or think out loud
+   about which tool to pick — decide, call it, and answer.
+10. Before anything that writes data or sends mail, ask about what the
+   request did not say. A start time, a length, a capacity, a room, who a
+   message reaches — if the user did not state it, ask, and ask for all of
+   it in one message. Never fill a gap with a sensible-sounding value. A
+   wrong number nobody was asked about looks correct right up until
+   someone is in the wrong place at the wrong time. When a tool answers
+   with a list of things it needs, that is the question to put to the
+   user; do not answer it on their behalf.
+11. Today is {today}. Work out every date from that. A month and a day
+   with no year means the next time that day occurs, not a year you
+   remember — "August 17" asked in August 2026 is 2026-08-17. If the year
+   is genuinely unclear, ask; a date in the past is never a guess worth
+   making. Do not convert dates to ISO week numbers: tools take a date.
+"""
+
+
 # Assembled here rather than written out twice so rules 3-7 cannot drift
 # between the two variants. ``_BASE`` must stay byte-identical to the
 # v0.3.0 text — ``test_system_prompt_preserves_phase_30_baseline`` compares
-# it against a checked-in fixture.
+# it against a checked-in fixture, so agent-only rules go after it and
+# never inside ``_SHARED_RULES``.
 _BASE = _PREAMBLE + _NO_TOOLS_ACCESS_RULES + _SHARED_RULES
-_AGENT_BASE = _PREAMBLE + _AGENT_ACCESS_RULES + _SHARED_RULES
+_AGENT_BASE = (
+    _PREAMBLE + _AGENT_ACCESS_RULES + _SHARED_RULES + _AGENT_EXTRA_RULES
+)
 
 
 _ADMIN_TAIL = """\
@@ -110,6 +145,21 @@ to their event.
 """
 
 
+def _today_pacific() -> str:
+    """"Friday 2026-08-08" — the date the model reasons from.
+
+    Without it, a request for "August 17" resolved to 2025: the model has no
+    clock, so a bare month and day is answered from whatever its training
+    suggests. The tool then refused, correctly, for a date a year in the
+    past that nobody had typed.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("America/Los_Angeles"))
+    return f"{now.strftime('%A')} {now.date().isoformat()}"
+
+
 def system_prompt_for(role: models.UserRole, *, agent: bool = False) -> str:
     """Return the role-appropriate system prompt.
 
@@ -121,7 +171,12 @@ def system_prompt_for(role: models.UserRole, *, agent: bool = False) -> str:
     about whether the model can reach live data, and serving the wrong
     one is not a cosmetic error.
     """
-    base = _AGENT_BASE if agent else _BASE
+    # The date is rendered in, not baked at import: a process that stays up
+    # over midnight would otherwise keep telling the model it is yesterday.
+    # Pacific, because that is the clock the whole app runs on.
+    base = (
+        _AGENT_BASE.replace("{today}", _today_pacific()) if agent else _BASE
+    )
     if role == models.UserRole.admin:
         return base + _ADMIN_TAIL
     if role == models.UserRole.organizer:

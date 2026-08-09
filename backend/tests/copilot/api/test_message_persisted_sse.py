@@ -29,6 +29,14 @@ def _enable_copilot(monkeypatch):
     monkeypatch.setattr(settings, "copilot_primary_model", "primary/test:free")
     monkeypatch.setattr(settings, "copilot_fallback_model", "fallback/test:free")
     monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    # These tests are about the Phase 30 Q&A stream specifically, and they
+    # script it by patching ``_stream_completion``. Once the agent loop
+    # became the default (2026-08-07) the endpoint stopped reaching that
+    # helper, so the patch bound to nothing and the unstubbed agent path
+    # dialled openrouter.ai for real and 401'd. Pin the path under test.
+    # The agent path's own ``message_persisted`` behaviour is covered in
+    # tests/copilot/agent/.
+    monkeypatch.setattr(settings, "copilot_agent_loop_enabled", False)
 
 
 def _patch_stream(monkeypatch, chunks=("Hi ", "there."), exc=None):

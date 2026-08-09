@@ -9,6 +9,7 @@ import CitationPanel from "./CitationPanel";
 import ConfirmationCard from "./ConfirmationCard";
 import ToolCallIndicator from "./ToolCallIndicator";
 import MessageRatingButtons from "./MessageRatingButtons";
+import MarkdownMessage from "./MarkdownMessage";
 import SessionRatingModal from "./SessionRatingModal";
 import useFocusTrap from "./useFocusTrap";
 import authStorage from "../lib/authStorage";
@@ -245,24 +246,32 @@ export default function CopilotDrawer({ open, onClose }) {
         onClick={requestClose}
         aria-hidden="true"
       />
+      {/* Width: 28rem was set when replies were a sentence or two. A
+          capability list or a roster table wraps every line at that width,
+          which is what makes a long answer unreadable. Grow with the
+          viewport and stop at 44rem — past that the measure gets too long
+          to scan, and the page behind the drawer stops being visible
+          enough to work alongside. */}
       <aside
         ref={asideRef}
         role="dialog"
         aria-modal="true"
         aria-label="SciTrek Copilot"
-        className="fixed right-0 top-0 bottom-0 w-full sm:w-[28rem] bg-white shadow-xl z-50 flex flex-col"
+        className="fixed right-0 top-0 bottom-0 w-full sm:w-[32rem] lg:w-[38rem] xl:w-[44rem] bg-white shadow-xl z-50 flex flex-col"
       >
         <header className="flex items-center justify-between px-4 py-3 border-b">
           <div>
             <h2 className="font-semibold">SciTrek Copilot</h2>
-            {/* The old copy said "no live data access yet", which stopped being
-                true once grounded retrieval shipped — answers stream with
-                citations into the knowledge base. Says what it does and, just
-                as usefully, what it doesn't: it explains the app, it can't read
-                today's roster. */}
+            {/* This line has now been wrong twice by outliving the build.
+                It said "no live data access yet" until grounded retrieval
+                shipped, then "can't see live rosters or signups" until the
+                agent loop was turned on (2026-08-07) and it could. It reads
+                live data and proposes changes you approve first — the
+                approval step is the part worth saying out loud, because it
+                is what makes asking it to move someone safe. */}
             <p className="text-xs text-gray-500">
-              Answers from the SciTrek knowledge base, with sources. Can't see
-              live rosters or signups.
+              Answers from the SciTrek knowledge base and live rosters, with
+              sources. Any change it makes waits for your approval.
             </p>
           </div>
           <button
@@ -407,11 +416,17 @@ function MessageBubble({ role, content, messageId = null, streaming = false }) {
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
         {...stamp}
-        className={`max-w-[85%] rounded px-3 py-2 text-sm whitespace-pre-wrap ${
-          isUser ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-900"
+        className={`max-w-[85%] rounded-lg px-3.5 py-2.5 text-[0.9375rem] leading-relaxed ${
+          isUser
+            ? "bg-indigo-600 text-white whitespace-pre-wrap"
+            : "bg-gray-100 text-gray-900"
         }`}
       >
-        {content}
+        {/* Only the assistant's text is parsed as Markdown. A user who
+            types `**` or starts a line with `-` means those characters,
+            and reinterpreting their message as formatting would quietly
+            change what they said. */}
+        {isUser ? content : <MarkdownMessage>{content}</MarkdownMessage>}
         {streaming && <span className="ml-1 animate-pulse">▋</span>}
       </div>
     </div>

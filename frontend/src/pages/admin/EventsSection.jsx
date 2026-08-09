@@ -21,6 +21,7 @@ import AdminPageHeader from "../../components/admin/AdminPageHeader";
 import FormModal from "../../components/admin/FormModal";
 import DuplicateEventModal from "../../components/admin/DuplicateEventModal";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
+import { fmtVenueDateTime } from "../../lib/venueTime";
 
 // ---------------------------------------------------------------------------
 // Form styling tokens
@@ -302,16 +303,10 @@ function InlineAction({ onClick, children }) {
   );
 }
 
+// Venue time, not browser time: see src/lib/venueTime.js for the event that
+// claimed to end on a Saturday.
 function fmtDateTime(iso) {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
+  return fmtVenueDateTime(iso);
 }
 
 // HTML datetime-local needs "YYYY-MM-DDTHH:MM" with no timezone.

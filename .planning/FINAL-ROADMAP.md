@@ -248,14 +248,19 @@ Scope: tests that monkeypatch the seam they claim to test; hollow assertions; th
 > complete on `feat/phase-b-agent`. B0.1–B0.3 (adapter, write-tool wiring,
 > confirmation store) are built.
 >
-> **The flag stays OFF for the deploy.** `COPILOT_AGENT_LOOP_ENABLED=0` in
-> `.env.production.example`, documented there with the reason. Off is not
-> indecision here — the tool layer has never run against a real model on real
-> data, and the ~50 requests/day ceiling on the unfunded OpenRouter account
-> is not enough to earn that confidence before handoff. K23 is what makes
-> "off" safe rather than a trap: flipping the flag now returns a real 503
-> instead of a bare 500. Turning it on is a deliberate, reversible act taken
-> after the account is funded and the agent has been exercised end to end.
+> **Superseded 2026-08-08 — the flag ships ON.** This box previously said
+> `COPILOT_AGENT_LOOP_ENABLED=0` for the deploy. That position is withdrawn:
+> a copilot that cannot act is not the feature SciTrek is being given, and
+> shipping it switched off hands them a chatbot and calls it an agent. The
+> production example has read `true` since; this record was the stale half.
+>
+> What the old position was protecting is still real and moves to the
+> prerequisite list rather than disappearing: the tool layer's tests drive it
+> through a monkeypatch, so real-model behaviour has to be established by
+> manual exercise before staff see it, and the OpenRouter account needs a
+> funded request budget — an agent turn spends several of the ~50 free daily
+> requests, so a busy day rate-limits a real question. K23 keeps the rollback
+> honest: setting the flag false returns a real 503, not a bare 500.
 
 ⛔️ ~~**The decision:** ship the copilot as **retrieval-grounded Q&A** (which works today and is production-usable the moment the OpenRouter key is unblocked), or as a **tool-using agent that takes actions**?~~ *(Settled above.)*
 
@@ -277,6 +282,19 @@ That is not a one-week item on top of everything else in this document. ~~**Reco
 
 **Gate:** flag state matches a written decision; no stub reports success it did not achieve.
 
+**Closed 2026-08-08 — the real-model exercise.** The prerequisite the DECIDED
+box moved here is met. `backend/scripts/copilot_smoke.py` drives the real model
+through the real loop and prints the tool calls it makes; write tools park at
+the confirmation card, so the proposed arguments are visible and nothing is
+written. Running it is what found the last six bugs, and only one of them was
+in a tool: the completion-token cap truncated a long tool argument mid-word,
+the system prompt never told the model today's date so "August 17" resolved to
+2025, reasoning-model deliberation was being streamed to admins as the answer,
+admin analytics counted orientation signups and not shift signups, and four
+copies of the same date formatter used the browser's timezone instead of the
+venue's. The remaining prerequisite is money, not code: the OpenRouter account
+needs its funded request budget before staff use it.
+
 ---
 
 ## W4 — Deploy blockers
@@ -286,8 +304,9 @@ That is not a one-week item on top of everything else in this document. ~~**Reco
 ### Hard blockers
 
 - **No `/health` endpoint** ✅verified — grep finds none in `main.py`. Returns 404 today. **Every load balancer and container orchestrator needs this.** Cheapest blocker in the document.
-- **No dev `.env.example`** ✅verified — `backend/` has `.env` (gitignored) and `.env.production.example`; **`frontend/` has only `.env`, no example at all.** The only working configuration is a gitignored file on your laptop. A clean clone cannot run. Must document `CORPUS_EMBEDDING_PRIMARY=local`, the `COPILOT_*` vars, and that `COPILOT_AGENT_LOOP_ENABLED` stays off.
+- **No dev `.env.example`** ✅verified — `backend/` has `.env` (gitignored) and `.env.production.example`; **`frontend/` has only `.env`, no example at all.** The only working configuration is a gitignored file on your laptop. A clean clone cannot run. Must document `CORPUS_EMBEDDING_PRIMARY=local`, the `COPILOT_*` vars, and that `COPILOT_AGENT_LOOP_ENABLED` is `1` in production — with a note that turning it off is the rollback, and returns a 503 rather than breaking.
 - **Rotate secrets** — `OPENROUTER_API_KEY`, `JINA_API_KEY`, `SENDGRID_API_KEY`, `JWT_SECRET` are personal keys. Replace `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`.
+- **`backend/.env` is inside the backend image** ✅verified 2026-08-08 — there is no `.dockerignore`, so `COPY . .` bakes the gitignored secrets file into a layer. `docker run … cat /app/.env` prints live keys, and anyone who can pull the image can read them. It also hides test failures: the suite passed locally with a key it was never given and failed in CI, which has none. Add a `.dockerignore` covering `.env*`, then rebuild — and treat the four keys above as already exposed when rotating.
 - **No model-cache volume** in `docker-compose.yml` — BGE (~130MB) and the reranker (~278MB) re-download on every rebuild. Bake the weights into the image or mount a volume.
 - **CrossEncoder cold start** — `rerank.py` lazy-loads ~278MB on first request *per worker*, with no lifespan prewarm in `main.py`. First real question after a deploy times out.
 - **Infra mapping** — Postgres → RDS **with the `vector` extension** (migration 0019 requires pgvector); Redis → ElastiCache. Point `DATABASE_URL` / `REDIS_URL` / `VITE_API_URL` / `FRONTEND_BASE_URL` at real hosts.
@@ -383,7 +402,7 @@ Nothing downstream closes without these. Answer them **on day one** — several 
 | # | Question | Blocks | Recommendation |
 |---|---|---|---|
 | 1 | **Does `feat/shifts` ship before handoff, or get parked as a documented branch?** | W1, and the size of W6 | Park it. A booking-model change in the final week doubles the verification surface. |
-| 2 | **Phase B: tool-using agent, or retrieval-grounded Q&A?** The 2026-07-16 "full agent" decision has had three weeks and zero of B0.1–B0.3 built. | W3, W4 flags, K23–K33 | ✅ **DECIDED 2026-08-06: full agent, affirmed.** Built and merged; ships behind `COPILOT_AGENT_LOOP_ENABLED=0`. This row's original recommendation (Q&A-only) was overruled. |
+| 2 | **Phase B: tool-using agent, or retrieval-grounded Q&A?** The 2026-07-16 "full agent" decision has had three weeks and zero of B0.1–B0.3 built. | W3, W4 flags, K23–K33 | ✅ **DECIDED 2026-08-06: full agent, affirmed.** Built and merged. This row's original recommendation (Q&A-only) was overruled. **Amended 2026-08-08:** it ships with `COPILOT_AGENT_LOOP_ENABLED=1` — a copilot that cannot act is not the feature SciTrek was promised. |
 | 3 | **Does a late cancellation or no-show carry any consequence for the volunteer?** | K21, and `docs/knowledge-base/35-cancellation-notice.md` — deliberately left silent rather than guessed | — |
 | 4 | **`/admin/imports` — delete the 8 endpoints, or keep them dormant?** PR #50 leaves them unrouted, which answers this implicitly. Make it explicit. | K34, K35, and W5's "live endpoints with no UI" finding | Delete. Dormant endpoints are attack surface with no owner. |
 | 5 | **PII at rest: encrypt `profile_text` + feedback comments, or accept the risk in writing?** | W4 | Accept in writing, given the timeline. |
@@ -485,7 +504,7 @@ Cut from the back, never the front.
 | Backlog items (K35–K42) | Inconsistent and inaccessible, but **correct**. Rafael's problem, documented. |
 | **W6.6** real conditions | Ships; may break on Safari or at quarter-scale. |
 | **W1** shifts (park it) | Ships the current booking model. **Recommended cut** — it buys back the most time for the least loss. |
-| ~~**W3** full agent (ship Q&A)~~ **NOT CUT** | ✅ The full agent was built. K23/K26/K28–K32 all done. Ships flag-off, so the copilot answers but cannot act *until someone turns it on* — the capability exists rather than being absent. |
+| ~~**W3** full agent (ship Q&A)~~ **NOT CUT** | ✅ The full agent was built. K23/K26/K28–K32 all done. Ships flag-**on** as of 2026-08-08, exercised against the real model rather than a monkeypatch. K23 keeps the reverse honest: flag false returns a real 503. |
 | **W6.1–W6.5** runtime verification | **Ships with unknown unknowns.** The one cut worth feeling bad about. |
 | **W5** security review | Ships with an unswept authz surface after one was already found open. Do not cut. |
 | **W2** | Ships something that lies to volunteers over email. Do not cut. |

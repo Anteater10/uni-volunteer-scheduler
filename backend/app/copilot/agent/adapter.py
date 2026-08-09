@@ -125,6 +125,14 @@ class ToolCallingAdapter:
                     "model": model_id,
                     "messages": messages,
                     "max_tokens": settings.copilot_max_completion_tokens,
+                    # Reasoning models on OpenRouter will otherwise write
+                    # their deliberation into ``content`` and stop there —
+                    # no tool call, just several paragraphs of "wait, let me
+                    # double-check that week number" delivered to an admin as
+                    # if it were the answer. ``exclude`` keeps the thinking
+                    # server-side. Providers that do not support the field
+                    # ignore it.
+                    "extra_body": {"reasoning": {"exclude": True}},
                 }
                 if tools:
                     kwargs["tools"] = tools
@@ -177,6 +185,15 @@ def _to_wire_tools(tools) -> list[dict[str, Any]] | None:
         name = getattr(t, "name", None) or t.get("name")
         description = getattr(t, "description", None) or t.get("description", "")
         schema = getattr(t, "json_schema", None) or t
+        if not name:
+            # A nameless function is a 400 from the provider, and a 400 here
+            # reads as "the model is down" three sweeps later rather than
+            # "we built the request wrong". This tolerance for bare schemas
+            # is what hid exactly that bug: fail where the mistake is.
+            raise ValueError(
+                "tool spec has no name — pass Tool objects (or dicts with a "
+                f"'name'), not bare JSON schemas. Got keys: {sorted(t) if isinstance(t, dict) else type(t)!r}"
+            )
         wire.append(
             {
                 "type": "function",

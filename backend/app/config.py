@@ -95,12 +95,24 @@ class Settings(BaseSettings):
     copilot_primary_model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"
     copilot_fallback_model: str = "google/gemma-4-31b-it:free"
     copilot_request_timeout_seconds: int = 60
-    copilot_max_completion_tokens: int = 1024
+    # 1024 was set when the copilot only answered questions, where it is
+    # generous. An agent turn spends the same budget writing tool arguments,
+    # and a real request — fifteen bookable shifts, each with its own day,
+    # times and capacity — ran out mid-word. The provider still returned a
+    # syntactically whole call, so nothing looked broken until the argument
+    # it truncated turned out to be half a shift list.
+    copilot_max_completion_tokens: int = 8192
     # Phase 33-09: when True the chat endpoint streams ReAct-loop events
     # (tool_call / tool_result / confirmation_request / final_answer)
-    # instead of raw token chunks. Defaults off so the Phase 30/32 SSE
-    # contract is unchanged for callers that haven't opted in.
-    copilot_agent_loop_enabled: bool = False
+    # instead of raw token chunks.
+    #
+    # Default flipped to True on 2026-08-07. This shipped off because the
+    # Phase 30/32 SSE contract predates it and no caller had opted in; that
+    # reasoning expired once the agent became the product rather than an
+    # experiment (see the DECIDED box in .planning/FINAL-ROADMAP.md, W3).
+    # Off is still one env var away, and K23 makes the disabled path return
+    # a real 503 rather than a bare 500, so flipping back is safe.
+    copilot_agent_loop_enabled: bool = True
     # Release guardrails (pre-Phase-37 minimum) — see app.copilot.guardrails.
     copilot_rate_limit_messages_per_minute: int = 10
     copilot_daily_token_budget: int = 500_000  # org-wide tokens/day; 0 disables
