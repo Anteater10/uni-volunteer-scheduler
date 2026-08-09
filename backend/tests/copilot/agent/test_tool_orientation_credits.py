@@ -369,6 +369,138 @@ class TestListOrientationCredits:
         assert result["count"] == 0
 
 
+class TestListingAModulesHolders:
+    """The other direction: not "does Jane hold credit" but "who does".
+
+    A live run asked whether anyone held Waves credit and the model answered,
+    correctly, that it could only check one address at a time — which is the
+    question a manager asks first and the one the tool could not answer.
+    Names come back rather than addresses because the boundary redactor
+    rewrites an address in any result, so a list of them says nothing.
+    """
+
+    def _grant(self, db_session, email, slug):
+        # acknowledged_family because a module sharing an orientation with
+        # another one makes the grant stop and warn first; these tests are
+        # about listing, not about that warning.
+        _run(
+            db_session,
+            GRANT_ORIENTATION_CREDIT_TOOL,
+            {
+                "email": email,
+                "module_slug": slug,
+                "acknowledged_family": True,
+            },
+        )
+
+    def test_a_module_slug_returns_its_holders_by_name(
+        self, db_session, solo
+    ):
+        from app.models import Volunteer
+
+        db_session.add(
+            Volunteer(
+                id=uuid.uuid4(),
+                email=EMAIL,
+                first_name="Jane",
+                last_name="Volunteer",
+            )
+        )
+        db_session.flush()
+        self._grant(db_session, EMAIL, "bioinformatics")
+
+        _, result = _run(
+            db_session,
+            LIST_ORIENTATION_CREDITS_TOOL,
+            {"module_id": "bioinformatics"},
+        )
+        assert result["count"] == 1
+        assert result["credits"][0]["name"] == "Jane Volunteer"
+        assert "volunteer_email" not in result["credits"][0]
+
+    def test_a_hand_granted_credit_with_no_volunteer_row_still_lists(
+        self, db_session, solo
+    ):
+        """Granting credit to somebody who has never signed up is the whole
+        point of granting one by hand, so there is no name to find."""
+        self._grant(db_session, "walkin@ucsb.edu", "bioinformatics")
+        _, result = _run(
+            db_session,
+            LIST_ORIENTATION_CREDITS_TOOL,
+            {"module_id": "bioinformatics"},
+        )
+        assert result["count"] == 1
+        assert result["credits"][0]["name"] == "(no volunteer record yet)"
+
+    def test_it_answers_for_the_family_not_the_module(
+        self, db_session, crispr_family
+    ):
+        """Credit granted on one CRISPR module is credit for both, so asking
+        about the other one must find the same person."""
+        self._grant(db_session, EMAIL, "crispr-intro")
+        _, result = _run(
+            db_session,
+            LIST_ORIENTATION_CREDITS_TOOL,
+            {"module_id": "crispr-advanced"},
+        )
+        assert result["count"] == 1
+        assert result["family_key"] == "crispr"
+
+    def test_a_family_key_works_directly(self, db_session, solo):
+        self._grant(db_session, EMAIL, "bioinformatics")
+        _, result = _run(
+            db_session,
+            LIST_ORIENTATION_CREDITS_TOOL,
+            {"family_key": "bioinformatics"},
+        )
+        assert result["count"] == 1
+
+    def test_revoked_holders_are_hidden_unless_asked_for(
+        self, db_session, solo
+    ):
+        self._grant(db_session, EMAIL, "bioinformatics")
+        _, listed = _run(
+            db_session, LIST_ORIENTATION_CREDITS_TOOL, {"email": EMAIL}
+        )
+        _run(
+            db_session,
+            REVOKE_ORIENTATION_CREDIT_TOOL,
+            {"credit_id": listed["credits"][0]["credit_id"]},
+        )
+        _, hidden = _run(
+            db_session,
+            LIST_ORIENTATION_CREDITS_TOOL,
+            {"module_id": "bioinformatics"},
+        )
+        assert hidden["count"] == 0
+        _, shown = _run(
+            db_session,
+            LIST_ORIENTATION_CREDITS_TOOL,
+            {"module_id": "bioinformatics", "include_revoked": True},
+        )
+        assert shown["count"] == 1
+
+    def test_a_module_nobody_has_credit_for(self, db_session, solo):
+        _, result = _run(
+            db_session,
+            LIST_ORIENTATION_CREDITS_TOOL,
+            {"module_id": "bioinformatics"},
+        )
+        assert result["count"] == 0
+
+    def test_a_slug_that_does_not_exist_says_so(self, db_session):
+        _, result = _run(
+            db_session,
+            LIST_ORIENTATION_CREDITS_TOOL,
+            {"module_id": "not-a-module"},
+        )
+        assert "no module called" in result["error"]
+
+    def test_neither_an_email_nor_a_module_asks_for_one(self, db_session):
+        _, result = _run(db_session, LIST_ORIENTATION_CREDITS_TOOL, {})
+        assert "module_id" in result["error"]
+
+
 class TestRevokeOrientationCredit:
     def test_revoking_removes_eligibility(self, db_session, solo):
         _run(

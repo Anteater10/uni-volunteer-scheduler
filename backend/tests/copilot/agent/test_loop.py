@@ -6,6 +6,9 @@ from sqlalchemy import text
 from app.copilot.agent.boundary.role_scope import scope_for
 from app.copilot.agent.loop import run_turn
 from app.copilot.agent.tools import registry
+from app.copilot.agent.tools.create_event_with_schedule import (
+    CREATE_EVENT_WITH_SCHEDULE_TOOL,
+)
 from app.copilot.agent.tools.list_modules import LIST_MODULES_TOOL
 from tests.copilot.prompt_fixture import TEST_SYSTEM_PROMPT
 
@@ -112,3 +115,80 @@ def test_loop_retries_then_aborts_on_malformed():
     )
     assert events[-1].type == "error"
     assert "unparseable" in events[-1].message
+
+
+class TestATruncatedArgumentIsARetry:
+    """The 500 that reached an admin who had already clicked Confirm.
+
+    The model ran out of completion tokens partway through a fifteen-shift
+    list, and the provider still returned a call that parsed at the outer
+    level: ``shifts`` was a string holding half a JSON array. Nothing
+    noticed until the handler indexed into it, which was after the
+    confirmation card, so the failure landed on the admin's approval rather
+    than on the model's mistake. The loop checks the shape first now, and a
+    bad one is one more retry.
+    """
+
+    def _llm(self, calls):
+        return _StubLLM(calls)
+
+    def test_it_asks_again_instead_of_calling_the_tool(self):
+        registry.register(CREATE_EVENT_WITH_SCHEDULE_TOOL)
+        truncated = '[{"weekday": "monday", "start_time": "09:0'
+        llm = _StubLLM(
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "name": "create_event_with_schedule",
+                            "args": {"template_id": "waves", "shifts": truncated},
+                        }
+                    ]
+                },
+                {"final_answer": "Sent it again, shorter."},
+            ]
+        )
+        events = list(
+            run_turn(
+                db=None,
+                llm=llm,
+                scope=scope_for(role="admin", caller_id=None),
+                system_prompt=TEST_SYSTEM_PROMPT,
+                session_id="s-coerce",
+                user_message="fifteen shifts please",
+                retrieval_context="",
+            )
+        )
+        # No tool_call event, because nothing was ever begun — and so no
+        # confirmation card for an admin to approve into a crash.
+        assert [e.type for e in events] == ["final_answer"]
+
+    def test_a_model_that_keeps_truncating_ends_the_turn(self):
+        registry.register(CREATE_EVENT_WITH_SCHEDULE_TOOL)
+        truncated = '[{"weekday": "monday'
+        llm = _StubLLM(
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "name": "create_event_with_schedule",
+                            "args": {"template_id": "waves", "shifts": truncated},
+                        }
+                    ]
+                }
+            ]
+            * 6
+        )
+        events = list(
+            run_turn(
+                db=None,
+                llm=llm,
+                scope=scope_for(role="admin", caller_id=None),
+                system_prompt=TEST_SYSTEM_PROMPT,
+                session_id="s-coerce-2",
+                user_message="fifteen shifts please",
+                retrieval_context="",
+            )
+        )
+        assert events[-1].type == "error"
+        assert "too many failed tool calls" in events[-1].message
