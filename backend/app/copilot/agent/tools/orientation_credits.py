@@ -31,7 +31,7 @@ from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._ask import ambiguous, ask_for
 from app.copilot.agent.tools.base import Tool
-from app.models import Module, OrientationCredit, User, UserRole
+from app.models import Module, OrientationCredit, User, UserRole, Volunteer
 from app.services import orientation_service
 
 _CREDIT_SCHEMA = [
@@ -48,6 +48,10 @@ _CREDIT_SCHEMA = [
     "credits",
     "count",
     "covers_modules",
+    # The family listing answers "who", so a name has to survive the schema
+    # filter. Addresses deliberately do not appear here — the redactor would
+    # rewrite them anyway, and a name is what the question was about.
+    "name",
 ]
 
 
@@ -177,10 +181,67 @@ CHECK_ORIENTATION_CREDIT_TOOL = Tool(
 # ------------------------------------------------------------ list
 
 
+def _by_family_handler(db: Session, family: str, include_revoked: bool) -> dict:
+    """Everyone holding credit for a family, by name.
+
+    Added after a live run: asked whether anyone held Waves credit, the model
+    correctly reported that it could only answer that one email at a time —
+    which is useless for the question actually being asked, and the question
+    a manager asks first. Names rather than addresses, because the boundary
+    redactor rewrites an address in any result anyway; the email column is
+    what the credit is keyed by, not what a person is called.
+    """
+    q = db.query(OrientationCredit).filter(OrientationCredit.family_key == family)
+    if not include_revoked:
+        q = q.filter(OrientationCredit.revoked_at.is_(None))
+    rows = q.order_by(OrientationCredit.granted_at.desc()).limit(200).all()
+
+    names = {
+        v.email.lower(): f"{v.first_name} {v.last_name}".strip()
+        for v in db.query(Volunteer).filter(
+            Volunteer.email.in_([c.volunteer_email for c in rows] or [""])
+        )
+    }
+    holders = [
+        {
+            "credit_id": str(c.id),
+            "name": names.get((c.volunteer_email or "").lower())
+            # A credit can be granted to somebody who has never signed up —
+            # that is the point of granting one by hand — so there may be no
+            # volunteer row to take a name from.
+            or "(no volunteer record yet)",
+            "family_key": c.family_key,
+            "source": c.source.value,
+            "granted_at": c.granted_at.isoformat() if c.granted_at else None,
+            "revoked_at": c.revoked_at.isoformat() if c.revoked_at else None,
+        }
+        for c in rows
+    ]
+    return schema_apply(
+        {"credits": holders, "count": len(holders), "family_key": family},
+        allowed_fields=_CREDIT_SCHEMA,
+    )
+
+
 def _list_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
+    family = args.get("family_key") or args.get("module_id")
+    if family and not args.get("email"):
+        resolved = _family_for_slug(db, str(family).strip().lower()) if args.get("module_id") else family
+        if resolved is None:
+            return {"error": f"no module called {args.get('module_id')!r}"}
+        return _by_family_handler(
+            db, resolved, args.get("include_revoked") is True
+        )
+
     email = _email(args)
     if email is None:
-        return {"error": "no email given"}
+        return {
+            "error": (
+                "give either an email, for one person's credits and the "
+                "credit_id needed to revoke one, or a module_id, for "
+                "everyone who holds credit for that module"
+            )
+        }
 
     q = db.query(OrientationCredit).filter(
         OrientationCredit.volunteer_email == email
@@ -211,20 +272,30 @@ def _list_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, 
 LIST_ORIENTATION_CREDITS_TOOL = Tool(
     name="list_orientation_credits",
     description=(
-        "List one volunteer's orientation credits, with the credit_id needed "
-        "to revoke one. Keyed by email — there is no way to list everybody, "
-        "because a tool result cannot carry email addresses back. Read-only."
+        "Orientation credits, either way round: give an email for one "
+        "person's credits and the credit_id needed to revoke one, or a "
+        "module_id for everyone who holds credit for that module. Results "
+        "carry names, never addresses. Read-only."
     ),
     json_schema={
         "type": "object",
         "properties": {
-            "email": {"type": "string"},
+            "email": {
+                "type": "string",
+                "description": "One volunteer, by address.",
+            },
+            "module_id": {
+                "type": "string",
+                "description": (
+                    "Everyone with credit for this module's orientation "
+                    "family — the slug, from list_module_templates."
+                ),
+            },
             "include_revoked": {
                 "type": "boolean",
                 "description": "Revoked credits are hidden by default.",
             },
         },
-        "required": ["email"],
     },
     allowed_roles=["admin", "organizer"],
     requires_confirmation=False,

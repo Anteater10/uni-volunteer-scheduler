@@ -104,6 +104,14 @@ def test_message_append_updates_last_message_at(
     """Task 9: posting a user message bumps last_message_at on the session."""
     from app.copilot import router as copilot_router
 
+    # The agent loop now ships on, and its first act is to build an LLM
+    # adapter — which needs an OPENROUTER_API_KEY and answers 503 without
+    # one. That is correct behaviour and nothing to do with this assertion:
+    # last_message_at is bumped before the handler branches either way. So
+    # take the non-agent path deliberately, rather than depending on whether
+    # the machine running the suite happens to have a key.
+    monkeypatch.setattr(settings, "copilot_agent_loop_enabled", False)
+
     admin = _admin(db_session, email="lma_admin@example.com")
     sess = _make_session(db_session, admin)
     original_ts = sess.last_message_at
