@@ -20,7 +20,15 @@
     # reverse_proxy streams Server-Sent Events correctly out of the box.
     @api path /api/* /openapi.json /docs /redoc
     handle @api {
-        reverse_proxy backend:8000
+        reverse_proxy backend:8000 {
+            # Overwrite, do not append. Caddy's default is to append the
+            # peer address to any X-Forwarded-For the client sent, and
+            # uvicorn reads the *leftmost* entry — so a client sending
+            # "X-Forwarded-For: 9.9.9.9" chooses its own rate-limit bucket
+            # and can mint a fresh one per request. {remote_host} is the
+            # address of the TCP peer, which the client cannot forge.
+            header_up X-Forwarded-For {remote_host}
+        }
     }
 
     # Everything else -> the static React SPA.

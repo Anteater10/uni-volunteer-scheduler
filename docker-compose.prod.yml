@@ -74,10 +74,17 @@ services:
       migrate:
         condition: service_completed_successfully
     # --proxy-headers: trust X-Forwarded-For from Caddy so the per-IP rate
-    # limiter keys on the real client, not Caddy's network IP. Trusting all
-    # proxies is safe here because port 8000 is never published — only Caddy
-    # can reach the backend on the compose network.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=*
+    # limiter keys on the real client, not Caddy's network IP.
+    #
+    # This used to say --forwarded-allow-ips=* on the reasoning that port
+    # 8000 is never published, so only Caddy can connect. That is true and
+    # beside the point: the header's *contents* still arrive from the
+    # public internet through Caddy. `*` means "believe whatever XFF shows
+    # up", so any client could pick its own rate-limit bucket. The CIDR
+    # below is the compose bridge range (Caddy's address on it is not
+    # stable, so the network is what we pin), and the Caddyfile now
+    # overwrites XFF rather than appending to it — both halves are needed.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=172.16.0.0/12
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)\""]
       interval: 15s
