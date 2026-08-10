@@ -30,7 +30,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.celery_app import send_waitlist_promotion_email
-from app.copilot.agent.boundary.role_scope import Scope
+from app.copilot.agent.boundary.role_scope import Scope, deny_if_not_owned
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._ask import ambiguous, ask_for, service_error
 from app.copilot.agent.tools._when import hhmm, local_date
@@ -152,6 +152,13 @@ def _move_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, 
     target_id = _as_uuid(args.get("to_shift_id"))
     if event_id is None or volunteer_id is None or target_id is None:
         return {"error": "event_id, participant_id and to_shift_id must be ids"}
+
+    event = db.query(Event).filter(Event.id == event_id).one_or_none()
+    if event is None:
+        return {"error": "no event with that id"}
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
 
     target = (
         db.query(Shift)
@@ -311,6 +318,13 @@ def _attendance_handler(
     slot = db.query(Slot).filter(Slot.id == slot_id).one_or_none()
     if slot is None:
         return {"error": "no slot with that id"}
+
+    event = db.query(Event).filter(Event.id == slot.event_id).one_or_none()
+    if event is None:
+        return {"error": "no event with that id"}
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
 
     volunteer = (
         db.query(Volunteer).filter(Volunteer.id == volunteer_id).one_or_none()

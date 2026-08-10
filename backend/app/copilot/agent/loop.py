@@ -37,6 +37,7 @@ from app.copilot.agent.events import (
     ToolResultEvent,
 )
 from app.copilot.agent.audit_log import update_status
+from app.copilot.agent.boundary.redactor import scrub
 from app.copilot.agent.confirmation import store_pending
 from app.copilot.agent.tools._coerce import CoercionError, coerce_args
 from app.copilot.agent.tools import registry
@@ -242,6 +243,39 @@ def run_turn(
                 db, tool=tool, scope=scope, args=call["args"], session_id=session_id
             )
             yield ToolCallEvent(call_id=call_id, tool=tool.name, args=call["args"])
+
+            # "Ask, don't guess." Every write tool declares a precheck that
+            # refuses when a value the user never stated would have to be
+            # invented — and until now not one of them ever ran in
+            # production. ``precheck`` was only reachable from
+            # ``tools/base.invoke()``, which the live loop does not use; it
+            # uses the ``_begin``/``_complete`` split. So the guard that
+            # exists to stop a made-up 09:00 start time from reaching a
+            # confirmation card was dead code on the only path that matters.
+            if tool.precheck is not None:
+                objection = tool.precheck(db, scope, call["args"])
+                if objection is not None:
+                    scrubbed, events = scrub(objection, declared=True)
+                    update_status(
+                        db,
+                        call_id,
+                        status="executed",
+                        result=scrubbed,
+                        redactions=len(events),
+                    )
+                    yield ToolResultEvent(
+                        call_id=call_id,
+                        result=scrubbed,
+                        redactions=len(events),
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "name": tool.name,
+                            "content": json.dumps(scrubbed, default=str),
+                        }
+                    )
+                    continue
 
             if tool.requires_confirmation:
                 # K25: this used to yield the event and return without ever

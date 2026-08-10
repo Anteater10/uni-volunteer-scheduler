@@ -28,7 +28,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.copilot.agent.boundary.role_scope import Scope
+from app.copilot.agent.boundary.role_scope import Scope, deny_if_not_owned
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._ask import ask_for, suggesting
 from app.copilot.agent.tools._when import (
@@ -166,6 +166,10 @@ def _schedule_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[s
     if event is None:
         return {"error": f"no event with id {args.get('event_id')!r}"}
 
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
+
     slots = (
         db.query(Slot)
         .filter(Slot.event_id == event.id)
@@ -275,6 +279,10 @@ def _update_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str
     event = _get_event(db, args.get("event_id"))
     if event is None:
         return {"error": f"no event with id {args.get('event_id')!r}"}
+
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
 
     changed = []
     for field in _EVENT_FIELDS:
@@ -401,6 +409,11 @@ def _reschedule_handler(
         return {"error": f"no slot with id {args.get('slot_id')!r}"}
 
     event = db.query(Event).filter(Event.id == slot.event_id).one()
+
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
+
     changed: list[str] = []
 
     try:
@@ -564,6 +577,10 @@ def _delete_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str
     event = _get_event(db, args.get("event_id"))
     if event is None:
         return {"error": f"no event with id {args.get('event_id')!r}"}
+
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
 
     signups = _live_signups(db, event.id)
     if signups:

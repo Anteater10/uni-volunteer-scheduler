@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,6 +47,20 @@ class ConfirmationExpired(Exception):
 
 class ConfirmationNotFound(Exception):
     """Raised when a confirmation is resolved for an unknown call_id."""
+
+
+class ConfirmationForbidden(Exception):
+    """Raised when the caller may not resolve this call_id.
+
+    Two distinct failures land here, and both were previously unchecked:
+
+    * the caller's role is not in the tool's ``allowed_roles`` — the loop
+      refuses to *park* a tool the caller may not run, but nothing re-checked
+      at execution time, so a call_id parked in an admin's turn would run
+      with organizer scope if an organizer ever learned the id;
+    * the parked call belongs to another user's session — ownership was
+      never consulted, so possession of a call_id was the whole authorization.
+    """
 
 
 @dataclass(frozen=True)
@@ -145,6 +160,33 @@ def resolve(call_id: str, *, approved: bool) -> Decision:
     return Decision(call_id=call_id, approved=approved)
 
 
+def assert_session_owned(db, call_id: str, *, user_id: Any) -> Pending:
+    """Verify ``user_id`` owns the session that parked ``call_id``.
+
+    Called from the router for *both* approve and reject, because a
+    call_id is otherwise a bearer token: anyone holding one could execute
+    another user's parked write, or cancel it out from under them.
+
+    Returns the pending entry so the caller does not load it twice.
+    """
+    from app import models
+
+    p = _load(call_id)
+    try:
+        session_uuid = uuid.UUID(str(p.session_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ConfirmationForbidden(call_id)
+
+    owner_id = (
+        db.query(models.CopilotSession.user_id)
+        .filter(models.CopilotSession.id == session_uuid)
+        .scalar()
+    )
+    if owner_id is None or str(owner_id) != str(user_id):
+        raise ConfirmationForbidden(call_id)
+    return p
+
+
 def execute_after_confirmation(
     db,
     call_id: str,
@@ -166,6 +208,11 @@ def execute_after_confirmation(
 
     p = _load(call_id)
     tool = registry.get_tool(p.tool_name)
+    # Re-check the role gate at execution time. ``loop.py:198`` is the only
+    # other place this is enforced, and it runs when the call is *parked* —
+    # a different request, possibly a different user, resolves it.
+    if scope_role not in tool.allowed_roles:
+        raise ConfirmationForbidden(call_id)
     scope = scope_for(role=scope_role, caller_id=caller_id)
     raw = tool.handler(db, scope, p.args)
     scrubbed, events = scrub(raw, declared=True)
