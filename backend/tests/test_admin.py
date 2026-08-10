@@ -64,8 +64,16 @@ def test_admin_delete_user(client, db_session):
     resp = client.delete(f"/api/v1/admin/users/{target.id}", headers=headers)
     assert resp.status_code == 204
 
-    gone = db_session.query(models.User).filter(models.User.id == target.id).first()
-    assert gone is None
+    # BASE-SEC-14: deletion anonymizes rather than dropping the row. A hard
+    # delete NULLed audit_logs.actor_id for every action this person had
+    # ever taken — erasing their history at exactly the moment it matters.
+    db_session.expire_all()
+    row = db_session.query(models.User).filter(models.User.id == target.id).first()
+    assert row is not None
+    assert row.deleted_at is not None
+    assert row.is_active is False
+    assert row.name == "[deleted]"
+    assert "todelete@example.com" not in (row.email or "")
 
 
 def test_admin_cancel_signup_does_not_promote_waitlist(client, db_session):
