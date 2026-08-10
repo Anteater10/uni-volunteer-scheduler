@@ -1,0 +1,43 @@
+# backend/.dockerignore
+#
+# `COPY . /app` in the Dockerfile copied the entire backend directory into
+# the image, including `.env` — the JWT signing secret, the SendGrid API key
+# and the Twilio credentials. Anyone who could pull or `docker save` the
+# image could mint admin tokens. Nothing here narrows the runtime; it only
+# removes what should never have been in a layer.
+
+# Secrets — the reason this file exists
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+service-account*.json
+
+# Local state / caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Tests and dev-only harnesses — not needed at runtime, and they widen the
+# attack surface of the image for no benefit.
+tests/
+scripts/dev/
+
+# VCS and editor noise
+.git/
+.gitignore
+.DS_Store
+*.swp
+*.log
