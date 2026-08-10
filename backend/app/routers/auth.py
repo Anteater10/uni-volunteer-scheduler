@@ -1,5 +1,6 @@
 # backend/app/routers/auth.py
 import hashlib
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -19,9 +20,12 @@ from ..deps import (
     rate_limit,
     log_action,
     get_current_user,
+    _account_usable,
 )
 from ..config import settings
 from ..services.password_reset import check_reset_rate_limit, send_reset_email
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -39,11 +43,17 @@ def _hash_refresh_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _issue_refresh_token(db: Session, user: models.User) -> str:
+def _issue_refresh_token(
+    db: Session, user: models.User, *, family_id=None
+) -> str:
     """
     Generate a cryptographically-random refresh token, store its SHA-256
     hash in the DB, and return the raw token to the caller.
     Does NOT commit — caller controls the transaction.
+
+    ``family_id`` carries rotation lineage: omitted at login (a fresh login
+    starts a new family), passed through on refresh so the whole chain can
+    be revoked at once if a spent token is ever replayed.
     """
     raw = secrets.token_urlsafe(48)
     token_hash = _hash_refresh_token(raw)
@@ -53,6 +63,7 @@ def _issue_refresh_token(db: Session, user: models.User) -> str:
         token_hash=token_hash,
         expires_at=expires,
         created_at=datetime.now(timezone.utc),
+        family_id=family_id or uuid.uuid4(),
     )
     db.add(rt)
     db.flush()
@@ -75,15 +86,15 @@ def _revoke_refresh_token(db: Session, raw: str) -> None:
         db.add(rt)
 
 
-def _consume_refresh_token(db: Session, raw: str) -> models.User:
+def _consume_refresh_token(db: Session, raw: str) -> tuple[models.User, object]:
     """
     Look up a refresh token by its SHA-256 hash, validate it is not
-    expired or revoked, and return the owning User.
+    expired, revoked or already consumed, mark it consumed, and return
+    ``(user, family_id)`` so the caller can mint the replacement into the
+    same rotation family.
 
-    The caller is responsible for rotating (deleting/revoking) the old
-    token and issuing a new one.
-
-    Raises HTTP 401 on any invalid state.
+    Raises HTTP 401 on any invalid state — and on replay of an already
+    consumed token, revokes the entire family first.
     """
     token_hash = _hash_refresh_token(raw)
     rt = (
@@ -91,6 +102,43 @@ def _consume_refresh_token(db: Session, raw: str) -> models.User:
         .filter(models.RefreshToken.token_hash == token_hash)
         .first()
     )
+
+    # Reuse detection. A spent token being presented a second time means the
+    # token leaked: either the legitimate holder is replaying (harmless but
+    # indistinguishable) or somebody else copied it. We cannot tell which,
+    # and the safe reading of "cannot tell" is that the family is
+    # compromised — so revoke every token descended from that login and make
+    # both parties sign in again. Previously the replay just 401'd, and if
+    # an attacker had already rotated the token first, the victim's 401 was
+    # the *only* symptom while the attacker's session ran on untouched.
+    if rt is not None and rt.consumed_at is not None:
+        now = datetime.now(timezone.utc)
+        if rt.family_id is not None:
+            db.query(models.RefreshToken).filter(
+                models.RefreshToken.family_id == rt.family_id,
+                models.RefreshToken.revoked_at.is_(None),
+            ).update({"revoked_at": now}, synchronize_session=False)
+        else:
+            # Pre-migration rows have no family; fall back to the account.
+            db.query(models.RefreshToken).filter(
+                models.RefreshToken.user_id == rt.user_id,
+                models.RefreshToken.revoked_at.is_(None),
+            ).update({"revoked_at": now}, synchronize_session=False)
+        db.commit()
+        logger.warning(
+            "refresh_token_reuse_detected user_id=%s family_id=%s",
+            rt.user_id,
+            rt.family_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "AUTH_REFRESH_REUSE",
+                "detail": "Refresh token reused; all sessions revoked",
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     if (
         rt is None
         or rt.revoked_at is not None
@@ -105,7 +153,7 @@ def _consume_refresh_token(db: Session, raw: str) -> models.User:
             headers={"WWW-Authenticate": "Bearer"},
         )
     user = db.query(models.User).filter(models.User.id == rt.user_id).first()
-    if not user:
+    if not user or not _account_usable(user):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -114,10 +162,12 @@ def _consume_refresh_token(db: Session, raw: str) -> models.User:
             },
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Delete (rotate) the consumed token so it cannot be replayed
-    db.delete(rt)
+    # Retain, do not delete. The row is what makes a later replay
+    # detectable; deleting it threw that evidence away.
+    rt.consumed_at = datetime.now(timezone.utc)
+    db.add(rt)
     db.flush()
-    return user
+    return user, rt.family_id
 
 
 # -------------------------
@@ -197,6 +247,14 @@ def set_password_from_invite(
     user.hashed_password = hash_password(payload.password)
     user.last_login_at = datetime.now(timezone.utc)
     db.add(user)
+
+    # Setting a password is the victim's remedy after a session is stolen, so
+    # it has to evict every existing session — otherwise the attacker's refresh
+    # token keeps rotating for its full 14 days. Matches change_password below.
+    db.query(models.RefreshToken).filter(
+        models.RefreshToken.user_id == user.id
+    ).delete()
+    db.flush()
 
     access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
     raw_refresh = _issue_refresh_token(db, user)
@@ -311,6 +369,14 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
+    # Deactivated / soft-deleted staff must not be able to log back in. Kept
+    # indistinguishable from a bad password so the endpoint is not an oracle
+    # for which accounts exist.
+    if not _account_usable(user):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
 
     access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
     raw_refresh = _issue_refresh_token(db, user)
@@ -339,11 +405,12 @@ def refresh_token(
     payload: RefreshRequest,
     db: Session = Depends(get_db),
 ):
-    # _consume_refresh_token validates, deletes the old row, and returns the user
-    user = _consume_refresh_token(db, payload.refresh_token)
+    # _consume_refresh_token validates, marks the old row consumed, and
+    # returns the user plus the rotation family the new token must join.
+    user, family_id = _consume_refresh_token(db, payload.refresh_token)
 
     access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
-    new_raw_refresh = _issue_refresh_token(db, user)
+    new_raw_refresh = _issue_refresh_token(db, user, family_id=family_id)
 
     log_action(db, user, "token_refresh", "User", str(user.id))
     db.commit()
