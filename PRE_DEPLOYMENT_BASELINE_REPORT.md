@@ -214,7 +214,7 @@ what failed.
 
 ### Remediation status
 
-**Fixed and verified (28):** `BASE-SEC-01`, `BASE-SEC-02`, `BASE-SEC-22`, `BASE-CONFIG-01`, `BASE-CONFIG-14`, `BASE-CONFIG-15`, `BASE-CONFIG-16`, `BASE-CONFIG-17`, `BASE-CONFIG-27`, `BASE-CONFIG-32`, `BASE-QUAL-01`, `BASE-QUAL-08`, `BASE-QUAL-12`, `BASE-QUAL-27`, `BASE-SEC-03`, `BASE-SEC-04`, `BASE-SEC-13`, `BASE-SEC-14`, `BASE-SEC-15`, `BASE-SEC-18`, `BASE-SEC-19`, `BASE-SEC-23`, `BASE-SEC-24`, `BASE-SEC-25`, `BASE-SEC-26`, `BASE-SEC-42`, `BASE-SEC-44`, `BASE-SEC-48`
+**Fixed and verified (31):** `BASE-SEC-01`, `BASE-SEC-02`, `BASE-SEC-22`, `BASE-CONFIG-01`, `BASE-CONFIG-14`, `BASE-CONFIG-15`, `BASE-CONFIG-16`, `BASE-CONFIG-17`, `BASE-CONFIG-27`, `BASE-CONFIG-32`, `BASE-QUAL-01`, `BASE-QUAL-08`, `BASE-QUAL-12`, `BASE-QUAL-27`, `BASE-SEC-03`, `BASE-SEC-04`, `BASE-SEC-13`, `BASE-SEC-14`, `BASE-SEC-15`, `BASE-SEC-18`, `BASE-SEC-19`, `BASE-SEC-23`, `BASE-SEC-24`, `BASE-SEC-25`, `BASE-SEC-26`, `BASE-SEC-42`, `BASE-SEC-44`, `BASE-SEC-48`, `BASE-SEC-27`, `BASE-CONFIG-13`, `BASE-QUAL-13`
 
 **step-3 batches 1-3** (2026-08-09) — backend suite 1886 passed / 0 failed / 11 skipped (docker, test_uvs); frontend 555 passed / 69 files
 
@@ -242,12 +242,12 @@ what failed.
 
 | Severity | Total | Open | | Lens | Count |
 |---|---|---|---|---|---|
-| Critical | 4 | 1 | | SecAudit | 51 |
-| High | 36 | 11 | | DevProd | 52 |
-| Medium | 72 | 72 | | Quality | 46 |
+| Critical | 4 | 0 | | SecAudit | 51 |
+| High | 36 | 10 | | DevProd | 52 |
+| Medium | 72 | 71 | | Quality | 46 |
 | Low | 37 | 37 | |  |  |
 
-**Total: 149 findings** · 28 fixed · 121 open
+**Total: 149 findings** · 31 fixed · 118 open
 
 ### Index
 
@@ -256,7 +256,7 @@ what failed.
 | `BASE-SEC-01` | Critical | **fixed** | Deactivated and soft-deleted accounts retain full authenticated access |
 | `BASE-SEC-02` | Critical | **fixed** | Live production secrets are baked into the backend Docker image (no .dockerignore) |
 | `BASE-SEC-22` | Critical | **fixed** | Invite and password-reset JWTs are accepted as access tokens — the emailed set-password link is a 7-day admin bearer credential |
-| `BASE-CONFIG-13` | Critical | open | Migration 0009 unconditionally deletes every signup and magic-link token during upgrade() |
+| `BASE-CONFIG-13` | Critical | **fixed** | Migration 0009 unconditionally deletes every signup and magic-link token during upgrade() |
 | `BASE-SEC-03` | High | **fixed** | Copilot write tools bypass the organizer scope boundary that read tools enforce |
 | `BASE-SEC-04` | High | **fixed** | POST /copilot/confirm/{call_id} does not verify the caller owns the parked tool call |
 | `BASE-SEC-05` | High | open | 4-digit venue code is brute-forceable and gates unauthenticated PII lookup plus attendance writes |
@@ -274,7 +274,7 @@ what failed.
 | `BASE-SEC-24` | High | **fixed** | Setting a password from an invite or reset link does not revoke existing refresh tokens — a stolen session survives the reset |
 | `BASE-SEC-25` | High | **fixed** | Refresh-token rotation has no reuse detection — a replayed token 401s but never kills the family |
 | `BASE-SEC-26` | High | **fixed** | get_event_schedule is organizer-callable with no owner check, and it hands out the slot_ids and shift_ids the write tools consume |
-| `BASE-SEC-27` | High | open | DELETE /events/{id} cascade-destroys every signup, shift commitment and attendance record for the event, with no guard |
+| `BASE-SEC-27` | High | **fixed** | DELETE /events/{id} cascade-destroys every signup, shift commitment and attendance record for the event, with no guard |
 | `BASE-CONFIG-14` | High | **fixed** | No pgvector HNSW index is created by any migration — a fresh deploy leaves every copilot retrieval on a sequential scan |
 | `BASE-CONFIG-15` | High | **fixed** | The two hottest foreign keys in the schema are unindexed: slots.event_id and signups.slot_id |
 | `BASE-CONFIG-16` | High | **fixed** | Per-IP rate limiting reads request.client.host with no proxy-header handling — behind a load balancer the entire public surface shares one bucket |
@@ -312,7 +312,7 @@ what failed.
 | `BASE-SEC-20` | Medium | open | POST /copilot/confirm executes a parked call without re-checking the tool's allowed_roles against the confirming user |
 | `BASE-SEC-21` | Medium | open | Orientation-credit read tools are organizer-callable with no scope filter, exposing the credit roster and revocation targets for any module family |
 | `BASE-CONFIG-12` | Medium | open | Model-supplied ids reach SQL filters unvalidated in four write handlers; one hallucinated id aborts the transaction and strands the audit row as 'pending' forever |
-| `BASE-QUAL-13` | Medium | open | log_action is called after db.commit() in eight mutating endpoints, so those audit rows are silently discarded |
+| `BASE-QUAL-13` | Medium | **fixed** | log_action is called after db.commit() in eight mutating endpoints, so those audit rows are silently discarded |
 | `BASE-SEC-28` | Medium | open | Tool pii_schema is declared on all 34 copilot tools and read by no code — the allow-list is documentation, not a control |
 | `BASE-SEC-29` | Medium | open | schema_filter passes an entire nested subtree whenever the parent key is declared without a dotted rule |
 | `BASE-SEC-30` | Medium | open | declared=True is hardcoded on every copilot tool path, so the redactor's HIGH-severity boundary-bug alarm can never fire |
@@ -584,7 +584,7 @@ Treat a missing `purpose` as invalid (fail closed) rather than defaulting it to 
 
 --- FIXED 2026-08-09. deps.py now stamps purpose='access' on mint (deps.py:114) and both get_current_user (deps.py:155) and get_optional_user (deps.py:191) reject anything else, failing closed on a missing claim. Regression tests: tests/test_auth_token_hardening.py.
 
-## `BASE-CONFIG-13` — Migration 0009 unconditionally deletes every signup and magic-link token during upgrade()
+## `BASE-CONFIG-13` — Migration 0009 unconditionally deletes every signup and magic-link token during upgrade() — ✅ FIXED
 
 | | |
 |---|---|
@@ -592,7 +592,7 @@ Treat a missing `purpose` as invalid (fail closed) rather than defaulting it to 
 | **Lens** | DevProd |
 | **File** | `backend/alembic/versions/0009_phase08_v1_1_schema_realignment.py` |
 | **Lines** | 53-60, 136-139 |
-| **Status** | open |
+| **Status** | ✅ fixed |
 
 **Vulnerable code**
 
@@ -631,6 +631,20 @@ To make the migration safe to replay, replace the DELETEs with a guard that fail
         raise RuntimeError("0009 requires an empty signups table; backfill volunteer_id first")
 
 and add volunteer_id as nullable → backfill → SET NOT NULL.
+
+--- FIXED 2026-08-12. Both directions of 0009 now call `_refuse_if_holding_data`
+before any DDL (`0009_phase08_v1_1_schema_realignment.py:21`), which counts
+`signups` and raises with the row count and the recovery procedure in the message.
+The `DELETE FROM magic_link_tokens` was removed outright rather than guarded — no
+structural requirement ever justified it, and tokens are FK-anchored to signups,
+so guarding them would refuse rollbacks that are perfectly safe. The `nullable →
+backfill → SET NOT NULL` rewrite this remediation also suggested was deliberately
+NOT done: there is no rule for deriving a volunteer identity from a `user_id`
+anchor, so any automatic backfill would invent data. Refusing and telling the
+operator what to do is the honest outcome. The runbook half of this finding is
+now in `docs/deployment.md` under "Before every `alembic upgrade head` on prod",
+and on the production hardening checklist. Regression tests:
+`backend/tests/test_migration_0009_guard.py` (4).
 
 ## `BASE-SEC-03` — Copilot write tools bypass the organizer scope boundary that read tools enforce — ✅ FIXED
 
@@ -1537,7 +1551,7 @@ Keep the not-found sentinel byte-identical for 'does not exist' and 'not yours' 
 
 Covered by the same deny_if_not_owned guard on _schedule_handler.
 
-## `BASE-SEC-27` — DELETE /events/{id} cascade-destroys every signup, shift commitment and attendance record for the event, with no guard
+## `BASE-SEC-27` — DELETE /events/{id} cascade-destroys every signup, shift commitment and attendance record for the event, with no guard — ✅ FIXED
 
 | | |
 |---|---|
@@ -1545,7 +1559,7 @@ Covered by the same deny_if_not_owned guard on _schedule_handler.
 | **Lens** | SecAudit |
 | **File** | `backend/app/routers/events.py` |
 | **Lines** | 311-330; cascades at models.py:276, 279-284, 347-349, 404, 406-408, 527-531 |
-| **Status** | open |
+| **Status** | ✅ fixed |
 
 **Vulnerable code**
 
@@ -1586,6 +1600,18 @@ Refuse to hard-delete an event that has booking history, mirroring the shift pat
         raise HTTPException(409, detail="Event has signup history; archive it instead of deleting.")
 
 Better: give Event a `deleted_at` soft-delete column (Module already has one, models.py:845) and reserve hard delete for events with zero bookings.
+
+--- FIXED 2026-08-12. `DELETE /events/{id}` now refuses with 409 when the event
+still holds live commitments, via a single shared rule in
+`backend/app/services/event_deletion_service.py` that the copilot's
+`events_edit` tool calls too — so the two delete paths cannot drift apart. The
+refusal names the count. Soft-delete was considered and rejected: every read
+path in the app would have to learn to filter, and an event with signups is not
+something an admin should be able to remove at all. Orientation credit is
+deliberately not counted, because it is keyed on
+`(volunteer_email, family_key)` with no foreign key to the event and so survives
+deletion anyway. Regression tests: `backend/tests/test_event_delete_guard.py`
+(5, including one that asserts REST and copilot share the rule).
 
 ## `BASE-CONFIG-14` — No pgvector HNSW index is created by any migration — a fresh deploy leaves every copilot retrieval on a sequential scan — ✅ FIXED
 
@@ -3138,7 +3164,7 @@ Independently — and this matters more than the four call sites — wrap the ha
         discard_pending(call_id)
         raise
 
-## `BASE-QUAL-13` — log_action is called after db.commit() in eight mutating endpoints, so those audit rows are silently discarded
+## `BASE-QUAL-13` — log_action is called after db.commit() in eight mutating endpoints, so those audit rows are silently discarded — ✅ FIXED
 
 | | |
 |---|---|
@@ -3146,7 +3172,7 @@ Independently — and this matters more than the four call sites — wrap the ha
 | **Lens** | Quality |
 | **File** | `backend/app/routers/events.py` |
 | **Lines** | events.py:194+198, 194+210, 304+307, 327+329, 441+447; slots.py:149+152, 245+248, 288+290; contract deps.py:292-312; teardown database.py:26-31 |
-| **Status** | open |
+| **Status** | ✅ fixed |
 
 **Vulnerable code**
 
@@ -3187,6 +3213,16 @@ Move each log_action above its commit:
     db.commit()
 
 Then add one regression test per mutating endpoint asserting an audit_logs row exists after the call — the reason this survived is that nothing asserts on the trail.
+
+--- FIXED 2026-08-12. Every `log_action` call in the affected endpoints now has a
+`db.commit()` after it, and in `delete_event` the call was moved above
+`db.delete(event)` so the audit row and the deletion land in one transaction —
+otherwise a failure between them would leave the event gone with no record of
+who removed it. `log_action`'s no-commit contract was left as it is: the caller
+controlling the transaction boundary is correct, and the defect was the callers,
+not the helper. Regression tests: `backend/tests/test_audit_log_persistence.py`
+(4), which read the rows back from a fresh session rather than the one that
+wrote them.
 
 ## `BASE-SEC-28` — Tool pii_schema is declared on all 34 copilot tools and read by no code — the allow-list is documentation, not a control
 

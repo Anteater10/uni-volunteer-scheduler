@@ -138,6 +138,17 @@
           "Secret rotation for JWT_SECRET, SENDGRID_API_KEY, Twilio and OIDC credentials \u2014 .dockerignore does not remove them from images already built.",
           "BASE-CONFIG-13 pre-deploy check (SELECT count(*) FROM signups before alembic upgrade head) is a runbook item, not a patch."
         ]
+      },
+      {
+        "pass": "step-1 critical",
+        "date": "2026-08-12",
+        "findings_fixed": [
+          "BASE-CONFIG-13",
+          "BASE-SEC-27",
+          "BASE-QUAL-13"
+        ],
+        "verification": "backend suite green (docker, test_uvs); 4 new tests in tests/test_migration_0009_guard.py covering upgrade refusal, downgrade refusal, inertness on an empty table, and a source-level check that no unconditional DELETE FROM signups survives.",
+        "note": "0009 now counts signups in both directions and raises with the row count instead of deleting. The DELETE FROM magic_link_tokens was removed outright rather than guarded: no structural requirement justified it, and tokens are FK-anchored to signups, so guarding them would refuse rollbacks that are safe. The runbook pre-check the earlier pass listed as outstanding is now in docs/deployment.md ('Before every alembic upgrade head on prod') and on the hardening checklist."
       }
     ]
   },
@@ -703,7 +714,7 @@
       "vulnerable_code": "    # Section 2 \u2014 Drop dev data that will be orphaned by FK rewire (D-04)\n    # Dev data is throwaway per locked decision D-04. Clear signups +\n    # magic_link_tokens so the FK rewire and NOT NULL columns don't trip on\n    # pre-existing rows.\n    op.execute(\"DELETE FROM magic_link_tokens\")\n    op.execute(\"DELETE FROM signups\")\n\n# ...and the reason it must be empty, at 136-139:\n        sa.Column(\"volunteer_id\", postgresql.UUID(as_uuid=True), nullable=False)",
       "attack_scenario": "VERIFIED verbatim in the file. This DELETE is the sanctioned substitute for a backfill: line 136-139 adds volunteer_id as NOT NULL with no server_default and no data migration, so the table MUST be empty for the ALTER to succeed.\n\nThe docker `migrate` service runs `alembic upgrade head` on every boot (docker-compose.yml:65). Against a virgin database this is a harmless no-op. But any environment already holding signup data below revision 0009 \u2014 a staging DB seeded before the deploy, a restored backup being rolled forward, a second server pointed at a partially-migrated database \u2014 loses every signup row and every outstanding magic link, silently, with no error and no row count reported. There is no guard, no WHERE clause, and no abort-if-non-empty check.\n\nThis is a deployment-procedure hazard rather than a remotely reachable vulnerability, but the blast radius is the entire booking history, and the trigger is an ordinary boot of the stack.",
       "remediation": "Before deploying, confirm the target database is either brand new (no `alembic_version` row) or already stamped at/after 0009:\n\n  SELECT version_num FROM alembic_version;\n  SELECT count(*) FROM signups;\n\nIf the stamp is below 0009 and signups is non-empty, do NOT run `upgrade head` \u2014 take a pg_dump first and plan a real backfill.\n\nTo make the migration safe to replay, replace the DELETEs with a guard that fails loudly:\n\n    if conn.execute(sa.text(\"SELECT 1 FROM signups LIMIT 1\")).first():\n        raise RuntimeError(\"0009 requires an empty signups table; backfill volunteer_id first\")\n\nand add volunteer_id as nullable \u2192 backfill \u2192 SET NOT NULL.",
-      "status": "open"
+      "status": "fixed"
     },
     {
       "id": "BASE-SEC-23",
@@ -766,7 +777,7 @@
       "vulnerable_code": "    ensure_event_staff_access(event, current_user)\n    quarter_service.ensure_event_quarter_writable(event)\n\n    db.delete(event)\n    db.commit()\n\n# models.py:276 / 279 / 404 / 347 / 527 \u2014 the cascade chain\n    slots = relationship(\"Slot\", back_populates=\"event\", cascade=\"all, delete-orphan\")\n    shifts = relationship(\"Shift\", back_populates=\"event\", cascade=\"all, delete-orphan\", ...)\n    signups = relationship(\"Signup\", back_populates=\"slot\", cascade=\"all, delete-orphan\")\n    shift_signups = relationship(\"ShiftSignup\", back_populates=\"shift\", cascade=\"all, delete-orphan\")\n    session_attendance = relationship(\"SessionAttendance\", back_populates=\"shift_signup\", cascade=\"all, delete-orphan\")",
       "attack_scenario": "Any organizer (ensure_event_staff_access is role-based, not ownership-based) can DELETE a finished event to tidy up. db.delete(event) triggers the full ORM cascade: Event\u2192slots\u2192signups and session_attendance; Event\u2192shifts\u2192shift_signups\u2192session_attendance. Every attended/no_show record, every SignupResponse and every SentNotification row for that event is physically deleted.\n\nVolunteer-hours and attendance-rate analytics (admin.py:1559, 1612) silently lose that quarter's history, and orientation credit granted from attendance can no longer be justified from the record. The only trace left is one `event_delete` AuditLog row naming an id that no longer resolves \u2014 and per BASE-QUAL-13 even that row is discarded, because log_action runs after db.commit() here.\n\nThe sibling path already knows better: DELETE /shifts/{id} calls shift_service.ensure_no_active_signups (shifts.py:127) before deleting.",
       "remediation": "Refuse to hard-delete an event that has booking history, mirroring the shift path:\n\n    has_bookings = (\n        db.query(models.Signup.id).join(models.Slot, models.Slot.id == models.Signup.slot_id)\n          .filter(models.Slot.event_id == event.id).first()\n        or db.query(models.ShiftSignup.id).join(models.Shift, models.Shift.id == models.ShiftSignup.shift_id)\n          .filter(models.Shift.event_id == event.id).first()\n    )\n    if has_bookings:\n        raise HTTPException(409, detail=\"Event has signup history; archive it instead of deleting.\")\n\nBetter: give Event a `deleted_at` soft-delete column (Module already has one, models.py:845) and reserve hard delete for events with zero bookings.",
-      "status": "open"
+      "status": "fixed"
     },
     {
       "id": "BASE-CONFIG-14",
@@ -843,7 +854,7 @@
       "vulnerable_code": "# events.py:327-329 \u2014 commit first, log after\n    db.delete(event)\n    db.commit()\n\n    log_action(db, current_user, \"event_delete\", \"Event\", str(event.id))\n\n# deps.py:300-302 \u2014 the helper's stated contract\n    Add an audit log entry to the current transaction.\n    IMPORTANT: no commit here. Caller controls commit/rollback.\n\n# database.py:26-31 \u2014 what happens to the pending INSERT\ndef get_db():\n    db = SessionLocal()\n    try:\n        yield db\n    finally:\n        db.close()",
       "attack_scenario": "VERIFIED by grep: in events.py every log_action line number is greater than its preceding db.commit(); same in slots.py at 149/152, 245/248, 288/290.\n\nlog_action only db.add()s an AuditLog to the session (deps.py:292-312, no commit by design). When it runs after the commit, the session is clean and nothing commits afterwards, so get_db's `finally: db.close()` discards the INSERT.\n\nResult: event create, event update, event delete, slot generation, and slot create/update/delete produce NO audit record at all \u2014 the post-incident trail is empty for precisely the destructive staff actions, including the cascade delete in BASE-SEC-27. Other call sites get the ordering right (signups.py:110-112, organizer.py:100-115), which is what makes this a slip rather than a design choice. Same family as BASE-SEC-13 (seven uncommitted log_action calls in admin.py).",
       "remediation": "Move each log_action above its commit:\n\n    log_action(db, current_user, \"event_delete\", \"Event\", str(event.id))\n    db.delete(event)\n    db.commit()\n\nThen add one regression test per mutating endpoint asserting an audit_logs row exists after the call \u2014 the reason this survived is that nothing asserts on the trail.",
-      "status": "open"
+      "status": "fixed"
     },
     {
       "id": "BASE-SEC-28",

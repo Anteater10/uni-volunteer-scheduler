@@ -107,11 +107,42 @@ Celery Beat schedules.
 - [ ] `EMAIL_MODE=sendgrid` with a **verified** sender domain.
 - [ ] Strong `SEED_ADMIN_PASSWORD` (or change the admin password after first login).
 - [ ] Backups for the Postgres volume / managed DB — see **Backups** below.
+- [ ] Ran the pre-migration check — see **Before every `alembic upgrade head` on
+      prod** below. Skip it only on a database you know is empty.
 - [ ] `ENVIRONMENT=production` set (compose sets it; disables /docs and
       hard-blocks `EXPOSE_TOKENS_FOR_TESTING` at boot).
 - [ ] `SENTRY_DSN` set if you want error monitoring (empty = off).
 - [ ] Ingest the corpus once after deploy so the copilot has something to retrieve
       (`python -m app.corpus ...`) — otherwise RAG answers come back empty.
+
+## Before every `alembic upgrade head` on prod
+
+Two commands, in this order, against the production database:
+
+```sql
+SELECT version_num FROM alembic_version;   -- where the DB actually is
+SELECT count(*) FROM signups;              -- how much history is at stake
+```
+
+Then take the dump (see **Backups**). The reason this is a ritual and not a
+suggestion: migration `0009_phase08_v1_1_schema_realignment` rewires `signups`
+from a `user_id` anchor to a `volunteer_id` one, and it cannot derive the new
+column for rows that already exist. It used to resolve that by running an
+unconditional `DELETE FROM signups` — so on a database already holding
+bookings, the first command of a deploy would erase the entire booking history
+and report success.
+
+It no longer does. Both directions of 0009 now count the table first and abort
+with the row count in the error if it is non-empty
+(`backend/tests/test_migration_0009_guard.py` holds that in place). But the
+guard only converts silent data loss into a **failed deploy**, which is still a
+failed deploy. If you hit it, the recovery is in the error message: dump, then
+backfill `volunteer_id` by hand — add it nullable, create a `volunteers` row per
+distinct signup identity, point the column at it, then `SET NOT NULL`.
+
+This only bites a database that is below 0009 and already has bookings — i.e.
+an old install being brought forward, not a fresh one. A fresh
+`upgrade head` starts from an empty table and the guard is inert.
 
 ## Backups
 

@@ -18,7 +18,68 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _refuse_if_holding_data(direction: str, because: str) -> None:
+    """Abort this migration if it would destroy booking history.
+
+    BASE-CONFIG-13. Both directions of 0009 rewire ``signups`` between a
+    ``user_id`` and a ``volunteer_id`` anchor, and neither can derive the new
+    column for rows that already exist. The original code resolved that by
+    emptying the table. This refuses instead, and names the row count so the
+    operator knows what they are looking at before they reach for a dump.
+
+    Only ``signups`` is checked, which is narrower than the code this
+    replaces: it also emptied ``magic_link_tokens``. No structural requirement
+    ever justified that. Tokens are anchored to signups by a foreign key, so
+    once signups is empty the only tokens that can still exist are the ones
+    anchored elsewhere — staff login links — and those are none of this
+    migration's business. Checking them too would refuse a rollback that is
+    perfectly safe to perform.
+    """
+    conn = op.get_bind()
+    signups = conn.execute(sa.text("SELECT count(*) FROM signups")).scalar() or 0
+    if not signups:
+        return
+    raise RuntimeError(
+        f"Migration 0009 ({direction}) refuses to run: this database holds "
+        f"{signups} signup row(s), and 0009 {because}. It used to delete the "
+        "table at this point, which is how a routine `alembic upgrade head` "
+        "could erase an entire booking history without reporting it.\n\n"
+        "If this data is disposable, empty the table yourself and re-run:\n"
+        "    DELETE FROM signups;\n\n"
+        "If it is not, take a pg_dump first, then backfill: add volunteer_id "
+        "as nullable, create a volunteers row per distinct signup identity, "
+        "point volunteer_id at it, and only then SET NOT NULL."
+    )
+
+
 def upgrade() -> None:
+    # -----------------------------------------------------------------------
+    # Section 0 — Refuse to run against real booking data (BASE-CONFIG-13)
+    #
+    # Where Section 2 used to be `DELETE FROM magic_link_tokens` and `DELETE
+    # FROM signups`, on locked decision D-04 that dev data is throwaway. That
+    # was true of the laptop it was written on and is not a property of the
+    # database this migration will be pointed at. Section 5 below adds
+    # `signups.volunteer_id` as NOT NULL with no default and no backfill, so
+    # the table genuinely must be empty for the ALTER to succeed — but the
+    # honest response to a non-empty table is to stop, not to empty it.
+    #
+    # The trigger is an ordinary boot: the compose `migrate` service runs
+    # `alembic upgrade head` every time. Against a fresh database the table is
+    # empty and this check costs one count. Against a restored backup, a
+    # seeded staging database, or a second server pointed at a half-migrated
+    # one, the old code destroyed the entire booking history with no error and
+    # no row count. Refusing turns a silent data loss into a failed boot.
+    #
+    # Checked before any DDL so a refusal leaves the schema untouched rather
+    # than relying on the migration's transaction to unwind it.
+    # -----------------------------------------------------------------------
+    _refuse_if_holding_data(
+        "upgrade",
+        "adds signups.volunteer_id as NOT NULL and cannot infer it for "
+        "existing rows",
+    )
+
     # -----------------------------------------------------------------------
     # Section 1 — Create `volunteers` table (R08-01)
     # -----------------------------------------------------------------------
@@ -51,14 +112,7 @@ def upgrade() -> None:
     op.create_index("ix_volunteers_email", "volunteers", ["email"])
 
     # -----------------------------------------------------------------------
-    # Section 2 — Drop dev data that will be orphaned by FK rewire (D-04)
-    # Dev data is throwaway per locked decision D-04. Clear signups +
-    # magic_link_tokens so the FK rewire and NOT NULL columns don't trip on
-    # pre-existing rows.
-    # -----------------------------------------------------------------------
-    op.execute("DELETE FROM magic_link_tokens")
-    op.execute("DELETE FROM signups")
-
+    # Section 2 — was the unconditional wipe; now Section 0's guard.
     # -----------------------------------------------------------------------
     # Section 3 — events: new columns + drop module_slug FK (R08-02, D-07)
     # FK constraint name captured 2026-04-09 via `\d events`:
@@ -247,12 +301,18 @@ def downgrade() -> None:
     # -----------------------------------------------------------------------
     op.drop_constraint("uq_signups_volunteer_id_slot_id", "signups", type_="unique")
     op.drop_constraint("fk_signups_volunteer_id", "signups", type_="foreignkey")
+    # BASE-CONFIG-13, same reasoning as the upgrade guard and the same fix.
+    # A volunteer-keyed signup has no user_id to fall back on, so this
+    # direction cannot reconstruct the old shape either — but a rollback that
+    # silently empties the booking history is worse than a rollback that
+    # stops. Checked before dropping the column so the message can still
+    # count the rows.
+    _refuse_if_holding_data(
+        "downgrade",
+        "restores signups.user_id as NOT NULL and volunteer-keyed rows carry "
+        "no user to point it at",
+    )
     op.drop_column("signups", "volunteer_id")
-    # ASSUMPTION: dev data is throwaway (D-04). Any signup rows that were
-    # created via the volunteer-keyed schema after upgrade have no user_id
-    # to fall back on, so we wipe the table before re-adding the NOT NULL
-    # user_id column. This is safe per locked decision D-04.
-    op.execute("DELETE FROM signups")
     op.add_column(
         "signups",
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
