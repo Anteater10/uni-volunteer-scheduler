@@ -81,6 +81,7 @@ def create_shift(
     db.refresh(shift)
 
     log_action(db, actor, "shift_create", "Shift", str(shift.id))
+    db.commit()
     return shift
 
 
@@ -114,6 +115,7 @@ def update_shift(
     # Raising capacity opens seats but promotes nobody — automatic promotion
     # was removed by the read-only-signups spec. Staff promote by hand.
     log_action(db, actor, "shift_update", "Shift", str(shift.id))
+    db.commit()
     return shift
 
 
@@ -132,6 +134,7 @@ def delete_shift(
     db.commit()
 
     log_action(db, actor, "shift_delete", "Shift", str(shift_id))
+    db.commit()
     return
 
 
@@ -150,6 +153,7 @@ def reorder_shifts(
     db.commit()
 
     log_action(db, actor, "shift_reorder", "Event", str(event.id))
+    db.commit()
     return ordered
 
 
@@ -190,6 +194,7 @@ def add_session(
     db.refresh(shift)
 
     log_action(db, actor, "shift_session_add", "Shift", str(shift.id))
+    db.commit()
     return shift
 
 
@@ -253,6 +258,7 @@ def update_session(
     db.refresh(session)
 
     log_action(db, actor, "shift_session_update", "Slot", str(session.id))
+    db.commit()
 
     if time_changed:
         for signup in confirmed:
@@ -300,6 +306,7 @@ def delete_session(
     db.commit()
 
     log_action(db, actor, "shift_session_delete", "Slot", str(session_id))
+    db.commit()
     return
 
 
@@ -316,4 +323,5 @@ def reorder_sessions(
     db.refresh(shift)
 
     log_action(db, actor, "shift_session_reorder", "Shift", str(shift.id))
+    db.commit()
     return shift

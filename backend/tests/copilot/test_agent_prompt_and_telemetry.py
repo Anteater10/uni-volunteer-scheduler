@@ -443,3 +443,55 @@ class TestMissingAdapterFailsHonestly:
         )
         a = adapter_mod.ToolCallingAdapter()
         assert a.usage["prompt_tokens"] == 0
+
+
+class TestAgentOnlyRules:
+    """Rules 8-9: what the first week of real tool use taught us.
+
+    Both are agent-only. The no-tools prompt is compared byte-for-byte
+    against a checked-in fixture, so anything added for the agent has to
+    stay out of the shared block or that baseline test fails.
+    """
+
+    def test_the_agent_is_told_times_are_pacific(self):
+        from app.copilot import prompts
+        from app import models
+
+        agent = prompts.system_prompt_for(models.UserRole.admin, agent=True)
+        assert "Pacific" in agent
+        # It is the tool's job to convert, and a model that does it too
+        # subtracts the offset twice.
+        assert "never convert to UTC yourself" in agent
+
+    def test_the_agent_is_told_not_to_think_out_loud(self):
+        from app.copilot import prompts
+        from app import models
+
+        agent = prompts.system_prompt_for(models.UserRole.admin, agent=True)
+        assert "Do not narrate your planning" in agent
+
+    def test_the_agent_is_told_the_card_does_the_asking(self):
+        """A live run turned a done deal into a question.
+
+        Asked to move an orientation from 5:00 to 5:30 — every detail
+        stated — the model looked the slot up, described the change
+        correctly, and then ended with "please confirm". It never called
+        the tool, so no card appeared and nothing was pending: the admin's
+        "yes" would have started the work over. The confirmation step is
+        the system's, and the prompt has to say so, because rule 2's
+        description of confirmation reads like an instruction to perform it.
+        """
+        from app.copilot import prompts
+        from app import models
+
+        agent = prompts.system_prompt_for(models.UserRole.admin, agent=True)
+        assert "The card is what asks" in agent
+        assert "say yes twice" in agent
+
+    def test_the_no_tools_prompt_is_untouched_by_them(self):
+        from app.copilot import prompts
+        from app import models
+
+        plain = prompts.system_prompt_for(models.UserRole.admin, agent=False)
+        assert "Pacific" not in plain
+        assert "Do not narrate your planning" not in plain

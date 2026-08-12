@@ -133,30 +133,39 @@ def test_patch_blocks_self_demote(client, db_session):
     assert "own" in resp.json()["detail"].lower()
 
 
-def test_patch_blocks_last_admin_demote(client, db_session):
-    """Race-condition simulation: caller gets deactivated out-of-band after
-    their JWT was issued, so they're the holder of a valid token but their
-    user row is not 'active'. The only active admin left is the target.
-    Attempting to demote the target must 409.
+def test_deactivated_caller_with_valid_jwt_is_rejected(client, db_session):
+    """A caller deactivated out-of-band after their JWT was issued still holds a
+    cryptographically valid token until it expires. Authentication re-reads the
+    user row on every request, so the token must stop working immediately.
+
+    This previously asserted a 409 from the last-active-admin guard, which meant
+    the deactivated caller was reaching the business logic at all — the guard was
+    masking a broken offboarding path (BASE-SEC-01). It now asserts the 401.
+
+    Note: with this closed, the demote-side last-active-admin guard
+    (routers/users.py:307-318) is no longer reachable over HTTP — an active admin
+    demoting someone else always leaves themselves active. It is retained as
+    defence in depth and is exercised on the deactivate path below.
     """
     caller = _make_admin(db_session, email="caller-ld@example.com")
     target = _make_admin(db_session, email="target-ld@example.com")
     db_session.commit()
     headers = auth_headers(client, caller)
 
-    # Simulate a race: caller was deactivated after issuing their JWT.
+    # Simulate the race: caller was deactivated after their JWT was issued.
     caller.is_active = False
     db_session.commit()
 
-    # Now `target` is the only active admin. Demoting target would leave
-    # zero active admins → must 409.
     resp = client.patch(
         f"/api/v1/users/{target.id}",
         json={"role": "organizer"},
         headers=headers,
     )
-    assert resp.status_code == 409
-    assert "last active admin" in resp.json()["detail"].lower()
+    assert resp.status_code == 401
+
+    # The target must be untouched — the request never reached the handler.
+    db_session.refresh(target)
+    assert target.role == models.UserRole.admin
 
 
 def test_list_users_excludes_inactive_and_participants_by_default(client, db_session):

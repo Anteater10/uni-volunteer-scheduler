@@ -18,7 +18,11 @@ from .. import models, schemas
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
 from ..models import PrivacyMode
-from ..celery_app import send_email_notification, send_waitlist_promotion_email
+from ..celery_app import (
+    send_broadcast_email,
+    send_email_notification,
+    send_waitlist_promotion_email,
+)
 from ..signup_service import mark_promoted_pending
 from ..services.check_in_service import ensure_signup_cancellable
 from ..services.waitlist_service import SlotEndedError
@@ -486,43 +490,68 @@ def event_analytics(
     ensure_event_staff_access(event, actor)
 
     total_slots = len(event.slots)
-    total_capacity = sum(s.capacity for s in event.slots)
+
+    # Capacity lives in two places and summing one of them is not a smaller
+    # number, it is a wrong one. An orientation slot carries its own
+    # capacity; a shift's session slots carry a placeholder 1 each while the
+    # real limit sits on the Shift, because the shift is what a volunteer
+    # books. A fifteen-shift event of six seats each reported 65 instead of
+    # 140 — low enough to read as a quiet week rather than as a bug.
+    total_capacity = sum(
+        slot.capacity for slot in event.slots if slot.shift_id is None
+    ) + sum(shift.capacity for shift in event.shifts)
 
     # Count anyone still holding a seat: pending + confirmed + checked_in
     # + attended. Pending holds capacity (just hasn't clicked the magic link
     # yet). Otherwise the "Confirmed" card drops when someone checks in or
     # when staff manually promote a waitlisted person into pending — both
     # misread the state (they're more present, not less).
-    confirmed = (
-        db.query(func.count(models.Signup.id))
-        .join(models.Slot)
-        .filter(
-            models.Slot.event_id == event.id,
-            models.Signup.status.in_(
-                [
-                    models.SignupStatus.pending,
-                    models.SignupStatus.confirmed,
-                    models.SignupStatus.checked_in,
-                    models.SignupStatus.attended,
-                ]
-            ),
-        )
-        .scalar()
-        or 0
-    )
+    _HOLDING_A_SEAT = [
+        models.SignupStatus.pending,
+        models.SignupStatus.confirmed,
+        models.SignupStatus.checked_in,
+        models.SignupStatus.attended,
+    ]
 
-    waitlisted = (
-        db.query(func.count(models.Signup.id))
-        .join(models.Slot)
-        .filter(
-            models.Slot.event_id == event.id,
-            models.Signup.status == models.SignupStatus.waitlisted,
+    def _count(statuses):
+        """Both kinds of booking, because the page shows one number.
+
+        An orientation booking is a Signup against a slot; a shift booking
+        is a ShiftSignup against the shift. Counting only the first left
+        every classroom shift reading zero signups on the admin dashboard
+        while the roster underneath it listed people by name.
+        """
+        orientations = (
+            db.query(func.count(models.Signup.id))
+            .join(models.Slot)
+            .filter(
+                models.Slot.event_id == event.id,
+                models.Signup.status.in_(statuses),
+            )
+            .scalar()
+            or 0
         )
-        .scalar()
-        or 0
-    )
+        shifts = (
+            db.query(func.count(models.ShiftSignup.id))
+            .join(models.Shift)
+            .filter(
+                models.Shift.event_id == event.id,
+                models.ShiftSignup.status.in_(statuses),
+            )
+            .scalar()
+            or 0
+        )
+        return orientations + shifts
+
+    confirmed = _count(_HOLDING_A_SEAT)
+    waitlisted = _count([models.SignupStatus.waitlisted])
 
     log_action(db, actor, "admin_event_analytics", "Event", str(event.id))
+    # Committed explicitly. ``log_action`` only stages the row and this
+    # is a read path with nothing else to commit, so the request ended
+    # with the session closing and the audit row rolled back — a mass
+    # PII export that left no trace it ever happened.
+    db.commit()
 
     return schemas.EventAnalytics(
         event_id=event.id,
@@ -620,6 +649,11 @@ def event_roster(
             )
 
     log_action(db, actor, "admin_event_roster", "Event", str(event.id))
+    # Committed explicitly. ``log_action`` only stages the row and this
+    # is a read path with nothing else to commit, so the request ended
+    # with the session closing and the audit row rolled back — a mass
+    # PII export that left no trace it ever happened.
+    db.commit()
     return rows
 
 
@@ -724,6 +758,11 @@ def export_event_csv(
     headers = {"Content-Disposition": f'attachment; filename="event_{event.id}.csv"'}
 
     log_action(db, actor, "admin_export_event_csv", "Event", str(event.id))
+    # Committed explicitly. ``log_action`` only stages the row and this
+    # is a read path with nothing else to commit, so the request ended
+    # with the session closing and the audit row rolled back — a mass
+    # PII export that left no trace it ever happened.
+    db.commit()
     return Response(content=csv_data, media_type="text/csv", headers=headers)
 
 
@@ -1097,6 +1136,14 @@ def admin_reorder_waitlist(
         },
     )
     db.commit()
+    # This return had drifted into ``admin_reorder_shift_waitlist`` below,
+    # sitting after its ``return`` as unreachable code — so this endpoint
+    # answered a successful reorder with ``null`` and the caller could not
+    # tell the new order from no order at all.
+    return {
+        "slot_id": str(slot.id),
+        "ordered_signup_ids": [str(r.id) for r in rows],
+    }
 
 
 @router.patch("/events/{event_id}/shifts/{shift_id}/waitlist-order")
@@ -1149,11 +1196,6 @@ def admin_reorder_shift_waitlist(
     )
     db.commit()
     return {"ordered_shift_signup_ids": [str(r.id) for r in rows]}
-
-    return {
-        "slot_id": str(slot.id),
-        "ordered_signup_ids": [str(r.id) for r in rows],
-    }
 
 
 @router.post("/signups/{signup_id}/move", response_model=schemas.SignupRead)
@@ -1359,20 +1401,38 @@ def notify_event_participants(
             elif payload.include_waitlisted and signup.status == models.SignupStatus.waitlisted and signup.volunteer:
                 recipient_volunteers.add(signup.volunteer)
 
-    for v in recipient_volunteers:
-        # Phase 09: direct send to volunteer email (no user_id available)
-        # Phase 12: use send_email_notification with volunteer support
-        from ..celery_app import _send_email_via_sendgrid
-        _send_email_via_sendgrid(v.email, payload.subject, payload.body)
-
+    # This block used to send every email inline and *then* raise NameError
+    # on an undefined ``recipients``, so the endpoint always 500'd — after
+    # the mail had gone out. Every retry re-sent to the whole event, and the
+    # audit row was never written (nor committed) because the exception hit
+    # first. It also imported ``_send_email_via_sendgrid``, which does not
+    # exist in celery_app.
+    #
+    # Audit first and commit, then hand delivery to the queue: a failed
+    # recipient retries alone instead of re-mailing everyone.
+    recipient_count = len(recipient_volunteers)
     log_action(
         db,
         actor,
         "admin_event_notify",
         "Event",
         str(event.id),
-        extra={"include_waitlisted": payload.include_waitlisted, "recipient_count": len(recipients)},
+        extra={
+            "include_waitlisted": payload.include_waitlisted,
+            "recipient_count": recipient_count,
+        },
     )
+    db.commit()
+
+    for v in recipient_volunteers:
+        if not v.email:
+            continue
+        send_broadcast_email.delay(
+            v.email,
+            payload.subject,
+            payload.body,
+            payload.body,
+        )
 
     return
 
@@ -1627,6 +1687,11 @@ def analytics_attendance_rates(
         ))
 
     log_action(db, admin_user, "admin_analytics_attendance_rates", "Analytics", None)
+    # Committed explicitly. ``log_action`` only stages the row and this
+    # is a read path with nothing else to commit, so the request ended
+    # with the session closing and the audit row rolled back — a mass
+    # PII export that left no trace it ever happened.
+    db.commit()
     return result
 
 
@@ -1722,6 +1787,11 @@ def export_event_attendance_csv(
             ])
 
     log_action(db, actor, "admin_export_attendance_csv", "Event", str(event.id))
+    # Committed explicitly. ``log_action`` only stages the row and this
+    # is a read path with nothing else to commit, so the request ended
+    # with the session closing and the audit row rolled back — a mass
+    # PII export that left no trace it ever happened.
+    db.commit()
     headers_resp = {"Content-Disposition": f'attachment; filename="attendance-{event_id}.csv"'}
     return Response(content=output.getvalue(), media_type="text/csv", headers=headers_resp)
 
@@ -2251,10 +2321,35 @@ def admin_delete_user(
     # Phase 12: check volunteer signups before deletion when user<->volunteer link exists
     # For now, skip the signup check — admin delete of User rows is safe
 
-    db.delete(user)
-    db.commit()
+    # Anonymize, do not hard-delete. ``audit_logs.actor_id`` is a nullable FK
+    # to this row, so ``db.delete(user)`` NULLed the actor on every audit
+    # entry this person ever wrote — the trail survived, attributed to
+    # nobody. Deleting a staff account is exactly when their history matters
+    # most, and it was the one action that erased it.
+    #
+    # The audit row is also written *before* the change, not after: it used
+    # to be staged after ``db.commit()``, so the session closed and the
+    # record of the deletion was rolled back.
+    log_action(
+        db,
+        admin_user,
+        "admin_delete_user",
+        "User",
+        str(user.id),
+        extra={
+            "original_email_hint": (
+                user.email[:3] + "***" if user.email else "***"
+            )
+        },
+    )
 
-    log_action(db, admin_user, "admin_delete_user", "User", str(user.id))
+    user.name = "[deleted]"
+    user.email = f"deleted-{uuid_mod.uuid4()}@example.invalid"
+    user.university_id = None
+    user.hashed_password = "DELETED"
+    user.is_active = False
+    user.deleted_at = datetime.now(timezone.utc)
+    db.commit()
     return
 
 
@@ -2349,7 +2444,24 @@ def ccpa_delete(
         raise HTTPException(status_code=400, detail="Admin cannot CCPA-delete their own account")
 
     # Preserve truncated email for audit trail
+    original_email = user.email
     original_email_hint = user.email[:3] + "***" if user.email else "***"
+
+    # The volunteer record has to be resolved BEFORE user.email is
+    # overwritten — it is keyed by email, and email is the only link between
+    # the two tables. This whole block was missing: the endpoint anonymized
+    # the User row, reported "deleted", and left the Volunteer row holding
+    # the person's real name, email and phone number, plus their
+    # notification preferences (including their phone again) and their
+    # orientation-credit history keyed to their address. A CCPA deletion
+    # that deletes nothing the request was actually about.
+    volunteer = (
+        db.query(models.Volunteer)
+        .filter(models.Volunteer.email == original_email)
+        .first()
+        if original_email
+        else None
+    )
 
     # Anonymize PII
     user.name = "[deleted]"
@@ -2358,9 +2470,44 @@ def ccpa_delete(
     user.hashed_password = "DELETED"
     user.deleted_at = datetime.now(timezone.utc)
 
+    volunteer_anonymized = False
+    if volunteer is not None:
+        volunteer.first_name = "[deleted]"
+        volunteer.last_name = ""
+        volunteer.phone_e164 = None
+        volunteer.email = f"deleted-{uuid_mod.uuid4()}@example.invalid"
+        volunteer_anonymized = True
+
+    # Preferences are pure contact data — no analytic value in keeping them.
+    prefs_deleted = 0
+    credits_anonymized = 0
+    if original_email:
+        prefs_deleted = (
+            db.query(models.VolunteerPreference)
+            .filter(models.VolunteerPreference.volunteer_email == original_email)
+            .delete(synchronize_session=False)
+        )
+        # Credits are an audit trail and stay, but must stop naming the
+        # person: re-key them to the anonymized address.
+        credits_anonymized = (
+            db.query(models.OrientationCredit)
+            .filter(models.OrientationCredit.volunteer_email == original_email)
+            .update(
+                {"volunteer_email": volunteer.email if volunteer else
+                 f"deleted-{uuid_mod.uuid4()}@example.invalid"},
+                synchronize_session=False,
+            )
+        )
+
     log_action(
         db, admin_user, "ccpa_delete", "User", str(user.id),
-        extra={"reason": payload.reason, "original_email_hint": original_email_hint},
+        extra={
+            "reason": payload.reason,
+            "original_email_hint": original_email_hint,
+            "volunteer_anonymized": volunteer_anonymized,
+            "preferences_deleted": prefs_deleted,
+            "orientation_credits_anonymized": credits_anonymized,
+        },
     )
     db.commit()
 

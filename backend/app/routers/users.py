@@ -66,6 +66,7 @@ def update_me(
     db.refresh(current_user)
 
     log_action(db, current_user, "user_update_me", "User", str(current_user.id))
+    db.commit()
     return current_user
 
 
@@ -88,6 +89,7 @@ def anonymize_me(
     db.refresh(current_user)
 
     log_action(db, current_user, "user_anonymize_me", "User", str(current_user.id))
+    db.commit()
     return current_user
 
 
@@ -111,6 +113,7 @@ def list_users(
         query = query.filter(models.User.is_active == True)  # noqa: E712
     users = query.order_by(models.User.created_at.desc()).all()
     log_action(db, admin_user, "admin_list_users", "User", None)
+    db.commit()
     return users
 
 
@@ -143,6 +146,7 @@ def admin_create_user(
     db.refresh(user)
 
     log_action(db, admin_user, "admin_create_user", "User", str(user.id))
+    db.commit()
     return user
 
 
@@ -267,6 +271,7 @@ def admin_get_user(
             detail="User not found",
         )
     log_action(db, admin_user, "admin_get_user", "User", str(user.id))
+    db.commit()
     return user
 
 

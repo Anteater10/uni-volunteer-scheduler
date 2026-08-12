@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import require_role, log_action, ensure_event_staff_access
-from ..services import quarter_service, shift_service
+from ..services import event_deletion_service, quarter_service, shift_service
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -208,6 +208,7 @@ def create_event(
         )
     else:
         log_action(db, current_user, "event_create", "Event", str(event.id))
+    db.commit()
     return event
 
 
@@ -305,6 +306,7 @@ def update_event(
     db.refresh(event)
 
     log_action(db, current_user, "event_update", "Event", str(event.id))
+    db.commit()
     return event
 
 
@@ -323,10 +325,18 @@ def delete_event(
     ensure_event_staff_access(event, current_user)
     quarter_service.ensure_event_quarter_writable(event)
 
+    # BASE-SEC-27: the ORM cascade reaches signups, shift commitments and
+    # attendance. Refuse rather than ask — see event_deletion_service.
+    refusal = event_deletion_service.refusal_reason(db, event)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
+
+    # Log inside the same transaction as the delete, so the record of the
+    # deletion cannot survive a rollback that kept the event, or vanish with
+    # a commit that removed it.
+    log_action(db, current_user, "event_delete", "Event", str(event.id))
     db.delete(event)
     db.commit()
-
-    log_action(db, current_user, "event_delete", "Event", str(event.id))
     return
 
 
@@ -445,6 +455,7 @@ def generate_slots(
         db.refresh(sh)
 
     log_action(db, current_user, "event_generate_slots", "Event", str(event.id))
+    db.commit()
     return schemas.SlotGenerationResult(slots=created_slots, shifts=created_shifts)
 
 

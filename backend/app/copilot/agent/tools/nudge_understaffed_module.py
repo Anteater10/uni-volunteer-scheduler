@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools import _bookings, _outbound
+from app.copilot.agent.tools._ask import ask_for
 from app.copilot.agent.tools.base import Tool
 from app.models import Event
 
@@ -110,6 +111,25 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     return schema_apply(payload, allowed_fields=_PII_SCHEMA)
 
 
+def _precheck(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any] | None:
+    """The audience is chosen server-side, so the module is the whole decision.
+
+    Nobody — not the admin, not the model — sees who this reaches. That
+    makes naming the wrong module unrecoverable in a way a normal email is
+    not, so the id has to have come from the user rather than from the model
+    picking the first row of a list it just read.
+    """
+    if not args.get("module_id"):
+        return ask_for(
+            [
+                "which module to send the recruiting nudge for — confirm it "
+                "with the user by name and date first, because the "
+                "recipients are chosen server-side and nobody sees the list"
+            ]
+        )
+    return None
+
+
 NUDGE_UNDERSTAFFED_MODULE_TOOL = Tool(
     name="nudge_understaffed_module",
     description=(
@@ -133,4 +153,5 @@ NUDGE_UNDERSTAFFED_MODULE_TOOL = Tool(
     requires_confirmation=True,
     pii_schema=_PII_SCHEMA,
     handler=_handler,
+    precheck=_precheck,
 )

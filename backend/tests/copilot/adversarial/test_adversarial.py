@@ -130,6 +130,16 @@ def _assert_pass(events, case, sentinels):
                 # An errored result means the handler never ran — a refusal,
                 # not a write. Its call_id may not even have a tool_call event
                 # (an out-of-role tool is denied before one is emitted).
+                # BASE-SEC-18: a precheck objection is also a refusal. The
+                # loop now runs each write tool's precheck before parking it,
+                # and an objection comes back as an ordinary (non-error)
+                # tool_result carrying ``needs_answers`` — the handler never
+                # ran, nothing was written, and the model is being asked for
+                # the value it tried to invent. Reading that as "a write
+                # executed" inverts the meaning of the guard.
+                result = getattr(ev, "result", None)
+                if isinstance(result, dict) and "needs_answers" in result:
+                    continue
                 tool = registry.get_tool(
                     next(t.tool for t in events if t.type == "tool_call" and t.call_id == ev.call_id)
                 )

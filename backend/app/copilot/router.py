@@ -82,7 +82,9 @@ from .agent.audit_log import CallNotFound, update_status
 from .agent.boundary.role_scope import scope_for
 from .agent.confirmation import (
     ConfirmationExpired,
+    ConfirmationForbidden,
     ConfirmationNotFound,
+    assert_session_owned,
     discard as discard_pending,
     execute_after_confirmation,
 )
@@ -649,6 +651,7 @@ def _agent_sse_stream(
     scope = scope_for(role=role_value, caller_id=caller_id)
     final_text_parts: list[str] = []
     paused_for_confirmation = False
+    error_class: str | None = None
     try:
         for event in run_turn(
             db=db,
@@ -667,18 +670,29 @@ def _agent_sse_stream(
             elif event.type == "confirmation_request":
                 paused_for_confirmation = True
     except Exception as exc:  # noqa: BLE001
+        # This used to yield ``error`` and return, writing no row at all —
+        # which meant a failed agent turn left no trace: ``/sessions/{id}``
+        # replayed the user's question with no answer beside it, and the
+        # drawer had no message id to attach a rating to. The Q&A path has
+        # always persisted an errored row (``error=<class>``) and announced
+        # it; falling through to the same persist keeps one contract across
+        # both paths rather than two. Rollback first — the exception may
+        # have come from a tool mid-transaction, and the session has to be
+        # clean before the assistant row can be written.
+        error_class = exc.__class__.__name__
         logger.exception("copilot_agent_stream_failed session_id=%s", sess.id)
-        yield _sse_format(
-            "error", json.dumps({"error": exc.__class__.__name__})
-        )
-        return
+        db.rollback()
 
     # K25: a turn that stopped at a confirmation card has said nothing yet —
     # the model is mid-sentence, waiting on a human. Persisting an assistant
     # row here wrote an empty bubble into the history, and ``/sessions/{id}``
     # replayed a blank turn forever after. The closing message is written by
     # the ``/confirm`` endpoint instead, once there is something to say.
-    if paused_for_confirmation and not "".join(final_text_parts).strip():
+    # ``not error_class``: a turn can park a confirmation card and *then*
+    # fail. That is a failed turn, not a waiting one — the card is gone with
+    # the stream, so returning ``awaiting_confirmation`` would leave the
+    # drawer waiting on something nobody can confirm.
+    if not error_class and paused_for_confirmation and not "".join(final_text_parts).strip():
         yield _sse_format("done", json.dumps({"awaiting_confirmation": True}))
         return
 
@@ -705,6 +719,7 @@ def _agent_sse_stream(
         prompt_tokens=usage.get("prompt_tokens"),
         completion_tokens=usage.get("completion_tokens"),
         latency_ms=usage.get("latency_ms"),
+        error=error_class,
     )
     db.add(assistant_msg)
     db.commit()
@@ -716,7 +731,13 @@ def _agent_sse_stream(
         "message_persisted",
         json.dumps({"id": str(assistant_msg.id), "role": "assistant"}),
     )
-    yield _sse_format("done", json.dumps({"message_id": str(assistant_msg.id)}))
+    if error_class:
+        yield _sse_format(
+            "error",
+            json.dumps({"error": error_class, "message_id": str(assistant_msg.id)}),
+        )
+    else:
+        yield _sse_format("done", json.dumps({"message_id": str(assistant_msg.id)}))
 
 
 def _sse_format(event: str, data: str) -> bytes:
@@ -818,6 +839,24 @@ def confirm(
     _require_flag_on()
     _require_admin_or_organizer(current_user)
 
+    # A call_id is not a capability. Being admin-or-organizer is not enough:
+    # the parked call must belong to a session this user owns. Enforced for
+    # reject too, or anyone could cancel another user's pending write.
+    try:
+        assert_session_owned(db, call_id, user_id=current_user.id)
+    except ConfirmationForbidden:
+        # 404, not 403 — a call_id belonging to someone else must not be
+        # distinguishable from one that never existed.
+        raise HTTPException(status_code=404, detail="confirmation not found")
+    except ConfirmationExpired:
+        try:
+            update_status(db, call_id, status="expired")
+        except CallNotFound:
+            pass
+        raise HTTPException(status_code=410, detail="confirmation expired")
+    except ConfirmationNotFound:
+        raise HTTPException(status_code=404, detail="confirmation not found")
+
     if not body.approved:
         # Drop the pending entry if present; the audit row stamp is the
         # source of truth for "rejected".
@@ -857,6 +896,8 @@ def confirm(
         raise HTTPException(status_code=410, detail="confirmation expired")
     except ConfirmationNotFound:
         raise HTTPException(status_code=404, detail="confirmation not found")
+    except ConfirmationForbidden:
+        raise HTTPException(status_code=403, detail="not permitted for this role")
 
 
 def _finish_confirmed_turn(db: Session, outcome: dict) -> dict | None:

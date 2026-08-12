@@ -197,3 +197,61 @@ def test_chat_endpoint_unchanged_when_flag_off(client, db_session, monkeypatch):
     text = body_bytes.decode("utf-8")
     assert "event: token" in text
     assert "event: tool_call" not in text
+
+
+class _ExplodingLLM:
+    """A model call that fails the way a real one does — mid-turn."""
+
+    def chat(self, *, messages, tools):
+        raise RuntimeError("upstream is down")
+
+
+def test_failed_agent_turn_persists_a_row_and_announces_it(
+    client, db_session, monkeypatch
+):
+    """A turn that dies mid-stream still leaves a rateable, replayable row.
+
+    The Q&A path has always written an errored assistant row and emitted
+    ``message_persisted`` before the terminal marker. The agent path used
+    to yield ``error`` and return, so the failure existed only in the
+    drawer: reload the session and the question sat there with no answer
+    beside it, and thumbs-down had no message id to attach to.
+    """
+    admin = _admin(db_session, email="agent_admin_err@example.com")
+    db_session.commit()
+    rc = client.post("/api/v1/copilot/sessions", headers=auth_headers(client, admin))
+    sid = rc.json()["id"]
+
+    monkeypatch.setattr(copilot_router_mod, "_get_agent_llm", lambda: _ExplodingLLM())
+    _stub_retrieval(monkeypatch)
+
+    body_bytes = bytearray()
+    with client.stream(
+        "POST",
+        f"/api/v1/copilot/sessions/{sid}/messages",
+        headers=auth_headers(client, admin),
+        json={"content": "how many rows?"},
+    ) as resp:
+        assert resp.status_code == 200
+        for chunk in resp.iter_bytes():
+            body_bytes.extend(chunk)
+
+    text = body_bytes.decode("utf-8")
+    event_names = re.findall(r"event: (\S+)", text)
+    assert "message_persisted" in event_names, event_names
+    # Order matters: the id has to land before the terminal marker.
+    assert event_names.index("message_persisted") < event_names.index("error")
+    assert "done" not in event_names
+
+    rows = (
+        db_session.query(models.CopilotMessage)
+        .filter(
+            models.CopilotMessage.session_id == sid,
+            models.CopilotMessage.role == models.CopilotMessageRole.assistant,
+        )
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].error == "RuntimeError"
+    # The id in the SSE payload is the id of the row that was written.
+    assert str(rows[0].id) in text

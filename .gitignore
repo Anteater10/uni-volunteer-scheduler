@@ -49,3 +49,4 @@ Untitled.*
 # demo-day golden database dump (local artifact, not source)
 /uvs-demo-golden.sql
 .superpowers/
+backend/coverage.json

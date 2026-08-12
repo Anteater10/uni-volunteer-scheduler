@@ -39,6 +39,32 @@ def configure_logging() -> None:
     })
 
 
+# Header names are matched case-insensitively; both spellings show up
+# depending on which integration built the event.
+_SENSITIVE_HEADERS = {"authorization", "cookie", "set-cookie", "x-api-key"}
+
+
+def _scrub_event(event, hint):
+    """Last line of defence before an error leaves the building.
+
+    ``max_request_body_size="never"`` should already prevent bodies being
+    attached; this drops them again regardless, along with the headers that
+    carry a bearer token. Belt and braces on purpose — the cost of a
+    redundant check here is nothing, and the cost of missing one is a
+    plaintext password sitting in a third party's dashboard.
+    """
+    request = event.get("request")
+    if isinstance(request, dict):
+        request.pop("data", None)
+        request.pop("cookies", None)
+        headers = request.get("headers")
+        if isinstance(headers, dict):
+            for name in list(headers):
+                if name.lower() in _SENSITIVE_HEADERS:
+                    headers.pop(name, None)
+    return event
+
+
 def init_sentry() -> bool:
     """Initialise Sentry when SENTRY_DSN is configured. Returns True on init.
 
@@ -61,6 +87,15 @@ def init_sentry() -> bool:
         environment=settings.environment,
         # Error monitoring only — no performance tracing volume.
         traces_sample_rate=0.0,
+        # A 500 anywhere on an authenticated route would otherwise ship the
+        # request body to a third party. On /auth/change-password that body
+        # is a plaintext password; on the public signup path it is a
+        # volunteer's name, email and phone. Neither belongs in an error
+        # tracker, and no amount of after-the-fact scrubbing is as reliable
+        # as never capturing it.
+        send_default_pii=False,
+        max_request_body_size="never",
+        before_send=_scrub_event,
     )
     logger.info("sentry initialised (environment=%s)", settings.environment)
     return True

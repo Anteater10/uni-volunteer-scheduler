@@ -40,3 +40,32 @@ def scope_for(*, role: str, caller_id) -> Scope:
             see_all=False,
         )
     raise ScopeError(f"role {role!r} not allowed in agent")
+
+
+_OUT_OF_SCOPE = "that event is not one of yours"
+
+
+def owns_event(scope: Scope, event) -> bool:
+    """Whether ``scope`` may act on ``event``.
+
+    Admins see everything; an organizer is confined to events they own.
+    """
+    if scope.see_all:
+        return True
+    return getattr(event, "owner_id", None) == scope.module_owner_id
+
+
+def deny_if_not_owned(scope: Scope, event) -> dict | None:
+    """The error payload a tool handler returns, or None when allowed.
+
+    The read tools each grew their own copy of this check
+    (``get_module_roster.py:51`` is the canonical one) while every *write*
+    handler in ``events_edit.py`` and ``operations.py`` had none at all — so
+    an organizer who knew an event id could rename, reschedule or move
+    people inside another organizer's event. One helper, called from every
+    handler that resolves an event, so the next write tool inherits the
+    boundary instead of having to remember it.
+    """
+    if owns_event(scope, event):
+        return None
+    return {"error": _OUT_OF_SCOPE}

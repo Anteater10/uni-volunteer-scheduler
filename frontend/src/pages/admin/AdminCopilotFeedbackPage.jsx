@@ -17,8 +17,16 @@ import authStorage from "../../lib/authStorage";
 import { COPILOT_BASE } from "../../copilot/api";
 import { useAdminPageTitle } from "./AdminLayout";
 
+// Hoisted to module scope on purpose. `window.fetch.bind(window)` inside the
+// component body allocated a NEW function on every render, so the `[f]`
+// dependency below never compared equal — each fetch settled, set state,
+// re-rendered, produced a fresh `f`, and re-fetched. Two admin endpoints in
+// an unbounded loop. As a module constant the identity is stable, and `[f]`
+// finally means what it reads as: run once.
+const DEFAULT_FETCH = (...args) => window.fetch(...args);
+
 export default function AdminCopilotFeedbackPage({ fetcher }) {
-  const f = fetcher || window.fetch.bind(window);
+  const f = fetcher || DEFAULT_FETCH;
   useAdminPageTitle("Copilot feedback");
   const [weekly, setWeekly] = React.useState(null);
   const [bottom, setBottom] = React.useState(null);
@@ -27,19 +35,19 @@ export default function AdminCopilotFeedbackPage({ fetcher }) {
 
   React.useEffect(() => {
     let cancelled = false;
+    const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
     async function load() {
       try {
         const tok = authStorage.getToken();
         const headers = tok ? { Authorization: `Bearer ${tok}` } : {};
+        const opts = {
+          headers,
+          credentials: "include",
+          ...(ac ? { signal: ac.signal } : {}),
+        };
         const [w, b] = await Promise.all([
-          f(`${COPILOT_BASE}/admin/feedback/weekly`, {
-            headers,
-            credentials: "include",
-          }),
-          f(`${COPILOT_BASE}/admin/feedback/bottom-messages`, {
-            headers,
-            credentials: "include",
-          }),
+          f(`${COPILOT_BASE}/admin/feedback/weekly`, opts),
+          f(`${COPILOT_BASE}/admin/feedback/bottom-messages`, opts),
         ]);
         if (!w.ok) throw new Error(`weekly HTTP ${w.status}`);
         if (!b.ok) throw new Error(`bottom HTTP ${b.status}`);
@@ -50,12 +58,15 @@ export default function AdminCopilotFeedbackPage({ fetcher }) {
           setBottom(bj.messages || []);
         }
       } catch (err) {
+        // An abort is the unmount we asked for, not a failure to show.
+        if (err && err.name === "AbortError") return;
         if (!cancelled) setError(String(err));
       }
     }
     load();
     return () => {
       cancelled = true;
+      if (ac) ac.abort();
     };
   }, [f]);
 

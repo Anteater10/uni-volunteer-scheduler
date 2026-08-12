@@ -252,18 +252,23 @@ Ten items. None blocks deploy. All of them are work you will do.
 
 ## Known conditions that are not bugs
 
-- **GitHub CI cannot run.** Every job fails with `The job was not acquired by
-  Runner of type hosted` — infrastructure, not code. W2 and W3 were merged on
-  locally-run verification standing in for CI: full backend suite, full frontend
-  suite twice, and all four per-package coverage gates. **Restoring CI should
-  happen before W6**, or W6's findings land on a branch nothing can check.
-- **~50 OpenRouter requests/day** on an unfunded account. This is why
-  `COPILOT_AGENT_LOOP_ENABLED` and `COPILOT_PROFILE_EXTRACTION_ENABLED` both
-  ship off, and why the copilot cannot be meaningfully load-tested in W6.
-- **The agent ships off deliberately.** See the DECIDED box in
-  `FINAL-ROADMAP.md` W3 and the comment in `.env.production.example`. One copy
-  change goes with the eventual flip: the drawer header says "Can't see live
-  rosters or signups", which becomes false the moment the agent can act.
+- ~~**GitHub CI cannot run.**~~ ✅ **Resolved 2026-08-12.** Runner acquisition
+  was failing (`The job was not acquired by Runner of type hosted`) —
+  infrastructure, not code — and W2 and W3 were merged on locally-run
+  verification standing in for it. PR #70 ran all three jobs green (backend
+  15m24s, frontend 58s, Playwright 12m7s), so CI is a merge signal again
+  going into W6.
+- **~50 OpenRouter requests/day** on an unfunded account. An agent turn spends
+  several of them, so a busy day rate-limits a real question, and the copilot
+  cannot be meaningfully load-tested in W6. This is a funding item, not a code
+  item, and it is the one prerequisite of the flag-on decision still open.
+- **The agent ships ON** — superseded 2026-08-08, after this document was
+  written. `.env.production.example:89` sets `COPILOT_AGENT_LOOP_ENABLED=true`
+  and `config.py` defaults to it; PR #69 landed the flip. Setting it false is
+  the rollback, and returns a real 503 rather than a bare 500 (K23).
+  `COPILOT_PROFILE_EXTRACTION_ENABLED` does still ship **off** (:65).
+  The drawer copy that this document flagged as needing to change with the flip
+  has already been changed (`CopilotDrawer.jsx:273`).
 
 ---
 
