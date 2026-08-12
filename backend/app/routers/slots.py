@@ -150,6 +150,7 @@ def create_slot(
     db.refresh(slot)
 
     log_action(db, actor, "slot_create", "Slot", str(slot.id))
+    db.commit()
     return slot
 
 
@@ -246,6 +247,7 @@ def update_slot(
     db.refresh(slot)
 
     log_action(db, actor, "slot_update", "Slot", str(slot.id))
+    db.commit()
 
     # Dispatch reschedule emails after commit
     if time_changed:
@@ -288,4 +290,5 @@ def delete_slot(
     db.commit()
 
     log_action(db, actor, "slot_delete", "Slot", str(slot.id))
+    db.commit()
     return
