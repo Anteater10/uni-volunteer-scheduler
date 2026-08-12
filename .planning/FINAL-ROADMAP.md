@@ -23,7 +23,7 @@ Every status marker in this document was re-verified against the working tree to
 - [W6 — Runtime verification](#w6--runtime-verification)
 - [W7 — The handoff itself](#w7--the-handoff-itself)
 - [Decisions only Andy can make](#decisions-only-andy-can-make)
-- [What Rafael inherits as documented backlog](#what-rafael-inherits-as-documented-backlog)
+- [Deferred — and still yours](#deferred--and-still-yours)
 - [Full K-item status table](#full-k-item-status-table)
 - [If the week compresses](#if-the-week-compresses)
 
@@ -299,11 +299,20 @@ needs its funded request budget before staff use it.
 
 ## W4 — Deploy blockers
 
+> ⚠️ **SUPERSEDED 2026-08-07 by `.planning/ROAD-TO-DEPLOY.md`.**
+> Three "hard blockers" below are wrong: `/api/v1/health` **exists**
+> (`main.py:103`, already healthchecked in `docker-compose.prod.yml`), and a
+> prod compose file exists with all six services. The premise that a backlog
+> is handed to Rafael is also wrong — **Rafael does deployment only.** Read
+> ROAD-TO-DEPLOY.md instead; this section is kept for its detail, not its
+> status.
+
+
 **~1–2 days.** Runs in parallel with W3. Much of the old Phase 37/38 is already done — `docker-compose.prod.yml`, `Caddyfile`, frontend `Dockerfile` + `nginx.conf`, `scripts/backup_db.sh`, `backend/.env.production.example`, `docs/deployment.md`, `docs/demo-runbook.md`, cost caps, rate limits, Sentry hooks. Verified present today. What is left:
 
 ### Hard blockers
 
-- **No `/health` endpoint** ✅verified — grep finds none in `main.py`. Returns 404 today. **Every load balancer and container orchestrator needs this.** Cheapest blocker in the document.
+- ~~**No `/health` endpoint**~~ ❌ **THIS CLAIM WAS WRONG.** `main.py:103` serves `GET /api/v1/health` and pings the DB; `docker-compose.prod.yml:89` already healthchecks it every 15s. The original grep looked for `"/health"` and missed the `/api/v1` prefix. What remains is `BASE-CONFIG-09`: the endpoint is DB-coupled with no timeout, so it reports unhealthy whenever the database is briefly slow, and Rafael's load balancer must be pointed at the `/api/v1`-prefixed path rather than the conventional one.
 - **No dev `.env.example`** ✅verified — `backend/` has `.env` (gitignored) and `.env.production.example`; **`frontend/` has only `.env`, no example at all.** The only working configuration is a gitignored file on your laptop. A clean clone cannot run. Must document `CORPUS_EMBEDDING_PRIMARY=local`, the `COPILOT_*` vars, and that `COPILOT_AGENT_LOOP_ENABLED` is `1` in production — with a note that turning it off is the rollback, and returns a 503 rather than breaking.
 - **Rotate secrets** — `OPENROUTER_API_KEY`, `JINA_API_KEY`, `SENDGRID_API_KEY`, `JWT_SECRET` are personal keys. Replace `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`.
 - **`backend/.env` is inside the backend image** ✅verified 2026-08-08 — there is no `.dockerignore`, so `COPY . .` bakes the gitignored secrets file into a layer. `docker run … cat /app/.env` prints live keys, and anyone who can pull the image can read them. It also hides test failures: the suite passed locally with a key it was never given and failed in CI, which has none. Add a `.dockerignore` covering `.env*`, then rebuild — and treat the four keys above as already exposed when rotating.
@@ -385,7 +394,7 @@ The unbounded tables (K36) with a full quarter of data, 500+ rows. 30 volunteers
 
 - **Runbook** — deploy steps, run migrations, rotate secrets, start the four services, flip the flags. Much of this is in `docs/deployment.md`; consolidate rather than rewrite.
 - **Env-var reference** + the dev `.env.example` from W4.
-- **Known-issues list** — everything not fixed, written down. See [What Rafael inherits](#what-rafael-inherits-as-documented-backlog).
+- **Known-issues list** — everything not fixed, written down. See [Deferred — and still yours](#deferred--and-still-yours).
 - **Fix the instruction files that teach wrong rules** (K39) · S — `CLAUDE.md:73` still says CSV import is quarterly (that surface is gone); `PRODUCT-BRIEF.md:31,342,343` still says orientation is a soft warning (it is a **hard block**); `DEPLOY-ROADMAP-v2.md` repeats both. **Every new session and every human reading the brief currently learns the wrong product.** This is part of *why* the copilot was wrong.
 
   The verified current rules: orientation is a **hard requirement at signup time** (advisory only when the event offers no orientation slots); credit is **permanent**, keyed `(volunteer_email, family_key)`; waitlist moves **only by staff promote**, and a promoted seat needs its own confirmation; understaffed is **below 6 mentors**; cancellation notice is **2 days**; volunteers **cannot self-cancel or self-swap** — they contact the organizer; there is **no CSV import**.
@@ -412,9 +421,14 @@ Nothing downstream closes without these. Answer them **on day one** — several 
 
 ---
 
-## What Rafael inherits as documented backlog
+## Deferred — and still yours
 
-Write these down rather than fixing them. Each is real; none blocks a working deploy.
+> **Corrected 2026-08-07.** This section used to be titled "What Rafael
+> inherits as documented backlog". **Rafael does deployment only**, so nothing
+> here is inherited by anyone. Deferring an item means Andy does it later.
+> Write them down *and* keep them on your own queue.
+
+Write these down rather than fixing them now. Each is real; none blocks a working deploy.
 
 **Consistency and code health**
 - **K37** — 4 overlay implementations (`ui/Modal` ×13, `SideDrawer` ×6, `FormModal` ×3, hand-rolled ×2), 3 notification patterns, 3 page-header components, `ui/Button` ×200 vs raw `<button>` ×57, 3 duplicate date helpers. Five overlay implementations are reachable from two adjacent admin pages.
@@ -444,7 +458,7 @@ Write these down rather than fixing them. Each is real; none blocks a working de
 
 ## Full K-item status table
 
-Re-verified against the working tree 2026-08-05. `✅fixed` / `⚠️open` / `➖dissolved` (the surface it lived on no longer exists).
+Re-verified against `main` **2026-08-07**, after W2 (PRs #60–#66) and W3 (PR #67) merged. `✅fixed` / `⚠️open` / `➖dissolved` (the surface it lived on no longer exists).
 
 | K | Item | Was | Now | Where |
 |---|---|---|---|---|
@@ -452,24 +466,24 @@ Re-verified against the working tree 2026-08-05. `✅fixed` / `⚠️open` / `�
 | K2 | Default deploy retrieves nothing | P0 | ✅ fixed (`config.py:117`) | — |
 | K3 | Cancel permanently bars re-signup | P0 | ➖ dissolved (PR #55) | — |
 | K4 | Nine emails print raw UTC | P0 | ✅ **fixed** — `emails.py` converts to `VENUE_TZ` (`America/Los_Angeles`) in `_fmt_slot_time`/`_fmt_slot_day`. Landed in `a9da85a`; this row said "open" for a week after the fix was on main. | W2 |
-| K5 | Organizer actions unreachable on phone | P0 | ⚠️ **open** (`ui/Modal.jsx:44`) | W2 |
-| K6 | Admin mobile nav has no destination | P0 | ⚠️ open | Backlog |
-| K7 | Copilot week tools ask an impossible question | P1 | ⚠️ **open** (`_iso_week.py`) | W2 |
-| K8 | `max_signups_per_user` never enforced | P1 | ⚠️ open | W2 |
-| K9 | Four reminders, opt-out covers two | P1 | ⚠️ **open** (`celery_app.py:991,995`) | W2 |
-| K10 | Past slots stay bookable | P1 | ⚠️ open | W2 |
-| K11 | Error branches render first-run cards | P1 | ⚠️ open | W2 |
-| K12 | Exports fail silently ×9 | P1 | ⚠️ open | W2 |
-| K13 | Destructive actions unconfirmed | P1 | ⚠️ open | W2 |
-| K14 | Delete-event has the weakest dialog | P1 | ⚠️ open | W2 |
-| K15 | One Escape discards unsaved work | P1 | ⚠️ open | Backlog |
+| K5 | Organizer actions unreachable on phone | P0 | ✅ fixed (PR #63) | — |
+| K6 | Admin mobile nav has no destination | P0 | ⚠️ open | Yours (deferred) |
+| K7 | Copilot week tools ask an impossible question | P1 | ✅ fixed (PR #64) | — |
+| K8 | `max_signups_per_user` never enforced | P1 | ✅ fixed (PR #66) | — |
+| K9 | Four reminders, opt-out covers two | P1 | ✅ fixed (PR #63) | — |
+| K10 | Past slots stay bookable | P1 | ✅ fixed (PR #60) | — |
+| K11 | Error branches render first-run cards | P1 | ✅ fixed (PR #62) | — |
+| K12 | Exports fail silently ×9 | P1 | ✅ fixed (PR #62) | — |
+| K13 | Destructive actions unconfirmed | P1 | ✅ fixed (PR #61) | — |
+| K14 | Delete-event has the weakest dialog | P1 | ✅ fixed (PR #61) | — |
+| K15 | One Escape discards unsaved work | P1 | ⚠️ open | Yours (deferred) |
 | K16 | Manage link in reminders is a dead end | P1 | ➖ mostly dissolved (PR #55) | Re-read |
 | K17 | Expired magic link is a closed loop | P1 | ➖ mostly dissolved (PR #55) | Re-read |
-| K18 | Pending signups hold a seat, then vanish | P1 | ⚠️ open | W2 |
+| K18 | Pending signups hold a seat, then vanish | P1 | ✅ **already fixed** — hourly `expire_pending_signups` sweep; this row was wrong when written | — |
 | K19 | Cancel/swap/waitlist tell volunteers nothing | P1 | ➖ partly dissolved (#53, #55) | Re-read |
-| K20 | Every email branded for the wrong product | P1 | ⚠️ **open** | W2 |
+| K20 | Every email branded for the wrong product | P1 | ✅ fixed (PR #65) | — |
 | K21 | 2-day cancellation notice doesn't exist | P1 | ⚠️ open ⛔️ | Decision 3 |
-| K22 | Copy contradicts the server | P1 | ⚠️ open | W2 |
+| K22 | Copy contradicts the server | P1 | ✅ fixed (PR #65) | — |
 | K23 | Flag-on returns a bare 500 | Phase B | ✅ done | W3 |
 | K24 | B0.1 the adapter | Phase B | ✅ done (full agent affirmed) | W3 |
 | K25 | Confirmation approve has never worked | Phase B | ✅ done | W3 |
@@ -480,18 +494,18 @@ Re-verified against the working tree 2026-08-05. `✅fixed` / `⚠️open` / `�
 | K30 | Token budget doesn't see agent turns | Phase B | ✅ done | W3 |
 | K31 | Profile extraction should go off | Phase B | ✅ done | W3 |
 | K32 | Copilot drawer can trap the user | Phase B | ✅ done | W3 |
-| K33 | `/admin/feedback/*` readable by organizers | Security | ⚠️ **open** (`router.py:938,959`) | W5 |
-| K34 | Delete dead pages | Cleanup | ⚠️ half (portals gone) | Backlog |
-| K35 | Dead client + endpoint surface | Cleanup | ⚠️ open | Backlog |
-| K36 | Tables: no pagination, sort, sticky headers | Cleanup | ⚠️ open | Backlog |
-| K37 | Pick one of each (4 overlays, 3 toasts…) | Cleanup | ⚠️ open | Backlog |
-| K38 | Loading and empty states | Cleanup | ⚠️ open | Backlog |
-| K39 | Instruction files teach wrong rules | Docs | ⚠️ **open** | W7 |
-| K40 | Accessibility | A11y | ⚠️ open | Backlog |
-| K41 | Motion | Polish | ⚠️ open | Backlog |
-| K42 | Mobile leftovers | Mobile | ⚠️ open | Backlog |
+| K33 | `/admin/feedback/*` readable by organizers | Security | ⚠️ **open** — guards are at `copilot/router.py:1093,1114` (the old line numbers drifted). **The only open K-item that blocks deploy.** | W5 |
+| K34 | Delete dead pages | Cleanup | ⚠️ half (portals gone) | Yours (deferred) |
+| K35 | Dead client + endpoint surface | Cleanup | ⚠️ open | Yours (deferred) |
+| K36 | Tables: no pagination, sort, sticky headers | Cleanup | ⚠️ open | Yours (deferred) |
+| K37 | Pick one of each (4 overlays, 3 toasts…) | Cleanup | ⚠️ open | Yours (deferred) |
+| K38 | Loading and empty states | Cleanup | ⚠️ open | Yours (deferred) |
+| K39 | Instruction files teach wrong rules | Docs | ⚠️ **open** — not a handoff item; these files make *your own* sessions and the copilot wrong | Yours |
+| K40 | Accessibility | A11y | ⚠️ open | Yours (deferred) |
+| K41 | Motion | Polish | ⚠️ open | Yours (deferred) |
+| K42 | Mobile leftovers | Mobile | ⚠️ open | Yours (deferred) |
 
-**6 closed, 36 open. 11 of the 36 are in W2 and land in ~2 days.**
+**29 closed, 13 open** (re-verified 2026-08-07 against `main` @ `886b6b5`). Of the 13, **only K33 blocks deploy**; K21 is a decision rather than work; the remaining 11 are deferred — and since Rafael does deployment only, they stay Andy's. See `.planning/ROAD-TO-DEPLOY.md`.
 
 ---
 
