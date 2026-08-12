@@ -103,4 +103,134 @@ describe("FormModal", () => {
 
     expect(document.querySelector("[data-testid='form-modal-subtitle']")).toBeNull();
   });
+
+  // An admin part-way through laying out an event's slots loses everything if
+  // the dialog closes: FormModal unmounts its children, so the form's state
+  // goes with it. A stray click on the backdrop is not consent to throw that
+  // away, so once the form reports itself dirty every exit asks first.
+  describe("with unsaved changes", () => {
+    const backdrop = () => screen.getByTestId("form-modal-backdrop");
+    const panel = () => screen.getByRole("dialog");
+
+    it("asks before discarding when the backdrop is clicked", () => {
+      const onClose = vi.fn();
+      render(
+        <FormModal open dirty title="New event" onClose={onClose}>
+          <p>body</p>
+        </FormModal>,
+      );
+
+      fireEvent.mouseDown(backdrop());
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByText("Discard changes?")).toBeInTheDocument();
+      expect(screen.getByText("body")).toBeInTheDocument();
+    });
+
+    it("closes once the discard is confirmed", () => {
+      const onClose = vi.fn();
+      render(
+        <FormModal open dirty title="New event" onClose={onClose}>
+          <p>body</p>
+        </FormModal>,
+      );
+
+      fireEvent.mouseDown(backdrop());
+      fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the form when the discard is declined", () => {
+      const onClose = vi.fn();
+      render(
+        <FormModal open dirty title="New event" onClose={onClose}>
+          <p>body</p>
+        </FormModal>,
+      );
+
+      fireEvent.mouseDown(backdrop());
+      fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.queryByText("Discard changes?")).toBeNull();
+      expect(screen.getByText("body")).toBeInTheDocument();
+    });
+
+    it("asks before discarding on Escape", () => {
+      const onClose = vi.fn();
+      render(
+        <FormModal open dirty title="New event" onClose={onClose}>
+          <p>body</p>
+        </FormModal>,
+      );
+
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByText("Discard changes?")).toBeInTheDocument();
+    });
+
+    it("asks before discarding on the close button", () => {
+      const onClose = vi.fn();
+      render(
+        <FormModal open dirty title="New event" onClose={onClose}>
+          <p>body</p>
+        </FormModal>,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByText("Discard changes?")).toBeInTheDocument();
+    });
+
+    // A drag that starts in a text field and ends past the panel edge reports
+    // its click on the backdrop. Listening for mousedown instead of click is
+    // what keeps selecting text from reading as "clicked off the dialog".
+    it("ignores a drag that starts inside the panel and ends on the backdrop", () => {
+      const onClose = vi.fn();
+      render(
+        <FormModal open dirty title="New event" onClose={onClose}>
+          <p>body</p>
+        </FormModal>,
+      );
+
+      fireEvent.mouseDown(panel());
+      fireEvent.click(backdrop());
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.queryByText("Discard changes?")).toBeNull();
+    });
+  });
+
+  describe("with a clean form", () => {
+    it("closes straight away on a backdrop click", () => {
+      const onClose = vi.fn();
+      render(
+        <FormModal open title="New event" onClose={onClose}>
+          <p>body</p>
+        </FormModal>,
+      );
+
+      fireEvent.mouseDown(screen.getByTestId("form-modal-backdrop"));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText("Discard changes?")).toBeNull();
+    });
+
+    it("ignores a drag that ends on the backdrop", () => {
+      const onClose = vi.fn();
+      render(
+        <FormModal open title="New event" onClose={onClose}>
+          <p>body</p>
+        </FormModal>,
+      );
+
+      fireEvent.mouseDown(screen.getByRole("dialog"));
+      fireEvent.click(screen.getByTestId("form-modal-backdrop"));
+
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -717,7 +717,15 @@ function NewModuleDialog({ open, onCancel, onCreated }) {
   );
 }
 
-function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel = "Save" }) {
+function EventForm({
+  initial,
+  mode,
+  onSubmit,
+  onCancel,
+  submitting,
+  submitLabel = "Save",
+  onDirtyChange,
+}) {
   const isEdit = mode === "edit";
   const [form, setForm] = useState(() => ({
     ...EMPTY_FORM,
@@ -754,6 +762,18 @@ function EventForm({ initial, mode, onSubmit, onCancel, submitting, submitLabel 
   const [error, setError] = useState(null);
   const [slotErrors, setSlotErrors] = useState({});
   const [shiftErrors, setShiftErrors] = useState({});
+
+  // Everything the operator typed lives in this component, and the modal
+  // unmounts it on close — so the modal has to know whether closing would
+  // destroy anything before it lets a stray backdrop click through. The
+  // baseline is whatever the form was built with, captured once at mount;
+  // anything different from that counts as unsaved work.
+  const pristine = React.useRef(null);
+  const current = JSON.stringify({ form, slots, shifts });
+  if (pristine.current === null) pristine.current = current;
+  useEffect(() => {
+    onDirtyChange?.(current !== pristine.current);
+  }, [current, onDirtyChange]);
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -1653,6 +1673,13 @@ export default function EventsSection() {
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [duplicating, setDuplicating] = useState(null); // source event for the duplicate modal
+  // Reported up from EventForm: true once the operator has typed something the
+  // form would lose if the modal closed. Reset on every open so a previous
+  // session's edits can't arm the discard prompt on a fresh form.
+  const [formDirty, setFormDirty] = useState(false);
+  useEffect(() => {
+    setFormDirty(false);
+  }, [drawerMode]);
 
   // fix/ux-quarter-batch: the list is quarter-scoped and shares its selection
   // with Overview / Manage Quarters. Default = the current quarter.
@@ -1945,6 +1972,7 @@ export default function EventsSection() {
         open={drawerMode === "create"}
         title="New event"
         subtitle="Schedule the visit, pick its module, and lay out the volunteer slots."
+        dirty={formDirty}
         onClose={() => setDrawerMode(null)}
       >
         <EventForm
@@ -1952,6 +1980,7 @@ export default function EventsSection() {
           onSubmit={(payload) => createM.mutateAsync(payload)}
           onCancel={() => setDrawerMode(null)}
           submitting={createM.isPending}
+          onDirtyChange={setFormDirty}
         />
       </FormModal>
 
@@ -1959,6 +1988,7 @@ export default function EventsSection() {
         open={drawerMode === "edit"}
         title="Edit event"
         subtitle="Details and slot changes save together when you hit Save."
+        dirty={formDirty}
         onClose={() => {
           setDrawerMode(null);
           setEditing(null);
@@ -1976,6 +2006,7 @@ export default function EventsSection() {
               setEditing(null);
             }}
             submitting={updateM.isPending}
+            onDirtyChange={setFormDirty}
           />
         )}
       </FormModal>

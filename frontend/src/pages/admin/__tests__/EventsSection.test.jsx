@@ -647,6 +647,69 @@ describe("EventsSection — create flow", () => {
     expect(screen.queryByTestId("slot-row-0")).not.toBeInTheDocument();
   });
 
+  // Laying out an event's shifts takes minutes of typing, and the modal holds
+  // all of it in local state — so a stray click on the backdrop used to wipe
+  // the lot with no warning. Once anything is typed, every exit asks first.
+  describe("accidental dismissal", () => {
+    it("keeps the typed form when the backdrop is clicked", async () => {
+      renderWithQuery(<EventsSection />);
+      fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+      fireEvent.change(await screen.findByLabelText(/School/i), {
+        target: { value: "Goleta Valley Junior High" },
+      });
+
+      fireEvent.mouseDown(screen.getByTestId("form-modal-backdrop"));
+
+      expect(screen.getByText("Discard changes?")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+      expect(screen.getByLabelText(/School/i)).toHaveValue(
+        "Goleta Valley Junior High",
+      );
+    });
+
+    it("closes without asking while the form is untouched", async () => {
+      renderWithQuery(<EventsSection />);
+      fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+      await screen.findByTestId("shift-row-0");
+
+      fireEvent.mouseDown(screen.getByTestId("form-modal-backdrop"));
+
+      expect(screen.queryByText("Discard changes?")).toBeNull();
+      expect(screen.queryByTestId("shift-row-0")).not.toBeInTheDocument();
+    });
+
+    it("discards the form once confirmed", async () => {
+      renderWithQuery(<EventsSection />);
+      fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+      fireEvent.change(await screen.findByLabelText(/School/i), {
+        target: { value: "Goleta Valley Junior High" },
+      });
+
+      fireEvent.mouseDown(screen.getByTestId("form-modal-backdrop"));
+      fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+
+      expect(screen.queryByTestId("shift-row-0")).not.toBeInTheDocument();
+    });
+
+    // Reopening after a discard must not inherit the last session's dirtiness.
+    it("does not ask on a freshly reopened form", async () => {
+      renderWithQuery(<EventsSection />);
+      fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+      fireEvent.change(await screen.findByLabelText(/School/i), {
+        target: { value: "Goleta Valley Junior High" },
+      });
+      fireEvent.mouseDown(screen.getByTestId("form-modal-backdrop"));
+      fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+
+      fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+      await screen.findByTestId("shift-row-0");
+      fireEvent.mouseDown(screen.getByTestId("form-modal-backdrop"));
+
+      expect(screen.queryByText("Discard changes?")).toBeNull();
+      expect(screen.queryByTestId("shift-row-0")).not.toBeInTheDocument();
+    });
+  });
+
   it("add and remove shift buttons update the list", async () => {
     renderWithQuery(<EventsSection />);
     fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
