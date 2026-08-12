@@ -43,12 +43,10 @@ from app.copilot.agent.tools.base import Tool
 from app.models import (
     Event,
     Shift,
-    ShiftSignup,
-    Signup,
-    SignupStatus,
     Slot,
     SlotType,
 )
+from app.services import event_deletion_service
 
 _EVENT_SCHEMA = [
     "event_id",
@@ -132,30 +130,13 @@ def _slot_row(slot: Slot) -> dict[str, Any]:
 def _live_signups(db: Session, event_id: Any) -> int:
     """Everyone still committed to this event, of either kind.
 
-    There are two, and counting only one is how a delete guard passes while
-    a full shift roster goes over the cliff: an orientation booking is a
-    ``Signup`` against the slot, a shift booking is a ``ShiftSignup``
-    against the shift. Cancelled rows do not block anything.
+    Delegates to ``event_deletion_service`` so the copilot and
+    ``DELETE /events/{id}`` share one definition. They used to hold separate
+    copies — and only this one existed, which is how the assistant refused a
+    destructive delete that the REST endpoint performed without comment
+    (BASE-SEC-27).
     """
-    orientations = (
-        db.query(Signup)
-        .join(Slot, Signup.slot_id == Slot.id)
-        .filter(
-            Slot.event_id == event_id,
-            Signup.status != SignupStatus.cancelled,
-        )
-        .count()
-    )
-    shifts = (
-        db.query(ShiftSignup)
-        .join(Shift, ShiftSignup.shift_id == Shift.id)
-        .filter(
-            Shift.event_id == event_id,
-            ShiftSignup.status != SignupStatus.cancelled,
-        )
-        .count()
-    )
-    return orientations + shifts
+    return event_deletion_service.live_signup_count(db, event_id)
 
 
 # ------------------------------------------------------------ read
