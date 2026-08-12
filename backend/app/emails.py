@@ -23,6 +23,7 @@ from string import Template
 from zoneinfo import ZoneInfo
 
 from . import models
+from .observability import mask_email
 
 VENUE_TZ = ZoneInfo("America/Los_Angeles")
 
@@ -515,10 +516,16 @@ def _humanise_minutes(minutes: int) -> str:
     return "1 minute" if minutes == 1 else f"{minutes} minutes"
 
 
-def send_magic_link(
+def build_magic_link_email(
     email: str, token: str, event, base_url: str, ttl_minutes: int | None = None
 ) -> dict:
     """Build and return a magic-link confirmation email payload.
+
+    BUILDS ONLY — no transport. It was called ``send_magic_link`` and its one
+    caller discarded the return value, so resend delivered nothing while
+    logging "magic link sent" (BASE-QUAL-16). Renamed so the name cannot make
+    that promise again. The transport is
+    ``celery_app.send_magic_link_email``, which is what callers want.
 
     The raw token appears ONLY in the URL embedded in the email body.
     Logs redact the token to the first 6 characters.
@@ -576,8 +583,8 @@ def send_magic_link(
     result = {"to": email, "subject": subject, "html": html_content, "text": text}
 
     logger.info(
-        "magic link sent email=%s token=%s... event=%s",
-        email,
+        "magic link built email=%s token=%s... event=%s",
+        mask_email(email),
         token[:6],
         event_name,
     )

@@ -112,6 +112,15 @@ Celery Beat schedules.
 - [ ] `ENVIRONMENT=production` set (compose sets it; disables /docs and
       hard-blocks `EXPOSE_TOKENS_FOR_TESTING` at boot).
 - [ ] `SENTRY_DSN` set if you want error monitoring (empty = off).
+- [ ] The **backend port is not published** — all traffic must arrive through
+      Caddy. The request-body ceiling that stands in for the unpatched
+      starlette form-parsing bug (BASE-CONFIG-36) lives in the `Caddyfile`, so a
+      directly reachable `backend:8000` bypasses it. See the comment there.
+- [ ] Login lockout left at its defaults unless you have a reason
+      (`LOGIN_MAX_FAILED_ATTEMPTS=10`, `LOGIN_LOCKOUT_MINUTES=15`). A locked
+      account returns the same 401 as a wrong password on purpose, so the only
+      place the lockout is visible is the audit log — look for
+      `user_login_locked` if staff report being unable to log in.
 - [ ] Ingest the corpus once after deploy so the copilot has something to retrieve
       (`python -m app.corpus ...`) — otherwise RAG answers come back empty.
 

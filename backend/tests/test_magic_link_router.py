@@ -163,8 +163,22 @@ def test_resend_returns_200_on_valid_request(client, db_session, monkeypatch):
     mock_redis.pipeline = MagicMock(return_value=pipe)
     monkeypatch.setattr("app.routers.magic._get_redis", lambda: mock_redis)
 
-    # Mock send_magic_link to avoid real email
-    monkeypatch.setattr("app.emails.send_magic_link", lambda *a, **kw: {"to": a[0]})
+    # BASE-QUAL-16: this used to monkeypatch app.emails.send_magic_link and
+    # assert only the status code. It passed while the endpoint delivered
+    # nothing, because the function it patched had no transport to begin with —
+    # the mock stood in for something that was already a no-op. Assert the
+    # hand-off to a real transport instead.
+    #
+    # Asserting on _send_email directly does not work here: the task opens its
+    # own SessionLocal, and this test's writes live in a savepoint that is never
+    # really committed, so the worker would look up the event and find nothing
+    # (BASE-QUAL-40). That the transport itself sends is covered by
+    # test_send_magic_link_email_task_delivers_a_link below.
+    enqueued = []
+    monkeypatch.setattr(
+        "app.celery_app.send_magic_link_email.delay",
+        lambda *a, **kw: enqueued.append((a, kw)),
+    )
 
     resp = client.post(
         "/api/v1/auth/magic/resend",
@@ -172,6 +186,64 @@ def test_resend_returns_200_on_valid_request(client, db_session, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+    assert len(enqueued) == 1, "resend must hand exactly one email to a transport"
+    args, _ = enqueued[0]
+    assert args[0] == "resend1@example.com"
+    assert args[1], "a resend with no token is a dead link"
+    assert str(args[2]) == str(event.id)
+
+    # The token handed to the transport must be the one just minted, not a
+    # stale row — a resend that mails an already-consumed link is the bug in a
+    # different costume.
+    from app.magic_link_service import _hash_token
+    from app.models import MagicLinkToken
+
+    row = (
+        db_session.query(MagicLinkToken)
+        .filter_by(token_hash=_hash_token(args[1]))
+        .first()
+    )
+    assert row is not None and row.consumed_at is None
+
+
+def test_send_magic_link_email_task_delivers_a_link(db_session, monkeypatch):
+    """The transport half of BASE-QUAL-16: the task must actually send.
+
+    ``emails.build_magic_link_email`` only builds a payload. Before the fix its
+    single caller discarded that payload, so the endpoint above reported success
+    and no mail existed. This asserts the mail leaves the building.
+    """
+    from app import celery_app as celery_mod
+
+    signup, event, slot, volunteer = _make_pending_signup(
+        db_session, "task-send@example.com"
+    )
+    db_session.commit()
+
+    # The task opens its own session; point it at this test's so it can see the
+    # event that only exists inside this transaction.
+    monkeypatch.setattr(celery_mod, "SessionLocal", lambda: db_session)
+    sent = []
+    monkeypatch.setattr(
+        celery_mod,
+        "_send_email",
+        lambda to, subject, body, html_body=None, attachments=None: sent.append(
+            (to, subject, body, html_body)
+        ),
+    )
+
+    celery_mod.send_magic_link_email(
+        "task-send@example.com", "raw-token-abc123", str(event.id), "http://x.test"
+    )
+
+    assert len(sent) == 1
+    to, subject, body, html = sent[0]
+    assert to == "task-send@example.com"
+    assert event.title in subject
+    # The link is the entire point of the mail, in both parts.
+    assert "/auth/magic/raw-token-abc123" in html
+    assert "/auth/magic/raw-token-abc123" in body
 
 
 def test_resend_returns_200_for_unknown_email(client, db_session, monkeypatch):

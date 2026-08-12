@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = 60
     rate_limit_max_requests: int = 100
 
+    # BASE-SEC-08: per-account login lockout. 10 is high enough that a member of
+    # staff fat-fingering their password never meets it, and low enough that an
+    # attacker gets 10 guesses per 15 minutes against a known account instead of
+    # the unbounded number the per-IP limiter allowed them.
+    login_max_failed_attempts: int = 10
+    login_lockout_minutes: int = 15
+
     # Magic-link confirmation
     magic_link_ttl_minutes: int = 15
     magic_link_max_per_email_per_hour: int = 5

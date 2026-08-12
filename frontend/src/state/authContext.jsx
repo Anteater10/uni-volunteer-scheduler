@@ -41,9 +41,11 @@ export function AuthProvider({ children }) {
     return reloadMe();
   }
 
-  function logout() {
-    api.logout();
+  async function logout() {
+    // Clear the user first so the UI leaves the authenticated view immediately
+    // rather than waiting on the revoke round trip (BASE-SEC-43).
     setUser(null);
+    await api.logout();
   }
 
   const value = useMemo(

@@ -214,7 +214,7 @@ what failed.
 
 ### Remediation status
 
-**Fixed and verified (31):** `BASE-SEC-01`, `BASE-SEC-02`, `BASE-SEC-22`, `BASE-CONFIG-01`, `BASE-CONFIG-14`, `BASE-CONFIG-15`, `BASE-CONFIG-16`, `BASE-CONFIG-17`, `BASE-CONFIG-27`, `BASE-CONFIG-32`, `BASE-QUAL-01`, `BASE-QUAL-08`, `BASE-QUAL-12`, `BASE-QUAL-27`, `BASE-SEC-03`, `BASE-SEC-04`, `BASE-SEC-13`, `BASE-SEC-14`, `BASE-SEC-15`, `BASE-SEC-18`, `BASE-SEC-19`, `BASE-SEC-23`, `BASE-SEC-24`, `BASE-SEC-25`, `BASE-SEC-26`, `BASE-SEC-42`, `BASE-SEC-44`, `BASE-SEC-48`, `BASE-SEC-27`, `BASE-CONFIG-13`, `BASE-QUAL-13`
+**Fixed and verified (36):** `BASE-CONFIG-01`, `BASE-CONFIG-13`, `BASE-CONFIG-14`, `BASE-CONFIG-15`, `BASE-CONFIG-16`, `BASE-CONFIG-17`, `BASE-CONFIG-27`, `BASE-CONFIG-32`, `BASE-CONFIG-35`, `BASE-QUAL-01`, `BASE-QUAL-08`, `BASE-QUAL-12`, `BASE-QUAL-13`, `BASE-QUAL-16`, `BASE-QUAL-27`, `BASE-SEC-01`, `BASE-SEC-02`, `BASE-SEC-03`, `BASE-SEC-04`, `BASE-SEC-08`, `BASE-SEC-13`, `BASE-SEC-14`, `BASE-SEC-15`, `BASE-SEC-18`, `BASE-SEC-19`, `BASE-SEC-22`, `BASE-SEC-23`, `BASE-SEC-24`, `BASE-SEC-25`, `BASE-SEC-26`, `BASE-SEC-27`, `BASE-SEC-39`, `BASE-SEC-42`, `BASE-SEC-43`, `BASE-SEC-44`, `BASE-SEC-48`
 
 **step-3 batches 1-3** (2026-08-09) — backend suite 1886 passed / 0 failed / 11 skipped (docker, test_uvs); frontend 555 passed / 69 files
 
@@ -223,6 +223,14 @@ what failed.
 - *Still outstanding:* Secret rotation for JWT_SECRET, SENDGRID_API_KEY, Twilio and OIDC credentials — .dockerignore does not remove them from images already built.
 
 - *Still outstanding:* BASE-CONFIG-13 pre-deploy check (SELECT count(*) FROM signups before alembic upgrade head) is a runbook item, not a patch.
+
+**step-2 login and delivery** (2026-08-12) — fixed `BASE-QUAL-16` (resend sent nothing), `BASE-SEC-43` (logout never revoked), `BASE-CONFIG-35` (multipart CVEs), `BASE-SEC-08` (no per-account login lockout), `BASE-SEC-39` (addresses in logs). Backend suite green in docker against test_uvs; frontend suite green.
+
+- *Mitigated, not fixed:* `BASE-CONFIG-36`. starlette >= 1.3.1 is the real fix and cannot be pinned: fastapi 0.123.5 caps starlette below 0.51.0, and fastapi 0.141.1 hangs `tests/copilot/agent/test_confirm_authorization.py::test_owner_can_still_confirm` indefinitely — run, not assumed. Both pins reverted; the body-size ceiling now lives in the Caddyfile (`request_body { max_size 2MB }`), which only protects traffic arriving through Caddy, so the backend port must never be published separately.
+
+- *Accepted as risk, with the trade recorded:* `BASE-SEC-41` (tokens in localStorage — httpOnly cookies mean reworking how the SPA authenticates every call, and the exposure needs an XSS first; revisit when a CSP lands or any HTML-rendering feature is added), `BASE-SEC-32` and `BASE-SEC-51` (manage token in the URL — removing it means a login or a first-visit exchange, and the product is deliberately account-less; it discloses one volunteer's own schedule to whoever already holds their mailbox). Full reasoning and revisit triggers are on each finding.
+
+- *Corrections to the audit:* `BASE-SEC-43` said logout does not revoke server-side — the endpoint existed and did revoke; only the SPA never called it. `BASE-SEC-32` said the manage token is permanent — it expires after 14 days; what matters is that manage access does not consume it. `BASE-CONFIG-35/36` shared one remediation implying a single coordinated bump; only 36 needed it.
 
 *Every finding not listed above is UNFIXED. For those, the remediation field is a written prescription, not an applied change.*
 
@@ -280,21 +288,21 @@ what failed.
 | `BASE-CONFIG-16` | High | **fixed** | Per-IP rate limiting reads request.client.host with no proxy-header handling — behind a load balancer the entire public surface shares one bucket |
 | `BASE-CONFIG-17` | High | **fixed** | Sentry is initialised with no request-body scrubbing — a 500 on /auth/change-password ships plaintext passwords to a third party |
 | `BASE-QUAL-12` | High | **fixed** | weekly_digest mails every volunteer with no dedup, no daily-limit check, no retry policy and no time limit |
-| `BASE-SEC-41` | High | open | Access and refresh tokens are both stored in localStorage, so one XSS yields a 14-day renewable session |
+| `BASE-SEC-41` | High | **accepted risk** | Access and refresh tokens are both stored in localStorage, so one XSS yields a 14-day renewable session |
 | `BASE-SEC-42` | High | **fixed** | The SPA is served with no security headers at all — the app's own CSP applies only to API responses |
 | `BASE-CONFIG-27` | High | **fixed** | Production runs uvicorn with --forwarded-allow-ips=*, so any client can forge X-Forwarded-For and mint unlimited rate-limit buckets |
 | `BASE-SEC-44` | High | **fixed** | POST /auth/token authenticated deactivated and soft-deleted staff, so offboarding could be undone by simply logging in again |
 | `BASE-CONFIG-32` | High | **fixed** | No .dockerignore anywhere: backend/.env (JWT signing secret, SendGrid key, Twilio credentials) is baked into every backend image layer |
 | `BASE-CONFIG-33` | High | open | requirements.txt is a partial pin, not a lockfile: torch/sentence-transformers/openai transitives are unconstrained at build time |
-| `BASE-CONFIG-35` | High | open | python-multipart 0.0.20: seven advisories including two HIGH parser DoS, on the unauthenticated login form path |
-| `BASE-CONFIG-36` | High | open | starlette 0.50.0: request.form() limits silently ignored for urlencoded bodies (HIGH, CVSS 7.5), on the unauthenticated login route |
+| `BASE-CONFIG-35` | High | **fixed** | python-multipart 0.0.20: seven advisories including two HIGH parser DoS, on the unauthenticated login form path |
+| `BASE-CONFIG-36` | High | **mitigated** | starlette 0.50.0: request.form() limits silently ignored for urlencoded bodies (HIGH, CVSS 7.5), on the unauthenticated login route |
 | `BASE-QUAL-27` | High | **fixed** | Copilot feedback admin page re-fetches on every render: an unbounded request loop against two admin endpoints |
 | `BASE-SEC-48` | High | **fixed** | Copilot /confirm executes a parked tool without re-checking allowed_roles OR session ownership — privilege escalation for any organizer holding an admin-parked call_id |
 | `BASE-QUAL-33` | High | open | The copilot role-scope boundary is 8 hand-copied WHERE clauses with no test that any tool applies them — the one DB-level test re-implements the filter inside the test body |
 | `BASE-QUAL-34` | High | open | Two test suites pin two contradictory tenancy models: the REST roster is open to every organizer while the copilot roster tool is owner-scoped |
 | `BASE-QUAL-35` | High | open | Seven magic-link confirm tests pytest.skip themselves precisely when token issuance breaks |
 | `BASE-SEC-07` | Medium | open | Access and refresh tokens stored in localStorage, readable by any script on the origin |
-| `BASE-SEC-08` | Medium | open | No lockout or backoff on password login; per-IP rate limit only |
+| `BASE-SEC-08` | Medium | **fixed** | No lockout or backoff on password login; per-IP rate limit only |
 | `BASE-SEC-09` | Medium | open | Unauthenticated destructive test-helper endpoints ship in the production image, gated by one env var |
 | `BASE-SEC-10` | Medium | open | OIDC/SSO callback is reachable and structurally broken — no SessionMiddleware, auto-provisions users |
 | `BASE-CONFIG-03` | Medium | open | No frontend .env.example — a clean clone cannot build, and the only working config is one gitignored laptop file |
@@ -317,7 +325,7 @@ what failed.
 | `BASE-SEC-29` | Medium | open | schema_filter passes an entire nested subtree whenever the parent key is declared without a dotted rule |
 | `BASE-SEC-30` | Medium | open | declared=True is hardcoded on every copilot tool path, so the redactor's HIGH-severity boundary-bug alarm can never fire |
 | `BASE-SEC-31` | Medium | open | Volunteer full names and free-text staff notes cross the boundary to the model provider, and the system prompt says nothing about handling them |
-| `BASE-SEC-32` | Medium | open | The manage magic-link token is a permanent, unrevocable bearer credential in a URL that discloses a volunteer's identity and full schedule |
+| `BASE-SEC-32` | Medium | **accepted risk** | The manage magic-link token is a permanent, unrevocable bearer credential in a URL that discloses a volunteer's identity and full schedule |
 | `BASE-SEC-33` | Medium | open | Unauthenticated participation oracle: POST /public/signups returns 'already signed up for shift {id}' for an arbitrary email |
 | `BASE-SEC-34` | Medium | open | Public event pages disclose every volunteer's first name and last initial, and SiteSettings.default_privacy_mode is never consulted on that surface |
 | `BASE-SEC-35` | Medium | open | Unauthenticated orientation-credit oracle discloses whether an arbitrary email attended, when, and via which source |
@@ -330,14 +338,14 @@ what failed.
 | `BASE-CONFIG-23` | Medium | open | 0019 and 0024 issue CREATE EXTENSION, which requires superuser on most managed Postgres |
 | `BASE-QUAL-14` | Medium | open | Hard-deleting a User raises IntegrityError: refresh_tokens.user_id is NOT NULL and notifications carries an XOR CHECK, both of which the ORM tries to null |
 | `BASE-QUAL-15` | Medium | open | GET /admin/notifications/recent 500s permanently once any shift-anchored notification exists |
-| `BASE-QUAL-16` | Medium | open | POST /auth/magic/resend issues a token and sends no email — the built payload is discarded |
+| `BASE-QUAL-16` | Medium | **fixed** | POST /auth/magic/resend issues a token and sends no email — the built payload is discarded |
 | `BASE-QUAL-17` | Medium | open | Cancelled and waitlisted shift commitments can be marked attended — the resolve path lacks the status guard the check-in path has |
 | `BASE-QUAL-18` | Medium | open | Broadcast emails are dispatched to Celery before the transaction commits — a commit failure sends mail with no dedup record |
 | `BASE-CONFIG-24` | Medium | open | Audit-log export is a 2N+ query N+1 — up to ~20,000 sequential SELECTs in a single synchronous request |
 | `BASE-CONFIG-25` | Medium | open | list_upcoming_reminders issues 2-3 queries per (booking, kind) pair over an unbounded scan |
 | `BASE-QUAL-19` | Medium | open | swap_signup has no duplicate-booking guard, so swapping into a slot the volunteer already holds raises an opaque 500 |
 | `BASE-QUAL-20` | Medium | open | refresh_tokens grows without bound — no expiry reaper, no per-user session cap, no way to list live sessions |
-| `BASE-SEC-43` | Medium | open | Logging out is client-side only — the refresh token stays valid on the server for its full 14 days |
+| `BASE-SEC-43` | Medium | **fixed** | Logging out is client-side only — the refresh token stays valid on the server for its full 14 days |
 | `BASE-CONFIG-28` | Medium | open | No request has a timeout: every fetch in the API client can hang indefinitely |
 | `BASE-QUAL-26` | Medium | open | CSV and calendar downloads have no refresh-on-401, so every export fails once the access token is an hour old |
 | `BASE-CONFIG-29` | Medium | open | No container hardening in the production stack: no resource limits, no capability drops, no read-only filesystems |
@@ -363,7 +371,7 @@ what failed.
 | `BASE-QUAL-41` | Medium | open | The copilot citation e2e mocks all three backend routes, so retrieval, rerank and the citation authorization check are never exercised end to end |
 | `BASE-QUAL-42` | Medium | open | The v1.3 cross-feature integration spec sits outside Playwright's testDir, is describe.skip'd, and ends in expect(true).toBe(true) |
 | `BASE-SEC-50` | Medium | open | Volunteer email addresses are sent as URL query parameters on public endpoints, landing in access logs — contradicting the module's own stated no-log policy |
-| `BASE-SEC-51` | Medium | open | Magic-link manage token travels in the query string of both the SPA URL and every API call, landing in nginx and uvicorn logs and in browser history for its full 14-day life |
+| `BASE-SEC-51` | Medium | **accepted risk** | Magic-link manage token travels in the query string of both the SPA URL and every API call, landing in nginx and uvicorn logs and in browser history for its full 14-day life |
 | `BASE-QUAL-45` | Medium | open | Custom signup questions are silently dropped when the form-schema request fails — the volunteer submits an incomplete signup and neither side is told |
 | `BASE-SEC-11` | Low | open | Unauthenticated GET /check-in/signups/{signup_id} treats a guessable-in-transit id as the sole credential |
 | `BASE-SEC-12` | Low | open | Copilot PII (chat transcripts, extracted profiles, feedback comments) stored plaintext at rest |
@@ -377,7 +385,7 @@ what failed.
 | `BASE-QUAL-11` | Low | open | Write attribution falls back to 'the first admin row' when caller_id is absent, mis-signing the audit trail and assigning event ownership by row order |
 | `BASE-SEC-37` | Low | open | Broadcast HTML sanitizer is a four-tag regex over markdown output that deliberately enables raw inline HTML |
 | `BASE-SEC-38` | Low | open | Copilot tool arguments are written to the audit log unredacted, including volunteer email addresses |
-| `BASE-SEC-39` | Low | open | Volunteer email addresses are written to application logs at INFO on every magic-link build and every broadcast delivery |
+| `BASE-SEC-39` | Low | **fixed** | Volunteer email addresses are written to application logs at INFO on every magic-link build and every broadcast delivery |
 | `BASE-SEC-40` | Low | open | ICS export interpolates event title and location into the calendar body without RFC 5545 escaping |
 | `BASE-QUAL-21` | Low | open | test_helpers mass-cancel endpoint mutates rosters with no audit trail, no notifications and no row locks |
 | `BASE-QUAL-22` | Low | open | Public-preferences phone_e164 is stored unvalidated and unnormalised; an over-length value yields an unhandled 500 |
@@ -1855,7 +1863,7 @@ and gather rows, close the session, then send — rather than holding a pooled c
 
 weekly_digest is now bound with autoretry_for/retry_backoff/max_retries=3/time_limit=600/soft_time_limit=540, checks _check_daily_send_limit, and claims a per-volunteer per-ISO-week dedup row before sending.
 
-## `BASE-SEC-41` — Access and refresh tokens are both stored in localStorage, so one XSS yields a 14-day renewable session
+## `BASE-SEC-41` — Access and refresh tokens are both stored in localStorage, so one XSS yields a 14-day renewable session — 🟨 ACCEPTED RISK
 
 | | |
 |---|---|
@@ -1863,7 +1871,7 @@ weekly_digest is now bound with autoretry_for/retry_backoff/max_retries=3/time_l
 | **Lens** | SecAudit |
 | **File** | `frontend/src/lib/authStorage.js` |
 | **Lines** | 4-5, 11-19, 29-37; written at lib/api.js:33-34 and 208-209 |
-| **Status** | open |
+| **Status** | 🟨 accepted risk |
 
 **Vulnerable code**
 
@@ -1899,6 +1907,9 @@ Move the refresh token to an HttpOnly, Secure, SameSite=Strict cookie scoped to 
                         max_age=14 * 24 * 3600)
 
 Keep the short-lived access token in memory (a module variable) rather than localStorage — it is then lost on reload, which the refresh cookie transparently repairs. This requires CORS credentials handling, so pair it with the CORS review in BASE-CONFIG-05.
+
+--- ACCEPTED RISK 2026-08-12 (Andy's call, after the trade was explained). Moving refresh tokens to httpOnly cookies is the correct fix and is not a small change: it means a cookie-based refresh endpoint, CSRF protection on it, and a rework of how the SPA authenticates every call — days of work touching the one subsystem whose breakage locks all staff out. The exposure it removes only materialises if an XSS lands first, and the app has no user-supplied HTML rendering path. Revisit if a CSP is added (the cheaper first move against the same threat) or if any rich-text/HTML-rendering feature is introduced, which would change the likelihood of the precondition.
+
 
 ## `BASE-SEC-42` — The SPA is served with no security headers at all — the app's own CSP applies only to API responses — ✅ FIXED
 
@@ -2104,7 +2115,7 @@ VERIFIED: no Python lockfile exists anywhere in the repo (no pyproject.toml, no 
 
 Generate a fully-resolved hash-pinned lockfile (`pip-compile --generate-hashes` or `uv pip compile --generate-hashes`) and install with `pip install --require-hashes`. Add an upper bound to openai (>=1.30,<2). Caveat: --require-hashes is incompatible with the unpinned --extra-index-url torch resolution as currently written (see BASE-CONFIG-34), so the CPU torch wheel must be pinned to an exact version+hash from download.pytorch.org in the same change. Budget one build iteration for the CPU-wheel hashes.
 
-## `BASE-CONFIG-35` — python-multipart 0.0.20: seven advisories including two HIGH parser DoS, on the unauthenticated login form path
+## `BASE-CONFIG-35` — python-multipart 0.0.20: seven advisories including two HIGH parser DoS, on the unauthenticated login form path — ✅ FIXED
 
 | | |
 |---|---|
@@ -2112,7 +2123,7 @@ Generate a fully-resolved hash-pinned lockfile (`pip-compile --generate-hashes` 
 | **Lens** | DevProd |
 | **File** | `backend/requirements.txt` |
 | **Lines** | 59 |
-| **Status** | open |
+| **Status** | ✅ fixed |
 
 **Vulnerable code**
 
@@ -2128,7 +2139,10 @@ VERIFIED pin at line 59. python-multipart is the form parser Starlette/FastAPI d
 
 Move to python-multipart==0.0.31 or later, which clears every range above. The repo does not import it directly (it is consumed through Starlette), so the upgrade is drop-in; re-run the auth tests to confirm OAuth2PasswordRequestForm still parses.
 
-## `BASE-CONFIG-36` — starlette 0.50.0: request.form() limits silently ignored for urlencoded bodies (HIGH, CVSS 7.5), on the unauthenticated login route
+--- FIXED 2026-08-12. python-multipart bumped 0.0.20 -> 0.0.32 in backend/requirements.txt, clearing all seven advisories. This half was independent of BASE-CONFIG-36 despite the shared remediation note.
+
+
+## `BASE-CONFIG-36` — starlette 0.50.0: request.form() limits silently ignored for urlencoded bodies (HIGH, CVSS 7.5), on the unauthenticated login route — ⚠️ MITIGATED
 
 | | |
 |---|---|
@@ -2136,7 +2150,7 @@ Move to python-multipart==0.0.31 or later, which clears every range above. The r
 | **Lens** | DevProd |
 | **File** | `backend/requirements.txt` |
 | **Lines** | 67 |
-| **Status** | open |
+| **Status** | ⚠️ mitigated, still open |
 
 **Vulnerable code**
 
@@ -2151,6 +2165,9 @@ VERIFIED pin at line 67. GHSA-82w8-qh3p-5jfq / CVE-2026-54283, HIGH (7.5): 'requ
 **Remediation**
 
 Upgrade starlette to >=1.3.1. BREAKING: fastapi==0.123.5 declares `starlette<0.51.0,>=0.40.0`, so starlette cannot move alone -- fastapi must move to a release whose constraint allows it. Treat as a coordinated fastapi+starlette major bump with a full pytest + Playwright pass, not a point upgrade. Interim mitigation that is safe to ship immediately: bound request body size at the Caddy edge with `request_body { max_size 1MB }`.
+
+--- MITIGATED 2026-08-12, still open. The proper fix is starlette >= 1.3.1 and it cannot be pinned here: fastapi 0.123.5 requires starlette < 0.51.0, and the fastapi that permits starlette 1.x (0.141.1) hangs the backend suite indefinitely at tests/copilot/agent/test_confirm_authorization.py::test_owner_can_still_confirm (13 minutes against a 4-minute baseline, killed). Verified by running it, not assumed. Both pins were reverted. The ceiling now lives at the edge instead, where it does not depend on the framework honouring anything: Caddyfile declares request_body { max_size 2MB }, well above any legitimate request this app makes. Two limits on that mitigation, recorded deliberately: it only protects traffic that arrives through Caddy, so the backend port must never be published separately, and it does not fix the library. Re-attempt the bump when the fastapi hang is diagnosed.
+
 
 ## `BASE-QUAL-27` — Copilot feedback admin page re-fetches on every render: an unbounded request loop against two admin endpoints — ✅ FIXED
 
@@ -2363,7 +2380,7 @@ read it from request.cookies in refresh_token() and logout(), and delete getRefr
 
     add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://YOUR_API_ORIGIN; frame-ancestors 'none'; base-uri 'none'" always;
 
-## `BASE-SEC-08` — No lockout or backoff on password login; per-IP rate limit only
+## `BASE-SEC-08` — No lockout or backoff on password login; per-IP rate limit only — ✅ FIXED
 
 | | |
 |---|---|
@@ -2371,7 +2388,7 @@ read it from request.cookies in refresh_token() and logout(), and delete getRefr
 | **Lens** | SecAudit |
 | **File** | `backend/app/routers/auth.py` |
 | **Lines** | 296-312 |
-| **Status** | open |
+| **Status** | ✅ fixed |
 
 **Vulnerable code**
 
@@ -2410,6 +2427,9 @@ clearing the key on success. Normalize the lookup at the same time — `models.U
     if not user or user.hashed_password is None:
         pwd_context.dummy_verify() if hasattr(pwd_context, "dummy_verify") else verify_password(form_data.password, _DUMMY_HASH)
         raise HTTPException(401, detail="Incorrect email or password")
+
+--- FIXED 2026-08-12. Login now carries per-account state, not just a per-IP limiter that fails open when Redis is down. Migration 0041 adds failed_login_count, last_failed_login_at and locked_until to users. routers/auth.py checks _is_locked() BEFORE verify_password, and _record_login_failure() increments and commits on every wrong password; at settings.login_max_failed_attempts (10) it sets locked_until = now + login_lockout_minutes (15), resets the counter so the window cannot permanently re-lock, and writes a user_login_locked audit row. A locked account gets the byte-identical 'Incorrect email or password' 401 as a wrong password, so the lock is not an account-existence oracle — which is why the audit row exists at all: it is the only way an admin learns an account is being guessed at. Tests: tests/test_login_lockout.py (7).
+
 
 ## `BASE-SEC-09` — Unauthenticated destructive test-helper endpoints ship in the production image, gated by one env var
 
@@ -3395,7 +3415,7 @@ Two changes. Add a data-handling rule to _AGENT_EXTRA_RULES (prompts.py:91) and 
 
 And reword the _ADMIN_TAIL clause, which is about UI visibility but reads to the model as licence to restate personal data: 'Admins can see everything in the UI, so explain features fully — that is not licence to restate personal data the question did not need.'
 
-## `BASE-SEC-32` — The manage magic-link token is a permanent, unrevocable bearer credential in a URL that discloses a volunteer's identity and full schedule
+## `BASE-SEC-32` — The manage magic-link token is a permanent, unrevocable bearer credential in a URL that discloses a volunteer's identity and full schedule — 🟨 ACCEPTED RISK
 
 | | |
 |---|---|
@@ -3403,7 +3423,7 @@ And reword the _ADMIN_TAIL clause, which is about UI visibility but reads to the
 | **Lens** | SecAudit |
 | **File** | `backend/app/routers/public/signups.py` |
 | **Lines** | 109-147, 221-229; contrast preferences.py:26-35 |
-| **Status** | open |
+| **Status** | 🟨 accepted risk |
 
 **Vulnerable code**
 
@@ -3435,6 +3455,9 @@ Give manage access a bounded lifetime and a revocation path:
         raise HTTPException(status_code=400, detail="token invalid")
 
 and either reject consumed_at is not None for read access, or mint a separate short-lived SIGNUP_MANAGE token at confirm time. Add a staff-triggerable revoke that sets consumed_at. Accept the token in a POST body or Authorization header rather than a query parameter so it stays out of logs and history.
+
+--- ACCEPTED RISK 2026-08-12 (Andy's call, after the trade was explained). Correcting the audit's wording first: the token is not permanent — it lives 14 days (SIGNUP_CONFIRM_TTL_MINUTES = 20160). It is reusable within that window because manage access deliberately does not consume it, which is the actual property being accepted. Removing the token from the URL means either a login (the product rule is explicitly account-less) or an exchange-for-session step on first visit, which breaks the emailed link's whole purpose of working from any device with no setup. What it discloses is one volunteer's own name and schedule, to whoever already has their mailbox. Revisit if manage links ever expose anything beyond a single volunteer's own data.
+
 
 ## `BASE-SEC-33` — Unauthenticated participation oracle: POST /public/signups returns 'already signed up for shift {id}' for an arbitrary email
 
@@ -3959,7 +3982,7 @@ Mirror the dual-anchor shape the model already has:
 
 Then sweep the other read schemas for the same drift against the 0037 dual-anchor migration — magic_link_tokens and signup_responses gained the identical nullable pair.
 
-## `BASE-QUAL-16` — POST /auth/magic/resend issues a token and sends no email — the built payload is discarded
+## `BASE-QUAL-16` — POST /auth/magic/resend issues a token and sends no email — the built payload is discarded — ✅ FIXED
 
 | | |
 |---|---|
@@ -3967,7 +3990,7 @@ Then sweep the other read schemas for the same drift against the 0037 dual-ancho
 | **Lens** | Quality |
 | **File** | `backend/app/magic_link_service.py` |
 | **Lines** | 415-438; caller routers/magic.py:129 |
-| **Status** | open |
+| **Status** | ✅ fixed |
 
 **Vulnerable code**
 
@@ -4006,6 +4029,9 @@ Dispatch what the builders produce, on the same Celery path the first send uses:
         send_signup_confirmation_email.delay(volunteer_id=..., signup_ids=[...], token=raw, ...)
 
 Enqueue after db.commit(), since the worker reads from its own session (the reasoning is already written down at celery_app.py:727). Add a test asserting the task was enqueued — the absence of one is why this shipped.
+
+--- FIXED 2026-08-12. /auth/magic/resend now actually delivers. dispatch_email() returns a callable instead of sending inline, the router commits and then calls it, and a new Celery task app.send_magic_link_email provides the transport that never existed. emails.send_magic_link was renamed build_magic_link_email with a docstring saying BUILDS ONLY, so the next caller cannot make the same mistake. The misleading 'magic link sent' log line now reads 'magic link built'. Tests: tests/test_magic_link_router.py (23, incl. a new task-level delivery test).
+
 
 ## `BASE-QUAL-17` — Cancelled and waitlisted shift commitments can be marked attended — the resolve path lacks the status guard the check-in path has
 
@@ -4268,7 +4294,7 @@ Add a reaper and a cap:
 
 scheduled daily in beat_schedule. In _issue_refresh_token, delete the oldest rows beyond a per-user cap (e.g. 10 live tokens) before inserting, and add an admin-visible session list so the count is observable.
 
-## `BASE-SEC-43` — Logging out is client-side only — the refresh token stays valid on the server for its full 14 days
+## `BASE-SEC-43` — Logging out is client-side only — the refresh token stays valid on the server for its full 14 days — ✅ FIXED
 
 | | |
 |---|---|
@@ -4276,7 +4302,7 @@ scheduled daily in beat_schedule. In _issue_refresh_token, delete the oldest row
 | **Lens** | SecAudit |
 | **File** | `frontend/src/lib/api.js` |
 | **Lines** | 214-216; no counterpart endpoint exists in backend/app/routers/auth.py |
-| **Status** | open |
+| **Status** | ✅ fixed |
 
 **Vulnerable code**
 
@@ -4316,6 +4342,9 @@ Add a revoke endpoint and call it:
     }
 
 Clear local state even if the call fails, so a network error cannot strand the user logged in.
+
+--- FIXED 2026-08-12. The audit's description was slightly off and worth correcting: POST /api/v1/auth/logout already existed and already revoked the refresh-token family (routers/auth.py:426). The bug was purely that the SPA never called it — frontend/src/lib/api.js:214 cleared localStorage and returned. api.logout() is now async, POSTs the refresh token to that endpoint with the Bearer header, and clears local storage in a finally block so a failed revoke still logs the user out locally. Tests: frontend/src/lib/__tests__/api.logout.test.js (3).
+
 
 ## `BASE-CONFIG-28` — No request has a timeout: every fetch in the API client can hang indefinitely
 
@@ -5132,7 +5161,7 @@ VERIFIED by orchestrator against source, including the comment three lines above
 
 Change both helpers to POST with the address in the body, mirroring the already-correct checkInLookup shape at api.js:723-728. BREAKING: the matching backend routes must change from GET to POST and ship in the SAME deploy, or the orientation gate silently fails open — the call site's bare `catch {}` (EventDetailPage.jsx:1223-1227) swallows the error and proceeds to submit. If a coordinated deploy is not possible before launch, the interim mitigation is `--no-access-log` on docker-compose.prod.yml:80, accepting the loss of request logging.
 
-## `BASE-SEC-51` — Magic-link manage token travels in the query string of both the SPA URL and every API call, landing in nginx and uvicorn logs and in browser history for its full 14-day life
+## `BASE-SEC-51` — Magic-link manage token travels in the query string of both the SPA URL and every API call, landing in nginx and uvicorn logs and in browser history for its full 14-day life — 🟨 ACCEPTED RISK
 
 | | |
 |---|---|
@@ -5140,7 +5169,7 @@ Change both helpers to POST with the address in the body, mirroring the already-
 | **Lens** | SecAudit |
 | **File** | `frontend/src/lib/api.js` |
 | **Lines** | 495-517 |
-| **Status** | open |
+| **Status** | 🟨 accepted risk |
 
 **Vulnerable code**
 
@@ -5163,6 +5192,9 @@ VERIFIED by orchestrator. (1) A volunteer opens the emailed link https://<host>/
 **Remediation**
 
 Two changes. (a) Keep the token out of the API query string: move it to a header (request already supports `headers`, api.js:83-94) and carry manage_token in the existing PUT body rather than in params. (b) Keep it out of the frontend access log by having emails point at #token=<T> and reading window.location.hash — browsers never send the fragment to the server. Also add <meta name="referrer" content="strict-origin"> to frontend/index.html, which currently declares no referrer policy. BREAKING: links already in inboxes carry ?token= and stay valid 14 days, so both pages must keep accepting the query-string form (immediately history.replaceState-ing it out of the URL) for at least one full TTL after the change, or every outstanding confirmation email breaks.
+
+--- ACCEPTED RISK 2026-08-12 — same decision and same reasoning as BASE-SEC-32; this is that finding's log/history surface rather than a separate choice. Partly reduced by BASE-SEC-39's masking work in the same pass (the application log no longer pairs these URLs with a plaintext address), but the token itself still travels in the query string and lands in access logs and browser history for its 14-day life. Revisit alongside BASE-SEC-32.
+
 
 ## `BASE-QUAL-45` — Custom signup questions are silently dropped when the form-schema request fails — the volunteer submits an incomplete signup and neither side is told
 
@@ -5647,7 +5679,7 @@ Pick one and make it explicit. Either scrub for storage while keeping the value 
 
 or, if plaintext is deliberately retained for accountability, document that decision and add copilot_tool_calls.args_json to the CCPA erasure path so a deletion request actually clears it.
 
-## `BASE-SEC-39` — Volunteer email addresses are written to application logs at INFO on every magic-link build and every broadcast delivery
+## `BASE-SEC-39` — Volunteer email addresses are written to application logs at INFO on every magic-link build and every broadcast delivery — ✅ FIXED
 
 | | |
 |---|---|
@@ -5655,7 +5687,7 @@ or, if plaintext is deliberately retained for accountability, document that deci
 | **Lens** | SecAudit |
 | **File** | `backend/app/emails.py` |
 | **Lines** | 578-583; celery_app.py:615-620, 106, 143-146, 210-215 |
-| **Status** | open |
+| **Status** | ✅ fixed |
 
 **Vulnerable code**
 
@@ -5692,6 +5724,9 @@ Log a stable non-reversible handle:
     logger.info("broadcast_email_sent signup_id=%s email_ref=%s", signup_id, _email_ref(to_email))
 
 Keep the plaintext address behind settings.debug, the way the token preview already is.
+
+--- FIXED 2026-08-12. observability.mask_email() renders an address as a****y@ucsb.edu — the domain survives because it is not personal and is what explains delivery failures, and anything unparseable becomes (redacted) rather than a guess. Applied at all five sites that logged a recipient: emails.py's magic-link build line and the four in celery_app.py (both missing-config warnings, email_send_failed, broadcast_email_sent). Tests: tests/test_log_email_redaction.py (4, incl. a regression guard asserting the magic-link build logs the mask and never the address).
+
 
 ## `BASE-SEC-40` — ICS export interpolates event title and location into the calendar body without RFC 5545 escaping
 

@@ -39,6 +39,34 @@ def configure_logging() -> None:
     })
 
 
+def mask_email(value: object) -> str:
+    """Return an email safe to write to a log line.
+
+    BASE-SEC-39. Volunteer addresses were logged in full at INFO on every
+    magic-link build and every broadcast delivery, so the application log
+    accumulated a roster of who signed up for what — student PII sitting in a
+    stream that gets shipped to whatever aggregator the host provides and is
+    read by people who have no business seeing it. Masking keeps the log's
+    only real use (matching one delivery to one complaint) while removing the
+    part that makes it a dataset: ``a****y@ucsb.edu``.
+
+    The domain stays because it is not personal and is what actually explains
+    delivery failures. Anything unparseable is dropped entirely rather than
+    guessed at.
+    """
+    s = str(value or "").strip()
+    if "@" not in s:
+        return "(redacted)"
+    local, _, domain = s.rpartition("@")
+    if not local or not domain:
+        return "(redacted)"
+    if len(local) <= 2:
+        masked = local[0] + "*"
+    else:
+        masked = f"{local[0]}{'*' * (len(local) - 2)}{local[-1]}"
+    return f"{masked}@{domain}"
+
+
 # Header names are matched case-insensitively; both spellings show up
 # depending on which integration built the event.
 _SENSITIVE_HEADERS = {"authorization", "cookie", "set-cookie", "x-api-key"}

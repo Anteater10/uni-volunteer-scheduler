@@ -383,19 +383,34 @@ def check_rate_limit(redis_client, email: str, ip: str) -> bool:
     return True
 
 
-def dispatch_email(db: Session, signup: Anchor, event, base_url: str) -> None:
-    """Issue a token and send the magic-link email. Idempotent within a 60s window.
+def dispatch_email(db: Session, signup: Anchor, event, base_url: str):
+    """Issue a token and return a callable that sends the email after commit.
 
     2026-07-29 sweep remediation, Finding #2: a promotion-pending signup (see
     _is_promotion_pending) must get its own PROMOTION_CONFIRM token and the
     promotion email — the plain SIGNUP_CONFIRM token this used to mint
     unconditionally can never confirm such a signup (see consume_token's
     scoping), so resending it just handed out a second broken link.
+
+    BASE-QUAL-16: both branches used to call an ``emails.build_*`` function and
+    throw the return value away. Those builders return a payload; they have no
+    transport, and every real mail in this app goes through ``_send_email`` or a
+    Celery task. So resend minted a token, logged "magic link sent", answered
+    ``{"status": "ok"}``, and delivered nothing — on the one endpoint that
+    exists to rescue a booking whose confirmation mail went missing. The
+    volunteer then burned their hourly retry budget and had the signup reaped as
+    unconfirmed.
+
+    Returns a zero-argument callable rather than sending inline, because the
+    token row is uncommitted at this point and both Celery tasks read the
+    booking from their own session. Enqueue strictly AFTER the caller's commit
+    or the worker races the transaction that created the token. Returns None
+    when there is nothing to send.
     """
     # Phase 09: signup.user removed; use signup.volunteer
     email = signup.volunteer.email if signup.volunteer else None
     if not email:
-        return
+        return None
 
     # Idempotency: reuse recent un-consumed non-expired token if present
     recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=60)
@@ -410,13 +425,17 @@ def dispatch_email(db: Session, signup: Anchor, event, base_url: str) -> None:
         .first()
     )
     if existing is not None:
-        return  # A token was just issued; skip duplicate send
+        return None  # A token was just issued; skip duplicate send
 
-    anchor_kwargs = (
-        {"shift_signup": signup}
-        if isinstance(signup, ShiftSignup)
-        else {"signup": signup}
-    )
+    is_shift = isinstance(signup, ShiftSignup)
+    anchor_kwargs = {"shift_signup": signup} if is_shift else {"signup": signup}
+    # Read the ids now: the caller commits between here and the send, and a
+    # committed instance is expired, so touching signup.id afterwards would
+    # re-query — from a session the caller may already have closed.
+    volunteer_id = str(signup.volunteer_id)
+    signup_id = str(signup.id)
+    event_id = str(event.id)
+
     if _is_promotion_pending(db, signup):
         raw = issue_token(
             db,
@@ -426,13 +445,36 @@ def dispatch_email(db: Session, signup: Anchor, event, base_url: str) -> None:
             ttl_minutes=PROMOTION_CONFIRM_TTL_MINUTES,
             **anchor_kwargs,
         )
-        from .emails import build_waitlist_promotion_email
 
-        build_waitlist_promotion_email(signup.volunteer, signup, raw, event)
-    else:
-        raw = issue_token(db, email=email, **anchor_kwargs)
-        from .emails import send_magic_link
+        def _send():
+            from .celery_app import send_waitlist_promotion_email
 
-        send_magic_link(
-            email, raw, event, base_url, ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES
+            send_waitlist_promotion_email.delay(
+                volunteer_id,
+                raw,
+                event_id,
+                **(
+                    {"shift_signup_id": signup_id}
+                    if is_shift
+                    else {"signup_id": signup_id}
+                ),
+            )
+
+        return _send
+
+    raw = issue_token(db, email=email, **anchor_kwargs)
+
+    def _send():
+        from .celery_app import send_magic_link_email
+
+        # Deliberately the single-link "confirm your signup" mail rather than
+        # the full batch confirmation. One SIGNUP_CONFIRM token batch-confirms
+        # every pending signup this volunteer has for the event (see
+        # consume_token), but this function is handed one anchor — so a batch
+        # email built from it would list one booking and imply the others were
+        # lost. The single-link copy is accurate whatever the batch contains.
+        send_magic_link_email.delay(
+            email, raw, event_id, base_url, SIGNUP_CONFIRM_TTL_MINUTES
         )
+
+    return _send

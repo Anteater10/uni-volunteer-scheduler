@@ -214,21 +214,28 @@ class TestDispatchEmailPromotionPurpose:
         )
         assert abs((new_token.expires_at - expected_expiry).total_seconds()) < 60
 
-    def test_resend_for_promotion_pending_signup_uses_promotion_email_builder(
+    def test_resend_for_promotion_pending_signup_enqueues_the_promotion_email(
         self, db_session, monkeypatch
     ):
+        """BASE-QUAL-16 moved the send out of dispatch_email: it now returns a
+        callable the router runs after commit, and the email is built inside a
+        Celery task that opens its own session. So the thing to pin is which
+        task gets enqueued — calling the builder here was the old bug, since
+        its payload had no transport behind it."""
         signup, event = self._make_promoted_signup(db_session)
         calls = {"promotion": 0, "generic": 0}
         monkeypatch.setattr(
-            "app.emails.build_waitlist_promotion_email",
-            lambda *a, **kw: (calls.__setitem__("promotion", calls["promotion"] + 1), ("s", "h"))[1],
+            "app.celery_app.send_waitlist_promotion_email.delay",
+            lambda *a, **kw: calls.__setitem__("promotion", calls["promotion"] + 1),
         )
         monkeypatch.setattr(
-            "app.emails.send_magic_link",
-            lambda *a, **kw: (calls.__setitem__("generic", calls["generic"] + 1), {})[1],
+            "app.celery_app.send_magic_link_email.delay",
+            lambda *a, **kw: calls.__setitem__("generic", calls["generic"] + 1),
         )
 
-        dispatch_email(db_session, signup, event, "http://backend.example")
+        send = dispatch_email(db_session, signup, event, "http://backend.example")
+        assert send is not None, "a promotion-pending resend must have something to send"
+        send()
 
         assert calls == {"promotion": 1, "generic": 0}
 
@@ -238,9 +245,13 @@ class TestDispatchEmailPromotionPurpose:
         """Regression guard: an ordinary (non-promoted) pending signup's
         resend must keep minting a plain SIGNUP_CONFIRM token."""
         signup, event, slot = _make_pending_signup(db_session, "ordinary-resend@example.com")
-        monkeypatch.setattr("app.emails.send_magic_link", lambda *a, **kw: {})
+        monkeypatch.setattr(
+            "app.celery_app.send_magic_link_email.delay", lambda *a, **kw: None
+        )
 
-        dispatch_email(db_session, signup, event, "http://backend.example")
+        send = dispatch_email(db_session, signup, event, "http://backend.example")
+        assert send is not None
+        send()
 
         token = (
             db_session.query(MagicLinkToken)

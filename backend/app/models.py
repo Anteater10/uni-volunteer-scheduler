@@ -153,6 +153,15 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, server_default=text("true"), default=True)
     last_login_at = Column(DateTime(timezone=True), nullable=True, default=None)
 
+    # BASE-SEC-08: per-account brute-force state. The per-IP rate limiter cannot
+    # see an attacker spreading guesses across many addresses, and it fails open
+    # when Redis is down; these columns do neither. See migration 0041.
+    failed_login_count = Column(
+        Integer, nullable=False, server_default=text("0"), default=0
+    )
+    last_failed_login_at = Column(DateTime(timezone=True), nullable=True, default=None)
+    locked_until = Column(DateTime(timezone=True), nullable=True, default=None)
+
     # Relationships
     events = relationship("Event", back_populates="owner")
     # signups relationship removed in Phase 08 — Signup now keyed to Volunteer, not User

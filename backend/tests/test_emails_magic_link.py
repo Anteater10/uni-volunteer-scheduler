@@ -4,11 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.emails import _humanise_minutes, send_magic_link
+from app.emails import _humanise_minutes, build_magic_link_email
 
 
 def test_magic_link_email_html_contains_url():
-    result = send_magic_link(
+    result = build_magic_link_email(
         "user@example.com",
         "abc123def456",
         SimpleNamespace(title="Test Event"),
@@ -23,7 +23,7 @@ def test_magic_link_email_html_contains_url():
 
 
 def test_magic_link_email_text_contains_url():
-    result = send_magic_link(
+    result = build_magic_link_email(
         "user@example.com",
         "abc123def456",
         SimpleNamespace(title="Test Event"),
@@ -37,7 +37,7 @@ def test_magic_link_email_text_contains_url():
 
 
 def test_magic_link_email_states_the_ttl_it_was_given():
-    result = send_magic_link(
+    result = build_magic_link_email(
         "user@example.com",
         "tok",
         SimpleNamespace(title="Test Event"),
@@ -65,7 +65,7 @@ def test_humanise_minutes(minutes, expected):
 
 
 def test_magic_link_email_is_branded_scitrek():
-    result = send_magic_link(
+    result = build_magic_link_email(
         "user@example.com",
         "tok",
         SimpleNamespace(title="Test Event"),
@@ -79,7 +79,7 @@ def test_magic_link_email_is_branded_scitrek():
 
 def test_magic_link_email_log_redacted(caplog):
     with caplog.at_level(logging.INFO, logger="app.emails"):
-        send_magic_link(
+        build_magic_link_email(
             "user@example.com",
             "abc123def456",
             SimpleNamespace(title="Test Event"),
@@ -93,7 +93,7 @@ def test_magic_link_email_log_redacted(caplog):
 
 
 def test_magic_link_strips_trailing_slash_from_base_url():
-    result = send_magic_link(
+    result = build_magic_link_email(
         "user@example.com",
         "tok123",
         SimpleNamespace(title="Evt"),
@@ -105,7 +105,7 @@ def test_magic_link_strips_trailing_slash_from_base_url():
 
 def test_magic_link_uses_title_attribute():
     """Event model uses .title, not .name."""
-    result = send_magic_link(
+    result = build_magic_link_email(
         "u@x.com",
         "t",
         SimpleNamespace(title="My Event Title"),
