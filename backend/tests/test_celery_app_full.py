@@ -471,6 +471,52 @@ def test_weekly_digest_no_signups_in_window(
     assert sends == []
 
 
+def test_weekly_digest_claims_each_volunteer_once_per_week(
+    db_session, monkeypatch, patch_session_local
+):
+    """BASE-QUAL-12: a second run in the same ISO week sends nothing.
+
+    The digest used to have no dedup at all, so anything that ran it twice —
+    a worker restart mid-loop, a manual re-trigger, a retry policy added
+    later — mailed the whole volunteer base a second copy.
+    """
+    s = _seed_confirmed_signup(db_session, email_tag="wddedup")
+    s.slot.start_time = datetime.now(timezone.utc) + timedelta(days=2)
+    s.slot.end_time = s.slot.start_time + timedelta(hours=2)
+    db_session.commit()
+    sends = []
+    monkeypatch.setattr(celery_mod, "_send_email", lambda *a, **k: sends.append(a))
+
+    weekly_digest.run()
+    assert len(sends) == 1, "first run mails the volunteer"
+
+    weekly_digest.run()
+    assert len(sends) == 1, "second run in the same week mails nobody again"
+
+
+def test_weekly_digest_stops_at_the_daily_send_limit(
+    db_session, monkeypatch, patch_session_local
+):
+    """BASE-QUAL-12: the digest respects the cap every other mail path does.
+
+    It ran against the entire volunteer base with no limit check, so on a busy
+    day it was the job most likely to blow past the provider cap — and the one
+    whose failure was least visible, because nobody is waiting on a digest.
+    """
+    s = _seed_confirmed_signup(db_session, email_tag="wdlimit")
+    s.slot.start_time = datetime.now(timezone.utc) + timedelta(days=2)
+    s.slot.end_time = s.slot.start_time + timedelta(hours=2)
+    db_session.commit()
+    monkeypatch.setattr(celery_mod.settings, "resend_daily_limit", 5)
+    _seed_n_sent_notifications(db_session, 5, kind_prefix="wdcap")
+    sends = []
+    monkeypatch.setattr(celery_mod, "_send_email", lambda *a, **k: sends.append(a))
+
+    weekly_digest.run()
+
+    assert sends == []
+
+
 # ---------------------------------------------------------------------------
 # send_broadcast_email
 # ---------------------------------------------------------------------------

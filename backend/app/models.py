@@ -698,6 +698,20 @@ class RefreshToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Rotation lineage. Every token minted by refreshing an existing one
+    # inherits its family_id, so a whole chain descending from one login can
+    # be revoked together.
+    #
+    # ``consumed_at`` exists so a spent token is *retained* rather than
+    # deleted. Deleting it made a replay indistinguishable from a token that
+    # never existed: both 401'd, and the session that the thief had already
+    # rotated carried on working. Keeping the row means a second use of a
+    # spent token is detectable, and detection is what lets us kill the
+    # family — the legitimate user and the attacker both get logged out,
+    # which is the correct outcome when we cannot tell which is which.
+    family_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+
     user = relationship("User", back_populates="refresh_tokens")
 
 

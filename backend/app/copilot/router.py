@@ -82,7 +82,9 @@ from .agent.audit_log import CallNotFound, update_status
 from .agent.boundary.role_scope import scope_for
 from .agent.confirmation import (
     ConfirmationExpired,
+    ConfirmationForbidden,
     ConfirmationNotFound,
+    assert_session_owned,
     discard as discard_pending,
     execute_after_confirmation,
 )
@@ -837,6 +839,24 @@ def confirm(
     _require_flag_on()
     _require_admin_or_organizer(current_user)
 
+    # A call_id is not a capability. Being admin-or-organizer is not enough:
+    # the parked call must belong to a session this user owns. Enforced for
+    # reject too, or anyone could cancel another user's pending write.
+    try:
+        assert_session_owned(db, call_id, user_id=current_user.id)
+    except ConfirmationForbidden:
+        # 404, not 403 — a call_id belonging to someone else must not be
+        # distinguishable from one that never existed.
+        raise HTTPException(status_code=404, detail="confirmation not found")
+    except ConfirmationExpired:
+        try:
+            update_status(db, call_id, status="expired")
+        except CallNotFound:
+            pass
+        raise HTTPException(status_code=410, detail="confirmation expired")
+    except ConfirmationNotFound:
+        raise HTTPException(status_code=404, detail="confirmation not found")
+
     if not body.approved:
         # Drop the pending entry if present; the audit row stamp is the
         # source of truth for "rejected".
@@ -876,6 +896,8 @@ def confirm(
         raise HTTPException(status_code=410, detail="confirmation expired")
     except ConfirmationNotFound:
         raise HTTPException(status_code=404, detail="confirmation not found")
+    except ConfirmationForbidden:
+        raise HTTPException(status_code=403, detail="not permitted for this role")
 
 
 def _finish_confirmed_turn(db: Session, outcome: dict) -> dict | None:

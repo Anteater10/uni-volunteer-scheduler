@@ -1,4 +1,5 @@
 # backend/app/deps.py
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .database import get_db
 from . import models, schemas
+
+logger = logging.getLogger(__name__)
 
 
 # -------------------------
@@ -36,7 +39,19 @@ pwd_context = CryptContext(
 # Redis + rate limiting
 # -------------------------
 
-redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+# Timeouts are not optional here. With the defaults, a Redis that is up but
+# unreachable blocks the calling worker indefinitely — and this client sits
+# in front of the rate limiter, which runs on the public signup path. A
+# two-second ceiling turns "Redis is sick" into a logged error rather than
+# every worker parked on a socket read.
+redis_client = redis.Redis.from_url(
+    settings.redis_url,
+    decode_responses=True,
+    socket_connect_timeout=2,
+    socket_timeout=2,
+    retry_on_timeout=True,
+    health_check_interval=30,
+)
 
 
 def rate_limit(max_requests: int | None = None, window_seconds: int | None = None):
@@ -55,16 +70,29 @@ def rate_limit(max_requests: int | None = None, window_seconds: int | None = Non
         if _os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
             return
 
-        key = f"rate:{request.client.host}:{request.url.path}"
-        # Atomic INCR-first: the old GET-then-SET pattern let a concurrent
-        # burst all observe "no key" and each reset the counter to 1,
-        # blowing past the cap exactly when it matters.
-        current = redis_client.incr(key)
-        # Self-healing TTL: set on first hit, and restore it if it was ever
-        # lost (crash between INCR and EXPIRE) — a TTL-less key would
-        # otherwise rate-limit that IP+path forever.
-        if current == 1 or redis_client.ttl(key) < 0:
-            redis_client.expire(key, window)
+        client = request.client
+        key = f"rate:{client.host if client else 'unknown'}:{request.url.path}"
+        try:
+            # Atomic INCR-first: the old GET-then-SET pattern let a concurrent
+            # burst all observe "no key" and each reset the counter to 1,
+            # blowing past the cap exactly when it matters.
+            current = redis_client.incr(key)
+            # Self-healing TTL: set on first hit, and restore it if it was ever
+            # lost (crash between INCR and EXPIRE) — a TTL-less key would
+            # otherwise rate-limit that IP+path forever.
+            if current == 1 or redis_client.ttl(key) < 0:
+                redis_client.expire(key, window)
+        except redis.RedisError:
+            # Fail *open*, deliberately. This dependency guards signup,
+            # login and the magic-link paths; if Redis is unreachable the
+            # choice is between "nobody can sign up" and "the throttle is
+            # off for the duration". The throttle is a nuisance control,
+            # not an authorization boundary — the boundary is elsewhere and
+            # unaffected. The log line is the alert.
+            logger.error(
+                "rate_limit_backend_unavailable path=%s", request.url.path
+            )
+            return
         if current > max_req:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -99,12 +127,19 @@ def verify_password(plain: str, hashed: str) -> bool:
 # JWT helpers
 # -------------------------
 
+# Session tokens carry purpose="access". Invite and password-reset tokens are
+# signed with the same secret but carry their own purpose (see services/invite.py
+# and services/password_reset.py), so without this claim an emailed set-password
+# link is replayable as a bearer token. Missing purpose fails closed.
+ACCESS_TOKEN_PURPOSE = "access"
+
+
 def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=expires_minutes or settings.access_token_expires_minutes
     )
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "purpose": ACCESS_TOKEN_PURPOSE})
     encoded_jwt = jwt.encode(
         to_encode,
         settings.jwt_secret,
@@ -116,6 +151,18 @@ def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> st
 # -------------------------
 # Current user dependency
 # -------------------------
+
+def _account_usable(user: models.User) -> bool:
+    """Offboarding gate. A token stays cryptographically valid for its full TTL
+    and a refresh token for 14 days, so deactivating or deleting a staff account
+    only takes effect if every auth path re-checks the row on each request.
+    """
+    if getattr(user, "is_active", True) is False:
+        return False
+    if getattr(user, "deleted_at", None) is not None:
+        return False
+    return True
+
 
 def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -133,6 +180,8 @@ def get_current_user(
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
+        if payload.get("purpose") != ACCESS_TOKEN_PURPOSE:
+            raise credentials_exception
         user_id: str = payload.get("sub")
         role: str = payload.get("role")
         if user_id is None:
@@ -142,7 +191,7 @@ def get_current_user(
         raise credentials_exception
 
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if user is None:
+    if user is None or not _account_usable(user):
         raise credentials_exception
     return user
 
@@ -167,12 +216,17 @@ def get_optional_user(
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
+        if payload.get("purpose") != ACCESS_TOKEN_PURPOSE:
+            return None
         user_id: str = payload.get("sub")
         if user_id is None:
             return None
     except JWTError:
         return None
-    return db.query(models.User).filter(models.User.id == user_id).first()
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if user is not None and not _account_usable(user):
+        return None
+    return user
 
 
 def is_staff(user: Optional[models.User]) -> bool:

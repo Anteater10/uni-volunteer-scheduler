@@ -520,9 +520,32 @@ def send_reminders_1h(self) -> None:
         db.close()
 
 
-@celery.task
-def weekly_digest() -> None:
-    """Weekly digest: upcoming confirmed slots for each user in the next 7 days."""
+@celery.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+    time_limit=600,
+    soft_time_limit=540,
+    name="app.celery_app.weekly_digest",
+)
+def weekly_digest(self) -> None:
+    """Weekly digest: upcoming confirmed slots for each user in the next 7 days.
+
+    Every other mail path in this module claims its send against
+    ``sent_notifications`` before delivering, respects the daily send limit,
+    and has a retry policy. The digest had none of the three. It ran on beat
+    against the whole volunteer base, so a crash in the middle of the loop
+    meant a bare ``@celery.task`` with no retry silently dropped the rest of
+    the week's digests — or, if anything upstream did retry it, mailed
+    everyone already sent a second copy.
+
+    The claim anchor is the volunteer's *first* upcoming booking plus an ISO
+    week key, so a given volunteer is claimed once per week no matter how
+    many bookings they hold or how many times the task runs.
+    """
     db: Session = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
@@ -553,15 +576,43 @@ def weekly_digest() -> None:
 
         # Phase 09: Group by volunteer_id (signup.user removed in Phase 08)
         by_volunteer: dict = {}
+        anchors: dict = {}
         for s in signups:
             by_volunteer.setdefault(s.volunteer_id, []).append(s.slot)
+            anchors.setdefault(s.volunteer_id, ("signup", s.id))
         for shift_signup, slot in sessions:
             by_volunteer.setdefault(shift_signup.volunteer_id, []).append(slot)
+            anchors.setdefault(shift_signup.volunteer_id, ("shift", shift_signup.id))
 
+        if not _check_daily_send_limit(db):
+            logger.warning("weekly_digest skipped: daily send limit reached")
+            return
+
+        # ISO year + week, so the key rolls over exactly once a week and is
+        # short enough for the column.
+        week_key = "digest_" + datetime.now(timezone.utc).strftime("%G_%V")
+
+        # The anchor row per volunteer: whichever booking backs their first
+        # listed slot. Signup and shift-commitment anchors are separate
+        # tables, so keep track of which one each volunteer came from.
         for volunteer_id, slots in by_volunteer.items():
             v = db.get(models.Volunteer, volunteer_id)
             if not v:  # pragma: no cover - FK constraint makes this unreachable
                 continue
+
+            anchor = anchors.get(volunteer_id)
+            if anchor is None:  # pragma: no cover - defensive
+                continue
+            anchor_kind, anchor_id = anchor
+            claimed = (
+                _dedup_insert_shift(db, anchor_id, week_key)
+                if anchor_kind == "shift"
+                else _dedup_insert(db, anchor_id, week_key)
+            )
+            if not claimed:
+                continue  # already sent this week, by this run or another
+            db.commit()
+
             lines = [
                 f"- {slot.start_time} at {slot.event.location or 'TBD'} ({slot.event.title})"
                 for slot in slots

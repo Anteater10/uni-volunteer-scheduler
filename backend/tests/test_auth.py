@@ -80,14 +80,18 @@ def test_refresh_rotates_token(client, db_session):
     # Access token may or may not differ in content (same sub/role, same second); just assert present.
     assert new_body["access_token"]
 
-    # Old refresh token row must be gone from DB (rotation = delete).
+    # BASE-SEC-25: rotation is by *consumption*, not deletion. This used to
+    # assert the old row was gone, which is what made replay undetectable —
+    # a spent token and a forged one both looked like "no such row". The row
+    # stays, stamped consumed, so a second use is evidence rather than noise.
     old_hash = hashlib.sha256(original_refresh.encode()).hexdigest()
-    assert (
+    old_row = (
         db_session.query(models.RefreshToken)
         .filter(models.RefreshToken.token_hash == old_hash)
         .first()
-        is None
     )
+    assert old_row is not None
+    assert old_row.consumed_at is not None
 
     # Reusing the old refresh token must fail.
     replay = client.post(

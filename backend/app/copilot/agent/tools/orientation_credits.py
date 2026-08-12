@@ -31,7 +31,7 @@ from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._ask import ambiguous, ask_for
 from app.copilot.agent.tools.base import Tool
-from app.models import Module, OrientationCredit, User, UserRole, Volunteer
+from app.models import Event, Module, OrientationCredit, User, UserRole, Volunteer
 from app.services import orientation_service
 
 _CREDIT_SCHEMA = [
@@ -362,6 +362,29 @@ def _grant_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str,
     family, objection = _resolve_family(db, args)
     if objection is not None:
         return objection
+
+    # An organizer may only vouch for a family they actually run. Credit is
+    # permanent and covers the whole orientation family, so without this an
+    # organizer could grant themselves-adjacent volunteers standing
+    # eligibility for every module in the programme. Read tools have carried
+    # a scope filter since Phase 33; this write tool never did.
+    if not scope.see_all:
+        owns = (
+            db.query(Event.id)
+            .join(Module, Module.slug == Event.module_slug)
+            .filter(
+                Event.owner_id == scope.module_owner_id,
+                Module.deleted_at.is_(None),
+                (Module.family_key == family) | (Module.slug == family),
+            )
+            .first()
+        )
+        if owns is None:
+            return {
+                "error": (
+                    "you can only grant orientation credit for modules you run"
+                )
+            }
 
     already = orientation_service.has_orientation_credit(db, email, family)
     if already.has_credit:

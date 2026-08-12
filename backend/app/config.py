@@ -9,6 +9,14 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str
 
+    # Connection pool. Sized so (pool_size + max_overflow) × uvicorn workers
+    # plus Celery stays under the database's max_connections — raise these
+    # only after checking that ceiling. statement_timeout is the per-query
+    # cap the API runs under; Celery sets its own, longer one.
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
+    db_statement_timeout_ms: int = 15000
+
     # JWT
     jwt_secret: str
     jwt_algorithm: str = "HS256"

@@ -1,0 +1,31 @@
+# frontend/.dockerignore
+#
+# `COPY . .` in the build stage pulled in `.env*` and `node_modules`. The
+# built bundle is what ships, but the build stage is still a layer in the
+# build cache, and Vite will happily inline a VITE_-prefixed secret from a
+# local `.env` into the served JavaScript.
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Installed by `npm ci` inside the image — copying the host's copy is both
+# slow and wrong (host-native binaries in a linux image).
+node_modules/
+dist/
+.vite/
+
+# Tests and reports — not part of the bundle
+e2e/
+playwright-report/
+test-results/
+coverage/
+
+# VCS and editor noise
+.git/
+.gitignore
+.DS_Store
+*.log

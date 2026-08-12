@@ -28,7 +28,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.copilot.agent.boundary.role_scope import Scope
+from app.copilot.agent.boundary.role_scope import Scope, deny_if_not_owned
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._ask import ask_for, suggesting
 from app.copilot.agent.tools._when import (
@@ -43,12 +43,10 @@ from app.copilot.agent.tools.base import Tool
 from app.models import (
     Event,
     Shift,
-    ShiftSignup,
-    Signup,
-    SignupStatus,
     Slot,
     SlotType,
 )
+from app.services import event_deletion_service
 
 _EVENT_SCHEMA = [
     "event_id",
@@ -132,30 +130,13 @@ def _slot_row(slot: Slot) -> dict[str, Any]:
 def _live_signups(db: Session, event_id: Any) -> int:
     """Everyone still committed to this event, of either kind.
 
-    There are two, and counting only one is how a delete guard passes while
-    a full shift roster goes over the cliff: an orientation booking is a
-    ``Signup`` against the slot, a shift booking is a ``ShiftSignup``
-    against the shift. Cancelled rows do not block anything.
+    Delegates to ``event_deletion_service`` so the copilot and
+    ``DELETE /events/{id}`` share one definition. They used to hold separate
+    copies — and only this one existed, which is how the assistant refused a
+    destructive delete that the REST endpoint performed without comment
+    (BASE-SEC-27).
     """
-    orientations = (
-        db.query(Signup)
-        .join(Slot, Signup.slot_id == Slot.id)
-        .filter(
-            Slot.event_id == event_id,
-            Signup.status != SignupStatus.cancelled,
-        )
-        .count()
-    )
-    shifts = (
-        db.query(ShiftSignup)
-        .join(Shift, ShiftSignup.shift_id == Shift.id)
-        .filter(
-            Shift.event_id == event_id,
-            ShiftSignup.status != SignupStatus.cancelled,
-        )
-        .count()
-    )
-    return orientations + shifts
+    return event_deletion_service.live_signup_count(db, event_id)
 
 
 # ------------------------------------------------------------ read
@@ -165,6 +146,10 @@ def _schedule_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[s
     event = _get_event(db, args.get("event_id"))
     if event is None:
         return {"error": f"no event with id {args.get('event_id')!r}"}
+
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
 
     slots = (
         db.query(Slot)
@@ -275,6 +260,10 @@ def _update_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str
     event = _get_event(db, args.get("event_id"))
     if event is None:
         return {"error": f"no event with id {args.get('event_id')!r}"}
+
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
 
     changed = []
     for field in _EVENT_FIELDS:
@@ -401,6 +390,11 @@ def _reschedule_handler(
         return {"error": f"no slot with id {args.get('slot_id')!r}"}
 
     event = db.query(Event).filter(Event.id == slot.event_id).one()
+
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
+
     changed: list[str] = []
 
     try:
@@ -564,6 +558,10 @@ def _delete_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str
     event = _get_event(db, args.get("event_id"))
     if event is None:
         return {"error": f"no event with id {args.get('event_id')!r}"}
+
+    denied = deny_if_not_owned(scope, event)
+    if denied is not None:
+        return denied
 
     signups = _live_signups(db, event.id)
     if signups:
