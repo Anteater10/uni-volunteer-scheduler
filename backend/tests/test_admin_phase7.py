@@ -240,6 +240,88 @@ def test_ccpa_delete_anonymizes_pii(client, db_session):
 
 
 @pytest.mark.integration
+def test_ccpa_delete_erases_copilot_profile_and_feedback_comments(client, db_session):
+    """BASE-CONFIG-37: erasure has to reach the copilot's two PII columns.
+
+    These are staff-authored free text keyed to the user id — an LLM-written
+    summary of how they work, and comments they typed into a feedback box.
+    The endpoint anonymized the User and Volunteer rows and left both behind,
+    which would have made docs/pii-at-rest-decision.md false the day it was
+    signed. Rating *values* must survive: they are quality signal, not PII.
+    """
+    import uuid as _uuid
+
+    admin = _make_admin(db_session, email="a_ccpacopilot@example.com")
+    target = make_user(
+        db_session,
+        email="todelete_copilot@example.com",
+        role=models.UserRole.organizer,
+    )
+    db_session.commit()
+    target_id = target.id
+
+    db_session.add(models.CopilotUserProfile(
+        user_id=target_id,
+        profile_text="Runs the Tuesday cohort; prefers morning shifts.",
+    ))
+    sess = models.CopilotSession(
+        id=_uuid.uuid4(),
+        user_id=target_id,
+        model_id="openrouter/auto",
+        system_prompt_hash="h" * 64,
+        system_prompt_version="v0.1.0",
+    )
+    db_session.add(sess)
+    db_session.flush()
+    msg = models.CopilotMessage(
+        session_id=sess.id,
+        role=models.CopilotMessageRole.assistant,
+        content="x",
+    )
+    db_session.add(msg)
+    db_session.flush()
+    db_session.add(models.CopilotMessageRating(
+        message_id=msg.id,
+        user_id=target_id,
+        value="down",
+        comment="This got my week numbers wrong again.",
+    ))
+    db_session.add(models.CopilotSessionRating(
+        session_id=sess.id,
+        user_id=target_id,
+        value=2,
+        comment="Slow, and I had to correct it twice.",
+    ))
+    db_session.commit()
+
+    resp = client.post(
+        f"/api/v1/admin/users/{target_id}/ccpa-delete",
+        json={"reason": "User requested account deletion"},
+        headers=auth_headers(client, admin),
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    assert db_session.query(models.CopilotUserProfile).filter(
+        models.CopilotUserProfile.user_id == target_id
+    ).first() is None, "profile_text survived a CCPA delete"
+
+    msg_rating = db_session.query(models.CopilotMessageRating).filter(
+        models.CopilotMessageRating.user_id == target_id
+    ).one()
+    assert msg_rating.comment is None, "message feedback comment survived"
+    assert msg_rating.value == "down", (
+        "the rating value is quality signal, not PII — it must survive"
+    )
+
+    sess_rating = db_session.query(models.CopilotSessionRating).filter(
+        models.CopilotSessionRating.user_id == target_id
+    ).one()
+    assert sess_rating.comment is None, "session feedback comment survived"
+    assert sess_rating.value == 2, "the session score must survive"
+
+
+@pytest.mark.integration
 def test_ccpa_delete_preserves_signups(client, db_session):
     """CCPA delete preserves signup rows for analytics integrity.
 

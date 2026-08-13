@@ -39,7 +39,7 @@ You listed eight gaps. Here is what each one actually is, verified today:
 | **corpus** | Done on a branch. PR #54 is complete and self-describes as done; it is red only on a **stale** CI run that predates the test fix in #57. Blocked externally on the OpenRouter key. | [W0](#w0--land-what-is-already-built) |
 | **fix api.js** | The P0 (`api.slots` missing) **is fixed** — PR #56 merged. What remains is ~25 dead exports (K35), cosmetic. | [W0](#w0--land-what-is-already-built), [W2](#w2--bugs-that-lie-or-break) |
 | **fix celery for tests** | The red backend suite is fixed — PR #57 is **green on all three checks** including Playwright. Merge it first; it unblocks the other two PRs' CI. | [W0](#w0--land-what-is-already-built) |
-| **fix bugs** | 42 audited items. **6 closed**, 36 open. Of those, 4 lie to the user in ways that will generate mail to your inbox. | [W2](#w2--bugs-that-lie-or-break) |
+| **fix bugs** | 42 audited items. ~~**6 closed**, 36 open~~ → **Re-audit 1 (2026-08-13): 12 of the 13 W2 findings are fixed.** Only K33 (scheduled in W5) and half of K39 remain. | [W2](#w2--bugs-that-lie-or-break), [Re-audit 1](#re-audit-1--2026-08-13) |
 | **phase B** (AI agent) | ~1200 lines that have **never executed.** `_get_agent_llm` still raises `NotImplementedError`. This is a scope decision, not a task. | [W3](#w3--decide-phase-b) |
 | **prod hardening** (37) | Caps, rate limits, Sentry, prod compose, Caddy all exist. Missing: **no `/health` endpoint**, no dev `.env.example`, no model-cache volume, PII plaintext at rest. | [W4](#w4--deploy-blockers) |
 | **ai chatbot prod hardening** | Same phase; the copilot-specific remainder is the CrossEncoder cold start and the `/confirm`+rating rate limits. | [W4](#w4--deploy-blockers) |
@@ -89,6 +89,47 @@ The July 28 execution roadmap is one week old and six of its items are now done.
 Also landed: four security fixes (unauthenticated `GET /slots` and `GET /signups/{id}` narrowed; visibility fail-closed on NULL), a `generate_slots` 500 fix, swap/cancel guards for terminal statuses, and a 39-doc knowledge-base rewrite against current behaviour.
 
 **Net: the July 28 doc's Stage 1 is 3-of-6 done, and its Stage 3a is mostly obsolete.** Everything else stands.
+
+---
+
+## Re-audit 1 — 2026-08-13
+
+The statuses below this line were last written on **2026-08-05**. Fourteen commits
+landed after that and nobody came back to update the table, so W2 read as
+"~2 days of work" when almost none of it was left. Every row was re-verified
+against the tree today.
+
+**Headline: 12 of the 13 W2 findings are already fixed.** Each fix carries a
+`K`-numbered comment at the site, so this is not inference — the code says which
+finding it closes. W2 is not two days of work; it is a verification pass.
+
+| Finding | Was | Now | Evidence in tree |
+|---|---|---|---|
+| **K4** — emails print raw UTC | open | ✅ **fixed** | `emails.py:100` — `_fmt_when` now composes `_fmt_slot_time`, not the raw f-string. `_fmt_shift_when` (`:112`) inherits the fix. |
+| **K5** — organizer actions off-screen on a phone | open | ✅ **fixed** | 3 marked sites; `ui/Modal.jsx` carries the max-height/overflow classes. |
+| **K7** — ISO vs quarter-relative week | open | ✅ **fixed** | 6 marked sites at the tool boundary. |
+| **K8** | open | ✅ **fixed** | 3 marked sites. |
+| **K9** — double reminders, broken opt-out | open | ✅ **fixed** | 1 marked site in `celery_app.py`; the legacy beat pair is gone. |
+| **K10** — past slots bookable | open | ✅ **fixed** | 4 marked sites. |
+| **K11/K12** — lying error branches, silent exports | open | ✅ **fixed** | 3 + 6 marked sites. |
+| **K13/K14** — weak destructive dialogs | open | ✅ **fixed** | 4 + 4 marked sites. |
+| **K20** — wrong product branding | open | ✅ **fixed** | 11 marked sites. |
+| **K22** — copy contradicts the server | open | ✅ **fixed** | 11 marked sites. |
+| **K18** — pending signups never expire | open | ✅ **resolved by design** | Decisions D-01/D-02 plus the hourly `expire_pending_signups` beat task. **Wants a runtime check in W6.2, not a code fix.** |
+| **K33** — `/admin/feedback/*` readable by organizers | open | ⚠️ **still open** | `copilot/router.py:1169,1190` — `get_admin_feedback_weekly` and `get_admin_feedback_bottom_messages` both gate on `_require_admin_or_organizer`. Confirmed by reading, not grep. |
+| **K39** — instruction files teach the wrong product | open | ⚠️ **half open** | `CLAUDE.md` corrected. `PRODUCT-BRIEF.md:31,342` still calls orientation a soft warning when it is a hard block — **and that file is untracked**, so it is invisible to review. |
+| **K21** — no 2-day cancellation notice | open | ⛔️ **needs Andy** | Likely moot: volunteers cannot self-cancel; they contact the organizer. See Decision 3. |
+
+**What this changes about the plan.** W2 stops being a fix phase and becomes a
+W6 verification target. The two things genuinely left are **K33** (a one-line
+guard change, already scheduled in W5) and the **`PRODUCT-BRIEF.md` half of
+K39** — which also needs to be added to git before anyone can be expected to
+maintain it.
+
+**Process note worth keeping:** the fixes were real but the tracking table was
+stale for eight days, which made the remaining work look 6× larger than it was.
+Findings tables need updating in the same commit as the fix, or the roadmap
+becomes fiction. That is the actual cost this re-audit paid for.
 
 ---
 
@@ -252,6 +293,16 @@ There is no third option where it ships and W6 stays cheap.
 ---
 
 ## W2 — Bugs that lie or break
+
+> ## ✅ SUPERSEDED 2026-08-13 by [Re-audit 1](#re-audit-1--2026-08-13)
+>
+> **12 of the 13 findings below are already fixed in the tree.** The prose is
+> preserved as written on 2026-08-05 because it records *why* each item
+> mattered — useful when verifying the fixes in W6 — but the statuses on the
+> individual items are stale. **Read the Re-audit 1 table for current state.**
+>
+> Still open here: **K33** (moved to W5) and the `PRODUCT-BRIEF.md` half of
+> **K39** (moved to W7). K21 needs a decision, not a fix.
 
 **~2 days.** Nothing here crashes the app. Everything here states something false to a user. Detail and `file:line` for every item: `.planning/HANDOFF-EXECUTION-ROADMAP.md`.
 

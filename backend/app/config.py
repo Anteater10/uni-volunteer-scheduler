@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     # Release guardrails (pre-Phase-37 minimum) — see app.copilot.guardrails.
     copilot_rate_limit_messages_per_minute: int = 10
     copilot_daily_token_budget: int = 500_000  # org-wide tokens/day; 0 disables
+    # BASE-CONFIG-37: the chat endpoint was the only throttled one. Confirming
+    # a tool call is the endpoint that actually *executes* the agent's writes,
+    # so it gets its own ceiling; ratings and profile reads are cheap but were
+    # wide open. Both are deliberately loose enough that no real staff session
+    # touches them — they exist to bound a runaway client or a stolen token.
+    copilot_rate_limit_confirms_per_minute: int = 20
+    copilot_rate_limit_feedback_per_minute: int = 30
     # K26: the copilot's two mail tools have never had a transport behind
     # them. Their ``_dispatch`` seams returned True and sent nothing, so a
     # confirmed send reported "sent_count: 47" and the admin believed it.
@@ -162,14 +169,27 @@ class Settings(BaseSettings):
     # profile were never gated, so nothing else has to change.
     copilot_profile_extraction_enabled: bool = False
     # BASE-CONFIG-02 companion. Both local models load lazily on first use, per
-    # worker process, and the reranker weights are ~1.1GB — so with four uvicorn workers
-    # the first four questions after a deploy each pay a cold start, and the
+    # worker process, and the reranker weights are ~1.1GB — so with N uvicorn workers
+    # the first N questions after a deploy each pay a cold start, and the
     # first one after a restart is the one an admin is watching. Prewarming in a
     # background thread at startup moves that cost off the request path without
-    # delaying readiness. Set to false to get the lazy behaviour back (or to
-    # keep memory down on a small instance: prewarming loads both models in
-    # every worker whether or not anyone asks a question).
-    copilot_prewarm_on_startup: bool = True
+    # delaying readiness.
+    #
+    # DEFAULTS OFF, and the default is the whole lesson here. This shipped as
+    # True on 2026-08-13 and took the live Render trial down within the hour:
+    # that instance has 512MB, the app needs ~310MB idle and ~880MB with both
+    # models resident, so prewarming was an unconditional OOM. Worse, it OOMed
+    # *after* "Application startup complete" — the load happens on a background
+    # thread, so the healthcheck passed, the deploy looked good, and the
+    # instance died seconds later. Render then auto-rolled-back to an image
+    # predating migration 0041 while the database was already at 0041, so
+    # `alembic upgrade head` could not find the revision and every restart
+    # exited 255. One bad default, three failure modes.
+    #
+    # So: opt in, and only once the box is sized for it. Budget ~900MB per
+    # uvicorn worker with both models resident — this loads them in every
+    # worker whether or not anyone asks a question. See docs/deployment.md.
+    copilot_prewarm_on_startup: bool = False
 
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is
