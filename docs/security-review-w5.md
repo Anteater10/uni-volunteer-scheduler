@@ -306,6 +306,12 @@ endpoints:
 | `require_role(UserRole.organizer, UserRole.admin)` | 8 |
 | in-body `if current_user.role not in (...)` | `signups.py` ×4, `users.py` ×7 |
 
+The frontend review (W5.17) added a seventh spelling to the pile from the other
+side: `signups.py`'s `cancel_signup` takes plain `get_current_user` in its
+signature and does the staff check in the body, so a static read of the
+decorator and signature — which is how any reviewer or tooling starts — shows an
+endpoint that any authenticated caller can reach. Include it in the cleanup.
+
 No single search covers that set, which is the mechanism by which K33 sat
 unnoticed behind an admin-gated nav item, and why the first pass of this sweep
 initially mis-scoped its own target list (28 endpoints looked unguarded because
@@ -352,8 +358,19 @@ team actually operates. Two existing tests —
 `test_weekly_organizer_allowed` and `test_bottom_messages_organizer_allowed` in
 `backend/tests/copilot/api/test_feedback_admin_endpoints.py` — assert organizer
 access returns 200, so the behaviour is intentional and documented in the suite,
-not accidental. The admin-gated nav item means no organizer reaches it by
-clicking, which limits accidental exposure.
+not accidental.
+
+**Correction, 2026-08-13 (frontend authz review, W5.17).** This section
+originally said "the admin-gated nav item means no organizer reaches it by
+clicking, which limits accidental exposure". **That is false.**
+`AdminLayout.jsx` lists the Copilot feedback nav item as
+`roles: ["admin", "organizer"]`, so an organizer sees the link and reaches the
+page by clicking, and `/admin/copilot-feedback` sits in App.jsx's shared
+admin+organizer block. The behaviour matches the acceptance — organizers are
+meant to have this access — so nothing changes operationally, but the acceptance
+must not be read as resting on a mitigation that does not exist. The exposure is
+the full one described above, deliberately. `routeAuthz.test.jsx` now pins the
+route as intentionally shared so this cannot drift silently again.
 
 **Revisit trigger — this is load-bearing.** The acceptance rests entirely on
 "organizers are trusted staff". **If the copilot is ever opened to volunteers,
@@ -382,9 +399,67 @@ blocker, which removes the last open K-item from that list.
   `ENVIRONMENT` a startup failure. Confirm the dashboard value is exactly
   `development`, `staging` or `production` first. If it is unset or `prod`,
   the OpenAPI schema has been public and should be treated as disclosed.
-- **W5.4** — JWT expiry; magic-link single-use and expiry.
+- ~~**W5.4** — JWT expiry; magic-link single-use and expiry~~ — **done
+  2026-08-13** (`tests/test_jwt_expiry.py`). See "W5.4 — expiry, verified by
+  mutation" below.
 - **W5.6** — write down why broadcasts bypass the unsubscribe link (operational,
   not promotional) so it is a recorded decision rather than a scramble later.
 - **W5.7** — `token_budget_exhaustion` and `indirect_injection` are documented
   adversarial surfaces with no runner assertions. Assert them or mark them
   explicitly untested.
+
+---
+
+## W5.4 — expiry, verified by mutation · 2026-08-13
+
+No production code changed: both properties already held. What was missing was
+proof, so each new test was checked by breaking the code deliberately and
+confirming the test failed for the right reason.
+
+| Property | Where | Mutation it was proven against |
+|---|---|---|
+| Expired access token is not a credential | `get_current_user` | `options={"verify_exp": False}` → 401 test fails |
+| Expired token reads as **anonymous**, not staff | `get_optional_user` | same → `GET /slots` starts dumping every slot |
+| Minted token carries a bounded `exp` | `create_access_token` | drop the `exp` claim → no decode path can reject it |
+| Magic-link expiry | `consume_token` | remove the `expires_at` check → 3 existing tests fail |
+| Magic-link single-use | `consume_token` | remove the `consumed_at` check → **nothing fails, correctly** |
+
+The `get_optional_user` case is the one worth remembering. That path swallows
+`JWTError` and returns `None`, so an expiry regression there never surfaces as an
+auth failure — it surfaces as an expired token being treated as a *staff* caller.
+It is pinned through `GET /slots`, which dumps every slot in the database for
+staff and 404s for everyone else, so one call discriminates staff from anonymous.
+
+Single-use survives removal of its own guard because the atomic
+`UPDATE ... WHERE consumed_at IS NULL` is a genuine second guard: the second
+consumer updates 0 rows and gets `ConsumeResult.used`. Defence in depth, not a
+gap — recorded here so a future reader does not "fix" the redundancy.
+
+---
+
+## W5.17 — frontend authorization review · 2026-08-13
+
+The sweep above was backend routers only. This pass covered the ~38 routes in
+`App.jsx`, `ProtectedRoute`, the admin nav, and the unauthenticated pages.
+Pinned by `frontend/src/__tests__/routeAuthz.test.jsx` (19 cases), verified by
+mutation: widening App.jsx's `roles={["admin"]}` block to include organizers
+fails 5 tests.
+
+**No leak found.** The findings are one false claim in this document and one
+addition to S-03.
+
+What was checked, and what held:
+
+| Question | Result |
+|---|---|
+| Any route gated in the frontend but **not** on the backend? | **No.** All six admin-only screens (quarters, retrospective, users, audit logs, exports, orientation credits) hit endpoints taking `require_role(admin)`. Frontend gating is defence in depth, not the boundary. |
+| Is `role` client-forgeable? | **No.** `authContext` takes it from `GET /users/me` on every load, not from a decoded JWT claim or localStorage. |
+| Do shared screens render admin-only controls that would 403? | **No.** The one candidate — waitlist reorder on `AdminEventPage`, whose endpoints are admin-only — is gated behind `isAdmin` in the page. |
+| Do the unauthenticated pages touch anything privileged? | **No.** They call `public/*`, plus `GET /slots` (public-event-filtered via `get_optional_user`) and the check-in endpoints, all of which require a venue code behind a failure ceiling. |
+| Participant-role account on a staff URL? | Refused by `ProtectedRoute` and pinned. |
+
+Two things a route-gating test cannot cover, so they stay for W6.1: whether a
+screen an organizer *may* reach shows more than they should within it, and
+whether the refusal states read sensibly. `ProtectedRoute`'s refusal is an
+unstyled `<h2>Forbidden</h2>` with no way back — correct, and ugly. Log it with
+the K38 (loading and empty states) work, not here.
