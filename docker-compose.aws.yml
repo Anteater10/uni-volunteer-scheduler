@@ -1,0 +1,162 @@
+# EC2 + RDS single-host stack for uni-volunteer-scheduler.
+#
+# Same production topology as docker-compose.prod.yml, minus the local `db`
+# container: Postgres runs on a managed RDS instance instead. Redis, Celery,
+# the FastAPI backend, the static frontend, and the Caddy edge (automatic
+# HTTPS) still run as containers on this one EC2 host.
+#
+# Prereqs (see docs/deployment-aws.md for the full runbook):
+#   - An RDS PostgreSQL 16.x instance already created, with the `vector`
+#     extension available (RDS ships it for all 16.x builds — no parameter
+#     group change needed). Migration 0019 runs `CREATE EXTENSION IF NOT
+#     EXISTS vector` for you on first `alembic upgrade head`.
+#   - The RDS security group allows inbound 5432 from THIS EC2 instance's
+#     security group (by SG ID, not by CIDR/IP).
+#   - A domain name with a DNS A record pointed at this instance's
+#     Elastic IP (required for Caddy's automatic Let's Encrypt cert — it
+#     cannot issue a cert for a bare IP).
+#
+# Usage (run from the repo root on the EC2 instance):
+#   cp backend/.env.production.example backend/.env.production   # then fill in
+#   # Point DATABASE_URL at the RDS endpoint (found on the RDS console's
+#   # "Connectivity & security" tab), and require TLS to RDS:
+#   #   DATABASE_URL=postgresql://uvs_app:PASSWORD@<rds-endpoint>:5432/uni_volunteer?sslmode=require
+#   #
+#   # Unlike docker-compose.prod.yml, there is no local db container, so you
+#   # do NOT need to export POSTGRES_PASSWORD — the RDS password only lives
+#   # inside DATABASE_URL in backend/.env.production.
+#   export DOMAIN='scitrek.example.org'
+#   export VITE_API_URL="https://${DOMAIN}"
+#   docker compose -f docker-compose.aws.yml up -d --build
+#
+#   # Verify:
+#   curl https://${DOMAIN}/api/v1/health
+#   docker compose -f docker-compose.aws.yml ps
+
+services:
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: run migrations (incl. `CREATE EXTENSION vector`) against RDS,
+  # then seed the admin user. There is no local db healthcheck to gate on
+  # here (RDS isn't a compose service) — make sure the RDS instance's status
+  # is "Available" before you `docker compose up`, or this will just retry
+  # connection failures until it errors out.
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env.production
+    command: sh -c "alembic upgrade head && python -m app.seed_admin"
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # --proxy-headers / --forwarded-allow-ips: trust X-Forwarded-For from
+    # Caddy so the per-IP rate limiter keys on the real client. Unchanged
+    # from docker-compose.prod.yml — Caddy still overwrites XFF itself
+    # (see Caddyfile), and the compose bridge CIDR is what's pinned here,
+    # not Caddy's (unstable) address on it.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=172.16.0.0/12
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    command: celery -A app.celery_app.celery worker -l info
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app.celery inspect ping -d celery@$$HOSTNAME --timeout 10"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env.production
+    environment:
+      ENVIRONMENT: production
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    command: celery -A app.celery_app.celery beat -l info -S redbeat.RedBeatScheduler
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery.*beat' > /dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:?set VITE_API_URL e.g. https://scitrek.example.org}
+        VITE_COPILOT_ENABLED: ${VITE_COPILOT_ENABLED:-false}
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - backend
+      - frontend
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN e.g. scitrek.example.org}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  redisdata:
+  caddy_data:
+  caddy_config:
