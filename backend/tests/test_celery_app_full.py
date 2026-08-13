@@ -16,6 +16,7 @@ from app.celery_app import (
     expire_pending_signups,
     send_broadcast_email,
     send_email_notification,
+    send_magic_link_email,
     send_signup_confirmation_email,
     send_waitlist_promotion_email,
     weekly_digest,
@@ -794,3 +795,40 @@ def test_daily_send_limit_counts_transactional_notifications(db_session, monkeyp
     db_session.flush()
 
     assert celery_mod._check_daily_send_limit(db_session) is False
+
+
+# ---------------------------------------------------------------------------
+# send_magic_link_email
+# ---------------------------------------------------------------------------
+
+
+def test_magic_link_email_missing_event_warns_and_sends_nothing(
+    db_session, monkeypatch, patch_session_local, caplog
+):
+    """The warn-and-skip guard on a deleted event.
+
+    This is the transport for `POST /auth/magic/resend`, so a missing event
+    must not raise: the task would retry, and every retry re-sends nothing
+    while logging an exception. It has to send no mail either — a half-built
+    payload for a deleted event is worse than silence.
+    """
+    import uuid as _uuid
+
+    sends = []
+    monkeypatch.setattr(
+        celery_mod, "_send_email", lambda *a, **k: sends.append((a, k))
+    )
+    gone = _uuid.uuid4()
+
+    with caplog.at_level("WARNING"):
+        send_magic_link_email.run(
+            email="nobody@example.com",
+            token="raw-token",
+            event_id=str(gone),
+            base_url="https://example.test",
+        )
+
+    assert sends == [], "sent mail for an event that does not exist"
+    assert any(
+        "send_magic_link_email: missing event" in r.message for r in caplog.records
+    )
