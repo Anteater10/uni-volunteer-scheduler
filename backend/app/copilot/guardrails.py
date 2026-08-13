@@ -27,25 +27,71 @@ from ..deps import redis_client
 logger = logging.getLogger(__name__)
 
 
-def enforce_message_rate_limit(user: models.User, *, redis=None) -> None:
-    """Raise 429 when the user exceeds the per-minute message limit.
+def enforce_user_rate_limit(
+    user: models.User,
+    action: str,
+    limit: int,
+    *,
+    detail: str,
+    window_seconds: int = 60,
+    redis=None,
+) -> None:
+    """Raise 429 when one user exceeds ``limit`` calls to ``action`` per window.
 
-    Mirrors ``deps.rate_limit``'s E2E bypass so parallel Playwright workers
-    don't starve each other; the production boot guard in ``app.config``
-    guarantees that bypass can never be live in production.
+    BASE-CONFIG-37: the chat endpoint was the only throttled thing on the
+    copilot. Every cheaper endpoint around it — confirming a tool call,
+    rating an answer, reading or wiping a profile — was unmetered, and
+    ``/confirm/{call_id}`` is the one that *executes* the agent's writes.
+
+    Keyed on the user id, not the IP: ``deps.rate_limit`` keys on IP, and
+    every staff member at one school sits behind one address, so an IP
+    limit tuned for abuse would throttle a normal Saturday.
+
+    Fails OPEN on a Redis error, matching ``deps.rate_limit`` — a Redis
+    outage must not stop staff from working. Mirrors the same E2E bypass so
+    parallel Playwright workers don't starve each other; the production boot
+    guard in ``app.config`` keeps that bypass out of production.
     """
     if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
         return
     r = redis if redis is not None else redis_client
-    key = f"rate:copilot_messages:{user.id}"
-    count = r.incr(key)
-    if count == 1:
-        r.expire(key, 60)
-    if count > settings.copilot_rate_limit_messages_per_minute:
+    key = f"rate:copilot_{action}:{user.id}"
+    try:
+        count = r.incr(key)
+    except Exception:
+        logger.warning(
+            "copilot_rate_limit_unavailable action=%s user_id=%s", action, user.id
+        )
+        return
+    # Self-healing TTL: set it on the first hit, and restore it if it was ever
+    # lost, or a key that outlived its expire would lock this user out of this
+    # action permanently. Deliberately in its own try: failing to *set* the
+    # window must not also discard the ceiling we already counted against.
+    try:
+        if count == 1 or r.ttl(key) < 0:
+            r.expire(key, window_seconds)
+    except Exception:
+        logger.warning(
+            "copilot_rate_limit_ttl_failed action=%s user_id=%s", action, user.id
+        )
+    if count > limit:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Copilot rate limit reached — wait a minute before sending more messages.",
+            detail=detail,
         )
+
+
+def enforce_message_rate_limit(user: models.User, *, redis=None) -> None:
+    """Raise 429 when the user exceeds the per-minute message limit."""
+    enforce_user_rate_limit(
+        user,
+        "messages",
+        settings.copilot_rate_limit_messages_per_minute,
+        detail=(
+            "Copilot rate limit reached — wait a minute before sending more messages."
+        ),
+        redis=redis,
+    )
 
 
 def enforce_daily_token_budget(db: Session) -> None:

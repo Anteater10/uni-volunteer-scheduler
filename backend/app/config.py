@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     # Release guardrails (pre-Phase-37 minimum) — see app.copilot.guardrails.
     copilot_rate_limit_messages_per_minute: int = 10
     copilot_daily_token_budget: int = 500_000  # org-wide tokens/day; 0 disables
+    # BASE-CONFIG-37: the chat endpoint was the only throttled one. Confirming
+    # a tool call is the endpoint that actually *executes* the agent's writes,
+    # so it gets its own ceiling; ratings and profile reads are cheap but were
+    # wide open. Both are deliberately loose enough that no real staff session
+    # touches them — they exist to bound a runaway client or a stolen token.
+    copilot_rate_limit_confirms_per_minute: int = 20
+    copilot_rate_limit_feedback_per_minute: int = 30
     # K26: the copilot's two mail tools have never had a transport behind
     # them. Their ``_dispatch`` seams returned True and sent nothing, so a
     # confirmed send reported "sent_count: 47" and the admin believed it.

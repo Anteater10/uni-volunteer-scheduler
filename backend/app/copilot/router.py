@@ -49,7 +49,11 @@ from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user
 from . import llm
-from .guardrails import enforce_daily_token_budget, enforce_message_rate_limit
+from .guardrails import (
+    enforce_daily_token_budget,
+    enforce_message_rate_limit,
+    enforce_user_rate_limit,
+)
 from .memory.profile_block import load_profile_block
 from .prompts import (
     SYSTEM_PROMPT_VERSION,
@@ -115,6 +119,21 @@ def _require_admin_or_organizer(user: models.User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Copilot is restricted to admin and organizer accounts.",
         )
+
+
+def _enforce_feedback_rate_limit(user: models.User) -> None:
+    """BASE-CONFIG-37: one shared ceiling for the cheap authenticated reads.
+
+    Ratings and profile read/delete share a bucket on purpose — they are all
+    small, none of them is a plausible thing to call thirty times a minute by
+    hand, and one counter is easier for Rafael to reason about than four.
+    """
+    enforce_user_rate_limit(
+        user,
+        "feedback",
+        settings.copilot_rate_limit_feedback_per_minute,
+        detail="Too many requests — wait a minute and try again.",
+    )
 
 
 def _load_owned_session(
@@ -280,6 +299,7 @@ def get_profile(
     """
     _require_flag_on()
     _require_admin_or_organizer(current_user)
+    _enforce_feedback_rate_limit(current_user)
     row = (
         db.query(models.CopilotUserProfile)
         .filter(models.CopilotUserProfile.user_id == current_user.id)
@@ -308,6 +328,7 @@ def delete_profile(
     """
     _require_flag_on()
     _require_admin_or_organizer(current_user)
+    _enforce_feedback_rate_limit(current_user)
     row = (
         db.query(models.CopilotUserProfile)
         .filter(models.CopilotUserProfile.user_id == current_user.id)
@@ -838,6 +859,18 @@ def confirm(
     """
     _require_flag_on()
     _require_admin_or_organizer(current_user)
+    # Metered after authorization, so a rejected caller can't burn the quota
+    # of the user they're impersonating. This is the write-executing endpoint,
+    # hence its own ceiling rather than the shared feedback one.
+    enforce_user_rate_limit(
+        current_user,
+        "confirms",
+        settings.copilot_rate_limit_confirms_per_minute,
+        detail=(
+            "Too many confirmations in a row — wait a minute before "
+            "approving more actions."
+        ),
+    )
 
     # A call_id is not a capability. Being admin-or-organizer is not enough:
     # the parked call must belong to a session this user owns. Enforced for
@@ -1010,6 +1043,7 @@ def post_message_rating(
     """
     _require_flag_on()
     _require_admin_or_organizer(current_user)
+    _enforce_feedback_rate_limit(current_user)
     msg = _load_owned_message(db, message_id, current_user)
     row = (
         db.query(models.CopilotMessageRating)
@@ -1067,6 +1101,7 @@ def post_session_rating(
     """
     _require_flag_on()
     _require_admin_or_organizer(current_user)
+    _enforce_feedback_rate_limit(current_user)
     sess = _load_owned_session(db, session_id, current_user)
     n_assistant = (
         db.query(models.CopilotMessage)
