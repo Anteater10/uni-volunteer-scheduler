@@ -119,6 +119,15 @@ and all four services running.
 
 ## W5 — Security review · ~1 day
 
+**W5.1 — K33** · ✅ **CLOSED 2026-08-13 — accepted in writing, not fixed.**
+Organizers keep this access: they are trusted staff, and the 2026-08-12 ruling
+made organizer reads unscoped. Two tests already asserted the behaviour on
+purpose. Exposure, grounds, and the revisit trigger (**re-decide before the
+copilot is opened to any non-staff role**) are in
+[docs/security-review-w5.md](../docs/security-review-w5.md#accepted-risks).
+**This was the last open K-item blocking deploy; nothing on that list remains.**
+The original finding text follows, for the record:
+
 **W5.1 — K33: `/admin/feedback/*` is readable by organizers** · S · ✅verified
 `router.py:1093` and `1114` guard `GET /admin/feedback/weekly` and
 `GET /admin/feedback/bottom-messages` with `_require_admin_or_organizer`. Any
