@@ -46,6 +46,33 @@ def test_the_three_real_environments_are_accepted(good, monkeypatch):
     assert Settings().environment == good
 
 
+def test_the_default_is_production(monkeypatch):
+    """Forgetting the variable must produce the *safe* behaviour.
+
+    This is the case that actually bit us. The Render service was found running
+    ENVIRONMENT=development with /docs publicly served — a PaaS has no
+    docker-compose.prod.yml to set the variable, so it was typed by hand and
+    landed on the wrong value. Every example file and the deployment checklist
+    already said production; the default disagreed with all of them.
+
+    A default of "development" means the person deploying has to remember, and
+    forgetting is silently insecure. A default of "production" means the person
+    developing locally has to remember, and forgetting is merely inconvenient
+    (no /docs). Only one of those two failure modes is acceptable.
+    """
+    # _env_file=None is required: the repo's own .env sets ENVIRONMENT=development,
+    # so without this the test would read that file and assert the wrong thing.
+    # Disabling the file also drops the settings that have no default, hence the
+    # two explicit values below.
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql+psycopg2://u:p@localhost/x",
+        jwt_secret="test-secret-not-a-real-key",
+    )
+    assert settings.environment == "production"
+
+
 # ---------------------------------------------------------------------------
 # The flag guard: allowed in development only
 # ---------------------------------------------------------------------------

@@ -13,7 +13,21 @@ class Settings(BaseSettings):
     # as "not production" and silently downgraded both, with no error and a
     # perfectly healthy-looking deploy. A Literal turns that typo into a
     # startup failure, which is the only way a config guard fails safely.
-    environment: Literal["development", "staging", "production"] = "development"
+    #
+    # The default is "production", and that is the more important half of this
+    # fix. It used to be "development", which meant *forgetting* the variable
+    # produced the relaxed behaviour — and that is exactly what happened: the
+    # Render service was found on 2026-08-13 running ENVIRONMENT=development
+    # with /docs publicly served, because a PaaS has no docker-compose.prod.yml
+    # to set it and the variable was typed by hand. Every example file and the
+    # deployment checklist already said production; the default disagreed with
+    # all of them, and the default is what wins when someone forgets.
+    #
+    # Defaulting to production inverts who has to remember. A forgotten variable
+    # is now safe-but-inconvenient (no /docs) rather than convenient-but-exposed,
+    # and local development opts in explicitly — backend/.env.example already
+    # sets ENVIRONMENT=development, so the dev experience is unchanged.
+    environment: Literal["development", "staging", "production"] = "production"
     database_url: str
 
     # Connection pool. Sized so (pool_size + max_overflow) × uvicorn workers
