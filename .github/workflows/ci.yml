@@ -60,7 +60,12 @@ jobs:
         run: |
           cd backend
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # BASE-CONFIG-33: the lockfile, not requirements.txt. The image is
+          # built from the lock, so installing the loose file here would let CI
+          # test a different set of transitive versions than production runs —
+          # the exact failure the lockfile exists to prevent, with a green tick
+          # on it. tests/test_requirements_lock.py keeps the two in step.
+          pip install -r requirements.lock.txt
 
       - name: Create test database
         env:
@@ -241,7 +246,10 @@ jobs:
           docker compose up -d backend celery_worker celery_beat
           # wait for backend
           for i in $(seq 1 40); do
-            if curl -fsS http://localhost:8000/api/v1/healthz >/dev/null 2>&1 \
+            # /api/v1/health — not healthz. The old spelling 404s, so this loop
+            # was passing purely on the /docs fallback and never exercised the
+            # health check at all. Same path Rafael points a load balancer at.
+            if curl -fsS http://localhost:8000/api/v1/health >/dev/null 2>&1 \
                || curl -fsS http://localhost:8000/docs >/dev/null 2>&1; then
               echo "backend up"; break
             fi

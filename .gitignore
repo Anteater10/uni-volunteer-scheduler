@@ -2,8 +2,11 @@
 .DS_Store
 .env
 .env.*
-# but DO track the production env TEMPLATE (placeholders only, no real secrets)
+# but DO track the env TEMPLATES (placeholders and dev defaults only, no real
+# secrets). Without these a clean clone has no working configuration to copy.
 !backend/.env.production.example
+!backend/.env.example
+!frontend/.env.example
 *.log
 
 # --- legacy (do not push) ---

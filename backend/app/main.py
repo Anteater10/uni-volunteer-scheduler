@@ -1,6 +1,9 @@
 # backend/app/main.py
 import logging
 import os
+import threading
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -34,7 +37,69 @@ _docs_kwargs = (
     if settings.environment == "production"
     else {}
 )
-app = FastAPI(title="UCSB SciTrek Volunteer Scheduler API", **_docs_kwargs)
+
+
+def _prewarm_models() -> None:
+    """Load the two local models so the first real question doesn't pay for it.
+
+    BASE-CONFIG-02 companion. Both are lru_cache'd singletons loaded on first
+    use, per worker process — the reranker alone is ~1.1GB. Without this, the
+    first copilot question after a deploy or restart waits for that load, and
+    with several uvicorn workers the first question to each worker waits again.
+
+    Deliberately tolerant: a prewarm failure logs and returns. This runs on a
+    thread with nothing waiting on it, the lazy loaders are still in place, and
+    a copilot that cannot warm up must not be able to stop the API — every
+    non-copilot route works without either model.
+    """
+    import time
+
+    def _load_reranker():
+        from .copilot.retrieval.rerank import _model
+
+        _model()
+
+    def _load_embeddings():
+        # The local provider specifically, not whatever is configured as
+        # primary: this exists to touch the on-disk weights, and warming a Jina
+        # primary would spend an API call on a request nobody made.
+        from .corpus.embeddings import LocalBgeEmbeddingProvider
+
+        LocalBgeEmbeddingProvider(model=settings.local_embedding_model).embed(
+            ["warmup"]
+        )
+
+    for label, load in (
+        ("reranker", _load_reranker),
+        ("embeddings", _load_embeddings),
+    ):
+        started = time.monotonic()
+        try:
+            load()
+        except Exception:
+            logger.exception("model_prewarm_failed component=%s", label)
+            continue
+        logger.info(
+            "model_prewarm_ok component=%s seconds=%.1f",
+            label,
+            time.monotonic() - started,
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.copilot_enabled and settings.copilot_prewarm_on_startup:
+        # A thread, not an await: readiness must not wait on ~1.3GB of weights,
+        # or the container healthcheck fails the deploy it was meant to protect.
+        threading.Thread(
+            target=_prewarm_models, name="model-prewarm", daemon=True
+        ).start()
+    yield
+
+
+app = FastAPI(
+    title="UCSB SciTrek Volunteer Scheduler API", lifespan=lifespan, **_docs_kwargs
+)
 
 if _expose_tokens:
     logger.warning(

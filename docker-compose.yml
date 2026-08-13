@@ -1,3 +1,12 @@
+# Development stack. For production use docker-compose.prod.yml.
+#
+# BAKE_MODEL_WEIGHTS defaults to 0 here, unlike the Dockerfile's own default of
+# 1. Baking the ~1.3GB of copilot model weights is what we want in the image we
+# deploy, but paying for it on every local rebuild fills a laptop disk, and in
+# CI — which has no layer cache — it is a fresh 1.3GB download per run. Off
+# here means the models download at runtime on the first copilot question
+# instead; nothing else changes. Set BAKE_MODEL_WEIGHTS=1 in your environment
+# to reproduce a production-shaped image locally.
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -39,6 +48,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        BAKE_MODEL_WEIGHTS: ${BAKE_MODEL_WEIGHTS:-0}
     env_file:
       - ./backend/.env
     depends_on:
@@ -56,6 +67,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        BAKE_MODEL_WEIGHTS: ${BAKE_MODEL_WEIGHTS:-0}
     env_file:
       - ./backend/.env
     depends_on:
@@ -69,6 +82,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        BAKE_MODEL_WEIGHTS: ${BAKE_MODEL_WEIGHTS:-0}
     env_file:
       - ./backend/.env
     depends_on:
@@ -87,6 +102,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        BAKE_MODEL_WEIGHTS: ${BAKE_MODEL_WEIGHTS:-0}
     env_file:
       - ./backend/.env
     depends_on:

@@ -22,6 +22,19 @@ Email is sent via SendGrid in production (the dev `mailpit` catcher is dropped).
 
 ## 1. Run it locally (no internet) — verified working
 
+First, configuration. There are no defaults for the database URL or the JWT
+secret, so the app will not boot without these:
+
+```bash
+cp backend/.env.example backend/.env      # dev defaults; works as-is
+cp frontend/.env.example frontend/.env
+```
+
+Both example files document every key, including which ones are read at build
+time rather than runtime. The only values worth filling in by hand are
+`OPENROUTER_API_KEY` (for the copilot; everything else works without it) and
+fresh secrets if the stack will be reachable by anyone but you.
+
 Dev stack (backend + workers + db + redis + mailpit):
 
 ```bash
@@ -74,6 +87,44 @@ docker compose -f docker-compose.prod.yml ps
 Caddy auto-provisions a Let's Encrypt cert for `$DOMAIN`. The frontend and API are
 served from the **same origin**, so there's no CORS hop.
 
+### Build-time vs runtime configuration
+
+Most configuration is runtime: change `backend/.env.production`, restart, done.
+**Two keys are not**, and they are the ones most likely to make a healthy-looking
+deploy broken:
+
+| Key | Read at | Wrong value looks like |
+|---|---|---|
+| `VITE_API_URL` | frontend **build** | Page loads, every request fails or hits the wrong host. Must be the public https origin — not `backend:8000`, which a browser cannot resolve. |
+| `VITE_COPILOT_ENABLED` | frontend **build** | Drawer present or absent regardless of the backend's `COPILOT_ENABLED`. Set both. |
+
+They are baked into the JS bundle, so `docker compose restart frontend` will not
+pick up a new value — the frontend image has to be rebuilt. Export `VITE_API_URL`
+before `up --build`, as step 2 above does.
+
+### Model weights are baked into the backend image
+
+The copilot loads two local models: BGE for embeddings (~130MB) and a
+cross-encoder for reranking (~1.1GB). `backend/Dockerfile` downloads both at
+build time into `HF_HOME=/opt/hf-cache`, so containers never fetch from
+huggingface.co at runtime — which also means the app does not depend on that
+host being reachable, and a scaled-out replica starts warm.
+
+Consequences worth knowing:
+
+- The backend image grows from ~2.4GB to ~4.8GB, and the build needs internet.
+  If that pull size is a problem on your infrastructure, build with
+  `BAKE_MODEL_WEIGHTS=0` and mount a persistent cache at `/opt/hf-cache`
+  instead — same weights, moved from the image to a volume you have to keep.
+- `docker build --build-arg BAKE_MODEL_WEIGHTS=0` skips the download for a fast
+  local build. The app still works; it just downloads the weights on first use
+  and re-downloads them in every fresh container.
+- On startup each API worker warms both models on a background thread
+  (`COPILOT_PREWARM_ON_STARTUP=true`), so the first real question doesn't pay the
+  load. It is a daemon thread and failures only log — readiness never waits on
+  it. Set it to `false` on a memory-tight instance: prewarming holds both models
+  in every worker whether or not anyone uses the copilot.
+
 ---
 
 ## 3. Managed PaaS (Render / Railway / Fly.io)
@@ -107,11 +158,51 @@ Celery Beat schedules.
 - [ ] `EMAIL_MODE=sendgrid` with a **verified** sender domain.
 - [ ] Strong `SEED_ADMIN_PASSWORD` (or change the admin password after first login).
 - [ ] Backups for the Postgres volume / managed DB — see **Backups** below.
+- [ ] Ran the pre-migration check — see **Before every `alembic upgrade head` on
+      prod** below. Skip it only on a database you know is empty.
 - [ ] `ENVIRONMENT=production` set (compose sets it; disables /docs and
       hard-blocks `EXPOSE_TOKENS_FOR_TESTING` at boot).
 - [ ] `SENTRY_DSN` set if you want error monitoring (empty = off).
+- [ ] The **backend port is not published** — all traffic must arrive through
+      Caddy. The request-body ceiling that stands in for the unpatched
+      starlette form-parsing bug (BASE-CONFIG-36) lives in the `Caddyfile`, so a
+      directly reachable `backend:8000` bypasses it. See the comment there.
+- [ ] Login lockout left at its defaults unless you have a reason
+      (`LOGIN_MAX_FAILED_ATTEMPTS=10`, `LOGIN_LOCKOUT_MINUTES=15`). A locked
+      account returns the same 401 as a wrong password on purpose, so the only
+      place the lockout is visible is the audit log — look for
+      `user_login_locked` if staff report being unable to log in.
 - [ ] Ingest the corpus once after deploy so the copilot has something to retrieve
       (`python -m app.corpus ...`) — otherwise RAG answers come back empty.
+
+## Before every `alembic upgrade head` on prod
+
+Two commands, in this order, against the production database:
+
+```sql
+SELECT version_num FROM alembic_version;   -- where the DB actually is
+SELECT count(*) FROM signups;              -- how much history is at stake
+```
+
+Then take the dump (see **Backups**). The reason this is a ritual and not a
+suggestion: migration `0009_phase08_v1_1_schema_realignment` rewires `signups`
+from a `user_id` anchor to a `volunteer_id` one, and it cannot derive the new
+column for rows that already exist. It used to resolve that by running an
+unconditional `DELETE FROM signups` — so on a database already holding
+bookings, the first command of a deploy would erase the entire booking history
+and report success.
+
+It no longer does. Both directions of 0009 now count the table first and abort
+with the row count in the error if it is non-empty
+(`backend/tests/test_migration_0009_guard.py` holds that in place). But the
+guard only converts silent data loss into a **failed deploy**, which is still a
+failed deploy. If you hit it, the recovery is in the error message: dump, then
+backfill `volunteer_id` by hand — add it nullable, create a `volunteers` row per
+distinct signup identity, point the column at it, then `SET NOT NULL`.
+
+This only bites a database that is below 0009 and already has bookings — i.e.
+an old install being brought forward, not a fresh one. A fresh
+`upgrade head` starts from an empty table and the guard is inert.
 
 ## Backups
 

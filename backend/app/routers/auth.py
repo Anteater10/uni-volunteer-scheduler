@@ -43,6 +43,58 @@ def _hash_refresh_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+# -------------------------
+# Per-account login lockout (BASE-SEC-08)
+# -------------------------
+
+def _is_locked(user: models.User) -> bool:
+    """Whether ``user`` is inside an active lockout window.
+
+    ``locked_until`` is an absolute timestamp, so the lock expires on its own
+    and needs no sweeper — a restart mid-lockout does not release it either.
+    """
+    locked_until = user.locked_until
+    if locked_until is None:
+        return False
+    if locked_until.tzinfo is None:  # defensive: a naive value from a raw write
+        locked_until = locked_until.replace(tzinfo=timezone.utc)
+    return locked_until > datetime.now(timezone.utc)
+
+
+def _record_login_failure(db: Session, user: models.User) -> None:
+    """Count a wrong password and lock the account once the threshold is hit.
+
+    Commits, because the caller raises immediately afterwards — the whole point
+    is that this survives the failed request. Without the commit the session
+    closes unflushed and every attempt looks like the first, which is the
+    unbounded-guessing bug this exists to close.
+
+    The response the caller sends stays byte-identical to a wrong password on a
+    healthy account. That is deliberate: the endpoint is careful not to reveal
+    which accounts exist (see the ``_account_usable`` check below), and a
+    distinct "account locked" reply would hand that back by letting an attacker
+    tell a real address from a fake one. The cost is that a locked-out member of
+    staff sees "Incorrect email or password" and has to wait or ask an admin —
+    so the lock is recorded in the audit log, where an admin can see it.
+    """
+    now = datetime.now(timezone.utc)
+    user.failed_login_count = (user.failed_login_count or 0) + 1
+    user.last_failed_login_at = now
+
+    if user.failed_login_count >= settings.login_max_failed_attempts:
+        user.locked_until = now + timedelta(minutes=settings.login_lockout_minutes)
+        # Reset the counter with the lock, so the next window is a fresh N
+        # attempts rather than one attempt re-locking the account forever.
+        user.failed_login_count = 0
+        log_action(db, user, "user_login_locked", "User", str(user.id))
+        logger.warning(
+            "login_lockout user_id=%s until=%s", user.id, user.locked_until
+        )
+
+    db.add(user)
+    db.commit()
+
+
 def _issue_refresh_token(
     db: Session, user: models.User, *, family_id=None
 ) -> str:
@@ -364,7 +416,17 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
+    # BASE-SEC-08: refuse while the account is locked, BEFORE verifying the
+    # password. Checking after would let an attacker keep testing candidates
+    # against a locked account and learn from the timing of the bcrypt work
+    # whether they had guessed right, which defeats the point of locking.
+    if _is_locked(user):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
     if not verify_password(form_data.password, user.hashed_password):
+        _record_login_failure(db, user)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -377,6 +439,11 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
+
+    # The password was right, so this is the legitimate holder (or someone who
+    # already has it — in which case a stale counter is the least of it).
+    user.failed_login_count = 0
+    user.locked_until = None
 
     access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
     raw_refresh = _issue_refresh_token(db, user)

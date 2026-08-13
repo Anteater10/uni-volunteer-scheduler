@@ -30,6 +30,10 @@ ACTION_LABELS: dict[str, str] = {
     "user_reactivate": "Reactivated a user",
     "user_update": "Updated a user",
     "user_login": "Logged in",
+    # BASE-SEC-08. The login reply cannot say "locked" without revealing which
+    # email addresses are real, so this row is the only place an admin can see
+    # that an account was being guessed at.
+    "user_login_locked": "Account locked after repeated failed logins",
     "user_set_password": "Set their password from an emailed link",
     "user_change_password": "Changed their password",
     "ccpa_export": "Exported a user's personal data (CCPA)",

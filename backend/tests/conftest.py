@@ -186,7 +186,30 @@ def alembic_command(monkeypatch):
         def downgrade(self, rev: str) -> None:
             alembic_cmd_mod.downgrade(cfg, rev)
 
-    return _CmdShim()
+    yield _CmdShim()
+
+    # Hand the database back in the shape the session-scoped ``engine`` fixture
+    # created, not the shape Alembic leaves. Those are not the same thing: the
+    # migration chain seeds real rows (0038 inserts the SciTrek module catalog,
+    # 0012 seeds module templates), and an ORM test that inserts a module with a
+    # seeded slug then fails on a unique violation — in a file that has nothing
+    # to do with migrations, only because it happened to be ordered after one of
+    # these tests. Test order is randomised, so that surfaces as an intermittent
+    # failure somewhere else entirely.
+    from sqlalchemy import create_engine, text as _text
+    from app.database import Base
+
+    _drop_all_schema(url)
+    eng = create_engine(url, future=True)
+    with eng.begin() as conn:
+        # Both extensions must exist before create_all emits the DDL that uses
+        # them — corpus_chunks declares VECTOR(1024), quarters an EXCLUDE over
+        # daterange. Dropping the schema does not drop them, but a migration
+        # test may have.
+        conn.execute(_text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(_text("CREATE EXTENSION IF NOT EXISTS btree_gist"))
+    Base.metadata.create_all(eng)
+    eng.dispose()
 
 
 @pytest.fixture

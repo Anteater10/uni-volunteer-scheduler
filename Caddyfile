@@ -9,30 +9,51 @@
 # For local testing without a real domain, set DOMAIN=localhost (Caddy issues a
 # local self-signed cert) or use `http://` to skip TLS.
 {$DOMAIN} {
-    encode gzip
+	encode gzip
 
-    # Browsers may only ever reach this host over HTTPS after first contact.
-    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	# BASE-CONFIG-36 mitigation. starlette 0.50.0 silently ignores the size
+	# limits passed to request.form() for urlencoded bodies (CVSS 7.5), and
+	# login posts a urlencoded form — so the one route reachable without
+	# credentials will parse a body of any size straight into memory.
+	#
+	# The proper fix is starlette >= 1.3.1, which cannot be pinned here:
+	# fastapi 0.123.5 requires starlette < 0.51.0, and moving to a fastapi that
+	# allows 1.x (0.141.1) hangs tests/copilot/agent/test_confirm_authorization.py
+	# ::test_owner_can_still_confirm indefinitely. Verified, not assumed —
+	# see the note in PRE_DEPLOYMENT_BASELINE_REPORT.md.
+	#
+	# So the ceiling lives at the edge instead, where it does not depend on the
+	# framework honouring anything. 2MB is far above any real request this app
+	# makes: the largest are broadcast bodies and a roster CSV response, and
+	# responses are not affected by this. Raise it if a legitimate upload is
+	# ever added — and note this protects only traffic that comes through Caddy,
+	# so the backend port must not be published separately.
+	request_body {
+		max_size 2MB
+	}
 
-    # API surface (REST + SSE streaming) -> FastAPI backend. /docs, /redoc
-    # and /openapi.json stay routed but the backend disables them when
-    # ENVIRONMENT=production, so they 404 in prod.
-    # reverse_proxy streams Server-Sent Events correctly out of the box.
-    @api path /api/* /openapi.json /docs /redoc
-    handle @api {
-        reverse_proxy backend:8000 {
-            # Overwrite, do not append. Caddy's default is to append the
-            # peer address to any X-Forwarded-For the client sent, and
-            # uvicorn reads the *leftmost* entry — so a client sending
-            # "X-Forwarded-For: 9.9.9.9" chooses its own rate-limit bucket
-            # and can mint a fresh one per request. {remote_host} is the
-            # address of the TCP peer, which the client cannot forge.
-            header_up X-Forwarded-For {remote_host}
-        }
-    }
+	# Browsers may only ever reach this host over HTTPS after first contact.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
-    # Everything else -> the static React SPA.
-    handle {
-        reverse_proxy frontend:80
-    }
+	# API surface (REST + SSE streaming) -> FastAPI backend. /docs, /redoc
+	# and /openapi.json stay routed but the backend disables them when
+	# ENVIRONMENT=production, so they 404 in prod.
+	# reverse_proxy streams Server-Sent Events correctly out of the box.
+	@api path /api/* /openapi.json /docs /redoc
+	handle @api {
+		reverse_proxy backend:8000 {
+			# Overwrite, do not append. Caddy's default is to append the
+			# peer address to any X-Forwarded-For the client sent, and
+			# uvicorn reads the *leftmost* entry — so a client sending
+			# "X-Forwarded-For: 9.9.9.9" chooses its own rate-limit bucket
+			# and can mint a fresh one per request. {remote_host} is the
+			# address of the TCP peer, which the client cannot forge.
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+
+	# Everything else -> the static React SPA.
+	handle {
+		reverse_proxy frontend:80
+	}
 }

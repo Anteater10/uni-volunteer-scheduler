@@ -24,7 +24,7 @@ from . import models
 from .services import notification_dedup
 from .emails import BUILDERS, SessionBooking
 from .magic_link_service import CONFIRM_PURPOSES
-from .observability import init_sentry
+from .observability import init_sentry, mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,10 @@ def _send_via_smtp(
     question (smtp_host, smtp_username, smtp_password, smtp_use_tls).
     """
     if not settings.email_from_address:
-        logger.warning("email_from_address not configured; skipping send to=%s", to_email)
+        logger.warning(
+            "email_from_address not configured; skipping send to=%s",
+            mask_email(to_email),
+        )
         return
 
     msg = EmailMessage()
@@ -141,7 +144,7 @@ def _send_via_sendgrid(
     if not settings.sendgrid_api_key or not settings.email_from_address:
         logger.warning(
             "sendgrid_api_key or email_from_address missing; skipping send to=%s",
-            to_email,
+            mask_email(to_email),
         )
         return
 
@@ -210,7 +213,7 @@ def _send_email(
         logger.exception(
             "email_send_failed mode=%s to=%s subject=%s",
             settings.email_mode,
-            to_email,
+            mask_email(to_email),
             subject,
         )
         raise
@@ -667,7 +670,7 @@ def send_broadcast_email(
             "broadcast_email_sent signup_id=%s shift_signup_id=%s to=%s",
             signup_id,
             shift_signup_id,
-            to_email,
+            mask_email(to_email),
         )
     finally:
         db.close()
@@ -759,6 +762,57 @@ def send_signup_confirmation_email(
         if getattr(settings, "debug", False):
             logger.debug("signup_confirmation_token_preview token=%s", token)
         # NO Notification row per D-11
+    finally:
+        db.close()
+
+
+@celery.task(name="app.send_magic_link_email")
+def send_magic_link_email(
+    email: str,
+    token: str,
+    event_id: str,
+    base_url: str,
+    ttl_minutes: int | None = None,
+) -> None:
+    """Send the single-link "confirm your signup" email.
+
+    BASE-QUAL-16: ``emails.build_magic_link_email`` is a builder with no
+    transport, and its only caller threw the payload away — so
+    ``POST /auth/magic/resend`` minted a token, logged a send, returned
+    ``{"status": "ok"}`` and delivered nothing. This is the missing transport.
+
+    Mirrors send_signup_confirmation_email: one-shot, no sent_notifications
+    dedup row (D-11 — resend is an explicit user request, and the 60s
+    idempotency window plus the per-email hourly rate limit are the controls
+    that stop duplicates), warn-and-skip on a missing event. Enqueue strictly
+    AFTER db.commit(): the token row this mail carries is written by the
+    caller's transaction.
+
+    The raw token is passed in rather than looked up because only its hash is
+    stored — there is no way to recover it from the database.
+    """
+    from uuid import UUID
+
+    from .emails import build_magic_link_email
+
+    db: Session = SessionLocal()
+    try:
+        event = db.get(models.Event, UUID(str(event_id)))
+        if event is None:
+            logger.warning(
+                "send_magic_link_email: missing event, skipping event_id=%s",
+                event_id,
+            )
+            return
+        payload = build_magic_link_email(
+            email, token, event, base_url, ttl_minutes=ttl_minutes
+        )
+        _send_email(
+            payload["to"],
+            payload["subject"],
+            payload.get("text", ""),
+            html_body=payload.get("html"),
+        )
     finally:
         db.close()
 

@@ -15,6 +15,7 @@ Every status marker in this document was re-verified against the working tree to
 - [What closed since 2026-07-28](#what-closed-since-2026-07-28)
 - [The spine](#the-spine)
 - [W0 — Land what is already built](#w0--land-what-is-already-built)
+- [W0.5 — Index the tables that grow](#w05--index-the-tables-that-grow)
 - [W1 — Finish shifts](#w1--finish-shifts)
 - [W2 — Bugs that lie or break](#w2--bugs-that-lie-or-break)
 - [W3 — Decide Phase B](#w3--decide-phase-b)
@@ -97,6 +98,9 @@ Also landed: four security fixes (unauthenticated `GET /slots` and `GET /signups
 W0  land #57 → rebase #54, #50 → land           ← do today; unblocks CI for everything
      │
      ▼
+W0.5 index migration + audit_logs retention      ← ~1h, additive, conflicts with nothing
+     │
+     ▼
 W1  commit + PR feat/shifts                      ← biggest risk; uncommitted right now
      │
      ▼
@@ -148,6 +152,76 @@ Note the interaction: #50 retires the Imports nav item but deliberately leaves t
 `test_event_on_last_day_of_quarter_gets_final_week` uses `date.today()` with `end_date == today`, against a rule that compares to **UTC** today. One-day flakiness window west of UTC. Switch to the UTC basis and give it margin, or it rots the same way.
 
 **Gate:** CI green on main. Every open PR either merged or consciously parked.
+
+---
+
+## W0.5 — Index the tables that grow
+
+**~1 hour.** One additive migration. No behaviour change, no API change, nothing to
+re-test by hand. Placed first because it is isolated: it touches no file any other
+work item touches, so it cannot conflict with `feat/shifts` or the W2 bug fixes.
+
+Verified against the live `uni_volunteer` schema on 2026-08-12, not inferred from
+the models.
+
+**What is already right.** The shift-era tables are properly indexed —
+`shift_signups(shift_id, status)`, the waitlist-order index
+`(shift_id, timestamp, id)`, `shifts(event_id, sort_order)`,
+`slots(shift_id, sort_order)`, `magic_link_tokens(email, created_at DESC)` for
+rate-limiting, `volunteers(email)`, `events(quarter_id)`. Uniqueness is enforced in
+the database (`uq_signups_volunteer_id_slot_id`,
+`uq_shift_signups_volunteer_id_shift_id`), which is what actually prevents
+double-booking under concurrency. This section is not a rescue job.
+
+**What is missing.** Postgres does not index foreign keys automatically, and these
+are queried:
+
+| Column | Consequence today |
+|---|---|
+| `audit_logs` — every column | Only a primary key exists. Filtering or sorting the audit page is a full scan plus a sort, and the table never shrinks. |
+| `magic_link_tokens.expires_at` | The purge task (`celery_app.py:913`) scans the whole table on every run. |
+| `magic_link_tokens.signup_id` / `.shift_signup_id` / `.volunteer_id` | Cascade deletes and per-signup token lookups scan. |
+| `slots.event_id` | Loading one event's slots scans the slots table. |
+| `signups.slot_id` | The unique index is `(volunteer_id, slot_id)` — wrong column order to serve a lookup by slot. |
+| `session_attendance.slot_id` | Same shape: the unique index leads with `shift_signup_id`. |
+| `notifications.user_id`, `custom_answers.signup_id`, `events.owner_id` | Same pattern. |
+
+Unindexed child FKs also make `ON DELETE CASCADE` slow: deleting one event scans
+every child table.
+
+**Scale reality.** At SciTrek's volume — hundreds of events and low thousands of
+signups a year — none of this is visible. A sequential scan over 10,000 rows is a
+millisecond. The two that matter are the tables that grow regardless of how many
+events run: **`audit_logs`** (every admin action, forever, no retention policy) and
+**`magic_link_tokens`** (one per signup and per reminder email). Those degrade the
+audit page and the nightly purge first, on a horizon of a year or two of real use.
+This is structural analysis — the dev database holds 1 event and 19 audit rows, so
+nothing here was measured under load.
+
+### W0.5.1 — Add the missing indexes · S
+One Alembic revision, ~8 `CREATE INDEX` statements. Use `CONCURRENTLY` if it runs
+against a populated production database; plain `CREATE INDEX` is fine pre-launch.
+
+**Interaction with [W1](#w1--finish-shifts):** `signups` and `session_attendance`
+are the pre-shift booking model. If `feat/shifts` retires `signups`, indexing
+`signups.slot_id` is wasted work. Index the shift-era and always-growing tables now;
+hold the two legacy-model indexes until W1 lands and the booking model is settled.
+
+### W0.5.2 — Decide an `audit_logs` retention window · S
+An index makes the audit page fast; it does not stop the table growing forever.
+Pick a window (12 months is the usual answer for a university program) and add a
+purge to the existing Celery beat schedule, or consciously decide to keep
+everything and say so in the handoff. **Andy's call** — see
+[Decisions](#decisions-only-andy-can-make).
+
+**Not in scope here:** the near-total absence of eager loading (6 uses of
+`selectinload`/`joinedload` in the whole backend, across 2 files) means roster and
+list endpoints likely fire one query per row. That is a real N+1 risk, but it needs
+per-endpoint measurement rather than a blanket migration — it belongs in
+[W6](#w6--runtime-verification), where things get run under load.
+
+**Gate:** migration applies and rolls back cleanly on a copy of the dev database;
+CI green.
 
 ---
 

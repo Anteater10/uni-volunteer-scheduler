@@ -5,6 +5,8 @@ build
 .DS_Store
 .env
 .env.*
+# but DO track the template — a clean clone needs something to copy.
+!.env.example
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

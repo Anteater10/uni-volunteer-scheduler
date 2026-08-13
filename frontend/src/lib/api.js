@@ -211,8 +211,39 @@ async function login(email, password) {
   return json;
 }
 
-function logout() {
-  authStorage.clearAll();
+/**
+ * Log out on the server, then locally.
+ *
+ * BASE-SEC-43: this used to clear localStorage and nothing else, so the refresh
+ * token stayed valid on the server for its full 14 days — someone who had
+ * captured it kept a renewable session after the user believed they had logged
+ * out. POST /auth/logout already existed and already revoked the token; it was
+ * simply never called.
+ *
+ * The local clear runs whatever the server says. A network failure or an
+ * already-expired access token must not leave the user still logged in on this
+ * device, which is the outcome they can actually see — so the revoke is
+ * best-effort and the clear is unconditional.
+ */
+async function logout() {
+  const refreshToken = authStorage.getRefreshToken();
+  const accessToken = authStorage.getToken();
+  try {
+    if (refreshToken && accessToken) {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+    }
+  } catch {
+    // Offline, or the API is down. Fall through to the local clear.
+  } finally {
+    authStorage.clearAll();
+  }
 }
 
 async function setPasswordFromInvite(token, password) {

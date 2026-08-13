@@ -126,6 +126,11 @@ def resend_magic_link(
         # Do not leak signup existence — return success regardless
         return {"status": "ok"}
     event = db.query(Event).filter_by(id=anchor_event_id(db, signup)).first()
-    dispatch_email(db, signup, event, settings.backend_base_url)
+    send = dispatch_email(db, signup, event, settings.backend_base_url)
     db.commit()
+    # After the commit, never before: the send tasks look the booking and the
+    # token up in their own session, so enqueuing first is a race the worker
+    # usually wins on an idle queue (BASE-QUAL-16).
+    if send is not None:
+        send()
     return {"status": "ok"}
