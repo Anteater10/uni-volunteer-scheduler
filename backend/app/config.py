@@ -161,6 +161,15 @@ class Settings(BaseSettings):
     # Turning this on is enough to make it run again: reads of an existing
     # profile were never gated, so nothing else has to change.
     copilot_profile_extraction_enabled: bool = False
+    # BASE-CONFIG-02 companion. Both local models load lazily on first use, per
+    # worker process, and the reranker weights are ~1.1GB — so with four uvicorn workers
+    # the first four questions after a deploy each pay a cold start, and the
+    # first one after a restart is the one an admin is watching. Prewarming in a
+    # background thread at startup moves that cost off the request path without
+    # delaying readiness. Set to false to get the lazy behaviour back (or to
+    # keep memory down on a small instance: prewarming loads both models in
+    # every worker whether or not anyone asks a question).
+    copilot_prewarm_on_startup: bool = True
 
     # --- Phase 31 (v1.4): Knowledge corpus + pgvector ingestion ---
     # Embedding pipeline. The vector(1024) column on corpus_chunks is

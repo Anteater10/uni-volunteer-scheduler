@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: scitrek-preview
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

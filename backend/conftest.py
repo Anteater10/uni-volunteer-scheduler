@@ -1,4 +1,12 @@
 import os
+
+# Before importing the app: the `client` fixture enters TestClient as a context
+# manager, which runs the lifespan, which would otherwise start the model
+# prewarm thread — ~400MB of weights loaded (and downloaded, in a CI container
+# with no baked cache) for a suite that monkeypatches every model call anyway.
+# Must precede the app import because Settings is instantiated at that point.
+os.environ.setdefault("COPILOT_PREWARM_ON_STARTUP", "0")
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, text

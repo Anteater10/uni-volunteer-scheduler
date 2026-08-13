@@ -22,6 +22,19 @@ Email is sent via SendGrid in production (the dev `mailpit` catcher is dropped).
 
 ## 1. Run it locally (no internet) — verified working
 
+First, configuration. There are no defaults for the database URL or the JWT
+secret, so the app will not boot without these:
+
+```bash
+cp backend/.env.example backend/.env      # dev defaults; works as-is
+cp frontend/.env.example frontend/.env
+```
+
+Both example files document every key, including which ones are read at build
+time rather than runtime. The only values worth filling in by hand are
+`OPENROUTER_API_KEY` (for the copilot; everything else works without it) and
+fresh secrets if the stack will be reachable by anyone but you.
+
 Dev stack (backend + workers + db + redis + mailpit):
 
 ```bash
@@ -73,6 +86,44 @@ docker compose -f docker-compose.prod.yml ps
 
 Caddy auto-provisions a Let's Encrypt cert for `$DOMAIN`. The frontend and API are
 served from the **same origin**, so there's no CORS hop.
+
+### Build-time vs runtime configuration
+
+Most configuration is runtime: change `backend/.env.production`, restart, done.
+**Two keys are not**, and they are the ones most likely to make a healthy-looking
+deploy broken:
+
+| Key | Read at | Wrong value looks like |
+|---|---|---|
+| `VITE_API_URL` | frontend **build** | Page loads, every request fails or hits the wrong host. Must be the public https origin — not `backend:8000`, which a browser cannot resolve. |
+| `VITE_COPILOT_ENABLED` | frontend **build** | Drawer present or absent regardless of the backend's `COPILOT_ENABLED`. Set both. |
+
+They are baked into the JS bundle, so `docker compose restart frontend` will not
+pick up a new value — the frontend image has to be rebuilt. Export `VITE_API_URL`
+before `up --build`, as step 2 above does.
+
+### Model weights are baked into the backend image
+
+The copilot loads two local models: BGE for embeddings (~130MB) and a
+cross-encoder for reranking (~1.1GB). `backend/Dockerfile` downloads both at
+build time into `HF_HOME=/opt/hf-cache`, so containers never fetch from
+huggingface.co at runtime — which also means the app does not depend on that
+host being reachable, and a scaled-out replica starts warm.
+
+Consequences worth knowing:
+
+- The backend image grows from ~2.4GB to ~4.8GB, and the build needs internet.
+  If that pull size is a problem on your infrastructure, build with
+  `BAKE_MODEL_WEIGHTS=0` and mount a persistent cache at `/opt/hf-cache`
+  instead — same weights, moved from the image to a volume you have to keep.
+- `docker build --build-arg BAKE_MODEL_WEIGHTS=0` skips the download for a fast
+  local build. The app still works; it just downloads the weights on first use
+  and re-downloads them in every fresh container.
+- On startup each API worker warms both models on a background thread
+  (`COPILOT_PREWARM_ON_STARTUP=true`), so the first real question doesn't pay the
+  load. It is a daemon thread and failures only log — readiness never waits on
+  it. Set it to `false` on a memory-tight instance: prewarming holds both models
+  in every worker whether or not anyone uses the copilot.
 
 ---
 
