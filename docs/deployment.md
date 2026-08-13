@@ -119,11 +119,44 @@ Consequences worth knowing:
 - `docker build --build-arg BAKE_MODEL_WEIGHTS=0` skips the download for a fast
   local build. The app still works; it just downloads the weights on first use
   and re-downloads them in every fresh container.
-- On startup each API worker warms both models on a background thread
-  (`COPILOT_PREWARM_ON_STARTUP=true`), so the first real question doesn't pay the
-  load. It is a daemon thread and failures only log — readiness never waits on
-  it. Set it to `false` on a memory-tight instance: prewarming holds both models
-  in every worker whether or not anyone uses the copilot.
+- `COPILOT_PREWARM_ON_STARTUP` **defaults to `false`.** When enabled, each API
+  worker warms both models on a background thread so the first real question
+  doesn't pay the ~30s load. It is a daemon thread and failures only log —
+  readiness never waits on it. **Do not turn it on before reading the memory
+  budget below**; it is off by default because turning it on took the live
+  Render trial down.
+
+### Memory budget — read this before choosing an instance size
+
+Measured 2026-08-13. The models are the dominant cost and they are resident
+**per worker process**, not per server, because each worker caches its own copy:
+
+| State | RSS |
+|---|---|
+| App running, weights on disk only | **~310 MB** |
+| App running, both models resident | **~880 MB per worker** |
+
+So budget roughly **900MB per uvicorn worker**, plus headroom:
+
+| Workers | Minimum instance |
+|---|---|
+| 1 | 2 GB |
+| 2 | 4 GB |
+| 4 | 8 GB |
+
+Two traps this arithmetic exposes:
+
+- **More workers is not free.** The usual reflex — raise `--workers` for
+  throughput — costs ~900MB each here. Two workers on a correctly sized box beat
+  eight that OOM.
+- **512MB cannot prewarm at all.** One resident copy is already ~370MB over that
+  ceiling, so no worker-count tuning rescues it. Leave prewarm off and let the
+  models load lazily, which only pulls in what a given question needs.
+
+**How prewarm fails, so you recognise it.** It OOMs *after* `Application startup
+complete`, because the load runs on a background thread. The healthcheck passes,
+the deploy reports success, and the instance dies seconds later. If you see a
+clean startup followed by an unexplained OOM, this is it.
 
 ---
 
@@ -133,7 +166,9 @@ Same images, but data services are managed (no `db`/`redis` containers):
 
 1. Provision a **Postgres with pgvector** and a **Redis** add-on.
 2. Deploy three services from `backend/Dockerfile` with different start commands:
-   - web: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 4`
+   - web: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2`
+     (see the memory budget above before raising this — each worker can hold its
+     own ~880MB copy of the models)
    - worker: `celery -A app.celery_app.celery worker -l info`
    - beat: `celery -A app.celery_app.celery beat -l info -S redbeat.RedBeatScheduler`
    - run `alembic upgrade head && python -m app.seed_admin` as a release/pre-deploy step.
@@ -145,7 +180,9 @@ Same images, but data services are managed (no `db`/`redis` containers):
 
 Watch-outs: the backend image is large (PyTorch + sentence-transformers for local
 BGE embeddings) — some free tiers reject it. Free tiers also sleep, which breaks
-Celery Beat schedules.
+Celery Beat schedules. And the small instance sizes these platforms default to
+(512MB on Render's starter) cannot hold the copilot models — leave
+`COPILOT_PREWARM_ON_STARTUP` off there and read the memory budget above.
 
 ---
 
@@ -158,6 +195,10 @@ Celery Beat schedules.
 - [ ] `EMAIL_MODE=sendgrid` with a **verified** sender domain.
 - [ ] Strong `SEED_ADMIN_PASSWORD` (or change the admin password after first login).
 - [ ] Backups for the Postgres volume / managed DB — see **Backups** below.
+- [ ] Auto-rollback **disabled** on the service that runs migrations — see
+      **Never roll back a deploy that applied a migration** below.
+- [ ] Instance sized against the **Memory budget** above if
+      `COPILOT_PREWARM_ON_STARTUP=true` (it defaults to `false`).
 - [ ] Ran the pre-migration check — see **Before every `alembic upgrade head` on
       prod** below. Skip it only on a database you know is empty.
 - [ ] `ENVIRONMENT=production` set (compose sets it; disables /docs and
@@ -203,6 +244,37 @@ distinct signup identity, point the column at it, then `SET NOT NULL`.
 This only bites a database that is below 0009 and already has bookings — i.e.
 an old install being brought forward, not a fresh one. A fresh
 `upgrade head` starts from an empty table and the guard is inert.
+
+## Never roll back a deploy that applied a migration
+
+**Roll forward instead.** This is the single most likely way to turn a broken
+deploy into a service that cannot start at all, and it is not hypothetical — it
+happened on 2026-08-13.
+
+The mechanism: a deploy runs `alembic upgrade head`, the schema moves to the new
+revision, and then the app crashes for an unrelated reason. The platform's
+auto-rollback restores the **previous image** — but nothing rolls back the
+**database**. That old image's `alembic/versions/` directory does not contain the
+revision the database is now stamped with, so its release step fails:
+
+```
+ERROR [alembic.util.messaging] Can't locate revision identified by '0041_login_failure_lockout'
+```
+
+`backend/start_render.sh` runs `set -eu`, so that failure exits before uvicorn
+starts, and the platform retries the same doomed image forever — every restart
+exits 255. The service is now down harder than the bug that started it.
+
+What to do instead:
+
+- **Turn auto-rollback off** on any service whose release step runs migrations,
+  or move migrations to a manual step you run deliberately.
+- **When a deploy breaks, fix forward**: change the env var or the code and
+  deploy a *newer* image. Never redeploy an older one.
+- **If you are already stuck in the 255 loop**, deploy the newest image (the one
+  matching the schema) — that alone clears it. Only if you genuinely must run
+  older code, `alembic downgrade` the database to that revision first, and read
+  the enum caveat under **Known issues** before you do.
 
 ## Backups
 
