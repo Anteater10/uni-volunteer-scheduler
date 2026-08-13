@@ -1,11 +1,12 @@
 """Check-in HTTP endpoints for Phase 3."""
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from uuid import UUID
 
 from ..database import get_db
-from ..deps import ensure_event_staff_access, rate_limit, require_role
+from ..deps import ensure_event_staff_access, rate_limit, redis_client, require_role
 from ..models import Event, ShiftSignup, Signup, Slot, UserRole
 from ..schemas import (
     CheckInLookupResponse,
@@ -38,9 +39,60 @@ from ..services.check_in_service import (
     undo_check_in,
     undo_session_check_in,
 )
+from ..services.venue_code_attempts import (
+    VenueCodeLockedError,
+    assert_not_locked,
+    clear as clear_venue_code_failures,
+    record_failure as record_venue_code_failure,
+)
 from .roster import _build_roster
 
 router = APIRouter(tags=["check-in"])
+
+
+@contextmanager
+def _venue_code_ceiling(request: Request, event_id: UUID):
+    """W5 S-02: bound how many wrong venue codes one caller may try.
+
+    Wraps the service call on every no-auth endpoint whose only gate is the
+    4-digit code. A wrong code is counted; a correct one forgives the caller's
+    earlier fumbles. Keyed per caller address, not per event, so burning the
+    ceiling cannot shut down check-in for everyone at a visit — see
+    ``services/venue_code_attempts`` for why that distinction matters and what
+    it depends on.
+
+    ``VenueCodeError`` is re-raised untouched so each endpoint keeps returning
+    its existing 403 body; only the lockout is new.
+    """
+    caller = request.client.host if request.client else "unknown"
+    try:
+        assert_not_locked(redis_client, event_id, caller)
+    except VenueCodeLockedError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "TOO_MANY_VENUE_CODE_ATTEMPTS",
+                "message": (
+                    "Too many incorrect venue codes. Ask the organizer to read "
+                    "the code out again, then wait a few minutes."
+                ),
+            },
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+    try:
+        yield
+    except VenueCodeError:
+        record_venue_code_failure(redis_client, event_id, caller)
+        raise
+    except BaseException:
+        # The code was *accepted*; the failure is downstream (outside the
+        # check-in window, unknown email, bad transition). Forgive the caller's
+        # earlier typos anyway — they have demonstrably got the code right, and
+        # a volunteer who arrives early should not be walking around with a
+        # half-burnt ceiling.
+        clear_venue_code_failures(redis_client, event_id, caller)
+        raise
+    clear_venue_code_failures(redis_client, event_id, caller)
 
 
 def _check_in_shift(option) -> CheckInShift:
@@ -253,13 +305,15 @@ def organizer_undo_check_in_session(
 def self_check_in_endpoint(
     event_id: UUID,
     body: SelfCheckInRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Student self-check-in with venue code. No auth required."""
     try:
-        signup = self_check_in(
-            db, event_id, body.signup_id, body.venue_code, actor_id=None
-        )
+        with _venue_code_ceiling(request, event_id):
+            signup = self_check_in(
+                db, event_id, body.signup_id, body.venue_code, actor_id=None
+            )
         db.commit()
         db.refresh(signup)
         return signup
@@ -397,6 +451,7 @@ def reopen_event_endpoint(
 def check_in_lookup_endpoint(
     event_id: UUID,
     body: EventCheckInByEmailRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Issue #31 UX rework, step 1: the volunteer identifies with their email
@@ -405,9 +460,10 @@ def check_in_lookup_endpoint(
     Venue-code gated: the QR URL carries the code.
     """
     try:
-        volunteer, rows = lookup_check_in_options(
-            db, event_id, body.email, body.venue_code
-        )
+        with _venue_code_ceiling(request, event_id):
+            volunteer, rows = lookup_check_in_options(
+                db, event_id, body.email, body.venue_code
+            )
     except VenueCodeError:
         raise HTTPException(
             status_code=403,
@@ -442,6 +498,7 @@ def check_in_lookup_endpoint(
 def check_in_selected_endpoint(
     event_id: UUID,
     body: CheckInSelectedRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Issue #31 UX rework, step 2: check in exactly the shifts the volunteer
@@ -449,9 +506,10 @@ def check_in_selected_endpoint(
     Venue-code gated: the QR URL carries the code.
     """
     try:
-        volunteer, results = check_in_selected(
-            db, event_id, body.email, body.venue_code, body.unit_ids
-        )
+        with _venue_code_ceiling(request, event_id):
+            volunteer, results = check_in_selected(
+                db, event_id, body.email, body.venue_code, body.unit_ids
+            )
     except VenueCodeError:
         raise HTTPException(
             status_code=403,
@@ -526,6 +584,7 @@ def check_in_selected_endpoint(
 def event_check_in_by_email_endpoint(
     event_id: UUID,
     body: EventCheckInByEmailRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Event-QR self-check-in. The organizer displays a single QR per event;
@@ -537,9 +596,10 @@ def event_check_in_by_email_endpoint(
     time window still gates every transition.
     """
     try:
-        volunteer, results = event_check_in_by_email(
-            db, event_id, body.email, body.venue_code
-        )
+        with _venue_code_ceiling(request, event_id):
+            volunteer, results = event_check_in_by_email(
+                db, event_id, body.email, body.venue_code
+            )
     except VenueCodeError:
         raise HTTPException(
             status_code=403,

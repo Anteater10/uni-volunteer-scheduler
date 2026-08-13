@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     login_max_failed_attempts: int = 10
     login_lockout_minutes: int = 15
 
+    # W5 S-02: ceiling on wrong venue-code guesses, per (event, caller address).
+    # The code is only four digits — 10,000 candidates — and it is the sole gate
+    # on four no-auth check-in endpoints. 10 per 15 minutes puts a distributed
+    # attacker in the region of a thousand addresses to cover the space, while a
+    # volunteer scanning the event QR never records a failure at all (the URL
+    # carries the code) and an organizer typing it by hand gets ten tries plus a
+    # reset on success. Keyed per caller, NOT per event, so nobody can burn the
+    # ceiling to shut down check-in for a whole classroom.
+    # See app/services/venue_code_attempts.py for the full reasoning.
+    venue_code_max_attempts: int = 10
+    venue_code_attempt_window_seconds: int = 900
+
     # Magic-link confirmation
     magic_link_ttl_minutes: int = 15
     magic_link_max_per_email_per_hour: int = 5

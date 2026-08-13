@@ -86,7 +86,46 @@ edit that produces no failing request anywhere.
 
 ---
 
-## S-02 — the venue code is four digits, and never rotates · MEDIUM · ⛔️ needs a decision
+## S-02 — the venue code is four digits, and never rotates · MEDIUM · ✅ fixed
+
+> **Decided 2026-08-13 by Andy Subramanian: keep four digits, add an attempt
+> ceiling.** Implemented in `app/services/venue_code_attempts.py`, wired into all
+> four gated endpoints via `_venue_code_ceiling` in `routers/check_in.py`.
+> Default 10 wrong codes per 15 minutes, keyed on **(event, caller address)**.
+>
+> **Why per caller and not per event.** An event-wide counter would let anyone
+> shut down check-in for every volunteer at a visit by deliberately burning the
+> ceiling — trading an information leak for an outage on the one flow that has to
+> work on a classroom floor. That is a worse bargain than the leak.
+>
+> **This control depends on S-01.** Before proxy headers were trusted, every
+> caller resolved to Render's proxy, so a per-caller counter *would have been*
+> event-wide in practice, with exactly the DoS property above. If
+> `--proxy-headers` is ever dropped, this protection inverts into an outage;
+> `tests/test_proxy_headers.py` exists to prevent that.
+>
+> **Volunteers never trip it.** The QR URL carries the code, so the normal path
+> submits a correct one. Only manual entry can fail, and a correct code forgives
+> earlier fumbles — including when the request then fails downstream (arriving
+> early, outside the check-in window), so being early never burns the ceiling.
+>
+> **Residual risk, unchanged and accepted.** A per-caller ceiling does not stop a
+> distributed attacker: at 10 per 15 minutes, covering all 10,000 candidates needs
+> on the order of a thousand distinct addresses. That is the bar four digits can
+> support. If the threat model ever includes a motivated distributed attacker, the
+> answer is a longer code, not a tighter ceiling.
+>
+> **Redis failures fail open**, matching `deps.rate_limit` — "the guess ceiling is
+> off for the duration" beats "nobody at the event can check in". The boundary is
+> still `_require_venue_code`, which is unaffected.
+>
+> Tests: `tests/test_venue_code_ceiling.py` (14, the counter and its failure
+> modes) and `tests/test_venue_code_ceiling_endpoints.py` (8, parametrized over
+> all four endpoints — a helper wrapping three of four is the failure mode there).
+
+The original finding follows, for the record.
+
+
 
 `models.py:255` declares `venue_code = Column(String(4))` and `roster.py:41`
 fills it with `f"{secrets.randbelow(10000):04d}"` — a **10,000-value** space,
