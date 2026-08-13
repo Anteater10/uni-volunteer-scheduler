@@ -116,7 +116,7 @@ finding it closes. W2 is not two days of work; it is a verification pass.
 | **K20** — wrong product branding | open | ✅ **fixed** | 11 marked sites. |
 | **K22** — copy contradicts the server | open | ✅ **fixed** | 11 marked sites. |
 | **K18** — pending signups never expire | open | ✅ **resolved by design** | Decisions D-01/D-02 plus the hourly `expire_pending_signups` beat task. **Wants a runtime check in W6.2, not a code fix.** |
-| **K33** — `/admin/feedback/*` readable by organizers | open | ⚠️ **still open** | `copilot/router.py:1169,1190` — `get_admin_feedback_weekly` and `get_admin_feedback_bottom_messages` both gate on `_require_admin_or_organizer`. Confirmed by reading, not grep. |
+| **K33** — `/admin/feedback/*` readable by organizers | open | ✅ **closed 2026-08-13 — accepted, not fixed** | Decision: organizers are trusted staff, consistent with the 2026-08-12 unscoped-reads ruling. Two existing tests (`test_weekly_organizer_allowed`, `test_bottom_messages_organizer_allowed`) already asserted this behaviour deliberately. Exposure and revisit trigger recorded in [docs/security-review-w5.md](../docs/security-review-w5.md#k33--organizers-can-read-other-staffs-copilot-conversations). **No longer a deploy blocker.** |
 | **K39** — instruction files teach the wrong product | open | ⚠️ **half open** | `CLAUDE.md` corrected. `PRODUCT-BRIEF.md:31,342` still calls orientation a soft warning when it is a hard block — **and that file is untracked**, so it is invisible to review. |
 | **K21** — no 2-day cancellation notice | open | ⛔️ **needs Andy** | Likely moot: volunteers cannot self-cancel; they contact the organizer. See Decision 3. |
 
