@@ -2499,6 +2499,29 @@ def ccpa_delete(
             )
         )
 
+    # BASE-CONFIG-37: the same omission as the Volunteer block above, one
+    # feature later. The copilot writes two columns of staff-authored free
+    # text keyed to this user id — an LLM-written summary of how they work,
+    # and whatever they typed into a feedback box. Neither has analytic value
+    # once the person is gone, and both are named in the PII-at-rest decision
+    # (docs/pii-at-rest-decision.md) as things erasure must cover. A CCPA
+    # delete that leaves them behind makes that decision false.
+    copilot_profiles_deleted = (
+        db.query(models.CopilotUserProfile)
+        .filter(models.CopilotUserProfile.user_id == user.id)
+        .delete(synchronize_session=False)
+    )
+    # The rating *values* are aggregate signal about answer quality and stay;
+    # only the free-text comment is personal. Blanked rather than deleted so
+    # the thumbs-up/down history stays intact.
+    copilot_comments_cleared = 0
+    for _model in (models.CopilotMessageRating, models.CopilotSessionRating):
+        copilot_comments_cleared += (
+            db.query(_model)
+            .filter(_model.user_id == user.id, _model.comment.isnot(None))
+            .update({"comment": None}, synchronize_session=False)
+        )
+
     log_action(
         db, admin_user, "ccpa_delete", "User", str(user.id),
         extra={
@@ -2507,6 +2530,8 @@ def ccpa_delete(
             "volunteer_anonymized": volunteer_anonymized,
             "preferences_deleted": prefs_deleted,
             "orientation_credits_anonymized": credits_anonymized,
+            "copilot_profiles_deleted": copilot_profiles_deleted,
+            "copilot_comments_cleared": copilot_comments_cleared,
         },
     )
     db.commit()
