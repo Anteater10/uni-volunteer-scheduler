@@ -1,12 +1,19 @@
 # backend/app/config.py
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     # Core
-    # "development" | "production" — production disables API docs and hard-blocks
-    # EXPOSE_TOKENS_FOR_TESTING (see assert_test_mode_allowed).
-    environment: str = "development"
+    # W5 S-05: this is a Literal, not a str, on purpose. Two protections hang
+    # off this one value — API docs suppression and the EXPOSE_TOKENS_FOR_TESTING
+    # refusal — and both used to be spelled `== "production"` against a
+    # free-form string. ENVIRONMENT=prod, =Production, or unset therefore read
+    # as "not production" and silently downgraded both, with no error and a
+    # perfectly healthy-looking deploy. A Literal turns that typo into a
+    # startup failure, which is the only way a config guard fails safely.
+    environment: Literal["development", "staging", "production"] = "development"
     database_url: str
 
     # Connection pool. Sized so (pool_size + max_overflow) × uvicorn workers
@@ -264,10 +271,19 @@ def assert_test_mode_allowed(environment: str, *, expose_tokens: bool) -> None:
     endpoints, disables rate limiting, and leaks confirmation tokens in
     signup responses — one stray env var must never turn all three on
     against a reachable host.
+
+    W5 S-05: this check is fail-closed — the flag is permitted only in
+    development, rather than refused only in production. The old form
+    (`== "production"`) meant every value that was not exactly that string
+    allowed all three behaviours, so a staging box, or a production box whose
+    ENVIRONMENT was spelled "prod", accepted the flag silently. Listing where
+    the flag *is* allowed cannot fail that way: a new environment name has to
+    be added here deliberately before it can turn any of this on.
     """
-    if expose_tokens and environment == "production":
+    if expose_tokens and environment != "development":
         raise RuntimeError(
-            "EXPOSE_TOKENS_FOR_TESTING=1 is set while ENVIRONMENT=production. "
+            f"EXPOSE_TOKENS_FOR_TESTING=1 is set while ENVIRONMENT={environment}. "
             "This flag mounts unauthenticated destructive endpoints, disables "
-            "rate limiting, and leaks auth tokens. Unset it before starting."
+            "rate limiting, and leaks auth tokens. It is allowed only when "
+            "ENVIRONMENT=development. Unset it before starting."
         )

@@ -19,23 +19,45 @@ by reading one file.
 
 | Router | Endpoints | Swept | Findings |
 |---|---|---|---|
-| `signups.py` | 4 | ✅ | none |
+| `admin.py` | 59 | ✅ | none — 59/59 guarded |
+| `copilot/router.py` | 13 | ✅ | K33 (accepted) |
+| `check_in.py` | 12 | ✅ | **S-01**, **S-02** |
+| `shifts.py` | 11 | ✅ | none — previously remediated |
+| `events.py` | 11 | ✅ | none |
 | `users.py` | 10 | ✅ | none — see note below |
 | `auth.py` | 8 | ✅ | S-04 (OIDC, open decision) |
+| `slots.py` | 7 | ✅ | none — previously remediated |
+| `organizer.py` | 5 | ✅ | none |
+| `public/events.py` | 5 | ✅ | none — public by design |
+| `broadcasts.py` | 3 | ✅ | none |
+| `signups.py` | 3 | ✅ | none |
+| `public/signups.py` | 3 | ✅ | none — public by design |
+| `preferences.py` | 2 | ✅ | none — `manage_token` gated |
+| `magic.py` | 2 | ✅ | none — token is the credential |
+| `public/orientation.py` | 2 | ✅ | **S-06** (accepted) |
+| `test_helpers.py` | 2 | ✅ | none — double-gated |
 | `notifications.py` | 1 | ✅ | none |
-| `check_in.py` | 12 | ✅ | **S-01**, **S-02** |
-| `admin.py` | 59 | ☐ | — |
-| `copilot/router.py` | 13 | ☐ | K33 (accepted) |
-| `shifts.py` | 11 | ☐ | — |
-| `events.py` | 11 | ☐ | — |
-| `slots.py` | 7 | ☐ | — |
-| `organizer.py` | 5 | ☐ | — |
-| `broadcasts.py` | 3 | ☐ | — |
-| `preferences.py` | 2 | ☐ | — |
-| `magic.py` | 2 | ☐ | — |
-| `roster.py` | 1 | ☐ | — |
-| `test_helpers.py` | 2 | ☐ | — |
-| **Total** | **150** | **35 (23%)** | |
+| `roster.py` | 1 | ✅ | none |
+| **Total** | **160** | **160 (100%)** | |
+| *app-wide config* | — | ✅ | **S-05** |
+
+**The earlier count of 150 was low.** The `public/` sub-package (10 endpoints
+across three files) sits in `app/routers/public/`, not `app/routers/`, and was
+missed by the first pass — the same shape of omission as S-03, one directory up.
+The true surface is 160 across 19 routers.
+
+**Method note, because it changed the result.** The first pass over the
+remaining routers used a line-oriented script and reported 22 endpoints with no
+role guard. Nearly all were false positives, from two causes: multi-line
+`@router.post(...)` decorators, which truncated the signature before the
+`Depends` was reached, and stacked decorators — `GET /audit-logs` and its legacy
+`GET /audit_logs` alias are two decorators on one guarded handler, which a
+line-oriented reader attributes to the wrong function. Re-running over the
+Python AST, matching decorator `dependencies=` and every signature default,
+brought it to 32 unguarded-in-signature, all of which are accounted for above:
+public-by-design, token-gated, venue-code-gated, or checked in the handler body.
+**Do not trust a grep for this.** Two independent passes disagreed by 20
+endpoints in the direction of false alarm, and S-03 is why a third would too.
 
 **`users.py` deserves a positive note**, because it is the file where privilege
 escalation would most likely live and it is built correctly. `PATCH /me` uses a
@@ -182,9 +204,96 @@ which is the actual exposure. Awaiting Andy's call.
 
 ---
 
+## S-05 — two protections hung off one fail-open string compare · MEDIUM · ✅ fixed
+
+`environment` was a free-form `str` defaulting to `"development"`, and two
+separate protections tested it with `== "production"`:
+
+```python
+environment: str = "development"                     # config.py
+if expose_tokens and environment == "production":    # config.py
+_docs_kwargs = {...} if settings.environment == "production" else {}   # main.py
+```
+
+**Why this is fail-open.** Every value that is not *exactly* `"production"`
+reads as "not production" and turns both protections off. `ENVIRONMENT=prod`,
+`Production`, `PRODUCTION`, `live`, or the variable simply never being set all
+qualify — and `prod` is the spelling Render, Fly and ECS all invite. Nothing
+raises, nothing logs, and the deploy passes its healthcheck looking perfectly
+normal. That is the same signature as the prewarm OOM: a silent downgrade that
+presents as success.
+
+**What comes off when it downgrades:**
+
+1. `/docs`, `/redoc` and `/openapi.json` are served publicly — a complete,
+   machine-readable map of all 160 endpoints, their schemas and their required
+   fields, to anyone who has the hostname.
+2. The refusal to boot with `EXPOSE_TOKENS_FOR_TESTING=1` goes inert. That flag
+   mounts two unauthenticated destructive endpoints (`DELETE /api/v1/test/
+   seed-cleanup`, `DELETE /api/v1/test/event-signups-cleanup`, which bulk-cancel
+   signups), **disables rate limiting**, and returns confirmation tokens in
+   signup responses. One env var, all three.
+
+Protection 2 has a second, independent gate — the router is only included when
+the flag is set — so exposure needs both the flag *and* a non-`development`
+environment name. Protection 1 has no second gate.
+
+**Fix, in the fail-closed direction both times.** `environment` is now
+`Literal["development", "staging", "production"]`, so a misspelling is a startup
+`ValidationError` rather than a quiet downgrade. The flag check became
+`!= "development"` (allow-list where it *is* permitted) and the docs check
+became `== "development"` (serve only where intended). Listing the safe case
+cannot fail open when a new environment name is added; listing the unsafe case
+always can. The error message now names the offending value, because a guard
+that fires without saying which environment tripped it costs an hour mid-deploy.
+
+**Regression test:** `backend/tests/test_environment_guard.py`, 14 cases. The
+load-bearing ones are the *negative* tests — `staging` and the five misspellings.
+A test asserting that `production` blocks the flag passes against the broken code
+too, which is precisely how this survived earlier review.
+
+**Two caveats worth stating plainly.**
+
+- **This is a breaking config change.** If the Render backend service currently
+  has `ENVIRONMENT` set to anything outside the three literals, the next deploy
+  fails at startup. That is the intended behaviour — Render holds the previous
+  instance when a deploy fails its healthcheck, so the service stays up — but it
+  needs checking in the dashboard *before* deploying, not after.
+- **Whether the live service was actually exposed is unverified.** The backend
+  service was created through the Render dashboard, not `render.yaml` (which
+  defines only the static frontend), so its environment variables are not in the
+  repo and this review cannot read them. If `ENVIRONMENT` is unset or spelled
+  `prod` there, item 1 above has been live for the duration of the trial and the
+  OpenAPI schema should be assumed public. The code defect stands regardless of
+  what the dashboard says.
+
+---
+
+## S-06 — orientation status is a public lookup by email · LOW · ✅ accepted
+
+`GET /public/orientation-status?email=` and `GET /public/orientation-check?email=`
+return whether a given address holds orientation credit, with no credential.
+
+The docstring claims enumeration defense via "identical response shape for
+unknown and known emails" (D-08). That is true of the *shape* and not of the
+*value*: an address with credit returns `true`, an unknown address returns
+`false`, so the endpoint does answer "has this person done SciTrek orientation".
+The real defense is the 5/min/IP rate limit — and note that limit only began
+working per-caller once S-01 landed; before it, all callers shared one bucket.
+
+**Accepted, not fixed.** The disclosure is one boolean about UCSB volunteer
+training, not identity or contact data, and it is inherent to the feature: the
+signup page has to tell a volunteer whether they need orientation before they
+can sign up, and there is no credential to gate it with in an account-less
+product. The correction needed is to the comment, not the code — the claim
+"identical response shape" should not be read as "no oracle", because a future
+reviewer trusting that line would skip the endpoint.
+
+---
+
 ## S-03 — six spellings of "staff" · LOW (maintainability) · ☐ open
 
-The same authorization rule is expressed six different ways across 150
+The same authorization rule is expressed six different ways across 160
 endpoints:
 
 | Idiom | Sites |
@@ -259,11 +368,20 @@ blocker, which removes the last open K-item from that list.
 
 ## Still to do
 
-- Sweep the remaining 12 routers (115 endpoints), `admin.py` first by volume and
-  `broadcasts.py` first by risk.
-- **W5.3** — confirm the unauthenticated surface (public signup, magic-link
-  manage, the five `check_in.py` endpoints) cannot enumerate volunteers beyond
-  what S-02 describes.
+- ~~Sweep the remaining 12 routers~~ — **done.** 160/160 endpoints, 19 routers.
+  Findings: S-05 (config, fixed), S-06 (accepted). No unguarded staff endpoint
+  was found anywhere in the remaining surface.
+- **W5.3** — mostly discharged by the completed sweep: the unauthenticated
+  surface is `public/*` (10), `magic.py` (2), `preferences.py` (2), and the five
+  `check_in.py` endpoints, and each is either token-gated, venue-code-gated, or
+  visibility-filtered with 404-not-403 so a private event's existence is never
+  confirmed. `slots.py`, `shifts.py` and `check_in.py`'s `GET /signups/{id}` were
+  remediated in an earlier sweep and their reasoning is recorded in-file.
+  Remaining: confirm `magic.py` token expiry and single-use, which is W5.4.
+- **Andy — check before the next Render deploy.** S-05 makes an out-of-range
+  `ENVIRONMENT` a startup failure. Confirm the dashboard value is exactly
+  `development`, `staging` or `production` first. If it is unset or `prod`,
+  the OpenAPI schema has been public and should be treated as disclosed.
 - **W5.4** — JWT expiry; magic-link single-use and expiry.
 - **W5.6** — write down why broadcasts bypass the unsubscribe link (operational,
   not promotional) so it is a recorded decision rather than a scramble later.
