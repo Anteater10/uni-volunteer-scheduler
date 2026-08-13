@@ -50,6 +50,13 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # Explicit, not inherited: the deployed image must carry the copilot
+        # model weights. Without them the first question on each fresh
+        # container downloads ~1.3GB from huggingface.co on a path a user is
+        # waiting on, and a deploy silently depends on that host being
+        # reachable. The dev compose file deliberately sets this to 0.
+        BAKE_MODEL_WEIGHTS: 1
     env_file:
       - ./backend/.env.production
     depends_on:
@@ -62,6 +69,13 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # Explicit, not inherited: the deployed image must carry the copilot
+        # model weights. Without them the first question on each fresh
+        # container downloads ~1.3GB from huggingface.co on a path a user is
+        # waiting on, and a deploy silently depends on that host being
+        # reachable. The dev compose file deliberately sets this to 0.
+        BAKE_MODEL_WEIGHTS: 1
     env_file:
       - ./backend/.env.production
     environment:
@@ -97,6 +111,13 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # Explicit, not inherited: the deployed image must carry the copilot
+        # model weights. Without them the first question on each fresh
+        # container downloads ~1.3GB from huggingface.co on a path a user is
+        # waiting on, and a deploy silently depends on that host being
+        # reachable. The dev compose file deliberately sets this to 0.
+        BAKE_MODEL_WEIGHTS: 1
     env_file:
       - ./backend/.env.production
     environment:
@@ -119,6 +140,13 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # Explicit, not inherited: the deployed image must carry the copilot
+        # model weights. Without them the first question on each fresh
+        # container downloads ~1.3GB from huggingface.co on a path a user is
+        # waiting on, and a deploy silently depends on that host being
+        # reachable. The dev compose file deliberately sets this to 0.
+        BAKE_MODEL_WEIGHTS: 1
     env_file:
       - ./backend/.env.production
     environment:
