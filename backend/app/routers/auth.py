@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from authlib.integrations.starlette_client import OAuth
 from pydantic import BaseModel
 
 from .. import models, schemas
@@ -28,8 +27,6 @@ from ..services.password_reset import check_reset_rate_limit, send_reset_email
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-oauth = OAuth()
 
 
 # -------------------------
@@ -222,22 +219,13 @@ def _consume_refresh_token(db: Session, raw: str) -> tuple[models.User, object]:
     return user, rt.family_id
 
 
-# -------------------------
-# OIDC / SSO setup
-# -------------------------
+# W5.5 / S-04, 2026-08-13: the OIDC client registration and the two /sso/*
+# endpoints that used it were deleted here. See tests/test_no_sso_surface.py for
+# what they did, why half-wired was worse than absent, and what has to be decided
+# before campus SSO is attempted again.
 
 class RefreshRequest(BaseModel):
     refresh_token: str
-
-
-if settings.oidc_client_id and settings.oidc_client_secret and settings.oidc_issuer:
-    oauth.register(
-        name="university_sso",
-        client_id=settings.oidc_client_id,
-        client_secret=settings.oidc_client_secret,
-        server_metadata_url=f"{settings.oidc_issuer}/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile"},
-    )
 
 
 # -------------------------
@@ -502,49 +490,3 @@ def logout(
     return {"detail": "Logged out"}
 
 
-@router.get("/sso/login")
-async def sso_login(request: Request):
-    if "university_sso" not in oauth:
-        raise HTTPException(status_code=503, detail="SSO not configured")
-    redirect_uri = settings.oidc_redirect_uri
-    return await oauth.university_sso.authorize_redirect(request, redirect_uri)
-
-
-@router.get("/sso/callback")
-async def sso_callback(request: Request, db: Session = Depends(get_db)):
-    if "university_sso" not in oauth:
-        raise HTTPException(status_code=503, detail="SSO not configured")
-
-    token = await oauth.university_sso.authorize_access_token(request)
-    userinfo = token.get("userinfo") or {}
-
-    email = userinfo.get("email")
-    name = userinfo.get("name") or email
-
-    if not email:
-        raise HTTPException(status_code=400, detail="No email in SSO response")
-
-    user = db.query(models.User).filter(models.User.email == email).first()
-    if not user:
-        user = models.User(
-            name=name,
-            email=email,
-            role=models.UserRole.participant,
-            hashed_password=hash_password(str(uuid.uuid4())),
-        )
-        db.add(user)
-        db.flush()
-        log_action(db, user, "sso_register", "User", str(user.id))
-
-    access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
-    raw_refresh = _issue_refresh_token(db, user)
-
-    log_action(db, user, "sso_login", "User", str(user.id))
-
-    db.commit()
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "refresh_token": raw_refresh,
-    }

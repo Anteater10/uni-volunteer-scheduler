@@ -64,12 +64,6 @@ class Settings(BaseSettings):
     twilio_auth_token: str | None = None
     twilio_from_number: str | None = None
 
-    # OIDC SSO (for SAML/OIDC via Authlib)
-    oidc_client_id: str | None = None
-    oidc_client_secret: str | None = None
-    oidc_issuer: str | None = None      # e.g. https://accounts.google.com or your IdP
-    oidc_redirect_uri: str | None = None  # e.g. https://yourdomain/api/v1/auth/sso/callback
-
     # Rate limiting
     rate_limit_window_seconds: int = 60
     rate_limit_max_requests: int = 100
