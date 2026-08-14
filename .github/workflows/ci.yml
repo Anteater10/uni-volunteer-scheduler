@@ -237,6 +237,13 @@ jobs:
           SEED_ADMIN_EMAIL=admin@e2e.example.com
           SEED_ADMIN_PASSWORD=Admin!2345
           EXPOSE_TOKENS_FOR_TESTING=1
+          # Required, not incidental: EXPOSE_TOKENS_FOR_TESTING=1 is refused at
+          # import outside development (config.assert_test_mode_allowed), so
+          # omitting this stops the backend from starting at all. The e2e specs
+          # need token exposure to read magic-link tokens, so this stack really
+          # is a development stack. Do not "harden" this to production — that
+          # does not test production, it just breaks the suite.
+          ENVIRONMENT=development
           EOF
 
       - name: docker compose up
@@ -244,14 +251,26 @@ jobs:
           docker compose up -d db redis
           docker compose run --rm migrate
           docker compose up -d backend celery_worker celery_beat
-          # wait for backend
+          # Wait for the backend, and FAIL if it never arrives.
+          #
+          # This loop used to fall through silently after 40 tries, so the step
+          # reported success over a dead backend and the real failure surfaced
+          # two steps later as "Connection refused" from the seed script. It also
+          # accepted /docs as a fallback probe, which stopped meaning anything
+          # once /docs became 404 outside development (W5 S-05) — both probes
+          # were dead at once and nothing said so. One probe now, and a hard
+          # failure with logs.
+          #
+          # /api/v1/health, not /healthz: the old spelling 404s. Same path
+          # Rafael points a load balancer at, so this exercises it for real.
           for i in $(seq 1 40); do
-            # /api/v1/health — not healthz. The old spelling 404s, so this loop
-            # was passing purely on the /docs fallback and never exercised the
-            # health check at all. Same path Rafael points a load balancer at.
-            if curl -fsS http://localhost:8000/api/v1/health >/dev/null 2>&1 \
-               || curl -fsS http://localhost:8000/docs >/dev/null 2>&1; then
+            if curl -fsS http://localhost:8000/api/v1/health >/dev/null 2>&1; then
               echo "backend up"; break
+            fi
+            if [ "$i" -eq 40 ]; then
+              echo "::error::backend never became healthy on /api/v1/health"
+              docker compose logs --no-color --tail=200 backend
+              exit 1
             fi
             sleep 2
           done
