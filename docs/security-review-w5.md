@@ -402,8 +402,14 @@ blocker, which removes the last open K-item from that list.
 - ~~**W5.4** — JWT expiry; magic-link single-use and expiry~~ — **done
   2026-08-13** (`tests/test_jwt_expiry.py`). See "W5.4 — expiry, verified by
   mutation" below.
-- **W5.6** — write down why broadcasts bypass the unsubscribe link (operational,
-  not promotional) so it is a recorded decision rather than a scramble later.
+- ~~**W5.6** — write down why broadcasts bypass the unsubscribe link~~ — **done
+  2026-08-13.** Recorded in
+  [docs/broadcast-email-policy-decision.md](broadcast-email-policy-decision.md),
+  with the CAN-SPAM basis (operational/relationship mail is exempt from the
+  opt-out requirement), the three rejected alternatives, and the two triggers
+  that re-open it: recipient selection widening beyond "holds a spot", or any
+  promotional content. Pinned by `tests/test_broadcast_optout_policy.py`, which
+  asserts both halves of the asymmetry so a well-meaning "fix" fails loudly.
 - **W5.7** — `token_budget_exhaustion` and `indirect_injection` are documented
   adversarial surfaces with no runner assertions. Assert them or mark them
   explicitly untested.
