@@ -32,10 +32,15 @@ logger = logging.getLogger(__name__)
 _expose_tokens = os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1"
 assert_test_mode_allowed(settings.environment, expose_tokens=_expose_tokens)
 
+# W5 S-05: fail-closed. Interactive docs are served only in development, not
+# "everywhere except the one string 'production'". /docs, /redoc and
+# /openapi.json together publish every route, every schema and every required
+# field in the app — a complete map for anyone who finds the hostname — so the
+# check that hides them must not be one typo away from serving them.
 _docs_kwargs = (
-    {"docs_url": None, "redoc_url": None, "openapi_url": None}
-    if settings.environment == "production"
-    else {}
+    {}
+    if settings.environment == "development"
+    else {"docs_url": None, "redoc_url": None, "openapi_url": None}
 )
 
 

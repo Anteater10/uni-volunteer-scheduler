@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import get_current_user, require_role, log_action, hash_password
+from ..deps import get_current_user, hash_password, log_action, require_admin
 from ..services.invite import send_invite_email
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ def anonymize_me(
 def list_users(
     include_inactive: bool = Query(False),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Phase 16 Plan 02 (D-13): admins + organizers only; participants excluded.
 
@@ -121,7 +121,7 @@ def list_users(
 def admin_create_user(
     user_in: schemas.UserCreate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """
     Admin-only: create a user with a specific role and password.
@@ -154,7 +154,7 @@ def admin_create_user(
 def invite_user(
     body: schemas.UserInvite,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.admin)),
+    actor: models.User = Depends(require_admin),
 ):
     """Phase 16 Plan 02 (D-11, D-41): magic-link invite flow.
 
@@ -201,7 +201,7 @@ def invite_user(
 def deactivate_user(
     user_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.admin)),
+    actor: models.User = Depends(require_admin),
 ):
     """Phase 16 Plan 02 (D-10, D-12): soft-disable a user via is_active.
 
@@ -244,7 +244,7 @@ def deactivate_user(
 def reactivate_user(
     user_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.admin)),
+    actor: models.User = Depends(require_admin),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
@@ -262,7 +262,7 @@ def reactivate_user(
 def admin_get_user(
     user_id: str,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
@@ -280,7 +280,7 @@ def admin_update_user(
     user_id: str,
     updates: schemas.UserAdminUpdate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     user = (
         db.query(models.User)

@@ -62,10 +62,25 @@ class TestProductionGuardrail:
 
         assert_test_mode_allowed("production", expose_tokens=False)
 
-    def test_settings_environment_defaults_to_development(self):
-        from app.config import settings
+    def test_settings_environment_defaults_to_production(self):
+        """W5 S-05: this test used to assert the default was "development", and
+        that assertion is why the unsafe default survived.
 
-        assert settings.environment == "development"
+        A default of "development" means forgetting the variable produces the
+        relaxed behaviour — /docs served publicly, and the
+        EXPOSE_TOKENS_FOR_TESTING refusal inert. That is exactly what happened
+        on the live Render service, which was found on 2026-08-13 running
+        ENVIRONMENT=development with /docs public. The default now fails safe.
+
+        Note this reads the process-wide ``settings`` singleton, so it asserts
+        the *ambient* value, not the class default — it passes here because CI
+        sets no ENVIRONMENT. The rigorous version, which disables .env loading
+        so it cannot be fooled by an ambient value, is
+        ``test_environment_guard.py::test_the_default_is_production``.
+        """
+        from app.config import Settings
+
+        assert Settings.model_fields["environment"].default == "production"
 
 
 class TestSecurityHeaders:
@@ -76,7 +91,39 @@ class TestSecurityHeaders:
             == "default-src 'none'; frame-ancestors 'none'"
         )
 
-    def test_docs_exempt_from_csp_in_dev(self, client):
+    def test_docs_paths_are_exempt_from_csp(self, client):
+        """The exemption is path-based, so it holds whether or not docs are
+        mounted.
+
+        This previously asserted ``status_code == 200``, which silently made it
+        a test of two things: the CSP exemption *and* the app being in
+        development. Once the default environment became production (W5 S-05)
+        the second half broke the first. Status is deliberately not asserted —
+        whether /docs is served is the environment's business, and
+        ``test_docs_are_not_served_under_the_default_environment`` below covers
+        that separately.
+        """
         resp = client.get("/docs")
-        assert resp.status_code == 200
         assert "Content-Security-Policy" not in resp.headers
+        # Still passed through the middleware, so the non-CSP headers are set.
+        assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+
+    def test_docs_are_not_served_under_the_default_environment(self, client):
+        """The actual security property, which nothing asserted before.
+
+        /docs, /redoc and /openapi.json together publish every route, schema and
+        required field in the app. With no ENVIRONMENT set — the state the Render
+        service was found in — they must not be served.
+        """
+        from app.config import settings
+
+        if settings.environment == "development":
+            pytest.skip(
+                "ENVIRONMENT=development is set (a local .env), so docs are "
+                "served here by design; this asserts the default, not dev."
+            )
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert client.get(path).status_code == 404, (
+                f"{path} is being served outside development — the S-05 "
+                "docs suppression is not in effect"
+            )

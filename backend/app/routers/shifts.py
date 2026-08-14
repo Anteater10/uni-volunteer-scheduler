@@ -18,13 +18,11 @@ from ..deps import (
     get_optional_user,
     is_staff,
     log_action,
-    require_role,
+    require_staff,
 )
 from ..services import quarter_service, shift_service
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
-
-require_staff = require_role(models.UserRole.organizer, models.UserRole.admin)
 
 
 def _event_or_404(db: Session, event_id) -> models.Event:

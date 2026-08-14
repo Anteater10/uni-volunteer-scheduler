@@ -47,7 +47,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..config import settings
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import STAFF_ROLES, get_current_user
 from . import llm
 from .guardrails import (
     enforce_daily_token_budget,
@@ -114,7 +114,13 @@ def _require_flag_on() -> None:
 
 
 def _require_admin_or_organizer(user: models.User) -> None:
-    if user.role not in (models.UserRole.admin, models.UserRole.organizer):
+    """Same role set as `deps.require_staff`, different 403 copy.
+
+    Not a duplicate spelling (S-03): the copilot answers a support question
+    rather than serving an endpoint, so the message names the surface. The role
+    set is read from STAFF_ROLES so only the wording is local.
+    """
+    if user.role not in STAFF_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Copilot is restricted to admin and organizer accounts.",

@@ -28,6 +28,7 @@ from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._ask import ask_for, suggesting
 from app.copilot.agent.tools.base import Tool
+from app.deps import STAFF_ROLES
 from app.models import User, UserRole
 
 _STAFF_SCHEMA = [
@@ -116,7 +117,7 @@ _LAST_ADMIN = (
 def _list_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     q = db.query(User).filter(
         User.deleted_at.is_(None),
-        User.role.in_([UserRole.admin, UserRole.organizer]),
+        User.role.in_(STAFF_ROLES),
     )
     if args.get("include_inactive") is not True:
         q = q.filter(User.is_active.is_(True))

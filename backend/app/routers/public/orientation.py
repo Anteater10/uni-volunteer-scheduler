@@ -5,6 +5,16 @@ GET /public/orientation-check?email=&event_id=        — Phase 21: cross-week/c
 
 Enumeration defense (D-08): identical response shape for unknown and known
 emails. Rate-limited at 5/min/IP.
+
+W5 S-06 — read that claim precisely. The response *shape* is identical; the
+boolean is not. A known address with credit returns true and an unknown one
+returns false, so these endpoints *are* an oracle for "has this person done
+SciTrek orientation". The rate limit is the actual defense, not the shape.
+
+Accepted as a LOW risk: the disclosure is one boolean about volunteer training,
+and it is inherent to the flow — an account-less signup page has to tell a
+volunteer whether they need orientation, and has no credential to gate it with.
+Do not read "identical response shape" as "no enumeration risk here".
 """
 from uuid import UUID
 
