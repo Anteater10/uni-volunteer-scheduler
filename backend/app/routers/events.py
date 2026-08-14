@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, log_action, ensure_event_staff_access
+from ..deps import ensure_event_staff_access, log_action, require_staff
 from ..services import event_deletion_service, quarter_service, shift_service
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -80,9 +80,7 @@ def _validate_slot_range_within_event(
 def create_event(
     event_in: schemas.EventCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     _validate_event_dates(event_in.start_date, event_in.end_date)
     _validate_module_slug(db, event_in.module_slug)
@@ -218,9 +216,7 @@ def list_events(
         None, description="Only events linked to this academic quarter"
     ),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     # Staff-only: EventRead exposes owner_id and non-public events. The
     # anonymous surface is /public/events (PublicEventRead).
@@ -234,9 +230,7 @@ def list_events(
 def get_event(
     event_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -250,9 +244,7 @@ def update_event(
     event_id: str,
     event_in: schemas.EventUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -314,9 +306,7 @@ def update_event(
 def delete_event(
     event_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -347,9 +337,7 @@ def generate_slots(
     event_id: str,
     recurrence: schemas.SlotRecurrenceCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     """Generate recurring bookable units for an event.
 
@@ -468,9 +456,7 @@ def generate_slots(
 def list_custom_questions(
     event_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -493,9 +479,7 @@ def create_custom_question(
     event_id: str,
     question_in: schemas.CustomQuestionCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -523,9 +507,7 @@ def update_custom_question(
     question_id: str,
     updates: schemas.CustomQuestionUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     question = (
         db.query(models.CustomQuestion)
@@ -553,9 +535,7 @@ def update_custom_question(
 def delete_custom_question(
     question_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     question = (
         db.query(models.CustomQuestion)

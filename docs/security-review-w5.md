@@ -291,7 +291,7 @@ reviewer trusting that line would skip the endpoint.
 
 ---
 
-## S-03 — six spellings of "staff" · LOW (maintainability) · ☐ open
+## S-03 — six spellings of "staff" · LOW (maintainability) · ✅ fixed 2026-08-14
 
 The same authorization rule is expressed six different ways across 160
 endpoints:
@@ -322,9 +322,53 @@ obstacle to ever auditing this surface again**, including by whoever inherits it
 Recommend one cleanup commit collapsing all six onto `require_role`, scheduled
 *after* the sweep so it does not churn the files being read.
 
+### Resolution
+
+There is now one definition, `deps.STAFF_ROLES`, and two dependencies built from
+it — `require_admin` and `require_staff`. Every call site reads a name; nothing
+constructs a guard inline. `require_role` survives as the factory but is a
+private detail of `deps.py`.
+
+What changed, by spelling:
+
+| Was | Now |
+|---|---|
+| `require_role(models.UserRole.admin)` ×42 | `Depends(require_admin)` |
+| the three staff-pair orderings/import styles ×53 | `Depends(require_staff)` |
+| `shifts.py`'s local `require_staff = require_role(...)` alias | imported from `deps` |
+| in-body checks in `signups.py` ×4 | `Depends(require_staff)` in the signature |
+| `copilot.router._require_admin_or_organizer` | kept, now reads `STAFF_ROLES` |
+| `deps.is_staff` | kept, now reads `STAFF_ROLES` |
+
+**Two guards were deliberately kept.** `is_staff` is a predicate, not a
+dependency, because the endpoints using it accept anonymous callers who simply
+see less — a dependency cannot express "optional, but staff see more". The
+copilot's guard keeps its own 403 wording ("Copilot is restricted to admin and
+organizer accounts") because it names the surface rather than a route. Neither
+now spells out the role pair.
+
+**The behavioural surface is unchanged with one exception.** The four
+`signups.py` endpoints previously raised 403 with bespoke wording ("Not
+authorized to cancel signups via this endpoint"); they now raise the standard
+"Insufficient permissions". No test asserted the old strings, and the frontend
+does not read the detail. Worth knowing if a user reports different copy.
+
+**Two counts in the table above were wrong**, found while doing the cleanup:
+`users.py` has no in-body role checks (its seven guards are ordinary
+`require_admin` dependencies — the "self-or-admin" exception I expected to need
+does not exist), and `is_staff` was a seventh spelling nobody had listed. The
+sweep's own inventory of the problem was itself incomplete, which is the best
+argument for the guard test.
+
+Pinned by `tests/test_staff_guard_canonical.py` — four source-level assertions
+that fail on a new spelling: the role pair appears only in `deps.py`, no file
+constructs `Depends(require_role(...))`, no handler body does a role check, and
+`STAFF_ROLES` is exactly `{admin, organizer}`. Source-level on purpose: every
+spelling *behaved* correctly, so no behavioural test can see the problem.
+
 ---
 
-## S-04 — OIDC is half-wired · LOW · ⛔️ needs a decision
+## S-04 — OIDC is half-wired · LOW · ✅ deleted 2026-08-13
 
 `auth.py` registers an OIDC client when three settings are present. All three
 are `None`, there is no UI entry point, and two endpoints (`GET /sso/login`,
@@ -334,6 +378,24 @@ test coverage.
 
 **Recommendation:** delete both endpoints and the registration. Restoring them
 from git history is easy if SSO is ever wanted.
+
+### Resolution — deleted
+
+Both handlers, the `OAuth()` registration, and the four `oidc_*` settings are
+gone, and `Authlib` is dropped from `requirements.txt` and the lock file (a leaf
+dependency; `cryptography` stays because python-jose pins it directly).
+
+Reading `sso_callback` before deleting it was worth the five minutes: it created
+a **new local user with a role, from any email an IdP asserted**, with no
+allow-list and no invitation check. It could not actually run — `SessionMiddleware`
+is not installed, so Authlib's state check would have 500'd — but "unreachable
+because of an unrelated missing middleware" is not a security control. Adding
+session middleware for any other reason would have armed it.
+
+Pinned by `tests/test_no_sso_surface.py`: no route path contains `/sso`, both old
+paths 404, `Settings` has no `oidc` fields, and nothing under `app/` imports
+authlib. If SSO is ever wanted, that file is the checklist of what a real
+implementation has to add back deliberately.
 
 ---
 
@@ -410,6 +472,13 @@ blocker, which removes the last open K-item from that list.
   that re-open it: recipient selection widening beyond "holds a spot", or any
   promotional content. Pinned by `tests/test_broadcast_optout_policy.py`, which
   asserts both halves of the asymmetry so a well-meaning "fix" fails loudly.
+- ~~**S-03 / W5.16** — collapse the six spellings of "staff"~~ — **done
+  2026-08-14.** One `STAFF_ROLES` constant, `require_admin` / `require_staff`,
+  and a guard test that fails on a new spelling. See the S-03 resolution above,
+  including the two things the original finding got wrong.
+- ~~**S-04 / W5.5** — decide on the dormant OIDC path~~ — **deleted 2026-08-13.**
+  See the S-04 resolution above; the callback would have created users from any
+  IdP-asserted email.
 - ~~**W5.7** — `token_budget_exhaustion` and `indirect_injection` have no runner
   assertions~~ — **done 2026-08-13.** Both now run. Note the scope: the five
   `indirect_injection` cases in `cases.yaml` were always executed by the tool-loop

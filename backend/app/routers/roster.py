@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from ..database import get_db
-from ..deps import ensure_event_staff_access, require_role
+from ..deps import ensure_event_staff_access, require_staff
 from ..models import (
     Event,
     Shift,
@@ -168,7 +168,7 @@ def _session_rows(
 def get_roster(
     event_id: UUID,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+    current_user=Depends(require_staff),
 ):
     event = db.get(Event, event_id)
     if not event:

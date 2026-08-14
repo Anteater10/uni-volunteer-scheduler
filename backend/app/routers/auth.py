@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .. import models, schemas
 from ..database import get_db
 from ..deps import (
+    STAFF_ROLES,
     verify_password,
     create_access_token,
     hash_password,
@@ -378,7 +379,7 @@ def forgot_password(
             models.User.email == payload.email.lower().strip(),
             models.User.is_active.is_(True),
             models.User.deleted_at.is_(None),
-            models.User.role.in_([models.UserRole.admin, models.UserRole.organizer]),
+            models.User.role.in_(STAFF_ROLES),
         )
         .first()
     )

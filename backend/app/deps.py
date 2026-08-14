@@ -230,11 +230,12 @@ def get_optional_user(
 
 
 def is_staff(user: Optional[models.User]) -> bool:
-    """Admin/organizer check usable with get_optional_user's Optional result."""
-    return user is not None and user.role in (
-        models.UserRole.admin,
-        models.UserRole.organizer,
-    )
+    """Admin/organizer check usable with get_optional_user's Optional result.
+
+    Not redundant with `require_staff`: this is for endpoints anonymous users may
+    reach, where staff simply see more. A dependency cannot express that.
+    """
+    return user is not None and user.role in STAFF_ROLES
 
 
 # -------------------------
@@ -261,7 +262,7 @@ def ensure_event_staff_access(event: models.Event, user: models.User) -> None:
     `event` is kept in the signature: callers have already loaded it, and a
     future per-event rule belongs here rather than in 40-odd call sites.
     """
-    if user.role in (models.UserRole.admin, models.UserRole.organizer):
+    if user.role in STAFF_ROLES:
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -270,6 +271,17 @@ def ensure_event_staff_access(event: models.Event, user: models.User) -> None:
 
 
 def require_role(*roles: models.UserRole):
+    """Build a role guard. Prefer the named guards below over calling this.
+
+    S-03: the W5 sweep found six different spellings of "admin or organizer"
+    across the routers, because every endpoint constructed its own dependency
+    inline — arg order, import style (`UserRole` vs `models.UserRole`) and role
+    set all drifted per call site. No single grep covered the surface, which is
+    how K33 stayed hidden and how the sweep's own first pass mis-scoped its
+    target list by 20 endpoints. Constructing this at a call site is what
+    multiplies spellings, so `tests/test_staff_guard_canonical.py` fails on
+    `Depends(require_role(...))` anywhere outside this module.
+    """
     def dependency(current_user: models.User = Depends(get_current_user)):
         if current_user.role not in roles:
             raise HTTPException(
@@ -278,6 +290,15 @@ def require_role(*roles: models.UserRole):
             )
         return current_user
     return dependency
+
+
+# The one definition of "staff". Everything that means "admin or organizer" —
+# route guards, the copilot's own guard, and the queries that ask *which users
+# are staff* — reads it from here.
+STAFF_ROLES = (models.UserRole.admin, models.UserRole.organizer)
+
+require_admin = require_role(models.UserRole.admin)
+require_staff = require_role(*STAFF_ROLES)
 
 
 # -------------------------

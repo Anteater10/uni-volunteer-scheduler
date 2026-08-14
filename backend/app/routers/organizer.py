@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..celery_app import send_waitlist_promotion_email
 from ..database import get_db
-from ..deps import ensure_event_staff_access, log_action, require_role
+from ..deps import ensure_event_staff_access, log_action, require_staff
 from ..services import form_schema_service
 from ..services.orientation_service import (
     family_for_event,
@@ -40,9 +40,7 @@ def grant_orientation_for_signup(
     event_id: UUID,
     signup_id: UUID,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     """Organizer override — grant orientation credit to a signed-up volunteer.
 
@@ -139,9 +137,7 @@ def grant_orientation_for_shift_signup(
     event_id: UUID,
     shift_signup_id: UUID,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     """2026-08-02 shifts: the same one-tap grant, for a shift commitment.
 
@@ -248,9 +244,7 @@ def append_event_form_field(
     event_id: UUID,
     field: dict,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     """Phase 22 — organizer quick-add: append a single field to an event's
     form schema override. Seeds the override from the template default if the
@@ -284,9 +278,7 @@ def organizer_promote_signup(
     signup_id: UUID,
     allow_overfill: bool = False,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     """Phase 25 (WAIT-03): manual waitlist promotion that bypasses FIFO.
 
@@ -376,9 +368,7 @@ def organizer_promote_shift_signup(
     shift_signup_id: UUID,
     allow_overfill: bool = False,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.organizer, models.UserRole.admin)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     """2026-08-02 shifts: the roster's Promote button, for a shift waitlist.
 

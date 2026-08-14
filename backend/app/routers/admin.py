@@ -16,7 +16,7 @@ from sqlalchemy import func, or_, cast, String, Integer
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, log_action, ensure_event_staff_access
+from ..deps import ensure_event_staff_access, log_action, require_admin, require_staff
 from ..models import PrivacyMode
 from ..celery_app import (
     send_broadcast_email,
@@ -187,7 +187,7 @@ def admin_summary(
         description="Scope the *_quarter aggregates to this quarter instead of the active one",
     ),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Expanded admin dashboard summary (Phase 16 Plan 02, D-14..D-29, D-47).
 
@@ -478,9 +478,7 @@ def admin_summary(
 def event_analytics(
     event_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -573,9 +571,7 @@ def event_roster(
     event_id: str,
     privacy: PrivacyMode = PrivacyMode.full,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -666,9 +662,7 @@ def event_roster(
 def export_event_csv(
     event_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -775,9 +769,7 @@ def export_event_csv(
 def admin_cancel_signup(
     signup_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     signup = (
         db.query(models.Signup)
@@ -847,9 +839,7 @@ def admin_cancel_signup(
 def admin_promote_signup(
     signup_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     signup = (
         db.query(models.Signup)
@@ -915,9 +905,7 @@ def admin_promote_signup(
 def admin_promote_shift_signup(
     shift_signup_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     """2026-08-02 shifts: promote a waitlisted shift commitment.
 
@@ -977,9 +965,7 @@ def admin_promote_shift_signup(
 def admin_cancel_shift_signup(
     shift_signup_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     """2026-08-02 shifts: cancel a whole commitment.
 
@@ -1086,7 +1072,7 @@ def admin_reorder_waitlist(
     slot_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.admin)),
+    actor: models.User = Depends(require_admin),
 ):
     """Phase 25 (WAIT-05): admin rewrites the waitlist FIFO order for a slot.
 
@@ -1152,7 +1138,7 @@ def admin_reorder_shift_waitlist(
     shift_id: str,
     payload: dict,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.admin)),
+    actor: models.User = Depends(require_admin),
 ):
     """2026-08-02 shifts: rewrite a shift's waitlist FIFO order.
 
@@ -1203,9 +1189,7 @@ def admin_move_signup(
     signup_id: str,
     payload: schemas.SignupMoveRequest,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     signup = (
         db.query(models.Signup)
@@ -1336,9 +1320,7 @@ def admin_move_signup(
 def admin_resend_signup_email(
     signup_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
     if not signup:
@@ -1380,9 +1362,7 @@ def notify_event_participants(
     event_id: str,
     payload: schemas.EventNotifyRequest,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -1511,7 +1491,7 @@ def list_audit_logs(
     # Backward compat: ignore old limit param
     limit: int | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     import math
 
@@ -1556,7 +1536,7 @@ def export_audit_logs_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     import json as json_mod
 
@@ -1601,7 +1581,7 @@ def analytics_volunteer_hours(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Volunteer hours grouped by volunteer, joining Signup -> Slot -> Event."""
     # See services/attendance_facts: one row per (volunteer, slot) with an
@@ -1654,7 +1634,7 @@ def analytics_attendance_rates(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Attendance rate per event: attended / (confirmed + attended + no_show)."""
     query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
@@ -1700,7 +1680,7 @@ def analytics_no_show_rates(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """No-show rate per volunteer, joining Signup -> Slot -> Event."""
     # See services/attendance_facts: one row per (volunteer, slot) with an
@@ -1759,9 +1739,7 @@ def analytics_no_show_rates(
 def export_event_attendance_csv(
     event_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     """Event-level attendance CSV (admin or event owner)."""
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
@@ -1801,7 +1779,7 @@ def export_volunteer_hours_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Volunteer hours as CSV, joining Signup -> Slot -> Event -> Volunteer."""
     # See services/attendance_facts: one row per (volunteer, slot) with an
@@ -1859,7 +1837,7 @@ def export_attendance_rates_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Attendance-rate-per-event CSV (mirrors /analytics/attendance-rates JSON)."""
     query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
@@ -1908,7 +1886,7 @@ def export_no_show_rates_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """No-show-rate-per-volunteer CSV (mirrors /analytics/no-show-rates JSON)."""
     # See services/attendance_facts: one row per (volunteer, slot) with an
@@ -1987,7 +1965,7 @@ def analytics_event_fill_rates(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Per-event: total capacity across slots, seats filled, % filled."""
     q = _apply_date_filter(db.query(models.Event), from_date, to_date)
@@ -2030,7 +2008,7 @@ def export_event_fill_rates_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     rows = analytics_event_fill_rates(from_date, to_date, db, admin_user)
     output = io.StringIO()
@@ -2050,7 +2028,7 @@ def analytics_hours_by_school(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Total attended volunteer hours grouped by partner school."""
     # See services/attendance_facts: one row per (volunteer, slot) with an
@@ -2094,7 +2072,7 @@ def export_hours_by_school_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     rows = analytics_hours_by_school(from_date, to_date, db, admin_user)
     output = io.StringIO()
@@ -2114,7 +2092,7 @@ def analytics_unique_volunteers(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Unique volunteers per quarter (distinct volunteer_id among attended signups)."""
     # See services/attendance_facts: one row per (volunteer, slot) with an
@@ -2153,7 +2131,7 @@ def export_unique_volunteers_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     rows = analytics_unique_volunteers(from_date, to_date, db, admin_user)
     output = io.StringIO()
@@ -2173,7 +2151,7 @@ def analytics_cancellation_rates(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Per event: signups made vs cancelled, % cancelled."""
     q = _apply_date_filter(db.query(models.Event), from_date, to_date)
@@ -2205,7 +2183,7 @@ def export_cancellation_rates_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     rows = analytics_cancellation_rates(from_date, to_date, db, admin_user)
     output = io.StringIO()
@@ -2225,7 +2203,7 @@ def analytics_module_popularity(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Per module: how many events scheduled, how many signups, fill rate."""
     q = _apply_date_filter(db.query(models.Event), from_date, to_date)
@@ -2280,7 +2258,7 @@ def export_module_popularity_csv(
     from_date: datetime | None = Query(None),
     to_date: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     rows = analytics_module_popularity(from_date, to_date, db, admin_user)
     output = io.StringIO()
@@ -2304,7 +2282,7 @@ def export_module_popularity_csv(
 def admin_delete_user(
     user_id: str,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
@@ -2363,7 +2341,7 @@ def ccpa_export(
     user_id: str,
     reason: str = Query(..., min_length=5),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """CCPA data access request: export all user data as JSON."""
     user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -2430,7 +2408,7 @@ def ccpa_delete(
     user_id: str,
     payload: schemas.CcpaDeleteRequest,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """CCPA deletion request: soft-delete + anonymize PII. Preserves signups for analytics."""
     user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -2548,7 +2526,7 @@ def ccpa_delete(
 def list_modules(
     include_archived: bool = False,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
+    admin_user: models.User = Depends(require_staff),
 ):
     return module_service.list_modules(db, include_archived=include_archived)
 
@@ -2557,7 +2535,7 @@ def list_modules(
 def create_module(
     payload: ModuleCreate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
+    admin_user: models.User = Depends(require_staff),
 ):
     data = payload.model_dump(exclude={"slug"})
     return module_service.create_module(db, payload.slug, data)
@@ -2568,7 +2546,7 @@ def update_module(
     slug: str,
     payload: ModuleUpdate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
+    admin_user: models.User = Depends(require_staff),
 ):
     data = payload.model_dump(exclude_unset=True)
     return module_service.update_module(db, slug, data)
@@ -2578,7 +2556,7 @@ def update_module(
 def delete_module(
     slug: str,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
+    admin_user: models.User = Depends(require_staff),
 ):
     module_service.soft_delete_module(db, slug)
 
@@ -2587,7 +2565,7 @@ def delete_module(
 def restore_module(
     slug: str,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
+    admin_user: models.User = Depends(require_staff),
 ):
     return module_service.restore_module(db, slug)
 
@@ -2597,7 +2575,7 @@ def clone_module(
     slug: str,
     payload: dict,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin, models.UserRole.organizer)),
+    admin_user: models.User = Depends(require_staff),
 ):
     new_slug = (payload or {}).get("new_slug")
     new_name = (payload or {}).get("new_name")
@@ -2616,9 +2594,7 @@ def set_module_default_form_schema(
     slug: str,
     body: dict,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    admin_user: models.User = Depends(require_staff),
 ):
     """Replace the module's default form schema (admin or organizer).
 
@@ -2645,7 +2621,7 @@ def set_module_default_form_schema(
 @router.get("/quarters", response_model=List[schemas.QuarterRead])
 def list_quarters(
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     return quarter_service.list_quarters(db)
 
@@ -2654,7 +2630,7 @@ def list_quarters(
 def create_quarter(
     payload: schemas.QuarterCreate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     row, summary = quarter_service.create_quarter(db, payload.model_dump(), actor=admin_user)
     return {"quarter": row, "relink_summary": summary}
@@ -2665,7 +2641,7 @@ def update_quarter(
     quarter_id: uuid_mod.UUID,
     payload: schemas.QuarterUpdate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     row, summary = quarter_service.update_quarter(
         db, quarter_id, payload.model_dump(exclude_unset=True), actor=admin_user
@@ -2677,7 +2653,7 @@ def update_quarter(
 def delete_quarter(
     quarter_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     quarter_service.delete_quarter(db, quarter_id, actor=admin_user)
     return Response(status_code=204)
@@ -2691,7 +2667,7 @@ def delete_quarter(
 def archive_quarter(
     quarter_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     return quarter_service.archive_quarter(db, quarter_id, actor=admin_user)
 
@@ -2700,7 +2676,7 @@ def archive_quarter(
 def restore_quarter(
     quarter_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     return quarter_service.restore_quarter(db, quarter_id, actor=admin_user)
 
@@ -2716,7 +2692,7 @@ def restore_quarter(
 def quarter_retrospective(
     quarter_id: uuid_mod.UUID,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     return quarter_service.quarter_retrospective(db, quarter_id)
 
@@ -2726,9 +2702,7 @@ def set_event_form_schema(
     event_id: str,
     body: dict,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    admin_user: models.User = Depends(require_staff),
 ):
     """Replace the event's form schema override (admin or organizer).
 
@@ -2761,9 +2735,7 @@ def set_event_form_schema(
 @router.get("/notifications/recent", response_model=List[SentNotificationRead])
 def recent_notifications(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    current_user: models.User = Depends(require_staff),
 ):
     """Return last 100 sent notifications for admin/organizer monitoring."""
     return (
@@ -2810,7 +2782,7 @@ def admin_list_orientation_credits(
     quarter_id: uuid_mod.UUID | None = Query(None),
     active_only: bool = Query(False, description="Exclude revoked rows"),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Admin view of all explicit orientation_credits rows.
 
@@ -2846,7 +2818,7 @@ def admin_list_orientation_credits(
 def admin_create_orientation_credit(
     payload: schemas.OrientationCreditCreate,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Admin manual grant — e.g. vouched-for volunteer, pre-existing records.
 
@@ -2898,7 +2870,7 @@ def admin_create_orientation_credit(
 def admin_revoke_orientation_credit(
     credit_id: str,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_role(models.UserRole.admin)),
+    admin_user: models.User = Depends(require_admin),
 ):
     """Admin revoke — sets ``revoked_at``. Idempotent."""
     from ..services.orientation_service import revoke_orientation_credit
@@ -2934,9 +2906,7 @@ def admin_revoke_orientation_credit(
 def admin_list_upcoming_reminders(
     days: int = Query(7, ge=1, le=30),
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    admin_user: models.User = Depends(require_staff),
 ):
     """Preview the reminders that will fire in the next ``days`` days.
 
@@ -2959,9 +2929,7 @@ def admin_list_upcoming_reminders(
 def admin_send_reminder_now(
     payload: schemas.ReminderSendNowRequest,
     db: Session = Depends(get_db),
-    admin_user: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    admin_user: models.User = Depends(require_staff),
 ):
     """Ad-hoc fire a reminder outside its normal window.
 
@@ -3025,9 +2993,7 @@ def admin_send_reminder_now(
 @router.get("/site-settings", response_model=schemas.SiteSettingsRead)
 def get_site_settings(
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     """Return the singleton site settings row (creates it lazily)."""
     from ..services.settings_service import get_app_settings
@@ -3039,7 +3005,7 @@ def get_site_settings(
 def update_site_settings(
     payload: schemas.SiteSettingsUpdate,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.admin)),
+    actor: models.User = Depends(require_admin),
 ):
     """Partial update — only non-None fields overwrite. Writes an audit row."""
     from ..services.settings_service import get_app_settings

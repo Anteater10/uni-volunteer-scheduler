@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 
 from ..database import get_db
-from ..deps import ensure_event_staff_access, rate_limit, redis_client, require_role
+from ..deps import ensure_event_staff_access, rate_limit, redis_client, require_staff
 from ..models import Event, ShiftSignup, Signup, Slot, UserRole
 from ..schemas import (
     CheckInLookupResponse,
@@ -156,7 +156,7 @@ def _load_signup_event(db: Session, signup_id: UUID) -> Event:
 def organizer_check_in(
     signup_id: UUID,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+    current_user=Depends(require_staff),
 ):
     """Organizer one-tap check-in. Idempotent. Staff-scoped: any admin or
     organizer may act on any event."""
@@ -188,7 +188,7 @@ def organizer_check_in(
 def organizer_undo_check_in(
     signup_id: UUID,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+    current_user=Depends(require_staff),
 ):
     """Issue #31: revert a mis-tapped check-in (checked_in → confirmed).
 
@@ -234,7 +234,7 @@ def organizer_check_in_session(
     shift_signup_id: UUID,
     slot_id: UUID,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+    current_user=Depends(require_staff),
 ):
     """2026-08-02 shifts: organizer one-tap check-in for one session.
 
@@ -271,7 +271,7 @@ def organizer_undo_check_in_session(
     shift_signup_id: UUID,
     slot_id: UUID,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+    current_user=Depends(require_staff),
 ):
     """Revert a mis-tapped session check-in. Idempotent; a session already
     resolved to attended/no_show 409s — undo covers the tap-slip only."""
@@ -349,7 +349,7 @@ def resolve_event_endpoint(
     event_id: UUID,
     body: ResolveEventRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+    current_user=Depends(require_staff),
 ):
     """Batch-resolve: mark signups as attended or no-show. Atomic.
     Staff-scoped: any admin or organizer may resolve any event."""
@@ -385,7 +385,7 @@ def resolve_slot_endpoint(
     slot_id: UUID,
     body: ResolveEventRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+    current_user=Depends(require_staff),
 ):
     """Per-slot resolve ("End slot"): mark this slot's signups attended or
     no-show. Ending an ORIENTATION slot auto-grants orientation credit to
@@ -426,7 +426,7 @@ def resolve_slot_endpoint(
 def reopen_event_endpoint(
     event_id: UUID,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(UserRole.organizer, UserRole.admin)),
+    current_user=Depends(require_staff),
 ):
     """Undo "End event": resolved signups return to the live roster
     (attended -> checked_in when the check-in timestamp is real, else

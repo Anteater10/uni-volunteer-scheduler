@@ -14,7 +14,7 @@ from ..deps import (
     get_optional_user,
     is_staff,
     log_action,
-    require_role,
+    require_staff,
 )
 from ..services import quarter_service
 
@@ -102,7 +102,7 @@ def create_slot(
     slot_in: schemas.SlotCreate,
     event_id: str = Query(..., description="Event ID this slot belongs to"),
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.organizer, models.UserRole.admin)),
+    actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
@@ -159,7 +159,7 @@ def update_slot(
     slot_id: str,
     slot_in: schemas.SlotUpdate,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.organizer, models.UserRole.admin)),
+    actor: models.User = Depends(require_staff),
 ):
     # Locked: serializes this slot's counter updates against concurrent
     # signups/cancels — capacity changes here no longer touch current_count
@@ -261,7 +261,7 @@ def update_slot(
 def delete_slot(
     slot_id: str,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(require_role(models.UserRole.organizer, models.UserRole.admin)),
+    actor: models.User = Depends(require_staff),
 ):
     slot = db.query(models.Slot).filter(models.Slot.id == slot_id).first()
     if not slot:

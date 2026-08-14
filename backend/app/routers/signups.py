@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..database import get_db
-from ..deps import get_current_user, log_action
+from ..deps import log_action, require_staff
 from ..services.check_in_service import ensure_signup_cancellable
 from ..services.swap_service import swap_signup as _swap_signup
 from ..services.swap_service import swap_shift_signup as _swap_shift_signup
@@ -41,7 +41,7 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
 def cancel_signup(
     signup_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_staff),
 ):
     """
     Cancel a signup safely.
@@ -60,14 +60,10 @@ def cancel_signup(
     if not signup:
         raise HTTPException(status_code=404, detail="Signup not found")
 
-    # Phase 09: signups no longer have user_id.
     # 2026-08-02 read-only signups: volunteer self-cancel is gone entirely —
-    # cancellation is staff-only now, via this endpoint and admin.py's
-    # /admin/signups/{id}/cancel (the reaper also cancels stale rows on its own).
-    # For auth'd users (admin/organizer), allow if they have the admin/organizer role
-    if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
-        raise HTTPException(status_code=403, detail="Not authorized to cancel signups via this endpoint")
-
+    # cancellation is staff-only (require_staff above), via this endpoint and
+    # admin.py's /admin/signups/{id}/cancel. The reaper cancels stale rows too.
+    #
     # Lock the slot row
     slot = (
         db.query(models.Slot)
@@ -129,7 +125,7 @@ def cancel_signup(
 def signup_ics(
     signup_id: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_staff),
 ):
     """
     Export a single signup as an .ics calendar event.
@@ -138,14 +134,8 @@ def signup_ics(
     if not signup:
         raise HTTPException(status_code=404, detail="Signup not found")
 
-    # Phase 09: signup.user_id removed; allow admin/organizer to fetch ICS
-    # Phase 12: volunteer self-serve ICS will be added to public endpoints
-    if current_user.role not in (
-        models.UserRole.admin,
-        models.UserRole.organizer,
-    ):
-        raise HTTPException(status_code=403, detail="Not authorized to view this signup")
-
+    # Staff-only (require_staff above); volunteer self-serve ICS lives on the
+    # public manage-token endpoints, not here.
     slot = db.query(models.Slot).filter(models.Slot.id == signup.slot_id).first()
     if not slot:  # pragma: no cover - FK constraint makes this unreachable
         raise HTTPException(status_code=404, detail="Slot not found")
@@ -193,7 +183,7 @@ def swap_signup_authed(
     signup_id: str,
     payload: schemas.SignupMoveRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_staff),
 ):
     """Phase 29 (SWAP-01/03/04) — staff-initiated swap.
 
@@ -202,9 +192,6 @@ def swap_signup_authed(
     full (409) and cross-event (400). Staff-only — the volunteer self-swap
     endpoint was removed 2026-08-02 (read-only signups).
     """
-    if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
-        raise HTTPException(status_code=403, detail="Not authorized")
-
     result = _swap_signup(
         db,
         signup_id=signup_id,
@@ -229,7 +216,7 @@ def swap_shift_signup_authed(
     shift_signup_id: str,
     payload: schemas.ShiftSignupMoveRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_staff),
 ):
     """2026-08-02 shifts: staff move a commitment between shifts of one event.
 
@@ -238,9 +225,6 @@ def swap_shift_signup_authed(
     refusal that has no slot equivalent is a part-attended shift — see
     ``swap_service.swap_shift_signup``.
     """
-    if current_user.role not in (models.UserRole.admin, models.UserRole.organizer):
-        raise HTTPException(status_code=403, detail="Not authorized")
-
     result = _swap_shift_signup(
         db,
         shift_signup_id=shift_signup_id,

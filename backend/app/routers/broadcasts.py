@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..deps import require_role, ensure_event_staff_access, redis_client
+from ..deps import ensure_event_staff_access, redis_client, require_staff
 from ..services import broadcast_service
 
 router = APIRouter(prefix="/events", tags=["broadcasts"])
@@ -80,9 +80,7 @@ def send_event_broadcast(
     payload: schemas.BroadcastCreate,
     response: Response,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     event = _load_event_or_404(db, event_id)
     ensure_event_staff_access(event, actor)
@@ -129,9 +127,7 @@ def list_event_broadcasts(
     event_id: str,
     days: int = 30,
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     event = _load_event_or_404(db, event_id)
     ensure_event_staff_access(event, actor)
@@ -148,9 +144,7 @@ def preview_broadcast_recipients(
     slot_id: Optional[UUID] = Query(None),
     shift_id: Optional[UUID] = Query(None),
     db: Session = Depends(get_db),
-    actor: models.User = Depends(
-        require_role(models.UserRole.admin, models.UserRole.organizer)
-    ),
+    actor: models.User = Depends(require_staff),
 ):
     event = _load_event_or_404(db, event_id)
     ensure_event_staff_access(event, actor)
