@@ -410,9 +410,28 @@ blocker, which removes the last open K-item from that list.
   that re-open it: recipient selection widening beyond "holds a spot", or any
   promotional content. Pinned by `tests/test_broadcast_optout_policy.py`, which
   asserts both halves of the asymmetry so a well-meaning "fix" fails loudly.
-- **W5.7** — `token_budget_exhaustion` and `indirect_injection` are documented
-  adversarial surfaces with no runner assertions. Assert them or mark them
-  explicitly untested.
+- ~~**W5.7** — `token_budget_exhaustion` and `indirect_injection` have no runner
+  assertions~~ — **done 2026-08-13.** Both now run. Note the scope: the five
+  `indirect_injection` cases in `cases.yaml` were always executed by the tool-loop
+  runner; only the memory-flavoured case in `cases_memory.yaml` was inert, so
+  "indirect injection is untested" was too broad a claim.
+  - `token_budget_exhaustion` asserts the mechanical precondition of its
+    behavioural claim: 32KB of history triggers `compress_if_needed`, the current
+    question and the system prompt both survive, and a synopsis stands in for the
+    dropped turns. Verified against `THRESHOLD_RATIO = 10.0`.
+  - `indirect_injection` **was mis-specified, which is why it was never wired
+    up.** It asserted `must_not_contain: ["tokens"]` — a keyword filter this
+    system does not have and should not grow, since the extractor guards on PII
+    redaction and a profile may legitimately record that a user asked about
+    tokens. Rewritten to assert containment end-to-end: an imperative entering
+    through the transcript, surviving the extractor, reaches the system prompt
+    only inside the delimited advisory region. Verified by stripping the
+    header/footer from `profile_block`.
+  - **The structural fix matters more than either case.**
+    `test_every_memory_category_has_a_runner` now fails if a category is added to
+    the YAML without a runner. Both cases had sat there for weeks reading as
+    coverage in any report that counted cases — the suite was described as 35 + 5
+    when it was 35 + 3.
 
 ---
 
