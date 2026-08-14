@@ -13,6 +13,150 @@ Every ✅/❌ below was checked against the tree today, not carried over.
 
 ---
 
+# Handover plan — platform-tagged · added 2026-08-13
+
+**Every step below is tagged Render / AWS / both.** Read the frame first, because
+it determines which work is throwaway.
+
+## The frame: Render is a rehearsal, not a stepping stone
+
+Andy's Render deploy is a real environment for finding real bugs cheaply. Rafael
+deploys to AWS. Roughly two-thirds of what remains is application-level and moves
+to AWS untouched; a small set is Render-shaped and dies with it.
+
+| Category | Items | Transfers to AWS? |
+|---|---|---|
+| **Render-only** | dashboard env vars, `start_render.sh`, instance sizing, auto-rollback setting | no — but the *reasons* do |
+| **AWS-only** | ECS/EC2 task definitions, RDS, ElastiCache, ALB, IAM, Secrets Manager | Rafael's work |
+| **Both** | all of W5, all of W6, secret rotation, migrations discipline, memory budget, proxy headers, email sender | yes |
+
+**The trap: "Render-only" does not mean "irrelevant to AWS".** The *fix* lives in
+a Render-specific file while the *defect* is platform-independent. S-01 is the
+worked example — see below.
+
+## Step 0 — the decision that must come first
+
+**Email: SendGrid or AWS SES?** · **both** · Andy + Rafael
+
+`EMAIL_MODE` already supports `smtp` and `sendgrid`. SES is plain SMTP, so the
+code path exists either way. But sender verification means DNS records and
+propagation delay, and doing it for SendGrid and *then* moving to SES means doing
+it twice.
+
+**This blocks W6.3** (opening every email in a real client), which is on the
+critical path. Ask Rafael before touching DNS. Nothing else in the plan depends
+on an answer, so everything below can proceed in parallel.
+
+## W4 — what remains
+
+| # | Item | Platform | Owner | Note |
+|---|---|---|---|---|
+| W4.4 | Rotate 4 secrets + seed admin | **both** | Andy | Non-optional. They were readable in a published image layer, so they are burned regardless of platform. Rotate once, use everywhere. |
+| — | `ENVIRONMENT=production` in dashboard | **Render only** | Andy | Confirmed 2026-08-13 as `development`; `/docs` public for the whole trial. |
+| — | Redeploy to pick up S-01 | **Render only** | Andy | The shared-rate-limit-bucket bug is live until this happens. |
+| W4.6 | Confirm `celery_worker` + `celery_beat` run | **both** | Andy | Five beat schedules are silently dead if not. A PaaS web service runs one process; workers are separate services. **The same question recurs on ECS as separate task definitions.** |
+| W4.7 | Sender verification | **both** | Andy | Gated on Step 0. |
+| W4.8 | Sign `docs/pii-at-rest-decision.md` | **both** | Andy | Decision, not code. |
+| W4.2 | `backend/Dockerfile` hf-cache fix | **both** | needs Andy's permission | 2 lines; PR-only file. |
+| W4.10 | Bundle splitting (~606KB) | **both** | deferred | Cosmetic. |
+
+**S-01, and why the tagging matters.** I originally described `--proxy-headers`
+as a Render fix. That was too narrow. An AWS ALB terminates TLS exactly as
+Render's proxy does, so without those flags `deps.rate_limit` keys every caller
+to the proxy address and collapses all of them into one bucket per path — a dozen
+simultaneous QR check-ins start 429-ing each other mid-event. The fix currently
+lives in `start_render.sh`, which Rafael will never run. **The two flags must be
+restated in the ECS task definition or entrypoint**, or the defect silently
+returns on AWS. Put it in the runbook as a requirement, not a Render footnote.
+
+## W5 — security · all **both** · ~half a day left
+
+Steps 1–3 complete (PRs #73, #74, #75). The authz sweep is finished: **160/160
+endpoints, 19 routers, no unguarded staff endpoint anywhere.**
+
+| # | Item | Status |
+|---|---|---|
+| W5.1 | K33 — organizers read others' copilot messages | ✅ closed, accepted in writing |
+| W5.2 | Authz sweep | ✅ done — S-05 found and fixed, S-06 accepted |
+| W5.3 | Unauthenticated surface | ✅ mostly discharged by the sweep |
+| W5.4 | JWT expiry; magic-link single-use and expiry | ☐ **the last real security gap** |
+| W5.5 | OIDC half-wired | ☐ decision — recommend delete |
+| W5.6 | Broadcast unsubscribe reasoning | ☐ write it down |
+| W5.7 | Two inert adversarial cases | ☐ assert or mark untested |
+| S-03 | Six spellings of "staff" | ☐ maintainability — **the mechanism by which K33 hid** |
+
+**Gap nobody has covered: the frontend has never had an authz review.** The sweep
+was backend routers only. The ~38 routes in `App.jsx` and their role gating have
+not been checked, and a route that renders admin UI to an organizer is a real
+finding even when the API behind it correctly returns 403. **Add this to W5 or
+W6.1 — currently it is in neither.** · **both**
+
+## W6 — runtime verification · all **both** · 3–4 days · nothing started
+
+⛔️ **The stage that finds new things.** Every bug in this project's audit came
+from *reading code*. All 1,600+ tests passed while `api.slots` did not exist.
+**Nobody has clicked through this application.** Budget W6 for finding new work,
+not for confirming the existing list.
+
+**Run W6 on Render, before AWS.** That is what the Render deploy is genuinely
+for — find the bugs where it costs nothing, so AWS receives an app that has
+already been exercised. See W6.1–W6.6 below for the detail.
+
+## W7 — handoff · ~0.5 day
+
+Rafael deploys and nothing else. Deployment knowledge only, not a codebase
+handover.
+
+| Item | Platform | Note |
+|---|---|---|
+| Runbook | **both** | Write it **platform-neutrally**. Consolidate `docs/deployment.md`; don't rewrite. |
+| Memory budget | **both** | ~880 MB per worker with both models resident; 2 workers → 4 GB minimum. Same code, same models, same arithmetic on ECS. |
+| Proxy headers | **both** | Restate for ECS — see S-01 above. |
+| "Never roll back a deploy that applied a migration" | **both** | Can permanently brick a service: forward-only migration + code rollback leaves the old image unable to find the revision the DB is stamped with. Disable auto-rollback on any service whose release step migrates. |
+| Env-var reference | **both** | Including `ENVIRONMENT`, whose default is now `production`. |
+| Celery as separate services | **both** | See W4.6. |
+| Live walkthrough | **AWS** | Rafael deploys from a clean clone while Andy watches. **This is the exit criterion, not the document.** |
+
+## Re-audit schedule — when, and what kind
+
+Andy asked when re-auditing happens. Three have run; two remain.
+
+| Pass | Kind | When | Status |
+|---|---|---|---|
+| Audit 1 | Exhaustive code read | pre-W4 | ✅ produced the K-item list |
+| Re-audit 1 | Targeted — verify W4 fixes | W4 | ✅ PR #73 |
+| Re-audit 2 | Security — authz sweep | W5 | ✅ PRs #74/#75 — 160/160 endpoints |
+| **Re-audit 3** | **Targeted — verify W6 fixes** | **after W6** | ☐ **required** |
+| **Re-audit 4** | **Exhaustive, pre-handover** | **W7, before the walkthrough** | ☐ **required** |
+
+**Re-audit 3 is not optional and is routinely skipped.** W6 will produce a batch
+of bug fixes written under time pressure against a live deploy. Those fixes have
+had no review at all. Every prior pass found defects in code that was believed
+finished; there is no reason this batch differs.
+
+**Re-audit 4 is the last gate before Rafael.** Scope it to the diff since
+re-audit 2 rather than the whole tree — the tree has been swept, the diff has not.
+
+**One standing caveat on all of it.** Every audit so far found bugs by reading
+code, and W6 exists because reading cannot find "confusing", "in the wrong
+place", or "the email renders broken in Outlook". A re-audit is not a substitute
+for a human clicking through the app, and neither substitutes for the other.
+
+## Shortest path
+
+1. Ask Rafael: SendGrid or SES? *(unblocks W6.3)*
+2. Render dashboard: `ENVIRONMENT=production`; redeploy for S-01; confirm celery runs.
+3. Rotate secrets.
+4. Finish W5 — including the frontend authz gap.
+5. **W6 on Render** — the long pole.
+6. Re-audit 3 on the W6 fixes.
+7. Re-audit 4 on the diff since re-audit 2.
+8. W7 runbook + live walkthrough with Rafael.
+
+Realistically **5–7 working days**, of which W6 is 3–4.
+
+---
+
 ## Where things stand
 
 | Phase | Status |
