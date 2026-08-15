@@ -16,6 +16,14 @@ vi.mock("../../../lib/api", () => {
       update: vi.fn(async () => ({})),
       delete: vi.fn(async () => ({})),
     },
+    shifts: {
+      create: vi.fn(async () => ({})),
+      update: vi.fn(async () => ({})),
+      delete: vi.fn(async () => ({})),
+      addSession: vi.fn(async () => ({})),
+      updateSession: vi.fn(async () => ({})),
+      deleteSession: vi.fn(async () => ({})),
+    },
     admin: { modules: { list: vi.fn(async () => []) } },
     public: { getQuarters: vi.fn(async () => []) },
   };
@@ -151,6 +159,25 @@ describe("EventSettingsModal", () => {
     );
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(toastMock.success).toHaveBeenCalled();
+  });
+
+  it("saves shift edits, not just the metadata and slots", async () => {
+    // This modal shares EventForm with the Events list drawer, so it collects
+    // shift edits either way. It used to apply only the slot diff, which meant
+    // renaming a shift here reported "Event settings saved." and discarded the
+    // rename — the same silent-success shape as the `school` bug.
+    renderModal();
+
+    const shiftName = screen.getByDisplayValue("Mon 12:00pm");
+    await userEvent.clear(shiftName);
+    await userEvent.type(shiftName, "Morning crew");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(api.shifts.update).toHaveBeenCalledTimes(1));
+    expect(api.shifts.update).toHaveBeenCalledWith(
+      "shift-1",
+      expect.objectContaining({ name: "Morning crew" }),
+    );
   });
 
   it("reports a failed save and stays open", async () => {

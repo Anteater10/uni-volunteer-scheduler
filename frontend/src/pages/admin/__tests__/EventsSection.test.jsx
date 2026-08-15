@@ -424,8 +424,22 @@ describe("validateShift", () => {
     expect(validateShift(ok, evStart, evEnd)).toBeNull();
   });
 
-  it("requires a name — it is what volunteers pick from", () => {
-    expect(validateShift({ ...ok, name: "  " }, evStart, evEnd)).toMatch(/name/i);
+  // 2026-08-14: the name became optional. This test previously asserted the
+  // opposite ("requires a name — it is what volunteers pick from"). Volunteers
+  // do still pick by name, which is why a blank one is *generated* server-side
+  // rather than stored empty — see backend tests/test_shift_name_optional.py.
+  it("accepts a blank name — the server names it from the first session", () => {
+    expect(validateShift({ ...ok, name: "  " }, evStart, evEnd)).toBeNull();
+    expect(validateShift({ ...ok, name: "" }, evStart, evEnd)).toBeNull();
+    expect(validateShift({ ...ok, name: undefined }, evStart, evEnd)).toBeNull();
+  });
+
+  it("omits the name key entirely when it is blank, rather than sending empty", () => {
+    // The distinction matters: "" would be stored as an empty label, while an
+    // absent key is what tells the server to generate one.
+    const payload = shiftFormToApiPayload({ ...ok, name: "   " }, 0);
+    expect("name" in payload && payload.name !== undefined).toBe(false);
+    expect(shiftFormToApiPayload(ok, 0).name).toBe("Tue 1:00pm");
   });
 
   it("rejects non-positive capacity", () => {
