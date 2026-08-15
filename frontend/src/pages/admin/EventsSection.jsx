@@ -504,8 +504,11 @@ function sessionFormToApiPayload(session, index) {
 }
 
 function shiftFormToApiPayload(shift, index = 0) {
+  const name = shift.name?.trim();
   return {
-    name: shift.name?.trim(),
+    // Omitted rather than sent blank, so the payload says "no name given" and
+    // the server generates one. JSON.stringify drops undefined keys.
+    name: name || undefined,
     capacity: Number(shift.capacity),
     sort_order: index,
     sessions: shift.sessions.map(sessionFormToApiPayload),
@@ -523,7 +526,11 @@ function sessionChanged(a, b) {
 }
 
 function validateShift(shift, eventStartIso, eventEndIso) {
-  if (!shift.name?.trim()) return "Shift name is required.";
+  // Name is optional (2026-08-14). Left blank, the server names the shift after
+  // its first session ("Tue 9:00-10:30") — the same format migration 0037 used,
+  // so a generated name and a migrated one read identically in the roster.
+  // Deliberately not generated here: the format is timezone-sensitive and
+  // belongs in one place, shift_service.default_shift_name.
   const cap = Number(shift.capacity);
   if (!Number.isFinite(cap) || cap <= 0) return "Capacity must be a positive integer.";
   if (!shift.sessions?.length) return "A shift needs at least one session.";
@@ -1214,12 +1221,17 @@ function EventForm({
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end pl-2">
                     <div className="md:col-span-2">
-                      <label className={LABEL_SM}>Name</label>
+                      <label className={LABEL_SM}>
+                        Name{" "}
+                        <span className="font-normal normal-case text-[var(--color-fg-muted)]">
+                          — optional
+                        </span>
+                      </label>
                       <input
                         aria-label={`Shift ${i + 1} name`}
                         value={sh.name}
                         onChange={(e) => updateShift(i, { name: e.target.value })}
-                        placeholder="e.g. Tue 1:00pm"
+                        placeholder="Leave blank to name it by time"
                         className={FIELD_SM}
                       />
                     </div>
@@ -1591,8 +1603,14 @@ async function applyShiftDiff(eventId, initialShifts, draftShifts) {
   async function run(label, work) {
     try {
       await work();
-    } catch {
-      failed.push(label);
+    } catch (err) {
+      // Keep the reason. This used to be a bare `catch {}`, so a refusal the
+      // backend had explained ("… has ended and is read-only", "cannot change
+      // sessions once a shift has signups") reached the admin as a shift label
+      // and nothing else — a save that failed for a knowable reason looked
+      // arbitrary.
+      const why = err?.message ? `: ${err.message}` : "";
+      failed.push(`${label}${why}`);
     }
   }
 
@@ -1606,8 +1624,13 @@ async function applyShiftDiff(eventId, initialShifts, draftShifts) {
     ...updates.map((u) =>
       run(`shift "${u.shift.name}"`, async () => {
         if (u.fieldsChanged) {
+          const name = u.shift.name?.trim();
           await api.shifts.update(u.shift.id, {
-            name: u.shift.name.trim(),
+            // Clearing the box on an *existing* shift leaves its name alone
+            // rather than blanking it — volunteers have already seen that label
+            // in their confirmation email. The PATCH refuses an empty name, so
+            // the key is omitted instead of sent empty.
+            ...(name ? { name } : {}),
             capacity: Number(u.shift.capacity),
             sort_order: u.index,
           });

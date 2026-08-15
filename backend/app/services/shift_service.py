@@ -84,9 +84,19 @@ def build_shift(
     Session `sort_order` falls back to payload order when the caller sends all
     zeros, which is what a freshly built list from the UI looks like.
     """
+    # The name is optional to supply. Blank or absent is named from the first
+    # session, so the stored value is never empty — a shift with a blank label
+    # reaches volunteers in confirmation email. `.strip()` alone was not enough:
+    # a whitespace-only name passed ShiftCreate's old min_length=1 and was
+    # stored as "".
+    first = payload.sessions[0]
+    name = (payload.name or "").strip() or default_shift_name(
+        first.start_time, first.end_time
+    )
+
     shift = models.Shift(
         event_id=event.id,
-        name=payload.name.strip(),
+        name=name,
         capacity=payload.capacity,
         sort_order=payload.sort_order,
     )

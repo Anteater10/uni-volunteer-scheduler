@@ -214,7 +214,13 @@ class ShiftSessionUpdate(BaseModel):
 
 
 class ShiftCreate(BaseModel):
-    name: str = Field(min_length=1)
+    # Optional to *supply*, never null in storage: omit it (or send blank) and
+    # shift_service names the shift after its first session, the same format
+    # migration 0037 used. The column stays NOT NULL because the name is shown
+    # in rosters, check-in and volunteer email. ShiftUpdate deliberately keeps
+    # min_length=1 — clearing an existing name is a different act from never
+    # having typed one. See tests/test_shift_name_optional.py.
+    name: Optional[str] = None
     capacity: int = Field(gt=0)
     sort_order: int = 0
     # A shift with no sessions is not bookable and cannot be checked in to,
@@ -322,6 +328,10 @@ class EventCreate(EventBase):
 class EventRead(ORMBase, EventBase):
     id: UUID
     owner_id: UUID
+    # The admin edit form loads this field. Without it here the box always
+    # rendered empty regardless of what was stored, so the school looked unset
+    # on every event that had one. See tests/test_event_school_round_trip.py.
+    school: Optional[str] = None
     module_slug: Optional[str] = None
     quarter: Optional[Quarter] = None
     year: Optional[int] = None
@@ -356,6 +366,11 @@ class EventUpdate(BaseModel):
     max_signups_per_user: Optional[int] = None
     signup_open_at: Optional[datetime] = None
     signup_close_at: Optional[datetime] = None
+    # The admin form has always sent this. Until it was declared here, Pydantic
+    # dropped it as an unknown key and the router returned 200 — an edit that
+    # reported success and saved nothing. Omit the key to leave it unchanged;
+    # send an explicit null to clear it (the router uses exclude_unset).
+    school: Optional[str] = None
     # Admins can reassign / backfill an event's module. When present the
     # router validates the slug exists. Omit to leave module unchanged.
     module_slug: Optional[str] = None
