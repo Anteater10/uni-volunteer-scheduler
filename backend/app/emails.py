@@ -683,3 +683,47 @@ def build_waitlist_promotion_email(
     )
     subject = f"A spot opened up — confirm your SciTrek signup for {event.title}"
     return subject, html
+
+
+# ---------------------------------------------------------------------------
+# Copilot-initiated mail (K26)
+# ---------------------------------------------------------------------------
+# The only two templates the copilot's mail tools can reach. Deliberately
+# generic, and deliberately containing no model-authored prose: the agent
+# chooses *recipients*, never wording. A tool that let an LLM write the body
+# would put unreviewed text out over SciTrek's sending domain.
+
+
+def build_copilot_reminder_email(*, template: str) -> dict:
+    """Reminder copy for a copilot-initiated nudge to booked volunteers."""
+    subject = "A reminder about your upcoming SciTrek session"
+    text_body = (
+        "Hi,\n\n"
+        "This is a reminder about your upcoming SciTrek volunteer commitment.\n"
+        "You can view or change your booking using the manage link in your "
+        "original confirmation email.\n\n"
+        "Thank you for volunteering!"
+    )
+    return {
+        "subject": subject,
+        "text_body": text_body,
+        "html_body": _render_html("copilot_reminder.html"),
+    }
+
+
+def build_copilot_nudge_email(*, module_name: str) -> dict:
+    """Recruiting copy asking a past volunteer to consider one module."""
+    name = module_name or "an upcoming module"
+    subject = f"Volunteers still needed for '{name}'"
+    text_body = (
+        "Hi,\n\n"
+        f"We are still looking for volunteers for '{name}'.\n"
+        "If you are available, you can sign up from the SciTrek volunteer page.\n\n"
+        "If you would rather not receive these, you can turn off reminder "
+        "email from your preferences."
+    )
+    return {
+        "subject": subject,
+        "text_body": text_body,
+        "html_body": _render_html("copilot_nudge.html", module_name=name),
+    }

@@ -143,22 +143,33 @@ class TestTheStubNoLongerLies:
                 db_session, admin_scope, {"module_id": str(target.id)}
             )
 
-    def test_turning_the_flag_on_is_not_enough_to_send(
+    def test_turning_the_flag_on_reaches_a_real_transport(
         self, db_session, admin, admin_scope, monkeypatch
     ):
-        """A flag that enabled a no-op would recreate the bug exactly."""
+        """A flag that enabled a no-op would recreate the bug exactly.
+
+        Until the transport was bound this asserted the opposite — that the
+        flag alone still refused — because an unwired flag that reported
+        success was the whole of K26. The transport exists now, so the
+        guarantee is restated rather than dropped: turning the flag on must
+        put a real message on the broker. If this ever passes while nothing
+        is enqueued, the no-op is back.
+        """
         monkeypatch.setattr(settings, "copilot_outbound_email_enabled", True)
+        queued = []
+        monkeypatch.setattr(_outbound, "_enqueue", lambda **kw: queued.append(kw))
         soon = datetime.now(timezone.utc) + timedelta(days=7)
         ev = _event(db_session, admin.id, title="M", start_date=soon)
         [v] = _booked(db_session, ev, count=1)
 
-        with pytest.raises(_outbound.OutboundNotWired) as exc:
-            SEND_REMINDER_EMAIL_TOOL.handler(
-                db_session,
-                admin_scope,
-                {"participant_ids": [str(v.id)], "template": "reminder"},
-            )
-        assert "no mail transport is bound" in str(exc.value)
+        out = SEND_REMINDER_EMAIL_TOOL.handler(
+            db_session,
+            admin_scope,
+            {"participant_ids": [str(v.id)], "template": "reminder"},
+        )
+
+        assert out["queued_count"] == 1
+        assert [m["to_email"] for m in queued] == [v.email]
 
     def test_the_refusal_reaches_the_user_as_a_failed_call(
         self, db_session, admin, admin_scope
@@ -211,7 +222,7 @@ class TestTheNudgeAudienceIsBounded:
         out = NUDGE_UNDERSTAFFED_MODULE_TOOL.handler(
             db_session, admin_scope, {"module_id": str(target.id)}
         )
-        assert out["notified_count"] == 2
+        assert out["queued_count"] == 2
         for v in long_gone:
             assert v.email not in seen
 
@@ -230,7 +241,7 @@ class TestTheNudgeAudienceIsBounded:
         out = NUDGE_UNDERSTAFFED_MODULE_TOOL.handler(
             db_session, admin_scope, {"module_id": str(target.id)}
         )
-        assert out["notified_count"] == 1
+        assert out["queued_count"] == 1
         for v in already:
             assert v.email not in seen
 
@@ -282,7 +293,7 @@ class TestTheNudgeAudienceIsBounded:
             scope_for(role="organizer", caller_id=org.id),
             {"module_id": str(target.id)},
         )
-        assert out["notified_count"] == 1
+        assert out["queued_count"] == 1
         for v in others:
             assert v.email not in seen
 
@@ -321,7 +332,7 @@ class TestTheRecipientQueriesDegradeQuietly:
         out = NUDGE_UNDERSTAFFED_MODULE_TOOL.handler(
             db_session, admin_scope, {"module_id": str(target.id)}
         )
-        assert out["notified_count"] == 0
+        assert out["queued_count"] == 0
 
 
 class TestTheReminderListIsBounded:
@@ -363,7 +374,7 @@ class TestTheReminderListIsBounded:
             admin_scope,
             {"participant_ids": [str(v.id) for v in vols], "template": "reminder"},
         )
-        assert out["sent_count"] == 2
+        assert out["queued_count"] == 2
         assert len(sent) == 2
 
     def test_an_unknown_participant_id_is_a_failure_not_a_send(
@@ -377,7 +388,7 @@ class TestTheReminderListIsBounded:
             admin_scope,
             {"participant_ids": [str(uuid.uuid4())], "template": "reminder"},
         )
-        assert out == {"sent_count": 0, "failed_count": 1}
+        assert out == {"queued_count": 0, "failed_count": 1, "skipped_count": 0}
         assert sent == []
 
     def test_a_bounced_address_is_still_only_a_failed_count(
@@ -396,4 +407,4 @@ class TestTheReminderListIsBounded:
             admin_scope,
             {"participant_ids": [str(v.id)], "template": "reminder"},
         )
-        assert out == {"sent_count": 0, "failed_count": 1}
+        assert out == {"queued_count": 0, "failed_count": 1, "skipped_count": 0}
