@@ -199,6 +199,7 @@ docker run --rm -e PGPASSWORD='<RDS_PASSWORD>' postgres:16-alpine \
 ```bash
 export DOMAIN='app.scitrek-ucsb.org'
 export VITE_API_URL="https://${DOMAIN}"
+export VITE_COPILOT_ENABLED=true
 
 docker compose -f docker-compose.aws.yml up -d --build
 ```
@@ -207,6 +208,23 @@ docker compose -f docker-compose.aws.yml up -d --build
 executes `CREATE EXTENSION IF NOT EXISTS vector` (migration `0019`), so you
 don't need to enable pgvector by hand. Then it seeds the admin user, then
 `backend`/`celery_worker`/`celery_beat` start.
+
+The three `export`s are **build-time**, not runtime: Vite inlines every `VITE_*`
+value into the JS bundle when the `frontend` image is built, so they are not in
+`backend/.env.production` and a `docker compose restart` will never pick up a
+change to them. Compose aborts the build if any of the three is unset.
+
+`VITE_COPILOT_ENABLED` is the frontend half of the copilot feature flag;
+`COPILOT_ENABLED=true` in `backend/.env.production` is the backend half. **Both
+are required.** With only the backend one, the API endpoints are live but the
+copilot FAB, the admin *Copilot* nav item, and the feedback page are all absent
+from the bundle — a deploy that looks completely healthy and has no copilot in
+it. To fix it after the fact, export the variable and rebuild just that image:
+
+```bash
+export VITE_COPILOT_ENABLED=true
+docker compose -f docker-compose.aws.yml up -d --build frontend
+```
 
 ## 7. DNS and HTTPS
 
@@ -283,3 +301,29 @@ bucket — don't put long-lived AWS access keys in the env file or the repo.
 - **Backend OOM-killed under `docker stats` / `docker compose ps` shows
   restarts** — see the sizing note in §3: move to `t3.large` or reduce
   `--workers` in `docker-compose.aws.yml`.
+- **Everything works but there is no copilot** — the drawer, the FAB, the admin
+  *Copilot* nav item and the feedback page are compiled out unless
+  `VITE_COPILOT_ENABLED` was exported as the string `true` when the `frontend`
+  image was built. `COPILOT_ENABLED=true` in `backend/.env.production` does not
+  cover it. Confirm which half is missing:
+
+  ```bash
+  # backend half — must print "true". If it prints nothing, the key is
+  # missing from backend/.env.production; the copilot router then 404s
+  # every request, deliberately (the surface is invisible when off).
+  docker compose -f docker-compose.aws.yml exec backend printenv COPILOT_ENABLED
+
+  # frontend half — a hit means the flag was baked into the bundle
+  docker compose -f docker-compose.aws.yml exec frontend \
+    sh -c 'grep -rl copilot /usr/share/nginx/html/assets | head'
+  ```
+
+  Then `export VITE_COPILOT_ENABLED=true` and
+  `docker compose -f docker-compose.aws.yml up -d --build frontend`.
+- **Copilot drawer opens but every message fails** — that is the backend, not
+  the build flag. `OPENROUTER_API_KEY` missing (provider error on the first
+  message), or the `:free` model slugs have been retired by OpenRouter (both
+  primary and fallback 404 and the drawer prints `Stream failed:
+  NotFoundError`). `docker compose -f docker-compose.aws.yml logs backend`
+  shows which; `backend/.env.production.example` has the curl one-liner for
+  re-checking the live free-model list.
