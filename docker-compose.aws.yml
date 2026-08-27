@@ -27,6 +27,7 @@
 #   # inside DATABASE_URL in backend/.env.production.
 #   export DOMAIN='scitrek.example.org'
 #   export VITE_API_URL="https://${DOMAIN}"
+#   export VITE_COPILOT_ENABLED=true    # build-time; unset = frontend with no copilot
 #   docker compose -f docker-compose.aws.yml up -d --build
 #
 #   # Verify:
@@ -137,7 +138,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:?set VITE_API_URL e.g. https://scitrek.example.org}
-        VITE_COPILOT_ENABLED: ${VITE_COPILOT_ENABLED:-false}
+        VITE_COPILOT_ENABLED: ${VITE_COPILOT_ENABLED:?set VITE_COPILOT_ENABLED=true or false — unset used to default to false, which builds a healthy frontend with no copilot in it}
     restart: unless-stopped
 
   caddy:

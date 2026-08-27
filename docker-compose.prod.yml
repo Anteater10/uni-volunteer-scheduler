@@ -1,6 +1,7 @@
 # Production single-host stack (one VPS). Differences from the dev
 # docker-compose.yml:
-#   - no mailpit — email goes through SendGrid (backend/.env.production)
+#   - no mailpit — email goes through a real provider (AWS SES SMTP or
+#     SendGrid, per EMAIL_MODE in backend/.env.production)
 #   - Postgres password is REQUIRED (no insecure default)
 #   - db/redis are NOT published to the host — internal network only
 #   - backend runs multiple uvicorn workers + a real container healthcheck
@@ -12,6 +13,7 @@
 #   export POSTGRES_PASSWORD='<same as in DATABASE_URL>'
 #   export DOMAIN='scitrek.example.org'
 #   export VITE_API_URL="https://${DOMAIN}"
+#   export VITE_COPILOT_ENABLED=true    # build-time; unset = frontend with no copilot
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
 # Managed-services variant (Render/Railway/Fly/RDS): drop the db and/or redis
@@ -172,7 +174,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:?set VITE_API_URL e.g. https://scitrek.example.org}
-        VITE_COPILOT_ENABLED: ${VITE_COPILOT_ENABLED:-false}
+        VITE_COPILOT_ENABLED: ${VITE_COPILOT_ENABLED:?set VITE_COPILOT_ENABLED=true or false — unset used to default to false, which builds a healthy frontend with no copilot in it}
     restart: unless-stopped
 
   caddy:
