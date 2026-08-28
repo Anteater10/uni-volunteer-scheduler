@@ -1,0 +1,77 @@
+# pip-audit baseline — KNOWN, UNTRIAGED backend advisories as of 2026-08-28.
+#
+# WHAT THIS FILE IS NOT: it is not an acceptance. Nothing here has been
+# assessed for reachability. It exists so CI can fail on *new* vulnerabilities
+# starting today, instead of being permanently red against a backlog and
+# therefore permanently ignored.
+#
+# The first-ever backend dependency audit (P1 / SCRUM-8) found these. Triaging
+# and fixing them is SCRUM-45, and this file should shrink to empty.
+#
+# To regenerate after fixing some:
+#   sed -E 's/\+cpu$//' backend/requirements.lock.txt | grep -v '^--' > /tmp/req.txt
+#   pip-audit -r /tmp/req.txt --no-deps --format json
+#
+# One advisory ID per line. Lines starting with # are ignored.
+# 34 advisories across 13 packages
+
+
+# click 8.3.1  (fix available: 8.3.3)
+PYSEC-2026-2132
+
+# cryptography 46.0.3  (fix available: 48.0.1)
+GHSA-537c-gmf6-5ccf
+PYSEC-2026-2141
+PYSEC-2026-35
+PYSEC-2026-3552
+PYSEC-2026-3553
+PYSEC-2026-3554
+PYSEC-2026-36
+
+# ecdsa 0.19.1  (fix available: none)
+PYSEC-2026-1325
+PYSEC-2026-2467
+
+# idna 3.11  (fix available: 3.15)
+PYSEC-2026-215
+
+# mako 1.3.10  (fix available: 1.3.12)
+PYSEC-2026-2617
+
+# markdown 3.7  (fix available: 3.8.1)
+PYSEC-2026-89
+PYSEC-2026-89
+
+# pyasn1 0.6.1  (fix available: 0.6.2)
+PYSEC-2026-1810
+PYSEC-2026-2263
+PYSEC-2026-3455
+PYSEC-2026-3456
+PYSEC-2026-3457
+
+# pydantic-settings 2.12.0  (fix available: 2.14.2)
+GHSA-4xgf-cpjx-pc3j
+
+# pytest 8.3.3  (fix available: 9.0.3)
+PYSEC-2026-1845
+
+# python-dotenv 1.2.1  (fix available: 1.2.2)
+PYSEC-2026-2270
+
+# starlette 0.50.0  (fix available: 1.0.1)
+PYSEC-2026-161
+PYSEC-2026-2280
+PYSEC-2026-2281
+PYSEC-2026-248
+PYSEC-2026-249
+
+# transformers 4.57.6  (fix available: none)
+PYSEC-2025-217
+PYSEC-2026-2288
+PYSEC-2026-2289
+PYSEC-2026-2290
+PYSEC-2026-2290
+
+# werkzeug 3.1.4  (fix available: 3.1.5)
+PYSEC-2026-2044
+PYSEC-2026-2320
