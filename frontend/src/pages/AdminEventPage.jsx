@@ -26,6 +26,7 @@ import EventSettingsModal from "../components/admin/EventSettingsModal";
 import DuplicateEventModal from "../components/admin/DuplicateEventModal";
 import BroadcastModal from "../components/BroadcastModal";
 import CheckInQRModal from "../components/admin/CheckInQRModal";
+import SignupQRModal from "../components/admin/SignupQRModal";
 import { toast } from "../state/toast";
 import { reopenEvent } from "../api/roster";
 import { useQuarters } from "../lib/useQuarters";
@@ -160,6 +161,8 @@ export default function AdminEventPage() {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   // Event-QR check-in (post-integration)
   const [qrOpen, setQrOpen] = useState(false);
+  // SCRUM-13 — public signup QR (distinct from the check-in QR above)
+  const [signupQrOpen, setSignupQrOpen] = useState(false);
   // Reconfigure title / where / when / slots without going back to the list
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -440,6 +443,14 @@ export default function AdminEventPage() {
             >
               <QrCode className="h-4 w-4" />
               Check-in QR
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setSignupQrOpen(true)}
+              className="whitespace-nowrap"
+            >
+              <QrCode className="h-4 w-4" />
+              Signup QR
             </Button>
             <Button
               variant="secondary"
@@ -1079,6 +1090,15 @@ export default function AdminEventPage() {
         onClose={() => setQrOpen(false)}
         eventId={eventId}
         eventTitle={eventTitle}
+      />
+
+      {/* SCRUM-13 — public signup QR */}
+      <SignupQRModal
+        open={signupQrOpen}
+        onClose={() => setSignupQrOpen(false)}
+        eventId={eventId}
+        eventTitle={eventTitle}
+        visibility={eventQ.data?.visibility}
       />
     </div>
   );
