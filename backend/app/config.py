@@ -42,7 +42,13 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_algorithm: str = "HS256"
     access_token_expires_minutes: int = 60
-    refresh_token_expires_days: int = 14
+    # F1 (2026-08-28): was 14. Both tokens live in localStorage, so a stolen
+    # refresh token is a staff account for its whole lifetime. Accepting
+    # localStorage was signed off in docs/f1-token-storage-decision.md; this
+    # is the compensating narrowing. Staff-only — volunteer magic links are a
+    # separate system (magic_link_service.SIGNUP_CONFIRM_TTL_MINUTES) and are
+    # deliberately still 14 days. Do not "re-sync" these two numbers.
+    refresh_token_expires_days: int = 2
 
     # Redis / Celery
     redis_url: str = "redis://redis:6379/0"
