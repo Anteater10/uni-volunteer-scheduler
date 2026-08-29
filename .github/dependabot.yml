@@ -1,0 +1,56 @@
+# Dependency update automation.
+#
+# P1 / SCRUM-8. Added 2026-08-28 after the first-ever backend dependency audit
+# found 42 advisories across 13 packages — none of which anything in this repo
+# would have reported. `npm audit` covered the frontend; the backend had no
+# equivalent and nothing watched either ecosystem over time.
+#
+# Grouped updates on purpose: one PR per ecosystem per week beats 13 PRs
+# nobody reviews. Security updates are NOT grouped — those arrive on their own
+# so they are visible and mergeable in isolation.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # torch/transformers pins are load-bearing: requirements.lock.txt exists
+      # precisely because two builds days apart installed different versions.
+      # Model weights are baked at image build (BAKE_MODEL_WEIGHTS), so a
+      # surprise major bump changes the image, not just a dependency.
+      - dependency-name: "torch"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "transformers"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "monthly"
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "monthly"

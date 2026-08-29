@@ -1,0 +1,62 @@
+# Project-specific Semgrep rules.
+#
+# Written for P1 / SCRUM-8 after discovering that Semgrep's published rulesets
+# (p/security-audit, p/secrets, p/javascript, p/react, p/python) return ZERO
+# findings on this repo — including on frontend/src/lib/authStorage.js, which
+# is the subject of F1. The claim that "Semgrep would have caught F1" was
+# wrong. These rules make it true.
+rules:
+  - id: uvs-auth-token-in-web-storage
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Auth token written to localStorage/sessionStorage. Any JavaScript on the
+      origin can read it, so an XSS or a compromised dependency takes the
+      session. This was accepted ONCE, deliberately and in writing, for the
+      existing staff tokens — see docs/f1-token-storage-decision.md, which caps
+      the refresh window at 2 days and is void if the CSP is dropped. That
+      acceptance covers the existing call sites in authStorage.js and nothing
+      else. A NEW token reaching web storage is not covered: either extend the
+      decision doc, or use an HttpOnly cookie.
+    paths:
+      exclude:
+        # The accepted, documented call sites. Do not widen this exclusion
+        # without amending docs/f1-token-storage-decision.md.
+        - frontend/src/lib/authStorage.js
+        # Tests legitimately seed tokens into storage to exercise the very
+        # code paths above; flagging them is noise, not signal.
+        - "**/__tests__/**"
+        - "**/*.test.js"
+        - "**/*.test.jsx"
+    patterns:
+      - pattern-either:
+          - pattern: localStorage.setItem($KEY, ...)
+          - pattern: sessionStorage.setItem($KEY, ...)
+          - pattern: window.localStorage.setItem($KEY, ...)
+          - pattern: window.sessionStorage.setItem($KEY, ...)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(token|jwt|auth|secret|credential|password|session).*
+
+  - id: uvs-refresh-window-widened
+    languages: [python]
+    severity: ERROR
+    message: >-
+      refresh_token_expires_days is being set above 2. Condition 2 of
+      docs/f1-token-storage-decision.md states the window stays at 2 or lower;
+      raising it reopens F1, because both tokens live in localStorage. Note the
+      volunteer magic-link TTL (SIGNUP_CONFIRM_TTL_MINUTES = 20160, i.e. 14
+      days) is a SEPARATE constant and is deliberately unchanged — the two are
+      not meant to match.
+    patterns:
+      - pattern: "refresh_token_expires_days: int = $N"
+      - metavariable-comparison:
+          metavariable: $N
+          comparison: $N > 2
+
+# A third rule (public endpoints missing the visibility allow-list) was drafted
+# and REMOVED: the real query in backend/app/routers/public/events.py is built
+# across several statements and filters correctly at line 215, but the rule
+# flagged it anyway. A rule that fires on correct code is worse than no rule --
+# it is how a scanner becomes something people click past. If this is worth
+# expressing, it needs a dataflow rule, not a syntactic one.
