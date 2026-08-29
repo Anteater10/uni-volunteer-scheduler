@@ -165,12 +165,18 @@ class Settings(BaseSettings):
     # touches them — they exist to bound a runaway client or a stolen token.
     copilot_rate_limit_confirms_per_minute: int = 20
     copilot_rate_limit_feedback_per_minute: int = 30
-    # K26: the copilot's two mail tools have never had a transport behind
-    # them. Their ``_dispatch`` seams returned True and sent nothing, so a
-    # confirmed send reported "sent_count: 47" and the admin believed it.
-    # The seams now refuse unless this is on, and turning it on is a
-    # deliberate act that must be paired with real wiring — there is
-    # intentionally no transport bound to it yet.
+    # K26: the copilot's two mail tools once had no transport behind them.
+    # Their ``_dispatch`` seams returned True and sent nothing, so a confirmed
+    # send reported "sent_count: 47" and the admin believed it.
+    #
+    # A transport is bound now — the same Celery + SMTP path as every other
+    # email — so this flag is live rather than symbolic. What survives from
+    # K26 is the naming: the tools report ``queued_count``, because handing a
+    # message to the broker is not delivering it, and the old name would be
+    # the old lie at lower volume.
+    #
+    # Still defaults off. These two tools are the only place where the
+    # audience comes from a model's reading of a sentence.
     copilot_outbound_email_enabled: bool = False
     # K26: a hard ceiling on how many people one copilot-initiated send can
     # reach. Not a tuning knob — a blast radius. The agent chooses these

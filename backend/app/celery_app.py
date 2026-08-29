@@ -1114,3 +1114,44 @@ celery.conf.beat_schedule = {
         "schedule": 300.0,
     },
 }
+
+
+@celery.task(
+    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+    name="app.celery_app.send_copilot_email",
+)
+def send_copilot_email(
+    self,
+    to_email: str,
+    subject: str,
+    text_body: str,
+    html_body: str | None = None,
+) -> None:
+    """K26 — deliver one copilot-initiated message.
+
+    Enqueued by ``app.copilot.agent.tools._outbound.dispatch``. The tool
+    handler has already enforced the recipient cap and the volunteer's
+    reminder opt-out; this task owns only delivery and the provider-level
+    daily cap, matching ``send_broadcast_email``.
+
+    Retries here are why the tool reports ``queued_count`` and not
+    ``sent_count``: at the moment the tool returned, this had not run.
+    """
+    db: Session = SessionLocal()
+    try:
+        if not _check_daily_send_limit(db):
+            logger.warning(
+                "copilot_email_skipped_daily_cap to=%s", mask_email(to_email)
+            )
+            return
+        if not to_email:
+            return
+        _send_email(to_email, subject, text_body or "", html_body=html_body)
+        logger.info("copilot_email_sent to=%s", mask_email(to_email))
+    finally:
+        db.close()

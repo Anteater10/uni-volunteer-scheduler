@@ -237,7 +237,7 @@ def test_f3_organizer_emails_no_shows_with_confirmation(
         scope_role="organizer",
         caller_id=org_a_id,
     )
-    assert out["result"]["sent_count"] == 1
+    assert out["result"]["queued_count"] == 1
     assert out["result"]["failed_count"] == 0
     assert len(calls) == 1
 

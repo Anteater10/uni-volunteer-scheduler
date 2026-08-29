@@ -153,7 +153,7 @@ def test_execute_after_confirmation_dispatches(db_session, monkeypatch):
     )
     assert result["result"]["module_id"] == str(event.id)
     assert result["result"]["module_name"] == "Understaffed"
-    assert result["result"]["notified_count"] == 1
+    assert result["result"]["queued_count"] == 1
     assert calls == [(vol.email, "Understaffed")]
 
     row = db_session.execute(
