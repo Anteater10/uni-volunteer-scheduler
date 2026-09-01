@@ -124,7 +124,7 @@ def soft_delete_module(db: Session, slug: str) -> None:
 
 def clone_module(db: Session, source_slug: str, new_slug: str, new_name: str | None = None) -> Module:
     """Deep-copy a template into a new slug. Copies capacity, duration,
-    description, materials, metadata, family_key, and default_form_schema."""
+    description, materials, metadata, school branch, family key, and form schema."""
     _validate_slug(new_slug)
     src = get_module(db, source_slug)
     existing = db.query(Module).filter(Module.slug == new_slug).first()
@@ -133,6 +133,7 @@ def clone_module(db: Session, source_slug: str, new_slug: str, new_name: str | N
     tpl = Module(
         slug=new_slug,
         name=new_name or f"{src.name} (copy)",
+        school_branch=src.school_branch,
         default_capacity=src.default_capacity,
         duration_minutes=src.duration_minutes,
         session_count=src.session_count,

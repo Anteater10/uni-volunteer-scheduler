@@ -4,7 +4,7 @@
 // Covers list, create, edit, archive, restore with SideDrawer pattern.
 
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // ---------------------------------------------------------------------------
@@ -48,6 +48,7 @@ const MODULES = [
   {
     slug: "dna-module",
     name: "DNA Extraction",
+    school_branch: "high_school",
     duration_minutes: 90,
     session_count: 2,
     default_capacity: 30,
@@ -58,6 +59,7 @@ const MODULES = [
   {
     slug: "orientation-101",
     name: "General Orientation",
+    school_branch: "both",
     duration_minutes: 120,
     session_count: 1,
     default_capacity: 50,
@@ -70,6 +72,7 @@ const MODULES = [
 const ARCHIVED_MODULE = {
   slug: "old-seminar",
   name: "Old Seminar",
+  school_branch: "middle_school",
   duration_minutes: 60,
   session_count: 1,
   default_capacity: 20,
@@ -128,7 +131,7 @@ test("renders empty state when list is empty", async () => {
   });
 });
 
-test("renders table with Name, Duration, Sessions, Capacity columns and no Type column (PR #51)", async () => {
+test("renders table with branch, schedule columns, and no Type column (PR #51)", async () => {
   api.admin.modules.list.mockResolvedValue(MODULES);
   const qc = makeQC();
   renderSection(qc);
@@ -140,11 +143,13 @@ test("renders table with Name, Duration, Sessions, Capacity columns and no Type 
   const headers = table.querySelectorAll("th");
   const headerTexts = Array.from(headers).map((h) => h.textContent.toLowerCase());
   expect(headerTexts.some((h) => h.includes("name"))).toBe(true);
+  expect(headerTexts.some((h) => h.includes("school branch"))).toBe(true);
   expect(headerTexts.some((h) => h.includes("type"))).toBe(false);
   expect(headerTexts.some((h) => h.includes("duration"))).toBe(true);
   expect(headerTexts.some((h) => h.includes("sessions"))).toBe(true);
   expect(headerTexts.some((h) => h.includes("capacity"))).toBe(true);
   expect(screen.getByText("General Orientation")).toBeInTheDocument();
+  expect(screen.getByText("High School")).toBeInTheDocument();
 });
 
 test("clicking 'New module' button opens SideDrawer with title 'New module'", async () => {
@@ -194,6 +199,7 @@ test("create form has all required fields", async () => {
   // Check for all required fields via their label text
   expect(screen.getByLabelText(/module name/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/url slug/i)).toBeInTheDocument();
+  expect(screen.getByLabelText(/school branch/i)).toHaveValue("both");
   // PR #51: the Type picker is gone — every module is just a module
   expect(document.getElementById("tf-type")).not.toBeInTheDocument();
   expect(screen.getByLabelText(/duration/i)).toBeInTheDocument();
@@ -202,6 +208,28 @@ test("create form has all required fields", async () => {
   expect(screen.getByLabelText(/default capacity/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
   expect(screen.getByLabelText(/materials/i)).toBeInTheDocument();
+});
+
+test("create sends the selected school branch", async () => {
+  api.admin.modules.list.mockResolvedValue([]);
+  api.admin.modules.create.mockResolvedValue({});
+  const qc = makeQC();
+  renderSection(qc);
+  await screen.findByText(/no modules yet/i);
+  fireEvent.click(screen.getByRole("button", { name: /new module/i }));
+  const drawer = screen.getByRole("dialog");
+  fireEvent.change(within(drawer).getByLabelText(/module name/i), {
+    target: { value: "Branch Module" },
+  });
+  fireEvent.change(within(drawer).getByLabelText(/school branch/i), {
+    target: { value: "middle_school" },
+  });
+  fireEvent.click(within(drawer).getByRole("button", { name: /create module/i }));
+  await waitFor(() =>
+    expect(api.admin.modules.create).toHaveBeenCalledWith(
+      expect.objectContaining({ school_branch: "middle_school" }),
+    ),
+  );
 });
 
 test("slug auto-generates from name as lowercase with hyphens", async () => {

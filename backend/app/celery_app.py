@@ -13,12 +13,13 @@ from email.message import EmailMessage
 
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import beat_init, celeryd_init
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
-from .config import settings
+from .config import assert_email_config_valid, settings
 from .database import SessionLocal
 from . import models
 from .services import notification_dedup
@@ -31,6 +32,29 @@ logger = logging.getLogger(__name__)
 # Celery configures worker logging itself (-l flag); Sentry still wants an
 # explicit init in this process so task exceptions are captured.
 init_sentry()
+
+
+@celeryd_init.connect
+@beat_init.connect
+def _assert_email_transport_configured(**_kwargs) -> None:
+    """F6: refuse to start a worker whose mail transport cannot send.
+
+    This is the process that delivers every confirmation, reminder and
+    broadcast email, so a missing SENDGRID_API_KEY/EMAIL_FROM_ADDRESS here
+    means silent non-delivery across the whole app. Failing at boot beats
+    finding out one dropped email at a time.
+
+    Hung off the init signals rather than called at import: importing this
+    module must stay free of environment assertions, or `from app.main
+    import app` in conftest (routers/admin.py imports celery_app) takes the
+    test suite down in any checkout without a .env — which is every CI run,
+    since backend/.env is gitignored.
+    """
+    assert_email_config_valid(
+        email_mode=settings.email_mode,
+        sendgrid_api_key=settings.sendgrid_api_key,
+        email_from_address=settings.email_from_address,
+    )
 
 # Celery app configured to use Redis (broker + result backend)
 celery = Celery(
@@ -103,11 +127,15 @@ def _send_via_smtp(
     question (smtp_host, smtp_username, smtp_password, smtp_use_tls).
     """
     if not settings.email_from_address:
-        logger.warning(
-            "email_from_address not configured; skipping send to=%s",
-            mask_email(to_email),
+        # F6: this used to log a warning and return normally, which the
+        # caller (and every log-scanning human) reads as "handled" — the
+        # task then reports success and the signup sits stuck pending
+        # forever with no visible error. Missing sender config is not a
+        # recoverable per-send condition; it's a deploy misconfiguration,
+        # so it must fail loudly instead of silently doing nothing.
+        raise RuntimeError(
+            f"email_from_address not configured; cannot send to={mask_email(to_email)}"
         )
-        return
 
     msg = EmailMessage()
     msg["From"] = settings.email_from_address
@@ -142,11 +170,12 @@ def _send_via_sendgrid(
 ) -> None:
     """Send an email via SendGrid HTTPS API. Prod fallback; dev uses SMTP."""
     if not settings.sendgrid_api_key or not settings.email_from_address:
-        logger.warning(
-            "sendgrid_api_key or email_from_address missing; skipping send to=%s",
-            mask_email(to_email),
+        # F6: same reasoning as the SMTP branch above — this must fail
+        # loudly, not silently no-op while reporting success upstream.
+        raise RuntimeError(
+            "sendgrid_api_key or email_from_address missing; "
+            f"cannot send to={mask_email(to_email)}"
         )
-        return
 
     mail_kwargs = {
         "from_email": settings.email_from_address,
@@ -179,7 +208,22 @@ def _send_via_sendgrid(
             for filename, content in attachments
         ]
     sg = SendGridAPIClient(settings.sendgrid_api_key)
-    sg.send(message)
+    try:
+        sg.send(message)
+    except Exception as e:
+        # A bare traceback here just says "HTTPError" — the reason (403
+        # sender not verified, 401 bad key, etc.) is in the response body,
+        # which python_http_client attaches as .body/.status_code and the
+        # default exception __str__ drops. Surface it explicitly so a
+        # misconfigured/unverified sender is diagnosable from worker logs
+        # alone, instead of looking identical to "delivered fine".
+        status_code = getattr(e, "status_code", None)
+        body = getattr(e, "body", None)
+        logger.error(
+            "sendgrid_send_failed to=%s status_code=%s body=%s",
+            mask_email(to_email), status_code, body,
+        )
+        raise
 
 
 # Backward-compat alias — external callers (admin broadcast router) still
@@ -762,6 +806,128 @@ def send_signup_confirmation_email(
         if getattr(settings, "debug", False):
             logger.debug("signup_confirmation_token_preview token=%s", token)
         # NO Notification row per D-11
+    finally:
+        db.close()
+
+
+@celery.task(
+    bind=True,
+    name="app.send_admin_signup_notification_email",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+)
+def send_admin_signup_notification_email(
+    self,
+    user_id: str,
+    volunteer_id: str,
+    signup_ids: list,
+    event_id: str,
+    shift_signup_ids: list | None = None,
+) -> None:
+    """Send one branch-routed operational summary to one administrator."""
+    from uuid import UUID
+
+    from .emails import build_admin_signup_notification_email
+    from .services.signup_notification_service import eligible_admin_ids_for_event
+
+    db: Session = SessionLocal()
+    try:
+        uid = UUID(user_id)
+        eid = UUID(event_id)
+        # Revalidate every eligibility rule in the worker. Account activity,
+        # preferences, or branch assignments may change while a task is queued.
+        if uid not in set(eligible_admin_ids_for_event(db, eid)):
+            return
+        if not _check_daily_send_limit(db):
+            logger.warning(
+                "admin_signup_notification skipped: daily send limit reached "
+                "user_id=%s event_id=%s",
+                user_id,
+                event_id,
+            )
+            return
+
+        admin = db.get(models.User, uid)
+        volunteer = db.get(models.Volunteer, UUID(volunteer_id))
+        event = db.get(models.Event, eid)
+        if not admin or not volunteer or not event:
+            logger.warning(
+                "send_admin_signup_notification_email: missing entity "
+                "user_id=%s volunteer_id=%s event_id=%s",
+                user_id,
+                volunteer_id,
+                event_id,
+            )
+            return
+
+        signup_uuid_order = [UUID(value) for value in signup_ids]
+        signup_rows = (
+            db.query(models.Signup)
+            .filter(models.Signup.id.in_(signup_uuid_order))
+            .all()
+            if signup_uuid_order
+            else []
+        )
+        signup_by_id = {row.id: row for row in signup_rows}
+        bookings = [signup_by_id[value] for value in signup_uuid_order if value in signup_by_id]
+
+        shift_uuid_order = [UUID(value) for value in (shift_signup_ids or [])]
+        shift_rows = (
+            db.query(models.ShiftSignup)
+            .filter(models.ShiftSignup.id.in_(shift_uuid_order))
+            .all()
+            if shift_uuid_order
+            else []
+        )
+        shift_by_id = {row.id: row for row in shift_rows}
+        bookings.extend(
+            shift_by_id[value] for value in shift_uuid_order if value in shift_by_id
+        )
+        if not bookings:
+            logger.warning(
+                "send_admin_signup_notification_email: signup batch missing "
+                "user_id=%s event_id=%s",
+                user_id,
+                event_id,
+            )
+            return
+
+        module = (
+            db.query(models.Module)
+            .filter(models.Module.slug == event.module_slug)
+            .first()
+            if event.module_slug
+            else None
+        )
+        subject, text_body, html_body = build_admin_signup_notification_email(
+            admin, volunteer, bookings, event, module
+        )
+        _send_email(
+            admin.email,
+            subject,
+            text_body,
+            html_body=html_body,
+        )
+        db.add(
+            models.Notification(
+                user_id=admin.id,
+                type=models.NotificationType.email,
+                subject=subject,
+                body=text_body,
+                delivery_method="email",
+                delivered_at=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+        logger.info(
+            "admin_signup_notification_sent user_id=%s event_id=%s booking_count=%d",
+            user_id,
+            event_id,
+            len(bookings),
+        )
     finally:
         db.close()
 

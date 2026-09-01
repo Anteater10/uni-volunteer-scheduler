@@ -82,12 +82,12 @@ def test_daily_send_limit_blocks_at_limit(db_session, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_send_via_smtp_skips_when_no_from_address(monkeypatch, caplog):
+def test_send_via_smtp_raises_when_no_from_address(monkeypatch):
+    # F6: missing sender config must fail loudly, not silently no-op while
+    # the caller reports success upstream.
     monkeypatch.setattr(celery_mod.settings, "email_from_address", None)
-    import logging
-    with caplog.at_level(logging.WARNING, logger="app.celery_app"):
+    with pytest.raises(RuntimeError, match="email_from_address"):
         _send_via_smtp("to@x.com", "s", "b")
-    assert any("email_from_address" in r.message for r in caplog.records)
 
 
 def test_send_via_smtp_sends_with_tls_and_auth(monkeypatch):
@@ -202,22 +202,20 @@ def test_send_via_smtp_attaches_every_file(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_send_via_sendgrid_skips_when_no_key(monkeypatch, caplog):
+def test_send_via_sendgrid_raises_when_no_key(monkeypatch):
+    # F6: missing sender config must fail loudly, not silently no-op while
+    # the caller reports success upstream.
     monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", None)
     monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
-    import logging
-    with caplog.at_level(logging.WARNING, logger="app.celery_app"):
+    with pytest.raises(RuntimeError, match="sendgrid_api_key"):
         _send_via_sendgrid("to@x.com", "s", "b")
-    assert any("sendgrid_api_key" in r.message for r in caplog.records)
 
 
-def test_send_via_sendgrid_skips_when_no_from(monkeypatch, caplog):
+def test_send_via_sendgrid_raises_when_no_from(monkeypatch):
     monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", "key")
     monkeypatch.setattr(celery_mod.settings, "email_from_address", None)
-    import logging
-    with caplog.at_level(logging.WARNING, logger="app.celery_app"):
+    with pytest.raises(RuntimeError, match="email_from_address"):
         _send_via_sendgrid("to@x.com", "s", "b")
-    assert any("email_from_address" in r.message for r in caplog.records)
 
 
 def test_send_via_sendgrid_sends_with_html_and_text(monkeypatch):
@@ -276,6 +274,55 @@ def test_send_via_sendgrid_attaches_calendar_file(monkeypatch):
     assert (
         base64.b64decode(attachment.file_content.file_content).decode() == ics
     )
+
+
+def test_send_via_sendgrid_logs_status_and_body_then_reraises(monkeypatch, caplog):
+    """A SendGrid rejection must name its reason in the logs.
+
+    The provider puts the actual cause — sender not verified, key revoked —
+    in the response body, and python_http_client's exception __str__ drops
+    it, so the bare traceback reads only "HTTPError". That is the difference
+    between a diagnosable failure and a mystery.
+    """
+    import logging
+
+    monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", "SG.test")
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+
+    class Forbidden(Exception):
+        status_code = 403
+        body = b'{"errors":[{"message":"The from address does not match a verified Sender Identity."}]}'
+
+    sg_instance = MagicMock()
+    sg_instance.send.side_effect = Forbidden()
+    with patch.object(celery_mod, "SendGridAPIClient", return_value=sg_instance):
+        with caplog.at_level(logging.ERROR, logger="app.celery_app"):
+            with pytest.raises(Forbidden):
+                _send_via_sendgrid("to@x.com", "s", "b")
+
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "sendgrid_send_failed" in logged
+    assert "403" in logged
+    assert "verified Sender Identity" in logged
+
+
+# ---------------------------------------------------------------------------
+# _assert_email_transport_configured — worker/beat boot guard
+# ---------------------------------------------------------------------------
+
+
+def test_worker_boot_guard_raises_on_unsendable_transport(monkeypatch):
+    monkeypatch.setattr(celery_mod.settings, "email_mode", "sendgrid")
+    monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", None)
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    with pytest.raises(RuntimeError, match="SENDGRID_API_KEY"):
+        celery_mod._assert_email_transport_configured()
+
+
+def test_worker_boot_guard_passes_on_valid_transport(monkeypatch):
+    monkeypatch.setattr(celery_mod.settings, "email_mode", "smtp")
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    celery_mod._assert_email_transport_configured()
 
 
 # ---------------------------------------------------------------------------

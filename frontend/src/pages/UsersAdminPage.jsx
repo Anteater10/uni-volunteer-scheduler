@@ -27,6 +27,15 @@ import { useAuth } from "../state/useAuth";
 
 // D-13: only admin + organizer can sign into the admin panel.
 const ROLES = ["admin", "organizer"];
+const SCHOOL_BRANCHES = [
+  { value: "high_school", label: "High School" },
+  { value: "middle_school", label: "Middle School" },
+  { value: "both", label: "Both" },
+];
+
+function branchLabel(value) {
+  return SCHOOL_BRANCHES.find((branch) => branch.value === value)?.label || "Both";
+}
 
 const RTF = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 function relativeTime(iso) {
@@ -236,6 +245,7 @@ export default function UsersAdminPage() {
                 <th className="py-3 px-4">Name</th>
                 <th className="py-3 px-4">Email</th>
                 <th className="py-3 px-4">Role</th>
+                <th className="py-3 px-4">School branch</th>
                 <th className="py-3 px-4">Last login</th>
                 <th className="py-3 px-4">Status</th>
               </tr>
@@ -260,6 +270,9 @@ export default function UsersAdminPage() {
                     <td className="py-3 px-4 text-gray-800">{u.email}</td>
                     <td className="py-3 px-4">
                       <RoleBadge role={u.role} />
+                    </td>
+                    <td className="py-3 px-4 text-gray-800">
+                      {u.role === "admin" ? branchLabel(u.school_branch) : "—"}
                     </td>
                     <td className="py-3 px-4 text-gray-600">
                       {lastLoginLabel(u.last_login_at)}
@@ -416,6 +429,7 @@ function InviteForm({ onSubmit, submitting, error }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("organizer");
+  const [schoolBranch, setSchoolBranch] = useState("both");
 
   const fieldClass =
     "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500";
@@ -424,7 +438,12 @@ function InviteForm({ onSubmit, submitting, error }) {
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({ name, email, role });
+        onSubmit({
+          name,
+          email,
+          role,
+          ...(role === "admin" ? { school_branch: schoolBranch } : {}),
+        });
       }}
       className="space-y-5"
     >
@@ -470,6 +489,26 @@ function InviteForm({ onSubmit, submitting, error }) {
           ))}
         </select>
       </div>
+      {role === "admin" && (
+        <div>
+          <label htmlFor="invite-school-branch" className="block text-base font-medium mb-1.5">
+            School branch
+          </label>
+          <select
+            id="invite-school-branch"
+            value={schoolBranch}
+            onChange={(e) => setSchoolBranch(e.target.value)}
+            required
+            className={`${fieldClass} bg-white`}
+          >
+            {SCHOOL_BRANCHES.map((branch) => (
+              <option key={branch.value} value={branch.value}>
+                {branch.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {error && (
         <p className="text-base text-[var(--color-danger)]" role="alert">
           {error}
@@ -510,6 +549,7 @@ function EditUserForm({
 }) {
   const [name, setName] = useState(user.name || "");
   const [role, setRole] = useState(user.role);
+  const [schoolBranch, setSchoolBranch] = useState(user.school_branch || "both");
   const [universityId, setUniversityId] = useState(user.university_id || "");
   const [notifyEmail, setNotifyEmail] = useState(user.notify_email ?? true);
 
@@ -537,6 +577,7 @@ function EditUserForm({
         onSave({
           name,
           role,
+          ...(role === "admin" ? { school_branch: schoolBranch } : {}),
           university_id: universityId,
           notify_email: notifyEmail,
         });
@@ -574,6 +615,24 @@ function EditUserForm({
           </option>
         </select>
       </div>
+      {role === "admin" && (
+        <div>
+          <Label htmlFor="edit-school-branch">School branch</Label>
+          <select
+            id="edit-school-branch"
+            value={schoolBranch}
+            onChange={(e) => setSchoolBranch(e.target.value)}
+            required
+            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+          >
+            {SCHOOL_BRANCHES.map((branch) => (
+              <option key={branch.value} value={branch.value}>
+                {branch.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div>
         <Label htmlFor="edit-univ-id">University ID</Label>
         <Input

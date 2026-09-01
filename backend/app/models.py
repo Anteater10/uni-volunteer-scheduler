@@ -42,6 +42,19 @@ class UserRole(str, enum.Enum):
     participant = "participant"
 
 
+class SchoolBranch(str, enum.Enum):
+    high_school = "high_school"
+    middle_school = "middle_school"
+    both = "both"
+
+
+def _default_user_school_branch(context):
+    """Give ORM-created admins the backwards-compatible ``both`` default."""
+    role = context.get_current_parameters().get("role")
+    role_value = role.value if isinstance(role, UserRole) else role
+    return SchoolBranch.both if role_value == UserRole.admin.value else None
+
+
 class SignupStatus(str, enum.Enum):
     pending = "pending"
     confirmed = "confirmed"
@@ -144,6 +157,19 @@ class User(Base):
         nullable=False,
     )
 
+    # Only admins participate in school-branch signup notification routing.
+    # The callable default keeps direct ORM construction backwards-compatible
+    # while the database CHECK below prevents branches leaking onto organizers.
+    school_branch = Column(
+        SqlEnum(
+            SchoolBranch,
+            values_callable=lambda x: [e.value for e in x],
+            name="schoolbranch",
+        ),
+        nullable=True,
+        default=_default_user_school_branch,
+    )
+
     university_id = Column(String(64), nullable=True)
     notify_email = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -168,6 +194,14 @@ class User(Base):
     notifications = relationship("Notification", back_populates="user")
     refresh_tokens = relationship("RefreshToken", back_populates="user")
     audit_logs = relationship("AuditLog", back_populates="actor")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(role = 'admin' AND school_branch IS NOT NULL) OR "
+            "(role <> 'admin' AND school_branch IS NULL)",
+            name="ck_users_school_branch_admin_only",
+        ),
+    )
 
 
 # -------------------------
@@ -846,6 +880,17 @@ class Module(Base):
 
     slug = Column(String, primary_key=True)
     name = Column(String(255), nullable=False)
+    school_branch = Column(
+        SqlEnum(
+            SchoolBranch,
+            values_callable=lambda x: [e.value for e in x],
+            name="schoolbranch",
+            create_type=False,
+        ),
+        nullable=False,
+        default=SchoolBranch.both,
+        server_default=SchoolBranch.both.value,
+    )
     # Phase 08: prereq_slugs column dropped (D-05)
     default_capacity = Column(Integer, nullable=False, server_default="20")
     duration_minutes = Column(Integer, nullable=False, server_default="90")
