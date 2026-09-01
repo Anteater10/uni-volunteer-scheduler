@@ -52,7 +52,14 @@ class Settings(BaseSettings):
     # Email / SMS
     # email_mode: "smtp" routes via smtplib (dev: Mailpit; prod: AWS SES SMTP).
     #             "sendgrid" routes via the SendGrid HTTPS API.
-    email_mode: str = "smtp"
+    #
+    # A Literal for the same reason `environment` above is one: _send_email
+    # dispatches with `if email_mode == "sendgrid": ... else: smtp`, so every
+    # value that isn't exactly "sendgrid" — including "SendGrid", "sendgird",
+    # or a stray quote — silently routes through SMTP instead. A typo that
+    # sends mail through the wrong transport (or nowhere) must be a startup
+    # failure, not a working-looking deploy.
+    email_mode: Literal["smtp", "sendgrid"] = "smtp"
     smtp_host: str = "mailpit"
     smtp_port: int = 1025
     smtp_username: str | None = None
@@ -294,4 +301,44 @@ def assert_test_mode_allowed(environment: str, *, expose_tokens: bool) -> None:
             "This flag mounts unauthenticated destructive endpoints, disables "
             "rate limiting, and leaks auth tokens. It is allowed only when "
             "ENVIRONMENT=development. Unset it before starting."
+        )
+
+
+def assert_email_config_valid(
+    *,
+    email_mode: str,
+    sendgrid_api_key: str | None,
+    email_from_address: str | None,
+) -> None:
+    """Refuse to start a mail-sending process that cannot possibly send.
+
+    F6: `_send_via_sendgrid`/`_send_via_smtp` used to log a warning and
+    return normally when their required config was missing, so a signup
+    confirmation task reported "sent" while delivering nothing — the
+    volunteer never got a magic link and the signup sat stuck pending
+    forever, with no error anywhere a human would look. Those two call
+    sites now raise (see celery_app.py); this is the belt to that
+    braces, so a misconfigured worker fails at boot instead of
+    discovering the problem one dropped email at a time.
+
+    Deliberately NOT called at module import. `backend/.env` is
+    gitignored, so CI and any fresh checkout legitimately have no
+    EMAIL_FROM_ADDRESS, and conftest imports `app.main` (which pulls in
+    celery_app via routers/admin.py) at collection time — an import-time
+    raise here takes down the whole test suite. It is wired to Celery's
+    worker/beat init signals instead, which fire only when a real
+    mail-sending process actually starts.
+    """
+    if email_mode == "sendgrid" and (not sendgrid_api_key or not email_from_address):
+        raise RuntimeError(
+            "EMAIL_MODE=sendgrid requires both SENDGRID_API_KEY and "
+            "EMAIL_FROM_ADDRESS to be set. Confirmation, reminder, and "
+            "broadcast emails would otherwise fail to send. Set both, or "
+            "switch EMAIL_MODE to smtp."
+        )
+    if email_mode == "smtp" and not email_from_address:
+        raise RuntimeError(
+            "EMAIL_MODE=smtp requires EMAIL_FROM_ADDRESS to be set. "
+            "Confirmation, reminder, and broadcast emails would otherwise "
+            "fail to send."
         )

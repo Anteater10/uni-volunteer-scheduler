@@ -27,6 +27,15 @@ import { toast } from "../../state/toast";
 // ---------------------------------------------------------------------------
 
 const PAGE_SIZE = 10;
+const SCHOOL_BRANCHES = [
+  { value: "high_school", label: "High School" },
+  { value: "middle_school", label: "Middle School" },
+  { value: "both", label: "Both" },
+];
+
+function branchLabel(value) {
+  return SCHOOL_BRANCHES.find((branch) => branch.value === value)?.label || "Both";
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,6 +58,7 @@ function emptyForm() {
     default_capacity: 30,
     description: "",
     materials: "",
+    school_branch: "both",
   };
 }
 
@@ -61,6 +71,7 @@ function moduleToForm(m) {
     default_capacity: m.default_capacity ?? 30,
     description: m.description || "",
     materials: Array.isArray(m.materials) ? m.materials.join(", ") : (m.materials || ""),
+    school_branch: m.school_branch || "both",
   };
 }
 
@@ -115,6 +126,27 @@ function ModuleForm({ form, setForm, isCreate, onSubmit, onArchive, onClone, onC
             Auto-generated from name. You can edit it.
           </p>
         )}
+      </div>
+
+      {/* School branch */}
+      <div>
+        <Label htmlFor="tf-school-branch">School branch</Label>
+        <select
+          id="tf-school-branch"
+          value={form.school_branch}
+          onChange={(e) => setForm((p) => ({ ...p, school_branch: e.target.value }))}
+          required
+          className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-base"
+        >
+          {SCHOOL_BRANCHES.map((branch) => (
+            <option key={branch.value} value={branch.value}>
+              {branch.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-[var(--color-fg-muted)] mt-1">
+          Controls which administrators receive new-signup emails.
+        </p>
       </div>
 
       {/* Duration */}
@@ -358,6 +390,7 @@ export default function ModulesSection() {
     createM.mutate({
       slug: formData.slug,
       name: formData.name,
+      school_branch: formData.school_branch,
       duration_minutes: Number(formData.duration_minutes),
       session_count: Number(formData.session_count),
       default_capacity: Number(formData.default_capacity),
@@ -374,6 +407,7 @@ export default function ModulesSection() {
       slug: drawerModule.slug,
       payload: {
         name: formData.name,
+        school_branch: formData.school_branch,
         duration_minutes: Number(formData.duration_minutes),
         session_count: Number(formData.session_count),
         default_capacity: Number(formData.default_capacity),
@@ -466,6 +500,7 @@ export default function ModulesSection() {
               <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
                 <tr>
                   <th className="py-3 px-4">Name</th>
+                  <th className="py-3 px-4">School branch</th>
                   <th className="py-3 px-4">Duration</th>
                   <th className="py-3 px-4">Sessions</th>
                   <th className="py-3 px-4">Capacity</th>
@@ -485,6 +520,9 @@ export default function ModulesSection() {
                       onClick={() => !isArchived && openEdit(t)}
                     >
                       <td className="py-3 px-4 font-semibold">{t.name}</td>
+                      <td className="py-3 px-4 text-gray-800">
+                        {branchLabel(t.school_branch)}
+                      </td>
                       <td className="py-3 px-4 text-gray-800">{t.duration_minutes} min</td>
                       <td className="py-3 px-4 text-gray-800">
                         {t.session_count === 1

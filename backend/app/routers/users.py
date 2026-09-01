@@ -139,6 +139,11 @@ def admin_create_user(
         role=user_in.role,
         university_id=user_in.university_id,
         notify_email=user_in.notify_email,
+        school_branch=(
+            user_in.school_branch or models.SchoolBranch.both
+            if user_in.role == models.UserRole.admin
+            else None
+        ),
         hashed_password=hash_password(user_in.password),
     )
     db.add(user)
@@ -177,6 +182,11 @@ def invite_user(
         name=body.name,
         email=body.email,
         role=models.UserRole(body.role),
+        school_branch=(
+            body.school_branch or models.SchoolBranch.both
+            if body.role == models.UserRole.admin.value
+            else None
+        ),
         hashed_password=None,
         is_active=True,
         notify_email=True,
@@ -321,6 +331,19 @@ def admin_update_user(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Cannot demote the last active admin",
                 )
+
+    resulting_role = data.get("role", user.role)
+    if resulting_role == models.UserRole.admin:
+        # Existing clients do not send this new field. Both is the agreed
+        # backwards-compatible default for a newly promoted/created admin.
+        data["school_branch"] = (
+            data.get("school_branch")
+            or user.school_branch
+            or models.SchoolBranch.both
+        )
+    else:
+        # Branch routing applies to admins only, including after demotion.
+        data["school_branch"] = None
 
     for field, value in data.items():
         setattr(user, field, value)

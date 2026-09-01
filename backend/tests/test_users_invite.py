@@ -31,6 +31,7 @@ def test_invite_happy_path_creates_user_and_sends_email(client, db_session):
     assert body["role"] == "organizer"
     assert body["is_active"] is True
     assert body["last_login_at"] is None
+    assert body["school_branch"] is None
 
     created = (
         db_session.query(models.User)
@@ -39,6 +40,7 @@ def test_invite_happy_path_creates_user_and_sends_email(client, db_session):
     )
     assert created is not None
     assert created.hashed_password is None
+    assert created.school_branch is None
     assert created.is_active is True
     assert mock_send.called
 
@@ -52,6 +54,48 @@ def test_invite_happy_path_creates_user_and_sends_email(client, db_session):
         .first()
     )
     assert log is not None
+
+
+def test_admin_invite_and_role_transitions_manage_school_branch(client, db_session):
+    actor = _make_admin(db_session, email="branch-actor@example.com")
+    other_admin = _make_admin(db_session, email="branch-other@example.com")
+    organizer = make_user(
+        db_session,
+        email="branch-organizer@example.com",
+        role=models.UserRole.organizer,
+    )
+    db_session.commit()
+    headers = auth_headers(client, actor)
+
+    with patch("app.routers.users.send_invite_email"):
+        invited = client.post(
+            "/api/v1/users/invite",
+            json={
+                "name": "High Admin",
+                "email": "high-admin@example.com",
+                "role": "admin",
+                "school_branch": "high_school",
+            },
+            headers=headers,
+        )
+    assert invited.status_code == 201, invited.text
+    assert invited.json()["school_branch"] == "high_school"
+
+    promoted = client.patch(
+        f"/api/v1/users/{organizer.id}",
+        json={"role": "admin", "school_branch": "middle_school"},
+        headers=headers,
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["school_branch"] == "middle_school"
+
+    demoted = client.patch(
+        f"/api/v1/users/{other_admin.id}",
+        json={"role": "organizer", "school_branch": "high_school"},
+        headers=headers,
+    )
+    assert demoted.status_code == 200, demoted.text
+    assert demoted.json()["school_branch"] is None
 
 
 def test_invite_duplicate_email_returns_409(client, db_session):
@@ -121,6 +165,7 @@ def test_invite_email_failure_does_not_roll_back_user(client, db_session):
     )
     assert created is not None
     assert created.hashed_password is None
+    assert created.school_branch == models.SchoolBranch.both
 
 
 def test_login_stamps_last_login_at(client, db_session):
