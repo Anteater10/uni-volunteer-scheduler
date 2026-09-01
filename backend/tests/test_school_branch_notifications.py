@@ -260,6 +260,37 @@ def test_worker_revalidates_and_records_notification(
     assert notification.subject == f"New signup — {event.title}"
     assert "Pending" in notification.body
 
+    # Defensive worker exits are observable and never send: a provider cap,
+    # an entity removed after enqueue, and a stale/empty booking batch.
+    monkeypatch.setattr(celery_mod, "_check_daily_send_limit", lambda _db: False)
+    send_admin_signup_notification_email.run(
+        user_id=str(admin.id),
+        volunteer_id=str(volunteer.id),
+        signup_ids=[str(signup.id)],
+        shift_signup_ids=[],
+        event_id=str(event.id),
+    )
+    assert len(sends) == 1
+
+    monkeypatch.setattr(celery_mod, "_check_daily_send_limit", lambda _db: True)
+    send_admin_signup_notification_email.run(
+        user_id=str(admin.id),
+        volunteer_id=str(uuid.uuid4()),
+        signup_ids=[str(signup.id)],
+        shift_signup_ids=[],
+        event_id=str(event.id),
+    )
+    assert len(sends) == 1
+
+    send_admin_signup_notification_email.run(
+        user_id=str(admin.id),
+        volunteer_id=str(volunteer.id),
+        signup_ids=[],
+        shift_signup_ids=[],
+        event_id=str(event.id),
+    )
+    assert len(sends) == 1
+
     # Revalidation happens at execution time: changing the account to a
     # non-matching branch prevents a queued task from sending.
     admin.school_branch = models.SchoolBranch.middle_school
