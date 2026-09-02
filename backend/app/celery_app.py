@@ -17,7 +17,7 @@ from celery.signals import beat_init, celeryd_init
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+from sendgrid.helpers.mail import ClickTracking, Mail, TrackingSettings
 
 from .config import assert_email_config_valid, settings
 from .database import SessionLocal
@@ -187,6 +187,17 @@ def _send_via_sendgrid(
     if html_body:
         mail_kwargs["html_content"] = html_body
     message = Mail(**mail_kwargs)
+    # SCRUM-50: SendGrid rewrites every href into a tracking redirect on a
+    # numbered subdomain of the sending domain (url1845.sci-trek.org). That
+    # extra hop is what an SSL-inspecting antivirus/appliance on a volunteer's
+    # machine mis-terminated, yielding ERR_CERT_COMMON_NAME_INVALID on a link
+    # that resolves fine elsewhere. We never consume SendGrid click analytics,
+    # so the hop buys nothing and costs deliverability. Set it per-send rather
+    # than only in the dashboard so the intent is visible in code and survives
+    # account-setting drift.
+    message.tracking_settings = TrackingSettings(
+        click_tracking=ClickTracking(enable=False, enable_text=False)
+    )
     if attachments:
         import base64
 
