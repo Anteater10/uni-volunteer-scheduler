@@ -498,7 +498,8 @@ async function publicGetCurrentWeek() {
   return request("/public/current-week", { method: "GET", auth: false });
 }
 async function publicGetQuarters() {
-  // Issue #24: ordered admin-entered quarter rows — powers week navigation.
+  // Issue #24: ordered admin-entered quarter rows. SCRUM-48: powers the
+  // public browse page's quarter × school-level navigation.
   return request("/public/quarters", { method: "GET", auth: false });
 }
 async function publicListEvents(params) {

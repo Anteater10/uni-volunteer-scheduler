@@ -948,6 +948,10 @@ class PublicEventRead(BaseModel):
     quarter_id: Optional[UUID] = None
     school: Optional[str] = None
     module_slug: Optional[str] = None
+    # SCRUM-48: the school level the event's module targets, resolved through
+    # module_slug. None when the slug is NULL or matches no module — such an
+    # event is shown under every level rather than hidden.
+    school_branch: Optional[SchoolBranch] = None
     start_date: datetime  # Event.start_date is DateTime not Date in model
     end_date: datetime
     # Phase 29 (LOCK-01) — expose signup window so the public UI can render

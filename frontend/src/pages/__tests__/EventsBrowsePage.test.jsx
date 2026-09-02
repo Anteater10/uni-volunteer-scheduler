@@ -1,9 +1,10 @@
 // src/pages/__tests__/EventsBrowsePage.test.jsx
 //
-// Component tests for the public events browse page — issue #24 rewrite.
-// Navigation is quarter_id-driven over the admin-entered quarter rows;
-// legacy ?quarter=&year=&week= links canonicalize; gap and unconfigured
-// states render dedicated UI.
+// Component tests for the public events browse page — issue #24 rewrite,
+// reworked for SCRUM-48. Navigation walks (quarter × school level) pairs over
+// the admin-entered quarter rows; legacy ?quarter=&year=&week= links and stale
+// ?week= params canonicalize onto the level form; gap and unconfigured states
+// render dedicated UI.
 
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -53,6 +54,10 @@ const SESSION_A = {
   archived_at: null,
 };
 const QUARTERS = [SPRING, SESSION_A];
+
+// The arrows step quarter × level now, so their accessible names say so.
+const NEXT = "Next quarter or school level";
+const PREV = "Previous quarter or school level";
 
 const CURRENT_WEEK = {
   configured: true,
@@ -114,7 +119,7 @@ describe("EventsBrowsePage", () => {
     expect(skeletons.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("defaults to the current week and fetches events by quarter_id", async () => {
+  it("defaults to the current quarter's first level and fetches by quarter_id", async () => {
     api.public.listEvents.mockResolvedValue(MOCK_EVENTS);
 
     renderPage();
@@ -122,10 +127,10 @@ describe("EventsBrowsePage", () => {
     await waitFor(() => {
       expect(screen.getByText("CRISPR at Carpinteria HS")).toBeInTheDocument();
     });
-    expect(screen.getByText("Spring 2026 — Week 5")).toBeInTheDocument();
+    expect(screen.getByText("Spring 2026 — Middle School")).toBeInTheDocument();
     expect(api.public.listEvents).toHaveBeenCalledWith({
       quarter_id: "spring-26",
-      week_number: 5,
+      school_branch: "middle_school",
     });
   });
 
@@ -133,45 +138,108 @@ describe("EventsBrowsePage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Nothing scheduled this week")).toBeInTheDocument();
+      expect(screen.getByText("Nothing scheduled here")).toBeInTheDocument();
     });
   });
 
-  it("next arrow advances one week within the quarter", async () => {
+  it("next arrow advances to the other school level within the quarter", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Next week" })).not.toBeDisabled();
+      expect(screen.getByRole("button", { name: NEXT })).not.toBeDisabled();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    fireEvent.click(screen.getByRole("button", { name: NEXT }));
 
     await waitFor(() => {
       expect(api.public.listEvents).toHaveBeenCalledWith({
         quarter_id: "spring-26",
-        week_number: 6,
+        school_branch: "high_school",
+      });
+    });
+    expect(
+      await screen.findByText("Spring 2026 — High School"),
+    ).toBeInTheDocument();
+  });
+
+  it("next arrow rolls from the last level into the next quarter", async () => {
+    renderPage({
+      initialEntries: ["/events?quarter_id=spring-26&school_branch=high_school"],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: NEXT })).not.toBeDisabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: NEXT }));
+
+    await waitFor(() => {
+      expect(api.public.listEvents).toHaveBeenCalledWith({
+        quarter_id: "summer-26-a",
+        school_branch: "middle_school",
       });
     });
   });
 
-  it("canonicalizes legacy quarter/year/week URL params onto quarter_id", async () => {
+  it("canonicalizes legacy quarter/year/week URL params onto the level form", async () => {
     renderPage({ initialEntries: ["/events?quarter=summer&year=2026&week=2"] });
 
     await waitFor(() => {
       expect(api.public.listEvents).toHaveBeenCalledWith({
         quarter_id: "summer-26-a",
-        week_number: 2,
+        school_branch: "middle_school",
       });
     });
-    expect(await screen.findByText("Summer 2026 · Session A — Week 2")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Summer 2026 · Session A — Middle School"),
+    ).toBeInTheDocument();
   });
 
-  it("disables the next arrow at the last entered week", async () => {
-    renderPage({ initialEntries: ["/events?quarter_id=summer-26-a&week=6"] });
+  it("drops a stale ?week= from a quarter_id link instead of erroring", async () => {
+    // SCRUM-48: bookmarks and already-sent emails carry ?week=N. They must
+    // land on the quarter rather than break.
+    renderPage({ initialEntries: ["/events?quarter_id=summer-26-a&week=4"] });
 
     await waitFor(() => {
-      expect(screen.getByText("Summer 2026 · Session A — Week 6")).toBeInTheDocument();
+      expect(api.public.listEvents).toHaveBeenCalledWith({
+        quarter_id: "summer-26-a",
+        school_branch: "middle_school",
+      });
     });
-    expect(screen.getByRole("button", { name: "Next week" })).toBeDisabled();
+    expect(api.public.listEvents).not.toHaveBeenCalledWith(
+      expect.objectContaining({ week_number: expect.anything() }),
+    );
+  });
+
+  it("preserves ?only=orientation while canonicalizing a stale ?week=", async () => {
+    // K22's modal button sends volunteers here with the filter attached;
+    // rewriting the URL must not silently drop it.
+    renderPage({
+      initialEntries: ["/events?quarter_id=summer-26-a&week=4&only=orientation"],
+    });
+
+    await waitFor(() => {
+      expect(api.public.listEvents).toHaveBeenCalledWith({
+        quarter_id: "summer-26-a",
+        school_branch: "middle_school",
+      });
+    });
+    expect(
+      await screen.findByText(/no orientation sessions here/i),
+    ).toBeInTheDocument();
+  });
+
+  it("disables the next arrow at the last quarter's last level", async () => {
+    renderPage({
+      initialEntries: [
+        "/events?quarter_id=summer-26-a&school_branch=high_school",
+      ],
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Summer 2026 · Session A — High School"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: NEXT })).toBeDisabled();
   });
 
   it("shows the gap banner pointing at the next quarter", async () => {
@@ -208,7 +276,7 @@ describe("EventsBrowsePage", () => {
     archived_at: "2026-07-01T00:00:00Z",
   };
 
-  it("lists archived quarters and navigates into week 1 on click", async () => {
+  it("lists archived quarters and navigates into them on click", async () => {
     api.public.getQuarters.mockResolvedValue([ARCHIVED_WINTER, ...QUARTERS]);
 
     renderPage();
@@ -219,7 +287,7 @@ describe("EventsBrowsePage", () => {
     await waitFor(() => {
       expect(api.public.listEvents).toHaveBeenCalledWith({
         quarter_id: "winter-26",
-        week_number: 1,
+        school_branch: "middle_school",
       });
     });
   });
@@ -228,7 +296,7 @@ describe("EventsBrowsePage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("Nothing scheduled this week")).toBeInTheDocument();
+      expect(screen.getByText("Nothing scheduled here")).toBeInTheDocument();
     });
     expect(screen.queryByText(/archived quarters/i)).toBeNull();
   });
@@ -236,17 +304,23 @@ describe("EventsBrowsePage", () => {
   it("deep link into an archived quarter shows the banner and clamps nav", async () => {
     api.public.getQuarters.mockResolvedValue([ARCHIVED_WINTER, ...QUARTERS]);
 
-    renderPage({ initialEntries: ["/events?quarter_id=winter-26&week=1"] });
+    renderPage({
+      initialEntries: [
+        "/events?quarter_id=winter-26&school_branch=middle_school",
+      ],
+    });
 
-    expect(await screen.findByText("Winter 2026 — Week 1")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Winter 2026 — Middle School"),
+    ).toBeInTheDocument();
     const banner = await screen.findByRole("status");
     expect(banner).toHaveTextContent(/archived/i);
     expect(banner).toHaveTextContent(/Winter 2026/);
 
-    // Week 1 of 11: prev clamps (archived nav never leaves the quarter),
-    // next moves within it.
-    expect(screen.getByRole("button", { name: "Previous week" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Next week" })).not.toBeDisabled();
+    // First level of an archived row: prev clamps (archived nav never leaves
+    // the quarter), next moves to the other level within it.
+    expect(screen.getByRole("button", { name: PREV })).toBeDisabled();
+    expect(screen.getByRole("button", { name: NEXT })).not.toBeDisabled();
   });
 
   it("renders the coming-soon state when no quarters are configured", async () => {
@@ -333,9 +407,9 @@ describe("EventsBrowsePage — ?only=orientation (K22)", () => {
     renderPage({ initialEntries: ["/volunteer?only=orientation"] });
 
     expect(
-      await screen.findByText(/no orientation sessions this week/i),
+      await screen.findByText(/no orientation sessions here/i),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/nothing scheduled this week/i)).toBeNull();
+    expect(screen.queryByText(/nothing scheduled here/i)).toBeNull();
   });
 
   it("shows everything when the param is absent", async () => {
