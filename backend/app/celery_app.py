@@ -444,7 +444,7 @@ def _sweep_session_reminders(
         .join(models.Shift, models.Shift.id == models.ShiftSignup.shift_id)
         .join(models.Slot, models.Slot.shift_id == models.Shift.id)
         .filter(
-            models.ShiftSignup.status == models.SignupStatus.confirmed,
+            models.ShiftSignup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
             models.Slot.start_time.between(window_start, window_end),
         )
     )
@@ -494,7 +494,7 @@ def send_reminders_24h(self) -> None:
             db.query(models.Signup)
             .join(models.Slot)
             .filter(
-                models.Signup.status == models.SignupStatus.confirmed,
+                models.Signup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
                 models.Signup.reminder_24h_sent_at.is_(None),
                 models.Slot.start_time.between(window_start, window_end),
             )
@@ -540,7 +540,7 @@ def send_reminders_1h(self) -> None:
             .join(models.Slot)
             .join(models.Event)
             .filter(
-                models.Signup.status == models.SignupStatus.confirmed,
+                models.Signup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
                 models.Signup.reminder_1h_sent_at.is_(None),
                 models.Slot.start_time.between(window_start, window_end),
                 models.Event.reminder_1h_enabled == True,  # noqa: E712
@@ -603,7 +603,7 @@ def weekly_digest(self) -> None:
             .join(models.Slot)
             .filter(
                 models.Slot.start_time.between(now, in_7d),
-                models.Signup.status == models.SignupStatus.confirmed,
+                models.Signup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
             )
             .all()
         )
@@ -616,7 +616,7 @@ def weekly_digest(self) -> None:
             .join(models.Slot, models.Slot.shift_id == models.Shift.id)
             .filter(
                 models.Slot.start_time.between(now, in_7d),
-                models.ShiftSignup.status == models.SignupStatus.confirmed,
+                models.ShiftSignup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
             )
             .all()
         )

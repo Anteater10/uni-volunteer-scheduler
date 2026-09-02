@@ -65,6 +65,28 @@ class SignupStatus(str, enum.Enum):
     cancelled = "cancelled"
 
 
+# SCRUM-49: the statuses that make a signup a mail recipient.
+#
+# Every signup-tied email — reminders, admin broadcasts, reschedule notices,
+# the weekly digest — used to filter on `confirmed` alone, so a volunteer left
+# in `pending` got total silence despite already occupying the seat as far as
+# capacity math was concerned. Pending is a real commitment awaiting an admin,
+# and it is the ShiftSignup default (see ck_shift_signups_status_is_lifecycle
+# below), so it was the single most common way to be silently unreachable.
+#
+# Waitlisted stays out: those volunteers have no seat yet, and the paths that
+# want them (e.g. notify_event_participants' include_waitlisted) opt in
+# explicitly. Cancelled and no_show stay out for obvious reasons.
+#
+# One constant, so widening or narrowing "who gets mail" is a single edit
+# rather than a hunt through five modules. Kept as a tuple for use directly in
+# `.in_()` filters.
+EMAIL_RECIPIENT_STATUSES = (
+    SignupStatus.pending,
+    SignupStatus.confirmed,
+)
+
+
 class MagicLinkPurpose(str, enum.Enum):
     email_confirm = "email_confirm"   # legacy, kept for Postgres compatibility
     check_in = "check_in"             # legacy

@@ -214,15 +214,19 @@ def update_slot(
     for field, value in data.items():
         setattr(slot, field, value)
 
-    # Collect confirmed signups before commit (needed for post-commit dispatch)
-    confirmed_signups = []
+    # Collect mail-eligible signups before commit (needed for post-commit
+    # dispatch). SCRUM-49: all three filters below must stay in lockstep on
+    # models.EMAIL_RECIPIENT_STATUSES — widening only the recipient query would
+    # mail pending volunteers the reschedule notice while leaving their stale
+    # reminder markers in place, so they'd never get a reminder for the new time.
+    notify_signups = []
     if time_changed:
         # Invalidate prior reminders so new window triggers fresh ones
         db.query(models.SentNotification).filter(
             models.SentNotification.signup_id.in_(
                 db.query(models.Signup.id).filter(
                     models.Signup.slot_id == slot.id,
-                    models.Signup.status == models.SignupStatus.confirmed,
+                    models.Signup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
                 )
             ),
             models.SentNotification.kind.in_(["reminder_24h", "reminder_1h"]),
@@ -231,15 +235,15 @@ def update_slot(
         # Reset denormalized columns
         db.query(models.Signup).filter(
             models.Signup.slot_id == slot.id,
-            models.Signup.status == models.SignupStatus.confirmed,
+            models.Signup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
         ).update({
             models.Signup.reminder_24h_sent_at: None,
             models.Signup.reminder_1h_sent_at: None,
         }, synchronize_session=False)
 
-        confirmed_signups = db.query(models.Signup).filter(
+        notify_signups = db.query(models.Signup).filter(
             models.Signup.slot_id == slot.id,
-            models.Signup.status == models.SignupStatus.confirmed,
+            models.Signup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
         ).all()
 
     db.add(slot)
@@ -251,7 +255,7 @@ def update_slot(
 
     # Dispatch reschedule emails after commit
     if time_changed:
-        for s in confirmed_signups:
+        for s in notify_signups:
             send_email_notification.delay(signup_id=str(s.id), kind="reschedule")
 
     return slot
