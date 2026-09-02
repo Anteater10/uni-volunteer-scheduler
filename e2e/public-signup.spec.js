@@ -73,8 +73,8 @@ test.describe.serial('public volunteer flow', () => {
     expect(seed.event_id, 'E2E seed is required — run seed_e2e.py first').toBeTruthy();
 
     await page.goto('/events');
-    // Week nav should be present
-    await expect(page.getByText(/week/i).first()).toBeVisible();
+    // SCRUM-48: the nav label is now "<quarter> — <school level>".
+    await expect(page.getByText(/middle school|high school/i).first()).toBeVisible();
     // Our seeded event must appear
     await expect(page.getByText('E2E Seed Event')).toBeVisible();
   });

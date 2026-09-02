@@ -8,6 +8,7 @@ from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ... import models, schemas
@@ -81,14 +82,48 @@ def _get_visible_event_or_404(db: Session, event_id: UUID) -> models.Event:
     return event
 
 
-def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEventRead:
+def _school_branch_by_slug(
+    db: Session, events: list[models.Event]
+) -> dict[str, models.SchoolBranch]:
+    """Map module_slug -> school_branch for the given events, in one query.
+
+    SCRUM-48: resolving each event's level individually would be an N+1 on a
+    list endpoint. Slugs with no matching module are simply absent from the
+    map, so callers get None and the event is treated as level-agnostic.
+    """
+    slugs = {e.module_slug for e in events if e.module_slug}
+    if not slugs:
+        return {}
+    rows = (
+        db.query(models.Module.slug, models.Module.school_branch)
+        .filter(models.Module.slug.in_(slugs))
+        .all()
+    )
+    return {slug: branch for slug, branch in rows}
+
+
+def _build_event_response(
+    db: Session,
+    event: models.Event,
+    school_branch: models.SchoolBranch | None = None,
+) -> schemas.PublicEventRead:
     """Build a PublicEventRead for the given event, with slots and shifts hydrated.
 
     2026-08-02 shifts: `slots` carries orientation slots only — period slots
     appear as sessions inside `shifts`, which is what a volunteer picks from.
     Listing a period slot at the top level too would invite the old flow of
     booking one session by itself, which the signup service now refuses.
+
+    ``school_branch`` is passed in by the list endpoint, which resolves every
+    event's level in a single query. Left None, it is looked up here — fine for
+    the single-event detail route.
     """
+    if school_branch is None and event.module_slug:
+        school_branch = (
+            db.query(models.Module.school_branch)
+            .filter(models.Module.slug == event.module_slug)
+            .scalar()
+        )
     slots = (
         db.query(models.Slot)
         .filter(
@@ -155,6 +190,7 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
         quarter_id=event.quarter_id,
         school=event.school,
         module_slug=event.module_slug,
+        school_branch=school_branch,
         start_date=event.start_date,
         end_date=event.end_date,
         # Phase 29 (LOCK-01) — expose signup window for client-side banner.
@@ -176,23 +212,54 @@ def _build_event_response(db: Session, event: models.Event) -> schemas.PublicEve
 def list_events(
     quarter: models.Quarter | None = Query(default=None),
     year: int | None = Query(default=None, ge=2020, le=2100),
-    week_number: int = Query(..., ge=1, le=26),
+    week_number: int | None = Query(default=None, ge=1, le=26),
     school: str | None = Query(default=None),
+    school_branch: models.SchoolBranch | None = Query(default=None),
     quarter_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    """List events for a week; optionally filter by school.
+    """List events for a quarter; optionally narrow by school level or week.
 
-    Preferred filter: quarter_id + week_number — unambiguous when summer
-    Sessions A/B both have a week N. Legacy quarter+year+week_number still
-    works; for summer it returns every session's week N (documented union).
+    Preferred filter: quarter_id + school_branch — volunteers browse a whole
+    quarter for the level they teach, not one week at a time.
+
+    SCRUM-48: week_number used to be required. It is now optional so a quarter
+    can be requested whole, but is still honoured when supplied — links and
+    bookmarks carrying `?week=N` from the old week-stepper UI keep working
+    rather than 422-ing.
+
+    Legacy quarter+year still works in place of quarter_id; for summer it
+    returns every session's matching events (documented union).
     """
     if quarter_id is None and (quarter is None or year is None):
         raise HTTPException(
             status_code=422,
             detail="Provide quarter_id, or both quarter and year.",
         )
-    q = db.query(models.Event).filter(models.Event.week_number == week_number)
+    q = db.query(models.Event)
+    if week_number is not None:
+        q = q.filter(models.Event.week_number == week_number)
+    if school_branch is not None:
+        # Event carries no school level of its own — it references a Module by
+        # the loose `module_slug` string, with no FK behind it (dropped in
+        # Phase 08, D-07), so the slug may be NULL or point at a module that no
+        # longer exists. Hence the OUTER join: an inner one would silently drop
+        # every orphaned event from the volunteer-facing list.
+        #
+        # Three arms, all deliberate:
+        #   - the requested level itself
+        #   - `both`, which by definition belongs under either level
+        #   - NULL, i.e. no module matched the slug — err toward visibility so
+        #     a data problem never makes an event vanish without explanation
+        q = q.outerjoin(
+            models.Module, models.Event.module_slug == models.Module.slug
+        ).filter(
+            or_(
+                models.Module.school_branch == school_branch,
+                models.Module.school_branch == models.SchoolBranch.both,
+                models.Module.school_branch.is_(None),
+            )
+        )
     if quarter_id is not None:
         q = q.filter(models.Event.quarter_id == quarter_id)
     else:
@@ -230,7 +297,13 @@ def list_events(
                 visible.append(e)
         events = visible
 
-    return [_build_event_response(db, e) for e in events]
+    branch_by_slug = _school_branch_by_slug(db, events)
+    return [
+        _build_event_response(
+            db, e, school_branch=branch_by_slug.get(e.module_slug)
+        )
+        for e in events
+    ]
 
 
 @router.get(

@@ -1,14 +1,42 @@
 /**
- * weekUtils.js — issue #24.
+ * weekUtils.js — issue #24, reworked for SCRUM-48.
  *
- * Week navigation and quarter selectors over the admin-entered quarter rows
- * returned by GET /public/quarters (see useQuarters). Each row carries its
- * real length (weeks_in_quarter) — 6-week summer sessions and 11-week
- * regular quarters need no special casing, and navigation returns null past
- * the ends so callers can disable arrows.
+ * Quarter selectors over the admin-entered quarter rows returned by
+ * GET /public/quarters (see useQuarters), plus the public browse page's
+ * navigation.
+ *
+ * SCRUM-48: that navigation used to step one week at a time. Volunteers don't
+ * think in weeks — they want a whole quarter for the level they teach — so it
+ * now steps through (quarter × school level) pairs instead. The control is the
+ * same pair of arrows; only what it walks changed. Two levels per quarter
+ * means three quarters gives six positions.
+ *
+ * Navigation returns null past the ends so callers can disable arrows.
  *
  * No side effects. No network calls. Safe to use in any rendering context.
  */
+
+/**
+ * The school levels a volunteer browses by, in stepper order.
+ *
+ * `both` is deliberately absent: it is a property a *module* can have, not a
+ * tab a volunteer picks. A `both` module's events surface under either level
+ * (the backend's filter includes them in each), so giving it its own position
+ * would add a tab nobody needs and hide those events from the two that matter.
+ */
+export const SCHOOL_BRANCHES = ["middle_school", "high_school"];
+
+const SCHOOL_BRANCH_LABELS = {
+  middle_school: "Middle School",
+  high_school: "High School",
+};
+
+/** The level a quarter opens on when none is specified. */
+export const DEFAULT_SCHOOL_BRANCH = SCHOOL_BRANCHES[0];
+
+export function isSchoolBranch(value) {
+  return SCHOOL_BRANCHES.includes(value);
+}
 
 function sortedByStart(quarters) {
   return [...(quarters || [])].sort((a, b) =>
@@ -31,56 +59,81 @@ export function findQuarterById(quarters, quarterId) {
 }
 
 /**
- * The week after {quarterId, weekNumber}, rolling into the next entered
- * (non-archived) row. Null past the last entered week. Inside an archived
- * row (deep link, issue #33) navigation clamps to that row — it never
- * rolls out into the live schedule.
+ * The position after {quarterId, schoolBranch}.
+ *
+ * Walks levels within a quarter first, then rolls into the next entered
+ * (non-archived) row at its first level. Null past the last position. Inside
+ * an archived row (deep link, issue #33) navigation clamps to that row — it
+ * never rolls out into the live schedule.
  */
-export function getNextWeek(quarters, quarterId, weekNumber) {
+export function getNextQuarterLevel(quarters, quarterId, schoolBranch) {
   const row = findQuarterById(quarters, quarterId);
   if (!row) return null;
-  if (weekNumber < row.weeks_in_quarter) {
-    return { quarter_id: quarterId, week_number: weekNumber + 1 };
+  const levelIndex = SCHOOL_BRANCHES.indexOf(schoolBranch);
+  if (levelIndex === -1) return null;
+  if (levelIndex < SCHOOL_BRANCHES.length - 1) {
+    return {
+      quarter_id: quarterId,
+      school_branch: SCHOOL_BRANCHES[levelIndex + 1],
+    };
   }
   if (row.archived_at) return null;
   const list = activeQuarters(quarters);
   const next = list[list.findIndex((q) => q.id === quarterId) + 1];
-  return next ? { quarter_id: next.id, week_number: 1 } : null;
+  return next
+    ? { quarter_id: next.id, school_branch: SCHOOL_BRANCHES[0] }
+    : null;
 }
 
 /**
- * The week before {quarterId, weekNumber}, rolling back into the previous
- * entered (non-archived) row's final week. Null before the first entered
- * week. Clamped inside archived rows, mirroring getNextWeek.
+ * The position before {quarterId, schoolBranch}, rolling back into the
+ * previous entered (non-archived) row's last level. Null before the first
+ * position. Clamped inside archived rows, mirroring getNextQuarterLevel.
  */
-export function getPrevWeek(quarters, quarterId, weekNumber) {
+export function getPrevQuarterLevel(quarters, quarterId, schoolBranch) {
   const row = findQuarterById(quarters, quarterId);
   if (!row) return null;
-  if (weekNumber > 1) {
-    return { quarter_id: quarterId, week_number: weekNumber - 1 };
+  const levelIndex = SCHOOL_BRANCHES.indexOf(schoolBranch);
+  if (levelIndex === -1) return null;
+  if (levelIndex > 0) {
+    return {
+      quarter_id: quarterId,
+      school_branch: SCHOOL_BRANCHES[levelIndex - 1],
+    };
   }
   if (row.archived_at) return null;
   const list = activeQuarters(quarters);
   const prev = list[list.findIndex((q) => q.id === quarterId) - 1];
-  return prev ? { quarter_id: prev.id, week_number: prev.weeks_in_quarter } : null;
+  return prev
+    ? {
+        quarter_id: prev.id,
+        school_branch: SCHOOL_BRANCHES[SCHOOL_BRANCHES.length - 1],
+      }
+    : null;
 }
 
-/** "Summer 2026 · Session A — Week 2" */
-export function formatWeekLabel(quarterRow, weekNumber) {
-  if (!quarterRow) return `Week ${weekNumber}`;
-  return `${quarterRow.display_name} — Week ${weekNumber}`;
+/** "Summer 2026 · Session A — Middle School" */
+export function formatQuarterLevelLabel(quarterRow, schoolBranch) {
+  const level = SCHOOL_BRANCH_LABELS[schoolBranch] || "";
+  if (!quarterRow) return level;
+  return level ? `${quarterRow.display_name} — ${level}` : quarterRow.display_name;
 }
 
 /**
- * Resolve a legacy ?quarter=&year=&week= link onto a quarter row.
- * Summer links are ambiguous between sessions — the first session wins.
+ * Resolve a legacy ?quarter=&year= link onto a quarter row.
+ *
+ * SCRUM-48: these links used to carry &week=N too. The week is now ignored
+ * rather than rejected — an old bookmark or emailed link lands on the same
+ * quarter's default level instead of erroring, which is the whole point of
+ * keeping this function. `week` is still accepted in the argument object so
+ * callers need not strip it.
  */
-export function resolveLegacyParams(quarters, { quarter, year, week }) {
+export function resolveLegacyParams(quarters, { quarter, year }) {
   const match = sortedByStart(quarters).find(
     (q) => q.season === quarter && Number(q.year) === Number(year),
   );
   if (!match) return null;
-  return { quarter_id: match.id, week_number: Number(week) };
+  return { quarter_id: match.id, school_branch: DEFAULT_SCHOOL_BRANCH };
 }
 
 function toIsoDate(d) {
