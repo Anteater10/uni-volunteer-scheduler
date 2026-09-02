@@ -227,13 +227,17 @@ def update_session(
         # Keep `date` truthful — check-in windows and the roster group by it.
         session.date = new_start.date()
 
-    confirmed: list[models.ShiftSignup] = []
+    # SCRUM-49: pending signups are mail recipients too, and pending is the
+    # ShiftSignup default — this one list feeds the dedup clear, the
+    # reminder-column reset and the dispatch below, so widening it here keeps
+    # all three in lockstep.
+    notify_signups: list[models.ShiftSignup] = []
     if time_changed:
-        confirmed = (
+        notify_signups = (
             db.query(models.ShiftSignup)
             .filter(
                 models.ShiftSignup.shift_id == session.shift_id,
-                models.ShiftSignup.status == models.SignupStatus.confirmed,
+                models.ShiftSignup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
             )
             .all()
         )
@@ -244,11 +248,11 @@ def update_session(
         suffix = f"_s{session.sort_order}"
         db.query(models.SentNotification).filter(
             models.SentNotification.shift_signup_id.in_(
-                [signup.id for signup in confirmed]
+                [signup.id for signup in notify_signups]
             ),
             models.SentNotification.kind.like(f"reminder%{suffix}"),
         ).delete(synchronize_session=False)
-        for signup in confirmed:
+        for signup in notify_signups:
             signup.reminder_24h_sent_at = None
             signup.reminder_1h_sent_at = None
 
@@ -259,7 +263,7 @@ def update_session(
     db.commit()
 
     if time_changed:
-        for signup in confirmed:
+        for signup in notify_signups:
             # Scoped to this session on both counts: the mail should name the
             # day that actually moved, and a second session rescheduled later
             # must not be swallowed by the first one's dedup marker.

@@ -92,6 +92,20 @@ def _make_event_with_capacity(db_session, *, capacity=5):
     return owner, event, slot
 
 
+# SCRUM-49: this fixture's seat bookkeeping used to read
+# broadcast_service.RECIPIENT_STATUSES, which silently tied "who gets mail" to
+# "who occupies a seat" — so widening the recipient list to include pending
+# would have moved capacity numbers in every test using this helper, for
+# reasons unrelated to what those tests assert. Frozen as its own tuple: the
+# values are exactly what RECIPIENT_STATUSES held before pending was added, so
+# no existing test's counts shift.
+_SEAT_BUMPING_STATUSES = (
+    models.SignupStatus.confirmed,
+    models.SignupStatus.checked_in,
+    models.SignupStatus.attended,
+)
+
+
 def _seed_signup(db_session, slot, *, status, email):
     _bind_factories(db_session)
     vol = VolunteerFactory(email=email)
@@ -101,7 +115,7 @@ def _seed_signup(db_session, slot, *, status, email):
         status=status,
         timestamp=datetime.now(timezone.utc),
     )
-    if status in broadcast_service.RECIPIENT_STATUSES:
+    if status in _SEAT_BUMPING_STATUSES:
         slot.current_count += 1
     db_session.flush()
     return s
@@ -147,6 +161,12 @@ def test_send_broadcast_reaches_only_active_signups(db_session, dispatched):
         db_session, slot,
         status=models.SignupStatus.attended, email="c@example.com",
     )
+    # SCRUM-49: pending receives too — a volunteer awaiting admin confirmation
+    # holds the seat and must not be left in silence.
+    _seed_signup(
+        db_session, slot,
+        status=models.SignupStatus.pending, email="p@example.com",
+    )
     # The following should NOT receive the broadcast.
     _seed_signup(
         db_session, slot,
@@ -159,10 +179,6 @@ def test_send_broadcast_reaches_only_active_signups(db_session, dispatched):
     _seed_signup(
         db_session, slot,
         status=models.SignupStatus.no_show, email="n@example.com",
-    )
-    _seed_signup(
-        db_session, slot,
-        status=models.SignupStatus.pending, email="p@example.com",
     )
     db_session.commit()
 
@@ -177,12 +193,14 @@ def test_send_broadcast_reaches_only_active_signups(db_session, dispatched):
         redis_client=redis_fake,
     )
 
-    assert result.recipient_count == 3
-    assert len(dispatched) == 3
+    assert result.recipient_count == 4
+    assert len(dispatched) == 4
     recipient_emails = {
         kwargs["to_email"] for _, kwargs in dispatched
     }
-    assert recipient_emails == {"a@example.com", "b@example.com", "c@example.com"}
+    assert recipient_emails == {
+        "a@example.com", "b@example.com", "c@example.com", "p@example.com",
+    }
 
     for _, kwargs in dispatched:
         assert kwargs["subject"] == "Parking change"
@@ -205,7 +223,7 @@ def test_send_broadcast_reaches_only_active_signups(db_session, dispatched):
         .one()
     )
     assert audit.extra["subject"] == "Parking change"
-    assert audit.extra["recipient_count"] == 3
+    assert audit.extra["recipient_count"] == 4
     assert audit.extra["broadcast_id"] == result.broadcast_id
 
 
@@ -769,7 +787,11 @@ def _seed_commitment(db_session, shift, *, status, email):
         status=status,
         timestamp=datetime.now(timezone.utc),
     )
-    if status in broadcast_service.SHIFT_RECIPIENT_STATUSES:
+    # SCRUM-49: frozen for the same reason as _SEAT_BUMPING_STATUSES above —
+    # seat bookkeeping must not follow the recipient list. Was
+    # SHIFT_RECIPIENT_STATUSES, i.e. confirmed alone, before pending was added
+    # there, so this preserves every existing test's counts.
+    if status == models.SignupStatus.confirmed:
         shift.current_count += 1
     db_session.flush()
     return commitment
@@ -799,11 +821,12 @@ def test_whole_event_recipients_include_shift_commitments(db_session):
 
 
 def test_shift_recipients_respect_lifecycle_status(db_session):
-    """Only confirmed commitments receive.
+    """Confirmed and pending commitments receive; waitlisted/cancelled do not.
 
-    A ShiftSignup's status is lifecycle-only by CHECK constraint, so confirmed
-    is the whole eligible set here — waitlisted, pending and cancelled are all
-    people who do not hold a spot.
+    A ShiftSignup's status is lifecycle-only by CHECK constraint, so the
+    eligible set here is confirmed + pending. SCRUM-49: pending is also the
+    ShiftSignup default, which made this the path where volunteers were most
+    often silently unreachable. Waitlisted and cancelled hold no spot.
     """
     _, event, _ = _make_event_with_capacity(db_session, capacity=5)
     shift = _add_shift(db_session, event, capacity=10)
@@ -811,18 +834,22 @@ def test_shift_recipients_respect_lifecycle_status(db_session):
         db_session, shift,
         status=models.SignupStatus.confirmed, email="in@example.com",
     )
+    _seed_commitment(
+        db_session, shift,
+        status=models.SignupStatus.pending, email="pend@example.com",
+    )
     for status, email in (
         (models.SignupStatus.waitlisted, "wait@example.com"),
-        (models.SignupStatus.pending, "pend@example.com"),
         (models.SignupStatus.cancelled, "gone@example.com"),
     ):
         _seed_commitment(db_session, shift, status=status, email=email)
     db_session.commit()
 
     assert {r.volunteer.email for r in list_recipients(db_session, event.id)} == {
-        "in@example.com"
+        "in@example.com",
+        "pend@example.com",
     }
-    assert count_recipients(db_session, event.id) == 1
+    assert count_recipients(db_session, event.id) == 2
 
 
 def test_send_broadcast_dispatches_to_shift_commitments(db_session, dispatched):

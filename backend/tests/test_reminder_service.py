@@ -247,3 +247,100 @@ def test_list_upcoming_reminders_includes_all_three_kinds(
         rows = reminder_service.list_upcoming_reminders(db_session, days=10)
     kinds = {r["kind"] for r in rows}
     assert {"kickoff", "pre_24h", "pre_2h"}.issubset(kinds)
+
+
+# ---------------------------------------------------------------
+# SCRUM-49 — recipient eligibility: pending must not be silent
+# ---------------------------------------------------------------
+#
+# The candidate scans are the gate that decides who a reminder is even
+# considered for, and they had no direct coverage. They filtered on confirmed
+# alone, so a volunteer sitting in pending — which is the ShiftSignup default —
+# was never a candidate and received nothing at all.
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (models.SignupStatus.confirmed, True),
+        (models.SignupStatus.pending, True),
+        (models.SignupStatus.waitlisted, False),
+        (models.SignupStatus.cancelled, False),
+    ],
+)
+def test_candidate_signups_for_scan_includes_pending(db_session, status, expected):
+    now = datetime(2030, 6, 4, 12, 0, tzinfo=timezone.utc)
+    s = _seed(
+        db_session,
+        start_time=now + timedelta(days=2),
+        email_tag=f"cand_{status.value}",
+        status=status,
+    )
+    db_session.commit()
+
+    found = reminder_service.candidate_signups_for_scan(db_session, now=now)
+    assert (s.id in {c.id for c in found}) is expected
+
+
+def test_list_upcoming_reminders_includes_pending(db_session, patch_session_local):
+    """The admin preview must agree with what actually gets sent — otherwise
+    staff see a roster that silently omits the pending volunteers who now
+    receive mail."""
+    start_pt = datetime(2030, 6, 5, 14, 0, tzinfo=PT)
+    s = _seed(
+        db_session,
+        start_time=start_pt.astimezone(timezone.utc),
+        email_tag="preview_pending",
+        status=models.SignupStatus.pending,
+    )
+    db_session.commit()
+
+    with freeze_time(datetime(2030, 6, 2, 6, 0, tzinfo=timezone.utc)):
+        rows = reminder_service.list_upcoming_reminders(db_session, days=10)
+
+    assert str(s.id) in {str(r["signup_id"]) for r in rows}
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (models.SignupStatus.confirmed, True),
+        (models.SignupStatus.pending, True),
+        (models.SignupStatus.waitlisted, False),
+        (models.SignupStatus.cancelled, False),
+    ],
+)
+def test_candidate_sessions_for_scan_includes_pending(db_session, status, expected):
+    """The shift path matters most: pending is the ShiftSignup default
+    (models.py ck_shift_signups_status_is_lifecycle), so confirmed-only
+    filtering here meant the volunteers doing the bulk of the classroom work
+    were the ones most likely to get no reminder at all."""
+    from tests.fixtures.factories import ShiftFactory, ShiftSignupFactory
+
+    now = datetime(2030, 6, 4, 12, 0, tzinfo=timezone.utc)
+    owner = make_user(db_session, email=f"owner_sess_{status.value}@example.com")
+    _bind_factories(db_session)
+    event, _ = make_event_with_slot(db_session, capacity=5, owner=owner)
+    shift = ShiftFactory(event=event, name="Tue morning", capacity=5)
+    db_session.flush()
+    session_start = now + timedelta(days=2)
+    db_session.add(
+        models.Slot(
+            event_id=event.id,
+            shift_id=shift.id,
+            name="Period 1",
+            sort_order=0,
+            start_time=session_start,
+            end_time=session_start + timedelta(hours=1),
+            capacity=5,
+            current_count=0,
+            slot_type=models.SlotType.PERIOD,
+            date=session_start.date(),
+        )
+    )
+    vol = VolunteerFactory(email=f"vol_sess_{status.value}@example.com")
+    commitment = ShiftSignupFactory(volunteer=vol, shift=shift, status=status)
+    db_session.commit()
+
+    found = reminder_service.candidate_sessions_for_scan(db_session, now=now)
+    assert (commitment.id in {c.id for c, _ in found}) is expected

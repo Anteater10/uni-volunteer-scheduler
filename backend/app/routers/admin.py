@@ -1338,7 +1338,12 @@ def admin_resend_signup_email(
 
     # Phase 09: signup.user removed; use kind-based pipeline
     # Phase 12: full resend logic deferred
-    if signup.status == models.SignupStatus.confirmed:
+    # SCRUM-49: pending belongs on the confirmation branch, not the else. A
+    # pending signup is an active commitment awaiting an admin, so resending
+    # its email must resend the confirmation — it previously fell through to
+    # the else and mailed the volunteer a *cancellation* for a signup that had
+    # not been cancelled.
+    if signup.status in models.EMAIL_RECIPIENT_STATUSES:
         send_email_notification.delay(signup_id=str(signup.id), kind="confirmation")
     elif signup.status == models.SignupStatus.waitlisted:
         # No standard kind for waitlisted resend — log only for now
@@ -1376,7 +1381,9 @@ def notify_event_participants(
 
     for slot in event.slots:
         for signup in _bookings_for_slot(db, slot):
-            if signup.status == models.SignupStatus.confirmed and signup.volunteer:
+            # SCRUM-49: pending needs no opt-in flag the way waitlisted does —
+            # those volunteers hold the seat and are ordinary recipients.
+            if signup.status in models.EMAIL_RECIPIENT_STATUSES and signup.volunteer:
                 recipient_volunteers.add(signup.volunteer)
             elif payload.include_waitlisted and signup.status == models.SignupStatus.waitlisted and signup.volunteer:
                 recipient_volunteers.add(signup.volunteer)
