@@ -246,6 +246,28 @@ def test_send_via_sendgrid_sends_html_only(monkeypatch):
     sg_instance.send.assert_called_once()
 
 
+def test_send_via_sendgrid_disables_click_tracking(monkeypatch):
+    """SCRUM-50: SendGrid must not rewrite hrefs into its tracking redirect.
+
+    That extra hop (url1845.sci-trek.org) is what an SSL-inspecting appliance
+    on a volunteer's machine mis-terminated, producing
+    ERR_CERT_COMMON_NAME_INVALID on a link that worked everywhere else. This
+    asserts the disable survives — re-enabling click tracking, in code or by
+    dropping this setting, reintroduces the broken-link class of bug.
+    """
+    monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", "SG.test")
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+
+    sg_instance = MagicMock()
+    with patch.object(celery_mod, "SendGridAPIClient", return_value=sg_instance):
+        _send_via_sendgrid("to@x.com", "subj", "plain", html_body="<b>hi</b>")
+
+    sent_message = sg_instance.send.call_args.args[0]
+    click_tracking = sent_message.get()["tracking_settings"]["click_tracking"]
+    assert click_tracking["enable"] is False
+    assert click_tracking["enable_text"] is False
+
+
 def test_send_via_sendgrid_attaches_calendar_file(monkeypatch):
     """SendGrid's attachment block base64-encodes the .ics and sets the
     filename/type/disposition helpers. Untested since it landed on
