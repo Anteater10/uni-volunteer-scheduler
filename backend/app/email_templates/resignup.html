@@ -1,0 +1,10 @@
+<!-- SCRUM-155: an admin reversed a cancellation. The volunteer last heard this signup was cancelled, so this says what changed rather than repeating the original confirmation. Wraps in base.html. -->
+<h1 style="font-size:20px;color:#1a1a1a;margin:0 0 16px;">You're back on!</h1>
+<p style="margin:0 0 12px;">Hi $user_name,</p>
+<p style="margin:0 0 12px;">Your cancelled signup has been reinstated, so you are confirmed for this volunteer slot again:</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">
+  <tr><td style="padding:4px 8px 4px 0;font-weight:bold;">Event:</td><td style="padding:4px 0;">$event_title</td></tr>
+  <tr><td style="padding:4px 8px 4px 0;font-weight:bold;">When:</td><td style="padding:4px 0;">$slot_when</td></tr>
+  <tr><td style="padding:4px 8px 4px 0;font-weight:bold;">Where:</td><td style="padding:4px 0;">$event_location</td></tr>
+</table>
+<p style="margin:0;">If you did not ask for this, reply to this email and we will take you back off.</p>

@@ -331,11 +331,27 @@ export default function EventsBrowsePage() {
         (e.slots || []).some((s) => s.slot_type === "orientation"),
       )
     : allEvents;
-  const grouped = events.reduce((acc, e) => {
-    const school = e.school || "Unknown";
-    (acc[school] = acc[school] || []).push(e);
-    return acc;
-  }, {});
+  // SCRUM-154: grouped by week, not school. Events are named
+  // "Week N - Module - School", so the week is the axis volunteers already
+  // read off the card; school stays visible on the card itself.
+  // Events with no week_number (no linked quarter) collect in a trailing
+  // "Unscheduled" section rather than vanishing.
+  const weekGroups = new Map();
+  const unscheduled = [];
+  for (const e of events) {
+    if (e.week_number == null) {
+      unscheduled.push(e);
+      continue;
+    }
+    if (!weekGroups.has(e.week_number)) weekGroups.set(e.week_number, []);
+    weekGroups.get(e.week_number).push(e);
+  }
+  const grouped = [
+    ...[...weekGroups.keys()]
+      .sort((a, b) => a - b)
+      .map((week) => [`Week ${week}`, weekGroups.get(week)]),
+    ...(unscheduled.length ? [["Unscheduled", unscheduled]] : []),
+  ];
 
   const positionLabel =
     allParamsReady && quarterRow
@@ -557,19 +573,19 @@ export default function EventsBrowsePage() {
           </div>
         ) : (
           <div className="flex flex-col gap-8 animate-fade-up">
-            {Object.entries(grouped).map(([school, schoolEvents]) => (
-              <section key={school}>
+            {grouped.map(([weekLabel, weekEvents]) => (
+              <section key={weekLabel}>
                 <div className="flex items-baseline justify-between mb-3">
                   <h2 className="text-base sm:text-lg font-semibold text-[var(--color-fg)]">
-                    {school}
+                    {weekLabel}
                   </h2>
                   <span className="text-xs sm:text-sm text-[var(--color-fg-muted)]">
-                    {schoolEvents.length}{" "}
-                    {schoolEvents.length === 1 ? "event" : "events"}
+                    {weekEvents.length}{" "}
+                    {weekEvents.length === 1 ? "event" : "events"}
                   </span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {schoolEvents.map((e) => (
+                  {weekEvents.map((e) => (
                     <EventCard key={e.id} event={e} />
                   ))}
                 </div>

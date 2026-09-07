@@ -835,6 +835,151 @@ def admin_cancel_signup(
     return signup
 
 
+def _resignup_dedup_kind() -> str:
+    """A dedup marker that is unique per uncancel action (SCRUM-155).
+
+    ``sent_notifications`` dedups on (anchor, kind), which is what stops a
+    Celery retry from sending twice. A plain "resignup" kind would also stop
+    the *second* genuine uncancel — cancel, reinstate, cancel, reinstate is a
+    real sequence, and the volunteer has to hear about it every time. The
+    suffix is generated here, at dispatch, so a retry of the same task reuses
+    it and still dedups. ``kind`` is String(32); this is 17.
+    """
+    return f"resignup:{uuid_mod.uuid4().hex[:8]}"
+
+
+@router.post("/signups/{signup_id}/uncancel", response_model=schemas.SignupRead)
+def admin_uncancel_signup(
+    signup_id: str,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_staff),
+):
+    """SCRUM-155: put a cancelled volunteer back on the slot.
+
+    Cancelling was one-way. A volunteer who emailed "I can't make it" and then
+    found they could was stuck: staff had cancelled them, and the public page
+    refuses a second signup while a row already exists for them.
+
+    This is deliberately not "flip the enum back". A cancel frees the seat, so
+    somebody else may have taken it in the meantime — the capacity guard is
+    the same one ``admin_promote_signup`` applies for the same reason.
+    """
+    signup = (
+        db.query(models.Signup)
+        .filter(models.Signup.id == signup_id)
+        .with_for_update()
+        .first()
+    )
+    if not signup:
+        raise HTTPException(status_code=404, detail="Signup not found")
+
+    slot = (
+        db.query(models.Slot)
+        .filter(models.Slot.id == signup.slot_id)
+        .with_for_update()
+        .first()
+    )
+    if not slot:
+        raise HTTPException(status_code=404, detail="Slot not found")
+
+    event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    ensure_event_staff_access(event, actor)
+
+    if signup.status != models.SignupStatus.cancelled:
+        raise HTTPException(
+            status_code=400, detail="Only cancelled signups can be reinstated"
+        )
+
+    actual_confirmed = _confirmed_count_for_slot(db, slot.id)
+    if slot.current_count != actual_confirmed:
+        slot.current_count = actual_confirmed
+
+    if slot.current_count >= slot.capacity:
+        raise HTTPException(
+            status_code=400,
+            detail="Slot is full — someone took the seat after this was cancelled",
+        )
+
+    signup.status = models.SignupStatus.confirmed
+    slot.current_count += 1
+
+    log_action(db, actor, "admin_signup_uncancel", "Signup", str(signup.id))
+    dedup_kind = _resignup_dedup_kind()
+    db.commit()
+    db.refresh(signup)
+
+    send_email_notification.delay(
+        signup_id=str(signup.id), kind="resignup", dedup_kind=dedup_kind
+    )
+
+    return signup
+
+
+@router.post(
+    "/shift-signups/{shift_signup_id}/uncancel",
+    response_model=schemas.ShiftSignupRead,
+)
+def admin_uncancel_shift_signup(
+    shift_signup_id: str,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_staff),
+):
+    """Shift twin of ``admin_uncancel_signup`` (SCRUM-155).
+
+    Capacity lives on the shift row, so that is what gets locked — same as
+    ``admin_promote_shift_signup``.
+    """
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .with_for_update(of=models.ShiftSignup)
+        .first()
+    )
+    if not shift_signup:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
+
+    shift = shift_service.lock_shift(db, shift_signup.shift_id)
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, actor)
+
+    if shift_signup.status != models.SignupStatus.cancelled:
+        raise HTTPException(
+            status_code=400, detail="Only cancelled shift signups can be reinstated"
+        )
+
+    if shift.current_count >= shift.capacity:
+        raise HTTPException(
+            status_code=400,
+            detail="Shift is full — someone took the seat after this was cancelled",
+        )
+
+    shift_signup.status = models.SignupStatus.confirmed
+    shift.current_count += 1
+
+    log_action(
+        db, actor, "admin_shift_signup_uncancel", "ShiftSignup", str(shift_signup.id)
+    )
+    dedup_kind = _resignup_dedup_kind()
+    db.commit()
+    db.refresh(shift_signup)
+
+    send_email_notification.delay(
+        shift_signup_id=str(shift_signup.id),
+        kind="resignup",
+        dedup_kind=dedup_kind,
+    )
+
+    return shift_signup
+
+
 @router.post("/signups/{signup_id}/promote", response_model=schemas.SignupRead)
 def admin_promote_signup(
     signup_id: str,

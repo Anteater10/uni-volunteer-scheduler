@@ -881,7 +881,9 @@ describe("EventsSection — create flow", () => {
     renderWithQuery(<EventsSection />);
     fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
 
-    fireEvent.change(screen.getByLabelText(/Title \*/i), { target: { value: "X" } });
+    fireEvent.change(screen.getByLabelText(/Title \*/i), {
+      target: { value: "Week 3 - Germs - SBJH" },
+    });
     fireEvent.change(screen.getByLabelText(/^Start \*/i), {
       target: { value: "2026-04-20T09:00" },
     });
@@ -921,7 +923,7 @@ describe("EventsSection — create flow", () => {
     fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
 
     fireEvent.change(screen.getByLabelText(/Title \*/i), {
-      target: { value: "Science Fair" },
+      target: { value: "Week 3 - Science Fair - SBJH" },
     });
     fireEvent.change(screen.getByLabelText(/^Start \*/i), {
       target: { value: "2026-04-20T09:00" },
@@ -976,7 +978,7 @@ describe("EventsSection — create flow", () => {
 
     await waitFor(() => expect(api.events.create).toHaveBeenCalledTimes(1));
     const payload = api.events.create.mock.calls[0][0];
-    expect(payload.title).toBe("Science Fair");
+    expect(payload.title).toBe("Week 3 - Science Fair - SBJH");
     expect(payload.module_slug).toBe("crispr-intro");
     expect(payload.slots).toHaveLength(1);
     expect(payload.slots[0].capacity).toBe(20);
@@ -995,7 +997,7 @@ describe("EventsSection — create flow", () => {
     fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
 
     fireEvent.change(screen.getByLabelText(/Title \*/i), {
-      target: { value: "No Module Event" },
+      target: { value: "Week 3 - No Module Event - SBJH" },
     });
     fireEvent.change(screen.getByLabelText(/^Start \*/i), {
       target: { value: "2026-04-20T09:00" },
@@ -1007,6 +1009,28 @@ describe("EventsSection — create flow", () => {
     // at, so the rest of the form is irrelevant here.
     fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/pick a module/i);
+    expect(api.events.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks submit when the title is not Week N - Module - School", async () => {
+    renderWithQuery(<EventsSection />);
+    fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+
+    // The loose hyphen spacing the old titles used.
+    fireEvent.change(screen.getByLabelText(/Title \*/i), {
+      target: { value: "Week 3-Germs- SBJH" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Start \*/i), {
+      target: { value: "2026-04-20T09:00" },
+    });
+    fireEvent.change(screen.getByLabelText(/^End \*/i), {
+      target: { value: "2026-04-20T17:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Week \{N\} - \{Module Name\} - \{School\}/i,
+    );
     expect(api.events.create).not.toHaveBeenCalled();
   });
 });
