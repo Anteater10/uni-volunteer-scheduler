@@ -10,7 +10,8 @@
 // keep this test focused on the header actions and completed-strip.
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -24,6 +25,17 @@ vi.mock("../../lib/api", () => {
         waitlisted_signups: 0,
       })),
       eventRoster: vi.fn(async () => []),
+      signups: {
+        cancel: vi.fn(async () => ({})),
+        uncancel: vi.fn(async () => ({})),
+        promote: vi.fn(async () => ({})),
+      },
+      shiftSignups: {
+        cancel: vi.fn(async () => ({})),
+        uncancel: vi.fn(async () => ({})),
+        promote: vi.fn(async () => ({})),
+      },
+      grantOrientation: vi.fn(async () => ({})),
     },
     events: {
       get: vi.fn(),
@@ -179,5 +191,93 @@ describe("AdminEventPage — ended-quarter read-only surfacing", () => {
       await screen.findByRole("button", { name: /^Reopen event$/i }),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("reopen-readonly-note")).not.toBeInTheDocument();
+  });
+});
+
+// SCRUM-155: the way back from a cancellation. A volunteer who cancels and
+// then finds they can make it cannot re-signup themselves — a row already
+// exists for them — so staff need a control that reverses it.
+describe("AdminEventPage — uncancel a cancelled signup", () => {
+  function rosterRow(overrides = {}) {
+    return {
+      signup_id: "su-1",
+      is_shift: false,
+      slot_id: "slot-1",
+      slot_type: "orientation",
+      slot_start: "2020-02-01T09:00:00Z",
+      slot_end: "2020-02-01T10:00:00Z",
+      slot_location: "Chem 1204",
+      status: "cancelled",
+      user_name: "Kim Ciancio",
+      user_email: "kciancio@ucsb.edu",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.public.getQuarters.mockResolvedValue([ACTIVE_QUARTER]);
+    api.events.get.mockResolvedValue(baseEvent({ quarter_id: "q-active" }));
+  });
+
+  it("offers Uncancel on a cancelled row and calls the endpoint", async () => {
+    api.admin.eventRoster.mockResolvedValue([rosterRow()]);
+    const confirmSpy = vi
+      .spyOn(window, "confirm")
+      .mockImplementation(() => true);
+
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: /^Uncancel$/i });
+    await userEvent.click(button);
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/emailed/i),
+    );
+    await waitFor(() =>
+      expect(api.admin.signups.uncancel).toHaveBeenCalledWith("su-1"),
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it("does not offer Uncancel on a row that is still active", async () => {
+    api.admin.eventRoster.mockResolvedValue([
+      rosterRow({ status: "confirmed" }),
+    ]);
+
+    renderPage();
+
+    // Wait for the roster to actually render before asserting an absence.
+    expect(await screen.findByText("Kim Ciancio")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Uncancel$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("routes a shift commitment to the shift endpoint", async () => {
+    api.admin.eventRoster.mockResolvedValue([
+      rosterRow({
+        is_shift: true,
+        shift_id: "shift-1",
+        shift_name: "Shift 1",
+        session_name: "Mon",
+        signup_id: "ss-1",
+      }),
+    ]);
+    const confirmSpy = vi
+      .spyOn(window, "confirm")
+      .mockImplementation(() => true);
+
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Uncancel$/i }),
+    );
+
+    await waitFor(() =>
+      expect(api.admin.shiftSignups.uncancel).toHaveBeenCalledWith("ss-1"),
+    );
+    expect(api.admin.signups.uncancel).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 });

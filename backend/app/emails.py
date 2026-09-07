@@ -223,6 +223,36 @@ def send_confirmation(signup: models.Signup) -> dict:
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
+def send_resignup(signup: models.Signup) -> dict:
+    """SCRUM-155: an admin reversed a cancellation and put them back on.
+
+    Deliberately not the plain confirmation copy: the volunteer last heard
+    that this signup was cancelled, so the mail has to say what changed
+    rather than read like a duplicate of the original confirmation.
+    """
+    v, event, when = _booking_parts(signup)
+    vol_name = f"{v.first_name} {v.last_name}"
+    subject = f"You're back on for '{event.title}'"
+    text_body = (
+        f"Hi {vol_name},\n\n"
+        f"Your cancelled signup has been reinstated, so you are confirmed "
+        f"for this volunteer slot again:\n"
+        f"- Event: {event.title}\n"
+        f"- When: {when}\n"
+        f"- Where: {event.location or 'TBD'}\n\n"
+        "If you did not ask for this, reply to this email and we will take "
+        "you back off."
+    )
+    html_body = _render_html(
+        "resignup.html",
+        user_name=vol_name,
+        event_title=event.title,
+        slot_when=when,
+        event_location=event.location or "TBD",
+    )
+    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+
+
 def send_cancellation(signup: models.Signup) -> dict:
     v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
@@ -492,6 +522,7 @@ def send_reminder_pre_2h(signup: "models.Signup") -> dict:
 
 BUILDERS = {
     "confirmation": send_confirmation,
+    "resignup": send_resignup,
     "cancellation": send_cancellation,
     "cancellation_waitlisted": send_waitlist_cancellation,
     "reminder_24h": send_reminder_24h,
