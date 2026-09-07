@@ -149,13 +149,14 @@ describe("EventSettingsModal", () => {
 
     const title = screen.getByDisplayValue("CRISPR Module 1");
     await userEvent.clear(title);
-    await userEvent.type(title, "CRISPR Module 2");
+    // SCRUM-154: a retitle has to land in the canonical shape.
+    await userEvent.type(title, "Week 4 - CRISPR - GVJH");
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => expect(api.events.update).toHaveBeenCalledTimes(1));
     expect(api.events.update).toHaveBeenCalledWith(
       "ev-1",
-      expect.objectContaining({ title: "CRISPR Module 2" }),
+      expect.objectContaining({ title: "Week 4 - CRISPR - GVJH" }),
     );
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(toastMock.success).toHaveBeenCalled();
@@ -180,13 +181,34 @@ describe("EventSettingsModal", () => {
     );
   });
 
+  it("still saves an event whose old title predates the naming rule", async () => {
+    // SCRUM-154 deliberately did not backfill existing titles. "CRISPR
+    // Module 1" is one of those, so editing anything *else* about the event
+    // has to keep working — enforcing the format on an untouched title would
+    // make every legacy event uneditable until it was renamed.
+    const onClose = vi.fn();
+    renderModal({ onClose });
+
+    const location = screen.getByDisplayValue("GVJH — Room 12");
+    await userEvent.clear(location);
+    await userEvent.type(location, "Room 5");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(api.events.update).toHaveBeenCalledTimes(1));
+    expect(api.events.update).toHaveBeenCalledWith(
+      "ev-1",
+      expect.objectContaining({ title: "CRISPR Module 1" }),
+    );
+  });
+
   it("reports a failed save and stays open", async () => {
     api.events.update.mockRejectedValueOnce(new Error("Conflict"));
     const onClose = vi.fn();
     renderModal({ onClose });
 
     const title = screen.getByDisplayValue("CRISPR Module 1");
-    await userEvent.type(title, "x");
+    await userEvent.clear(title);
+    await userEvent.type(title, "Week 4 - CRISPR - GVJH");
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith("Conflict"));

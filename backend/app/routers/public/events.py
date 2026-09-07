@@ -280,7 +280,16 @@ def list_events(
     # NULL and anything else automatically (NULL == 'public' is NULL, i.e.
     # not matched) and fails closed everywhere, matching the detail guard.
     q = q.filter(models.Event.visibility == "public")
-    events = q.order_by(models.Event.school, models.Event.start_date).all()
+    # SCRUM-154: volunteers browse a quarter by week, not by school — every
+    # event is named "Week N - Module - School", so week is the axis they
+    # already read off the title. School survives as a per-card label.
+    # NULLS LAST keeps week-less events (no linked quarter) after the
+    # numbered ones instead of at the top, matching the trailing
+    # "Unscheduled" group the browse page renders them into.
+    events = q.order_by(
+        models.Event.week_number.asc().nullslast(),
+        models.Event.start_date,
+    ).all()
 
     # Phase 29 (HIDE-01): optionally hide events whose last slot end is in
     # the past. Uses slot end, not event date — an event "ends" when its

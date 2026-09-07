@@ -22,6 +22,10 @@ import FormModal from "../../components/admin/FormModal";
 import DuplicateEventModal from "../../components/admin/DuplicateEventModal";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import { fmtVenueDateTime } from "../../lib/venueTime";
+import {
+  isValidEventTitle,
+  EVENT_TITLE_FORMAT_HINT,
+} from "../../lib/eventTitle";
 
 // ---------------------------------------------------------------------------
 // Form styling tokens
@@ -770,6 +774,19 @@ function EventForm({
   const [slotErrors, setSlotErrors] = useState({});
   const [shiftErrors, setShiftErrors] = useState({});
 
+  // SCRUM-154: the "Week N - Module - School" rule applies to any title being
+  // written — a new event, or a deliberate retitle. Events named before the
+  // rule keep their old title (nothing was backfilled), so an untouched one
+  // must not block saving a change to the room or the times; otherwise every
+  // legacy event becomes uneditable until it is renamed.
+  const originalTitle = React.useRef(initial?.title ?? "");
+  const titleIsBeingWritten =
+    form.title.trim() !== originalTitle.current.trim();
+  const titleFormatError =
+    titleIsBeingWritten &&
+    form.title.trim() !== "" &&
+    !isValidEventTitle(form.title);
+
   // Everything the operator typed lives in this component, and the modal
   // unmounts it on close — so the modal has to know whether closing would
   // destroy anything before it lets a stray backdrop click through. The
@@ -910,6 +927,7 @@ function EventForm({
     setShiftErrors({});
 
     if (!form.title.trim()) return setError("Title is required.");
+    if (titleFormatError) return setError(EVENT_TITLE_FORMAT_HINT);
     if (!form.module_slug)
       return setError("Pick a module, or create one with '+ New module'.");
     if (!form.start_date || !form.end_date)
@@ -987,10 +1005,17 @@ function EventForm({
           aria-label="Title *"
           value={form.title}
           onChange={(e) => update("title", e.target.value)}
-          placeholder="e.g. CRISPR Module 1 at Franklin Elementary"
+          placeholder="Week 7 - Conservation of Mass - GVJH"
           className={`${FIELD} text-base font-medium`}
           required
         />
+        {/* SCRUM-154: the format is a hard rule, so flag a bad title while
+            it is being typed rather than only on Save. */}
+        {titleFormatError && (
+          <p className="mt-1.5 text-xs text-[var(--color-danger)]">
+            {EVENT_TITLE_FORMAT_HINT}
+          </p>
+        )}
       </div>
       <div>
         <label className={LABEL}>Description</label>
