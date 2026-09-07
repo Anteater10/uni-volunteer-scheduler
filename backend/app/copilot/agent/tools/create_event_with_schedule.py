@@ -58,6 +58,7 @@ from app.copilot.agent.tools._when import (
     parse_when,
 )
 from app.copilot.agent.tools.base import Tool
+from app.event_title import EVENT_TITLE_FORMAT_HINT, is_valid_event_title
 from app.models import (
     Event,
     Module,
@@ -124,9 +125,10 @@ def _precheck(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]
     # The event's own details first. These used to fall through to the
     # handler, which meant an empty request reached the confirmation card
     # and the admin was asked to approve an event with no name.
-    # Note what is NOT demanded here: a title. Falling back to the module's
-    # own name is not an invention — it is the name the module already has,
-    # and every screen shows it.
+    # Note what is NOT demanded here: a title. It is built as
+    # "Week N - Module - School" (SCRUM-154) from values already known —
+    # not an invention. The school is demanded instead, because it is the
+    # one part of that name nothing else can supply.
     outline: list[str] = []
     if not args.get("template_id"):
         outline.append(
@@ -136,6 +138,12 @@ def _precheck(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]
         outline.append(
             "when it actually happens — the orientation times and the shifts "
             "volunteers can book, with the days and times of each"
+        )
+    if not (args.get("school") or "").strip() and not (args.get("title") or "").strip():
+        outline.append(
+            "which school it is for — every event is named "
+            '"Week N - Module - School" and the school is the part only '
+            "the user knows"
         )
     if outline:
         return ask_for(outline)
@@ -364,10 +372,32 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     if owner_id is None:
         return {"error": "no admin available to own the new event"}
 
+    event_school = (args.get("school") or "").strip() or None
+
+    # SCRUM-154: every event is named "Week N - Module - School". A supplied
+    # title has to match; an omitted one is now built in that shape from the
+    # week, module and school, rather than falling back to the bare module
+    # name — that default never matched the format it was supposed to follow.
+    supplied_title = (args.get("title") or "").strip()
+    if supplied_title:
+        if not is_valid_event_title(supplied_title):
+            return {"error": f"{EVENT_TITLE_FORMAT_HINT} Got {supplied_title!r}."}
+        event_title = supplied_title
+    elif week_number is not None and event_school:
+        event_title = f"Week {week_number} - {template.name} - {event_school}"
+    else:
+        return {
+            "error": (
+                "Cannot name the event. Pass a title matching "
+                '"Week {N} - {Module Name} - {School}", or pass school so '
+                "the title can be built from the week, module and school"
+            )
+        }
+
     event = Event(
         owner_id=owner_id,
-        title=(args.get("title") or template.name).strip(),
-        school=((args.get("school") or "").strip() or None),
+        title=event_title,
+        school=event_school,
         location=event_location,
         module_slug=template.slug,
         start_date=starts_at,
@@ -555,7 +585,12 @@ CREATE_EVENT_WITH_SCHEDULE_TOOL = Tool(
             },
             "title": {
                 "type": "string",
-                "description": "Event title. Defaults to the template name.",
+                "description": (
+                    'Event title. Must match "Week {N} - {Module Name} - '
+                    '{School}", e.g. "Week 7 - Conservation of Mass - GVJH". '
+                    "Omit it and it is built in that shape from the week, "
+                    "module and school automatically."
+                ),
             },
             "school": {"type": "string", "description": "School name, if known."},
             "location": {
