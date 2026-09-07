@@ -259,6 +259,22 @@ export default function AdminEventPage() {
     onError: (e) => toast.error(e?.message || "Cancel failed"),
   });
 
+  // SCRUM-155: reverse a cancellation. The volunteer emailed "I can't make
+  // it", was cancelled, then found they could after all — they cannot sign up
+  // again themselves, because a row already exists for them.
+  const uncancelMut = useMutation({
+    mutationFn: ({ signupId, isShift = false }) =>
+      isShift
+        ? api.admin.shiftSignups.uncancel(signupId)
+        : api.admin.signups.uncancel(signupId),
+    onSuccess: () => {
+      toast.success("Signup reinstated. The volunteer has been emailed.");
+      qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventAnalytics", eventId] });
+    },
+    onError: (e) => toast.error(e?.message || "Reinstate failed"),
+  });
+
   // Phase 25 — admin reorder waitlist (WAIT-05). A shift's waitlist is one
   // queue for the whole bundle, so it reorders by shift, not by session.
   const reorderMut = useMutation({
@@ -925,6 +941,30 @@ export default function AdminEventPage() {
                                 disabled={cancelMut.isPending}
                               >
                                 Cancel
+                              </Button>
+                            )}
+                            {/* SCRUM-155: the way back from a cancellation.
+                                Only offered on a cancelled row — every other
+                                status is already on the event. */}
+                            {r.status === "cancelled" && (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      `Reinstate ${name}'s signup? They will be emailed to say they are back on, and this takes a seat if one is free.`
+                                    )
+                                  ) {
+                                    uncancelMut.mutate({
+                                      signupId: r.signup_id || r.id,
+                                      isShift: Boolean(r.is_shift),
+                                    });
+                                  }
+                                }}
+                                disabled={uncancelMut.isPending}
+                              >
+                                Uncancel
                               </Button>
                             )}
                           </div>
