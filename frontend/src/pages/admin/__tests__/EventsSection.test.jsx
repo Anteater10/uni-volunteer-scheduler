@@ -705,6 +705,49 @@ describe("EventsSection — create flow", () => {
       expect(screen.queryByTestId("shift-row-0")).not.toBeInTheDocument();
     });
 
+    // SCRUM-156: Cancel used to be exempt from the prompt, on the reasoning
+    // that it is a deliberate "throw this away". It sits an inch from Save at
+    // the end of a long form, and one misclick binned the lot.
+    it("keeps the typed form when Cancel is clicked", async () => {
+      renderWithQuery(<EventsSection />);
+      fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+      fireEvent.change(await screen.findByLabelText(/Title \*/i), {
+        target: { value: "Week 3 - Germs - SBJH" },
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+
+      expect(screen.getByText("Discard changes?")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+      expect(screen.getByLabelText(/Title \*/i)).toHaveValue(
+        "Week 3 - Germs - SBJH",
+      );
+    });
+
+    it("closes on Cancel without asking while the form is untouched", async () => {
+      renderWithQuery(<EventsSection />);
+      fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+      await screen.findByTestId("shift-row-0");
+
+      fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+
+      expect(screen.queryByText("Discard changes?")).toBeNull();
+      expect(screen.queryByTestId("shift-row-0")).not.toBeInTheDocument();
+    });
+
+    it("discards the form when Cancel is confirmed", async () => {
+      renderWithQuery(<EventsSection />);
+      fireEvent.click(await screen.findByRole("button", { name: /\+ New event/i }));
+      fireEvent.change(await screen.findByLabelText(/Title \*/i), {
+        target: { value: "Week 3 - Germs - SBJH" },
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+      fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+
+      expect(screen.queryByTestId("shift-row-0")).not.toBeInTheDocument();
+    });
+
     // Reopening after a discard must not inherit the last session's dirtiness.
     it("does not ask on a freshly reopened form", async () => {
       renderWithQuery(<EventsSection />);

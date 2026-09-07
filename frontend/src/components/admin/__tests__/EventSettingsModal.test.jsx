@@ -200,4 +200,26 @@ describe("EventSettingsModal", () => {
     expect(onClose).toHaveBeenCalled();
     expect(api.events.update).not.toHaveBeenCalled();
   });
+
+  it("asks before cancelling away from unsaved edits", async () => {
+    // SCRUM-156: this modal never passed `dirty` down, so even the backdrop
+    // discarded silently. Cancel routes through the prompt now, and the modal
+    // has to actually know there is work to lose for that to mean anything.
+    const onClose = vi.fn();
+    renderModal({ onClose });
+
+    const location = screen.getByDisplayValue("GVJH — Room 12");
+    await userEvent.clear(location);
+    await userEvent.type(location, "Room 5");
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(screen.getByText("Discard changes?")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Keep editing" }),
+    );
+    expect(screen.getByDisplayValue("Room 5")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
