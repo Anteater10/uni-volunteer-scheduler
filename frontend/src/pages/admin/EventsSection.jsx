@@ -18,7 +18,7 @@ import {
 } from "../../state/QuarterSelectionContext";
 import { toast } from "../../state/toast";
 import AdminPageHeader from "../../components/admin/AdminPageHeader";
-import FormModal from "../../components/admin/FormModal";
+import FormModal, { useRequestClose } from "../../components/admin/FormModal";
 import DuplicateEventModal from "../../components/admin/DuplicateEventModal";
 import ConfirmDialog from "../../components/ui/ConfirmDialog";
 import { fmtVenueDateTime } from "../../lib/venueTime";
@@ -773,6 +773,7 @@ function EventForm({
   const [error, setError] = useState(null);
   const [slotErrors, setSlotErrors] = useState({});
   const [shiftErrors, setShiftErrors] = useState({});
+  const requestClose = useRequestClose();
 
   // SCRUM-154: the "Week N - Module - School" rule applies to any title being
   // written — a new event, or a deliberate retitle. Events named before the
@@ -1569,7 +1570,10 @@ function EventForm({
       <div className="sticky bottom-0 -mx-6 -mb-5 flex justify-end gap-2 border-t border-[var(--color-border)] bg-white/95 px-6 py-4 backdrop-blur">
         <button
           type="button"
-          onClick={onCancel}
+          // SCRUM-156: goes through the modal's discard prompt so a misclick
+          // next to Save doesn't silently bin a filled-in form. Falls back to
+          // the plain handler if this form is ever rendered outside a modal.
+          onClick={() => (requestClose ? requestClose() : onCancel?.())}
           className="rounded-lg px-4 py-2.5 text-sm font-medium text-[var(--color-fg-muted)] transition-colors hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-300"
         >
           Cancel
