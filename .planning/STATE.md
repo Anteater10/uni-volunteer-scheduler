@@ -1,7 +1,7 @@
 # STATE
 
 **Updated:** 2026-09-08
-**Branch:** main @ `3af0c15` (PR #89)
+**Branch:** main @ `89556b8` (PR #93)
 **Roadmap:** `.planning/ROADMAP.md` — the single source of truth
 
 > The previous STATE.md was dated 2026-05-23 and said "next action: merge Phase
@@ -15,8 +15,8 @@ Estimated 4–6 weeks from Gate 0 being answered.
 
 ## Current phase
 
-**Phase L0 — Protect what's fragile. Complete 2026-09-08.** See the L0 outcome
-block below. Gate 0 before it: 11 of 12 decided as of 2026-09-07. Only #12 (write real
+**Phase L2 — Land what's already built. Complete 2026-09-08.** L0 complete the
+same day. Gate 0 before both: 11 of 12 decided as of 2026-09-07. Only #12 (write real
 corpus test questions) remains, and it's just Andy's to-do, not a blocking call.
 
 Decided: #1 Cloudflare Free — yes. #2 Fix tokens properly, close PR #79. #3
@@ -36,15 +36,73 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. Pick the next phase — either **L1** (add CNAME records at the `sci-trek.org`
-   registrar; optional deliverability upgrade, no external approval wait) or
-   **L2** (land the three open PRs: #80 CI safety net, #79 close per Gate 0 #2,
-   #78 after fixing the recipient query). L2 is the larger unblock.
+1. **Phase L3 — auth and abuse hardening** is the next real phase: move tokens
+   out of `localStorage` to an HttpOnly cookie + in-memory access token with
+   CSRF (~21 files), plus the missing throttles and the `aud`/`iss` claims.
+   Gate 0 #2 committed to this, and L2 deliberately shipped only the
+   compensating 2-day window, not the fix.
+2. **L1 is ~90% already done and partly throwaway.** DKIM CNAMEs are live on
+   `sci-trek.org` (`s1`/`s2._domainkey` → `u113425370.wl121.sendgrid.net`,
+   resolving to a real key), so mail is domain-authenticated today. What is
+   left: confirm the third SendGrid CNAME in the dashboard, and optionally add
+   a DMARC `rua=`. Since the plan is to move SendGrid → SES, polish here gets
+   redone. Recommend skipping until the SES port.
+3. Decide whether to turn `copilot_profile_extraction_enabled` on — its
+   recorded reason for being off (tiny request budget) expired when Gate 0 #9
+   funded ~1,000 requests. One line.
 2. Answer Gate 0 #12 (write real copilot corpus test questions) — Andy's own
    task, not blocking anything else
 3. New Phase P6 (added 2026-09-07) — copilot production hardening: corpus
    refresh, CSV-upload-via-copilot tool, production-grade RAG audit,
    concurrency testing, guardrails. See `.planning/ROADMAP.md` items 133–142.
+
+## Phase L2 outcome (completed 2026-09-08)
+
+Roadmap items #20–#25 plus a new #26.1. Six PRs, five merged and one closed:
+**#91** `be0dbde` (2-day refresh window + the security review, salvaged from
+#79), **#92** `27bf2e3` (frontend container non-root), **#78** `5f54bce`
+(copilot mail transport, which also carried item #24), **#80** `5cbbab7` (CI
+security net), **#93** `89556b8` (react-router 7.14.0 → 7.18.3), **#94**
+(organizer check-in QR). **#79 closed** per Gate 0 #2. Jira SCRUM-8/9/10/70/71/72
+all Done; SCRUM-45 updated.
+
+**Three roadmap errors this phase exposed — worth knowing about, because the
+pattern repeats:**
+
+1. **Item #22's description was stale.** The mass-mail bug it warns about was
+   already fixed on the branch. The real blocker was two coverage gates.
+2. **Item #24 was not a separate task.** The commit lived inside PR #78.
+3. **Gate 0 #3 was half wrong.** "Dockerfiles already run non-root" held for
+   the backend only; the frontend ran PID 1 as root. And item #23's F3 dep
+   bump was outstanding — `react-router-dom` at 7.14.0 with nine high
+   advisories, three of which apply to a Vite SPA.
+
+**Method note, recorded because I got it wrong twice before getting it right.**
+`git diff main...branch` totals do **not** tell you whether a branch holds
+unmerged work — on a stale branch most "differences" are `main` having moved
+on. The reliable test is *which files does this branch add that `main` does not
+have*, plus a direction check on shared files. On that test
+`feat/deploy-baseline` is **fully landed** (all 12 added files present, four
+byte-identical including migration `0009`) — not the 1,837 lines of missing
+security work an earlier reading of the diff suggested. Same for
+`organizer-audit`.
+
+**Two L9 deploy notes**, on top of the existing Celery-worker one:
+
+- **#78 makes `VITE_COPILOT_ENABLED` required** at `docker compose up`.
+  Forgetting it previously produced a fully healthy stack with the copilot
+  compiled out of the bundle and nothing saying so. The next deploy must export
+  it or it fails fast — intended.
+- **#92 changed the frontend's internal port** (80 → 8080, with Caddy updated
+  to match). Not exercised end-to-end through Caddy locally; confirm the site
+  loads on the next deploy, and check that port first if it does not.
+
+**Branches:** one deleted (`fix/confirmation-email-silent-failure`, whose only
+unique lines would have reverted PRs #83/#84). `v1.3` and
+`fix/imports-templates` kept deliberately — sole copies of the SMS work and the
+bulk-add UI respectively. `feat/deploy-baseline` and `organizer-audit` proven
+landed and safe to delete. ~52 further remote branches are fully-merged
+clutter, not yet cleared.
 
 ## Phase L0 outcome (completed 2026-09-08)
 
@@ -122,18 +180,26 @@ These were reported directly by Andy from the live app, not drawn from the
 ROADMAP register — the same "SCRUM stream not in any planning doc" gap that
 PRs #81–#85 had. Worth folding into ROADMAP if the stream continues.
 
-## Verified test status (2026-09-07, main @ `fe05585`)
+## Verified test status (2026-09-08, main @ `89556b8`)
 
-- Frontend: **626/626 passing**, 73 files
-- Backend: **2,066 passing**, 3 failing, 13 skipped
-- CI green on all three of #86/#87/#88 including the full Playwright e2e suite
+- Frontend: **629/629 passing**, 74 files (+3 tests, +1 file — the organizer
+  check-in QR, PR #94)
+- Backend: **2,097 passing** in CI on PR #78's final run, 1 skipped
+- CI green on every merge this phase — #91, #92, #78, #80, #93 — including the
+  full Playwright e2e suite, and on #80 also Semgrep, Semgrep OSS and pip-audit,
+  which are new gates as of that merge
 
-The 3 failures are environmental and unchanged — no `/opt/hf-cache` mount in
-the one-off test container, so `transformers` tries to fetch BGE and 404s. Not
-a code defect. Tracked as ROADMAP #43.
+Locally the backend reads **2,072 passing, 13 skipped** with
+`tests/test_corpus_embeddings.py` excluded — it needs the `/opt/hf-cache` mount
+the one-off container lacks, so `transformers` tries to fetch BGE and 404s. Not
+a code defect; ROADMAP #43. **Note this understates package coverage by ~0.5%**,
+because that excluded file is what exercises the embedding paths — which is why
+`app.copilot` measures 94.5% locally while passing its 95% gate in CI. Do not
+chase that gap locally.
 
-Previous reading (2026-09-03): frontend 609/609 over 72 files; backend 2,044
-passing, 88.22% coverage (gate 55).
+Previous readings: 2026-09-07 frontend 626/626 over 73 files, backend 2,066
+passing with 3 environmental failures; 2026-09-03 frontend 609/609 over 72
+files, backend 2,044 passing, 88.22% coverage (gate 55).
 
 ## Operational notes
 
@@ -148,9 +214,12 @@ kind. Carry into the L9 deploy runbook and the Rafael handover.
 
 ## Open PRs
 
-- **#80** CI safety net — built, never merged
-- **#79** F1 accept localStorage — **close if reversing F1** (Gate 0 #2)
-- **#78** copilot mail transport — fix the recipient query first (ROADMAP #22)
+**None outstanding from before this phase.** All three that had been sitting
+open are resolved: **#80** merged `5cbbab7`, **#78** merged `5f54bce`, **#79**
+closed with its useful half salvaged into **#91** `be0dbde`.
+
+Opened and merged during L2: **#91**, **#92** `27bf2e3`, **#93** `89556b8`.
+**#94** (organizer check-in QR) was the last one in flight.
 
 ## Accumulated Context
 
