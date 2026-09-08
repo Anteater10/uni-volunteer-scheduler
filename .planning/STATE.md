@@ -15,8 +15,14 @@ Estimated 4–6 weeks from Gate 0 being answered.
 
 ## Current phase
 
-**Phase L2 — Land what's already built. Complete 2026-09-08.** L0 complete the
-same day. Gate 0 before both: 11 of 12 decided as of 2026-09-07. Only #12 (write real
+**Phases L0, L1 and L2 all complete as of 2026-09-08**, and **Gate 0 is fully
+closed** — all 12 decisions made and Jira level with them (SCRUM-51 umbrella
+plus 56–63 Done). L1 closed done-by-circumstance with no DNS work performed.
+Audited across Jira, these planning docs and GitHub on 2026-09-08 before
+starting L3; the gaps that audit found are recorded in the outcome blocks below.
+
+**Next: Phase L3 — auth and abuse hardening.** This is where Gate 0 #2 gets
+implemented. Only #12 (write real
 corpus test questions) remains, and it's just Andy's to-do, not a blocking call.
 
 Decided: #1 Cloudflare Free — yes. #2 Fix tokens properly, close PR #79. #3
@@ -36,25 +42,70 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. **Phase L3 — auth and abuse hardening** is the next real phase: move tokens
-   out of `localStorage` to an HttpOnly cookie + in-memory access token with
-   CSRF (~21 files), plus the missing throttles and the `aud`/`iss` claims.
-   Gate 0 #2 committed to this, and L2 deliberately shipped only the
-   compensating 2-day window, not the fix.
-2. **L1 is ~90% already done and partly throwaway.** DKIM CNAMEs are live on
-   `sci-trek.org` (`s1`/`s2._domainkey` → `u113425370.wl121.sendgrid.net`,
-   resolving to a real key), so mail is domain-authenticated today. What is
-   left: confirm the third SendGrid CNAME in the dashboard, and optionally add
-   a DMARC `rua=`. Since the plan is to move SendGrid → SES, polish here gets
-   redone. Recommend skipping until the SES port.
-3. Decide whether to turn `copilot_profile_extraction_enabled` on — its
-   recorded reason for being off (tiny request budget) expired when Gate 0 #9
-   funded ~1,000 requests. One line.
-2. Answer Gate 0 #12 (write real copilot corpus test questions) — Andy's own
-   task, not blocking anything else
-3. New Phase P6 (added 2026-09-07) — copilot production hardening: corpus
-   refresh, CSV-upload-via-copilot tool, production-grade RAG audit,
-   concurrency testing, guardrails. See `.planning/ROADMAP.md` items 133–142.
+1. **Phase L3 — auth and abuse hardening.** The next real phase, and where
+   Gate 0 #2 gets implemented: refresh token to an `HttpOnly` cookie, access
+   token in memory, CSRF on the refresh path, plus the missing throttles and
+   the `aud`/`iss` claims. L2 shipped only the compensating 2-day window, not
+   the fix. **Scoped 2026-09-08:** 13 token reads across 12 source files, of
+   which **7 are copilot call sites** that fetch the token independently
+   instead of going through the shared client — so the copilot is the bulk of
+   the work, not the login form. `useCopilotStream.js` uses `fetch` +
+   `ReadableStream`, **not** `EventSource`, so streaming survives an
+   in-memory `Authorization` header. CSRF is greenfield; CORS already sets
+   `allow_credentials=True`, and prod is same-origin behind Caddy while dev is
+   cross-origin — that split needs handling.
+2. **At the next AWS deploy** (L9 notes, cumulative): `VITE_COPILOT_ENABLED`
+   is now **required** or the deploy fails fast by design; confirm the site
+   loads after the frontend's internal port change (80 → 8080); and the Celery
+   worker must deploy together with the backend. On
+   `COPILOT_PROFILE_EXTRACTION_ENABLED` — Andy is enabling it in AWS; note
+   `backend/.env.production.example:176` already ships it as `true` and the
+   K31 note in `backend/app/tasks/extract_profile.py:32-36` records the budget
+   objection as resolved on 2026-08-20, so check whether it is already set.
+3. **Answer Gate 0 #12** — write real copilot corpus test questions. Andy's
+   own task, tracked as P6 item #133, blocking nothing else.
+4. **Phase P6** — copilot production hardening: corpus refresh,
+   CSV-upload-via-copilot tool (its starting material is the deliberately-kept
+   `fix/imports-templates` branch), production-grade RAG audit, concurrency
+   testing, guardrails. See `.planning/ROADMAP.md` items 133–142.
+5. **Open, not gating L3:** SCRUM-45 dependency triage — now 35 advisories,
+   including `CVE-2026-9856` against `transformers 4.57.6`, whose fix is a
+   major version jump that wants the embedding pipeline re-verified. GitHub
+   issue #9 also stays open: its RBAC is already correct (all seven
+   module/template endpoints use `require_staff`, unscoped) but its two
+   deliverables — an audit doc and a regression test asserting organizer ==
+   admin — do not exist, and `test_admin_modules.py` / `test_modules_crud.py`
+   have **zero** organizer coverage.
+
+## Phase L1 outcome (completed 2026-09-08 — done by circumstance)
+
+Roadmap items #18 and #19. **No DNS work was performed, and none was needed.**
+
+- **Domain authentication was already live and nobody had recorded it.** Verified
+  from public DNS: `s1._domainkey` / `s2._domainkey` on `sci-trek.org` point at
+  `u113425370.wl121.sendgrid.net` and resolve to a real RSA key. That is why real
+  confirmation mail from `no-reply@sci-trek.org` has been arriving since at least
+  2026-09-02.
+- **The phase's founding premise never applied.** It was written around "UCSB IT
+  may refuse the CNAMEs"; Gate 0 #10 established the domain is SciTrek's own, at
+  IONOS. No external approval was ever in the path.
+- **Deferred to the SendGrid → SES port**, deliberately, because both get redone
+  there: confirming the third SendGrid CNAME (the `emNNNN` return-path subdomain,
+  invisible from outside without the number) and adding a DMARC `rua=` — DMARC is
+  currently `p=none` with no reporting address, so nobody receives reports.
+- **A constraint that outlives the phase:** whenever Cloudflare is adopted
+  (Gate 0 #1, decided yes), the DKIM CNAMEs and MX must stay **DNS-only, never
+  proxied** — a proxied `_domainkey` resolves to a Cloudflare IP instead of
+  SendGrid's value and breaks DKIM while still looking correct in the dashboard.
+  Also note adopting Cloudflare is a **nameserver migration off IONOS**, not just
+  adding records, so the whole zone must be re-created.
+
+Jira: SCRUM-69 Done. Item #18 never had a ticket; recorded in the roadmap row.
+
+**Correction to an earlier reading in this file:** an earlier next-action here
+described L1 as "mostly resolved, remaining work is adding CNAME records."
+Wrong — the records were already there. The remaining work was only the third
+CNAME and DMARC polish.
 
 ## Phase L2 outcome (completed 2026-09-08)
 

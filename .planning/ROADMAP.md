@@ -89,6 +89,30 @@ SCRUM-156), **#94/#95/#96** (SCRUM-27/28/32, still open under Phase P3).
 | 11 | Power BI seed unpromoted | Licenses/owner/warehouse unknown | Answer all three | D1 | **Decided 2026-09-07: Switched from Power BI to Tableau — no Power BI license exists yet, no stakeholder mandate for it specifically (only general post-launch analytics need), and dev team is Mac-only (Power BI Desktop is Windows-only; Tableau has a native Mac app). Build analytics on Tableau instead once Milestone D starts post-launch. Owner/warehouse-sizing questions deferred until D1 planning.** |
 | 12 | Copilot corpus has no real questions | Only you know SciTrek policy | Write them | P6 | **Decided 2026-09-07: Moved into Phase P6 (item #133) — Andy will write these as part of the copilot hardening phase, not standalone** |
 
+**Action status, audited 2026-09-08.** All 12 rows are decided; Jira is now
+level with that (SCRUM-51 umbrella plus 56/57/58/59/60/61/62/63 all Done). Four
+rows never had tickets — #4, #5, #8, #12 — and none was created just to be
+closed. Of the rows that carried a *code or admin action* rather than a bare
+decision:
+
+- **#5 complete.** GitHub issue #25 closed as not-planned. Deviation, confirmed
+  by Andy: the branch `fix/imports-templates` is **kept**, not deleted — it is
+  the only copy of the in-app bulk event builder (`BulkAddSection.jsx` + tests,
+  `test_bulk_events.py`), which is input to P6 #135. Its
+  `0029_seed_scitrek_modules` migration did land separately as `0038`.
+- **#8 complete, and it was already done** — verified rather than assumed: no
+  `/admin/imports` endpoints in any router, no `csv_imports` in
+  `backend/app/models.py`, no `services/import_service.py`. PR #51 had removed
+  them; this row's premise ("8 dormant endpoints remain") was stale.
+- **#6** created new work — orientation credit must expire after 1 year —
+  tracked as SCRUM-151, still open, queued under L11.
+- **#12** was moved into Phase P6 as item #133 rather than done standalone.
+
+Two rows proved partly wrong when acted on, recorded so the pattern is visible:
+**#3** claimed the Dockerfiles already ran non-root — true of the backend, not
+the frontend, whose stock nginx ran PID 1 as root (fixed, PR #92) — and its F3
+dependency bump was outstanding despite reading as resolved (fixed, PR #93).
+
 **On #2:** PR #79 exists to accept localStorage tokens, reasoning "don't do
 surgery on the login path right before handing off to a developer who has never
 deployed this." But Rafael does deployment only, the backlog is entirely yours,
@@ -114,12 +138,17 @@ deleted on merge. Jira: SCRUM-64/65/66/67/68 all Done.
 | 16 | `BioApp/` nested untracked git repo | Shows as untracked forever | Gitignore or move out | Nothing | **✅ Done 2026-09-07** — deleted outright rather than gitignored. It was a standalone repo (1 commit, `LICENSE` + empty readme, clean tree) already pushed to `github.com/Anteater10/BioApp`, so nothing was lost. |
 | 17 | 4 stashes from April, 2 dead worktrees | Bases deleted; won't apply | Drop and prune | Nothing | **✅ Done 2026-09-07** — `git stash clear` + `git worktree prune`; dropped without patch export after review. All four were 2026-04-15 snapshots of Phase 16, which shipped in v1.2-prod on 2026-04-17 (all seven `16-0N-SUMMARY.md` + `16-VERIFICATION.md` on `main`; `scripts/verify-overrides-retired.sh` still present). Unappliable anyway — 3 of 4 bases gone. |
 
-## Phase L1 — File the DNS request (0.5 day)
+## Phase L1 — File the DNS request (0.5 day) — ✅ COMPLETE 2026-09-08 (done by circumstance)
 
-| # | Current situation | What's wrong | Recommendation | Blocks | Decision |
+Closed with **no DNS work performed**: domain authentication was already live and
+nobody had recorded it. The phase's founding premise — "UCSB IT may refuse the
+CNAMEs" — never applied, per Gate 0 #10. Remaining polish is deferred to the
+SendGrid → SES port, where it would be redone anyway. Jira: SCRUM-69 Done.
+
+| # | Current situation | What's wrong | Recommendation | Blocks | Status |
 |---|---|---|---|---|---|
-| 18 | No verified sender domain | **Update 2026-09-07: Resolved — `sci-trek.org` self-registered, already sending real email from AWS deploy (confirmed via real confirmation email received 2026-09-02).** No UCSB IT step needed; remaining work is just adding CNAME records via the domain registrar for full domain authentication (optional, deliverability upgrade only) | Add CNAMEs directly via registrar, no external approval wait | L9, all email | — |
-| 19 | Cloudflare not decided | CNAMEs must be DNS-only, not proxied | Decide #1 before filing | L9 | Depends on #1 (already decided: yes, Free plan) |
+| 18 | No verified sender domain | Premise was wrong twice over | Nothing to do | L9, all email | **✅ Moot — verified from public DNS 2026-09-08.** DKIM is live: `s1._domainkey` and `s2._domainkey` → `s1`/`s2.domainkey.u113425370.wl121.sendgrid.net`, both resolving to a real RSA key. So SendGrid domain auth was configured at some point and never written down — which is why real mail from `no-reply@sci-trek.org` has been arriving. No UCSB IT step was ever needed (Gate 0 #10 — the domain is SciTrek's own, at IONOS). Rest of the zone: apex A `52.35.73.159`, MX `mx00`/`mx01.ionos.com` (inbound stays IONOS), SPF `v=spf1 include:_spf-us.ionos.com ~all` — which does **not** name SendGrid, and that is correct under CNAME-based domain auth because the return path is a SendGrid-hosted subdomain with its own SPF. **Deferred to the SES port:** confirming the third CNAME (the `emNNNN` return-path subdomain, not resolvable from outside without the number — it is in SendGrid → Sender Authentication), and adding a DMARC `rua=` (currently `p=none` with no reporting address, so nobody receives reports). No ticket ever existed for this row; recorded here instead. |
+| 19 | Cloudflare not decided | CNAMEs must be DNS-only, not proxied | Decide #1 before filing | L9 | **✅ Decided (Gate 0 #1: Cloudflare Free) — and the constraint outlives this phase.** When Cloudflare is adopted, the DKIM CNAMEs and MX must be **DNS-only, never proxied**: an orange-clouded `_domainkey` resolves to a Cloudflare IP instead of SendGrid's value and breaks DKIM silently, with the records still looking correct in the dashboard. Only the web A record should be proxied. Carried onto SCRUM-56, since adopting Cloudflare is a nameserver migration off IONOS and the whole zone has to be re-created there. Sequencing it **after** the SES port avoids doing the sender records twice. |
 
 ## Phase L2 — Land what's already built (1–2 days) — ✅ COMPLETE 2026-09-08
 
