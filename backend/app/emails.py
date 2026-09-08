@@ -70,7 +70,12 @@ def _load_base() -> str:
     return _BASE_TEMPLATE
 
 
-def _render_html(template_name: str, **kwargs: str) -> str:
+def _render_html(
+    template_name: str,
+    *,
+    footer_text: str | None = None,
+    **kwargs: str,
+) -> str:
     """Load an HTML template, substitute variables, and wrap in the base layout.
 
     All variable values are html.escape()-d to prevent XSS via event titles etc.
@@ -79,6 +84,11 @@ def _render_html(template_name: str, **kwargs: str) -> str:
     content_raw = (_TEMPLATE_DIR / template_name).read_text()
     content = Template(content_raw).safe_substitute(safe_kwargs)
     base = _load_base()
+    if footer_text is not None:
+        base = base.replace(
+            "You&#39;re receiving this because you signed up to volunteer with UCSB SciTrek.",
+            html.escape(footer_text),
+        )
     return Template(base).safe_substitute(content=content)
 
 
@@ -205,6 +215,36 @@ def send_confirmation(signup: models.Signup) -> dict:
     )
     html_body = _render_html(
         "confirmation.html",
+        user_name=vol_name,
+        event_title=event.title,
+        slot_when=when,
+        event_location=event.location or "TBD",
+    )
+    return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
+
+
+def send_resignup(signup: models.Signup) -> dict:
+    """SCRUM-155: an admin reversed a cancellation and put them back on.
+
+    Deliberately not the plain confirmation copy: the volunteer last heard
+    that this signup was cancelled, so the mail has to say what changed
+    rather than read like a duplicate of the original confirmation.
+    """
+    v, event, when = _booking_parts(signup)
+    vol_name = f"{v.first_name} {v.last_name}"
+    subject = f"You're back on for '{event.title}'"
+    text_body = (
+        f"Hi {vol_name},\n\n"
+        f"Your cancelled signup has been reinstated, so you are confirmed "
+        f"for this volunteer slot again:\n"
+        f"- Event: {event.title}\n"
+        f"- When: {when}\n"
+        f"- Where: {event.location or 'TBD'}\n\n"
+        "If you did not ask for this, reply to this email and we will take "
+        "you back off."
+    )
+    html_body = _render_html(
+        "resignup.html",
         user_name=vol_name,
         event_title=event.title,
         slot_when=when,
@@ -482,6 +522,7 @@ def send_reminder_pre_2h(signup: "models.Signup") -> dict:
 
 BUILDERS = {
     "confirmation": send_confirmation,
+    "resignup": send_resignup,
     "cancellation": send_cancellation,
     "cancellation_waitlisted": send_waitlist_cancellation,
     "reminder_24h": send_reminder_24h,
@@ -650,6 +691,62 @@ def build_signup_confirmation_email(
     )
     subject = f"Confirm your SciTrek volunteer signup — {event.title}"
     return subject, html
+
+
+def build_admin_signup_notification_email(
+    admin: "models.User",
+    volunteer: "models.Volunteer",
+    signups: list,
+    event: "models.Event",
+    module: "models.Module | None",
+) -> tuple[str, str, str]:
+    """Build one operational summary for an entire public signup batch."""
+    from .config import settings
+
+    branch = module.school_branch if module else models.SchoolBranch.both
+    branch_label = {
+        models.SchoolBranch.high_school: "High School",
+        models.SchoolBranch.middle_school: "Middle School",
+        models.SchoolBranch.both: "Both",
+    }[branch]
+    module_name = module.name if module else (event.module_slug or "Unmatched legacy module")
+    roster_url = (
+        f"{settings.frontend_url.rstrip('/')}/admin/events/{event.id}/roster"
+    )
+    booking_lines = [
+        f"- {line} — {booking.status.value.replace('_', ' ').title()}"
+        for booking in signups
+        for line in _booking_lines(booking, event)
+    ]
+    bookings = "\n".join(booking_lines)
+    volunteer_name = f"{volunteer.first_name} {volunteer.last_name}"
+    subject = f"New signup — {event.title}"
+    text_body = (
+        f"Hi {admin.name},\n\n"
+        f"A new volunteer signup was submitted.\n\n"
+        f"Volunteer: {volunteer_name} ({volunteer.email})\n"
+        f"Event: {event.title}\n"
+        f"Module: {module_name}\n"
+        f"School branch: {branch_label}\n\n"
+        f"Bookings:\n{bookings}\n\n"
+        f"Open roster: {roster_url}"
+    )
+    html_body = _render_html(
+        "admin_signup_notification.html",
+        footer_text=(
+            "You're receiving this because your administrator account is "
+            "subscribed to signup notifications for this school branch."
+        ),
+        admin_name=admin.name,
+        volunteer_name=volunteer_name,
+        volunteer_email=volunteer.email,
+        event_title=event.title,
+        module_name=module_name,
+        school_branch=branch_label,
+        booking_list=bookings,
+        roster_url=roster_url,
+    )
+    return subject, text_body, html_body
 
 
 def build_waitlist_promotion_email(

@@ -75,7 +75,15 @@ def _make_template(db_session, slug=None):
 
 
 def _run(db_session, args, *, role="admin"):
-    """invoke -> confirm -> result, the path a real turn takes."""
+    """invoke -> confirm -> result, the path a real turn takes.
+
+    SCRUM-154 made the school required when no title is given, because the
+    title is built as "Week N - Module - School" and nothing else knows the
+    school. Tests that are not about naming get one supplied here so they
+    keep testing what they were written to test.
+    """
+    if "school" not in args and "title" not in args:
+        args = {**args, "school": "GVJH"}
     user = make_user(db_session, role=getattr(UserRole, role))
     session_id = _make_session(db_session, user.id)
     scope = scope_for(role=role, caller_id=user.id)
@@ -539,9 +547,10 @@ class TestDefaults:
                 ],
             },
         )
-        # A title is cosmetic and visibly wrong on the page if it is; a time
-        # is not. That is the line between what may default and what asks.
-        assert result["title"] == "Glucose Sensing"
+        # SCRUM-154: the default used to be the bare module name. It is now
+        # the canonical "Week N - Module - School", so the name the tool
+        # picks for itself is in the same shape as one a human would type.
+        assert result["title"] == "Week 9 - Glucose Sensing - GVJH"
         shift = db_session.query(Shift).filter(
             Shift.event_id == result["event_id"]
         ).one()
@@ -553,14 +562,65 @@ class TestDefaults:
             db_session,
             {
                 "template_id": tpl.slug,
-                "title": "Glucose Sensing at Goleta Valley",
+                "title": "Week 22 - Glucose Sensing - Goleta Valley Junior High",
                 "school": "Goleta Valley Junior High",
                 "orientations": [_orientation("2026-W22", "friday")],
             },
         )
         event = db_session.query(Event).filter(Event.id == result["event_id"]).one()
-        assert event.title == "Glucose Sensing at Goleta Valley"
+        assert event.title == (
+            "Week 22 - Glucose Sensing - Goleta Valley Junior High"
+        )
         assert event.school == "Goleta Valley Junior High"
+
+
+class TestTitleFormat:
+    """SCRUM-154: every event is named "Week N - Module - School"."""
+
+    def test_title_is_built_from_week_module_and_school_when_omitted(
+        self, db_session
+    ):
+        tpl = _make_template(db_session)
+        _out, result = _run(
+            db_session,
+            {
+                "template_id": tpl.slug,
+                "school": "GVJH",
+                "orientations": [_orientation("2026-W22", "friday")],
+            },
+        )
+        event = db_session.query(Event).filter(Event.id == result["event_id"]).one()
+        assert event.title == f"Week {event.week_number} - {tpl.name} - GVJH"
+
+    def test_a_title_in_the_wrong_shape_is_refused(self, db_session):
+        tpl = _make_template(db_session)
+        _out, result = _run(
+            db_session,
+            {
+                "template_id": tpl.slug,
+                "title": "Glucose Sensing at Goleta Valley",
+                "school": "GVJH",
+                "orientations": [_orientation("2026-W22", "friday")],
+            },
+        )
+        assert "Week {N}" in result["error"]
+        assert (
+            db_session.query(Event).filter(Event.module_slug == tpl.slug).count() == 0
+        )
+
+    def test_a_missing_school_is_asked_for_not_invented(self, db_session):
+        tpl = _make_template(db_session)
+        out, result = _run(
+            db_session,
+            {
+                "template_id": tpl.slug,
+                "school": "",
+                "orientations": [_orientation("2026-W22", "friday")],
+            },
+        )
+        assert result is None
+        asked = " ".join(out["result"]["needs_answers"]).lower()
+        assert "school" in asked
 
 
 class TestRefusals:
@@ -718,6 +778,7 @@ class TestAccess:
             scope=scope_for(role="admin", caller_id=admin.id),
             args={
                 "template_id": tpl.slug,
+                "school": "GVJH",
                 "orientations": [_orientation("2026-W22", "monday")],
             },
             session_id=session_id,

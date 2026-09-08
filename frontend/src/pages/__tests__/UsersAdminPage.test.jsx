@@ -71,6 +71,7 @@ const ALICE = {
   last_login_at: null,
   university_id: "",
   notify_email: true,
+  school_branch: "high_school",
 };
 
 const BOB = {
@@ -82,6 +83,7 @@ const BOB = {
   last_login_at: "2026-04-14T10:00:00Z",
   university_id: "",
   notify_email: true,
+  school_branch: null,
 };
 
 beforeEach(() => {
@@ -94,14 +96,17 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("UsersAdminPage", () => {
-  it("renders the table with all 5 expected columns", async () => {
+  it("renders the table with school branch for admins only", async () => {
     renderPage();
     await screen.findByText("alice@example.com");
     expect(screen.getByRole("columnheader", { name: "Name" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Email" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Role" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "School branch" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Last login" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+    expect(screen.getByText("High School")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
   });
 
   it("role filter dropdown does not include 'participant'", async () => {
@@ -125,6 +130,36 @@ describe("UsersAdminPage", () => {
       (o) => o.value,
     );
     expect(values).not.toContain("participant");
+    expect(within(screen.getByRole("dialog")).queryByLabelText(/school branch/i)).toBeNull();
+  });
+
+  it("shows branch for admin invites and submits the selection", async () => {
+    api.admin.users.invite.mockResolvedValue({});
+    renderPage();
+    await screen.findByText("alice@example.com");
+    fireEvent.click(screen.getByRole("button", { name: /invite user/i }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/^role$/i), {
+      target: { value: "admin" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/school branch/i), {
+      target: { value: "middle_school" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/name/i), {
+      target: { value: "Middle Admin" },
+    });
+    fireEvent.change(within(dialog).getByLabelText(/email/i), {
+      target: { value: "middle-admin@example.com" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /send invite/i }));
+    await waitFor(() =>
+      expect(api.admin.users.invite).toHaveBeenCalledWith(
+        expect.objectContaining({
+          role: "admin",
+          school_branch: "middle_school",
+        }),
+      ),
+    );
   });
 
   it("'Show deactivated' toggle starts unchecked", async () => {

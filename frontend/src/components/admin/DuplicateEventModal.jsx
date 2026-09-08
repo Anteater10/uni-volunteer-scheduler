@@ -57,6 +57,8 @@ export default function DuplicateEventModal({ open, onClose, sourceEvent, quarte
 
   const [targetQuarterId, setTargetQuarterId] = useState(null);
   const [targetWeek, setTargetWeek] = useState(1);
+  // SCRUM-156: feeds the modal's discard prompt, which Cancel now uses too.
+  const [dirty, setDirty] = useState(false);
 
   // Re-derive the default target each time the modal opens on a source.
   React.useEffect(() => {
@@ -147,6 +149,7 @@ export default function DuplicateEventModal({ open, onClose, sourceEvent, quarte
       title={`Duplicate "${sourceEvent.title}"`}
       subtitle="Pick where the copy lands. Everything below is prefilled from the original — adjust dates, rooms, and slots before creating."
       onClose={onClose}
+      dirty={dirty}
     >
       <div className="space-y-6">
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -223,6 +226,7 @@ export default function DuplicateEventModal({ open, onClose, sourceEvent, quarte
             submitLabel="Create event"
             onSubmit={(payload) => createM.mutateAsync(payload)}
             onCancel={onClose}
+            onDirtyChange={setDirty}
             submitting={createM.isPending}
           />
         ) : null}

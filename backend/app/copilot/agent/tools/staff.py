@@ -29,12 +29,13 @@ from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._ask import ask_for, suggesting
 from app.copilot.agent.tools.base import Tool
 from app.deps import STAFF_ROLES
-from app.models import User, UserRole
+from app.models import SchoolBranch, User, UserRole
 
 _STAFF_SCHEMA = [
     "user_id",
     "name",
     "role",
+    "school_branch",
     "active",
     "staff",
     "count",
@@ -65,6 +66,11 @@ def _row(user: User) -> dict[str, Any]:
         "user_id": str(user.id),
         "name": user.name,
         "role": user.role.value,
+        "school_branch": (
+            user.school_branch.value
+            if user.role == UserRole.admin and user.school_branch
+            else None
+        ),
         "active": bool(user.is_active),
     }
 
@@ -184,6 +190,12 @@ def _invite_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str
     role = str(args.get("role") or "").strip().lower()
     if role not in _ASSIGNABLE:
         return {"error": f"role must be one of {', '.join(_ASSIGNABLE)}"}
+    try:
+        branch = SchoolBranch(
+            str(args.get("school_branch") or SchoolBranch.both.value)
+        )
+    except ValueError:
+        return {"error": "school_branch must be high_school, middle_school, or both"}
 
     existing = (
         db.query(User).filter(User.email.ilike(email)).one_or_none()
@@ -201,6 +213,7 @@ def _invite_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str
         name=str(args["name"]).strip(),
         email=email,
         role=UserRole(role),
+        school_branch=branch if role == UserRole.admin.value else None,
         # No password: the invite is a magic link, which is the whole
         # account-recovery story here.
         hashed_password=None,
@@ -240,6 +253,11 @@ INVITE_STAFF_TOOL = Tool(
             "email": {"type": "string"},
             "name": {"type": "string"},
             "role": {"type": "string", "enum": list(_ASSIGNABLE)},
+            "school_branch": {
+                "type": "string",
+                "enum": [branch.value for branch in SchoolBranch],
+                "description": "Admin notification branch; defaults to both.",
+            },
         },
         "required": ["email", "name", "role"],
     },
@@ -279,6 +297,12 @@ def _role_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, 
     role = str(args.get("role") or "").strip().lower()
     if role not in _ASSIGNABLE:
         return {"error": f"role must be one of {', '.join(_ASSIGNABLE)}"}
+    try:
+        branch = SchoolBranch(
+            str(args.get("school_branch") or SchoolBranch.both.value)
+        )
+    except ValueError:
+        return {"error": "school_branch must be high_school, middle_school, or both"}
     if user.role.value == role:
         return {"error": f"{user.name} is already {role}"}
 
@@ -290,6 +314,7 @@ def _role_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, 
             return {"error": _LAST_ADMIN}
 
     user.role = UserRole(role)
+    user.school_branch = branch if role == UserRole.admin.value else None
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -314,6 +339,11 @@ SET_STAFF_ROLE_TOOL = Tool(
         "properties": {
             "user_id": {"type": "string", "description": "From list_staff."},
             "role": {"type": "string", "enum": list(_ASSIGNABLE)},
+            "school_branch": {
+                "type": "string",
+                "enum": [branch.value for branch in SchoolBranch],
+                "description": "Admin notification branch; defaults to both.",
+            },
         },
         "required": ["user_id", "role"],
     },

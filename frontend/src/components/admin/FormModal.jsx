@@ -12,10 +12,25 @@ import ConfirmDialog from "../ui/ConfirmDialog";
  *
  * Closing it unmounts its children, and the forms inside hold their state
  * locally — so a close is a data loss, not a navigation. `dirty` lets the form
- * say it has unsaved work; while it is set, every exit route (backdrop,
- * Escape, the X) asks before discarding. The form's own Cancel button is left
- * alone: that one is a labelled, deliberate "throw this away".
+ * say it has unsaved work; while it is set, every exit route asks before
+ * discarding.
+ *
+ * SCRUM-156: the form's own Cancel button used to be exempt, on the reasoning
+ * that it is a labelled, deliberate "throw this away". In practice it sits an
+ * inch from Save at the end of a long form, and losing a filled-in event to
+ * one misclick is the same data loss whichever control caused it. Cancel now
+ * goes through the same prompt, via the context below.
  */
+const RequestCloseContext = React.createContext(null);
+
+/**
+ * The enclosing FormModal's guarded close, for a form's own Cancel button.
+ * Null outside a FormModal, so callers keep their own fallback.
+ */
+export function useRequestClose() {
+  return React.useContext(RequestCloseContext);
+}
+
 export default function FormModal({
   open,
   title,
@@ -104,7 +119,11 @@ export default function FormModal({
               </button>
             </div>
           </div>
-          <div className="px-6 py-5">{children}</div>
+          <div className="px-6 py-5">
+            <RequestCloseContext.Provider value={requestClose}>
+              {children}
+            </RequestCloseContext.Provider>
+          </div>
         </div>
       </div>
 

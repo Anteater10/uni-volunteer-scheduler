@@ -1,20 +1,24 @@
 /**
- * weekUtils.test.js — issue #24 rewrite.
+ * weekUtils.test.js — issue #24 rewrite, reworked for SCRUM-48.
  *
- * Week navigation walks the admin-entered quarter rows from
- * GET /public/quarters (real week counts per row, summer Sessions A/B as
- * separate rows) instead of assuming a fixed 11-week cycle. Navigation
- * returns null past the ends so callers can disable arrows.
+ * Navigation walks the admin-entered quarter rows from GET /public/quarters
+ * (summer Sessions A/B as separate rows). SCRUM-48: it steps (quarter ×
+ * school level) pairs rather than weeks, so each row yields two positions and
+ * a three-quarter schedule gives six. Navigation returns null past the ends so
+ * callers can disable arrows.
  */
 
 import { describe, it, expect } from "vitest";
 import {
+  DEFAULT_SCHOOL_BRANCH,
+  SCHOOL_BRANCHES,
   activeQuarters,
   archivedQuarters,
   findQuarterById,
-  getNextWeek,
-  getPrevWeek,
-  formatWeekLabel,
+  getNextQuarterLevel,
+  getPrevQuarterLevel,
+  formatQuarterLevelLabel,
+  isSchoolBranch,
   resolveLegacyParams,
   quarterContaining,
   activeOrRecentQuarter,
@@ -55,54 +59,102 @@ const SESSION_B = {
 };
 const QUARTERS = [SPRING, SESSION_A, SESSION_B];
 
-describe("getNextWeek", () => {
-  it("increments within a quarter", () => {
-    expect(getNextWeek(QUARTERS, "spring-26", 5)).toEqual({
-      quarter_id: "spring-26",
-      week_number: 6,
-    });
+describe("school level vocabulary", () => {
+  it("offers exactly the two levels a volunteer browses by", () => {
+    // `both` is a module property, not a tab — its events surface under each
+    // of these instead of getting a position of their own.
+    expect(SCHOOL_BRANCHES).toEqual(["middle_school", "high_school"]);
+    expect(DEFAULT_SCHOOL_BRANCH).toBe("middle_school");
   });
 
-  it("rolls from a quarter's final week into the next entered row", () => {
-    expect(getNextWeek(QUARTERS, "spring-26", 11)).toEqual({
-      quarter_id: "summer-26-a",
-      week_number: 1,
-    });
-  });
-
-  it("rolls Session A week 6 into Session B week 1 (real week counts)", () => {
-    expect(getNextWeek(QUARTERS, "summer-26-a", 6)).toEqual({
-      quarter_id: "summer-26-b",
-      week_number: 1,
-    });
-  });
-
-  it("returns null past the last entered quarter", () => {
-    expect(getNextWeek(QUARTERS, "summer-26-b", 6)).toBeNull();
-  });
-
-  it("returns null for an unknown quarter id", () => {
-    expect(getNextWeek(QUARTERS, "nope", 3)).toBeNull();
+  it("isSchoolBranch rejects anything not a browsable level", () => {
+    expect(isSchoolBranch("middle_school")).toBe(true);
+    expect(isSchoolBranch("high_school")).toBe(true);
+    expect(isSchoolBranch("both")).toBe(false);
+    expect(isSchoolBranch(null)).toBe(false);
+    expect(isSchoolBranch("elementary")).toBe(false);
   });
 });
 
-describe("getPrevWeek", () => {
-  it("decrements within a quarter", () => {
-    expect(getPrevWeek(QUARTERS, "summer-26-a", 3)).toEqual({
-      quarter_id: "summer-26-a",
-      week_number: 2,
-    });
-  });
-
-  it("rolls week 1 back to the previous row's final week", () => {
-    expect(getPrevWeek(QUARTERS, "summer-26-a", 1)).toEqual({
+describe("getNextQuarterLevel", () => {
+  it("steps to the next level within a quarter", () => {
+    expect(getNextQuarterLevel(QUARTERS, "spring-26", "middle_school")).toEqual({
       quarter_id: "spring-26",
-      week_number: 11,
+      school_branch: "high_school",
     });
   });
 
-  it("returns null before the first entered quarter", () => {
-    expect(getPrevWeek(QUARTERS, "spring-26", 1)).toBeNull();
+  it("rolls from a quarter's last level into the next entered row", () => {
+    expect(getNextQuarterLevel(QUARTERS, "spring-26", "high_school")).toEqual({
+      quarter_id: "summer-26-a",
+      school_branch: "middle_school",
+    });
+  });
+
+  it("rolls Session A into Session B", () => {
+    expect(getNextQuarterLevel(QUARTERS, "summer-26-a", "high_school")).toEqual({
+      quarter_id: "summer-26-b",
+      school_branch: "middle_school",
+    });
+  });
+
+  it("returns null past the last position", () => {
+    expect(getNextQuarterLevel(QUARTERS, "summer-26-b", "high_school")).toBeNull();
+  });
+
+  it("returns null for an unknown quarter id", () => {
+    expect(getNextQuarterLevel(QUARTERS, "nope", "middle_school")).toBeNull();
+  });
+
+  it("returns null for a level that is not browsable", () => {
+    expect(getNextQuarterLevel(QUARTERS, "spring-26", "both")).toBeNull();
+  });
+});
+
+describe("getPrevQuarterLevel", () => {
+  it("steps back a level within a quarter", () => {
+    expect(getPrevQuarterLevel(QUARTERS, "summer-26-a", "high_school")).toEqual({
+      quarter_id: "summer-26-a",
+      school_branch: "middle_school",
+    });
+  });
+
+  it("rolls the first level back to the previous row's last level", () => {
+    expect(getPrevQuarterLevel(QUARTERS, "summer-26-a", "middle_school")).toEqual({
+      quarter_id: "spring-26",
+      school_branch: "high_school",
+    });
+  });
+
+  it("returns null before the first position", () => {
+    expect(getPrevQuarterLevel(QUARTERS, "spring-26", "middle_school")).toBeNull();
+  });
+});
+
+describe("a full walk covers every quarter × level pair", () => {
+  it("visits 2 positions per quarter, in order, then stops", () => {
+    // The arithmetic the feature was specified by: 3 quarters → 6 positions.
+    let position = { quarter_id: "spring-26", school_branch: "middle_school" };
+    const visited = [position];
+    for (let guard = 0; guard < 20; guard += 1) {
+      const next = getNextQuarterLevel(
+        QUARTERS,
+        position.quarter_id,
+        position.school_branch,
+      );
+      if (!next) break;
+      visited.push(next);
+      position = next;
+    }
+    expect(visited).toEqual([
+      { quarter_id: "spring-26", school_branch: "middle_school" },
+      { quarter_id: "spring-26", school_branch: "high_school" },
+      { quarter_id: "summer-26-a", school_branch: "middle_school" },
+      { quarter_id: "summer-26-a", school_branch: "high_school" },
+      { quarter_id: "summer-26-b", school_branch: "middle_school" },
+      { quarter_id: "summer-26-b", school_branch: "high_school" },
+    ]);
+    expect(visited).toHaveLength(QUARTERS.length * SCHOOL_BRANCHES.length);
   });
 });
 
@@ -120,8 +172,10 @@ describe("archived rows are skipped in navigation", () => {
     ]);
   });
 
-  it("prev from Session A week 1 has nowhere to go once spring is archived", () => {
-    expect(getPrevWeek(withArchived, "summer-26-a", 1)).toBeNull();
+  it("prev from Session A's first level has nowhere to go once spring is archived", () => {
+    expect(
+      getPrevQuarterLevel(withArchived, "summer-26-a", "middle_school"),
+    ).toBeNull();
   });
 
   it("archivedQuarters lists only archived rows, ordered by start", () => {
@@ -137,47 +191,73 @@ describe("navigation inside an archived quarter is clamped to it (issue #33)", (
     SESSION_B,
   ];
 
-  it("moves week-by-week within the archived row", () => {
-    expect(getNextWeek(withArchived, "spring-26", 5)).toEqual({
+  it("moves level-by-level within the archived row", () => {
+    expect(getNextQuarterLevel(withArchived, "spring-26", "middle_school")).toEqual({
       quarter_id: "spring-26",
-      week_number: 6,
+      school_branch: "high_school",
     });
-    expect(getPrevWeek(withArchived, "spring-26", 5)).toEqual({
+    expect(getPrevQuarterLevel(withArchived, "spring-26", "high_school")).toEqual({
       quarter_id: "spring-26",
-      week_number: 4,
+      school_branch: "middle_school",
     });
   });
 
   it("never rolls out of the archived row at either end", () => {
-    expect(getNextWeek(withArchived, "spring-26", 11)).toBeNull();
-    expect(getPrevWeek(withArchived, "spring-26", 1)).toBeNull();
+    expect(getNextQuarterLevel(withArchived, "spring-26", "high_school")).toBeNull();
+    expect(getPrevQuarterLevel(withArchived, "spring-26", "middle_school")).toBeNull();
   });
 });
 
-describe("formatWeekLabel", () => {
+describe("formatQuarterLevelLabel", () => {
   it("uses the row's display name (session-aware)", () => {
-    expect(formatWeekLabel(SESSION_B, 2)).toBe("Summer 2026 · Session B — Week 2");
-    expect(formatWeekLabel(SPRING, 3)).toBe("Spring 2026 — Week 3");
+    expect(formatQuarterLevelLabel(SESSION_B, "middle_school")).toBe(
+      "Summer 2026 · Session B — Middle School",
+    );
+    expect(formatQuarterLevelLabel(SPRING, "high_school")).toBe(
+      "Spring 2026 — High School",
+    );
+  });
+
+  it("degrades without a row rather than rendering undefined", () => {
+    expect(formatQuarterLevelLabel(null, "high_school")).toBe("High School");
+    expect(formatQuarterLevelLabel(SPRING, "nonsense")).toBe("Spring 2026");
   });
 });
 
 describe("resolveLegacyParams", () => {
-  it("resolves a legacy quarter/year/week link to the matching row", () => {
-    expect(resolveLegacyParams(QUARTERS, { quarter: "spring", year: 2026, week: 5 })).toEqual({
+  it("resolves a legacy quarter/year link to the matching row's default level", () => {
+    expect(
+      resolveLegacyParams(QUARTERS, { quarter: "spring", year: 2026 }),
+    ).toEqual({
       quarter_id: "spring-26",
-      week_number: 5,
+      school_branch: "middle_school",
+    });
+  });
+
+  it("ignores a legacy &week= rather than choking on it", () => {
+    // The whole point: links already sitting in volunteers' inboxes still land
+    // somewhere sensible instead of erroring.
+    expect(
+      resolveLegacyParams(QUARTERS, { quarter: "spring", year: 2026, week: 5 }),
+    ).toEqual({
+      quarter_id: "spring-26",
+      school_branch: "middle_school",
     });
   });
 
   it("picks the first session for an ambiguous legacy summer link", () => {
-    expect(resolveLegacyParams(QUARTERS, { quarter: "summer", year: 2026, week: 2 })).toEqual({
+    expect(
+      resolveLegacyParams(QUARTERS, { quarter: "summer", year: 2026, week: 2 }),
+    ).toEqual({
       quarter_id: "summer-26-a",
-      week_number: 2,
+      school_branch: "middle_school",
     });
   });
 
   it("returns null when nothing matches", () => {
-    expect(resolveLegacyParams(QUARTERS, { quarter: "fall", year: 2031, week: 1 })).toBeNull();
+    expect(
+      resolveLegacyParams(QUARTERS, { quarter: "fall", year: 2031, week: 1 }),
+    ).toBeNull();
   });
 });
 

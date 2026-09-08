@@ -18,6 +18,7 @@ magic_link_sent=True. When EXPOSE_TOKENS_FOR_TESTING=1, also returns
 confirm_token (dev/test only).
 """
 import os
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -45,6 +46,8 @@ from .waitlist_service import (
     shift_has_ended,
     slot_has_ended,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Phase 29 (LOCK-01) — PT-localized copy for participant-facing errors. We
@@ -654,6 +657,13 @@ def create_public_signup(
     )
     if os.environ.get("EXPOSE_TOKENS_FOR_TESTING") == "1":
         response_kwargs["confirm_token"] = raw_token
+
+    # Resolve the intended recipients while this session has the complete
+    # event/module view. Delivery is still deferred until after commit and the
+    # worker revalidates eligibility before sending.
+    from .signup_notification_service import eligible_admin_ids_for_event
+
+    admin_notification_user_ids = eligible_admin_ids_for_event(db, event_id)
     db.commit()
 
     # 5b. Rows are committed and now visible to other sessions — safe to enqueue
@@ -661,5 +671,26 @@ def create_public_signup(
     # worker logged "missing entity, skipping" and no email was sent.
     from ..celery_app import send_signup_confirmation_email
     send_signup_confirmation_email.delay(**confirmation_email_args)
+
+    # A branch alert is operational follow-up, not part of creating the
+    # volunteer's booking. A broker enqueue failure is observable but cannot
+    # turn an already-committed signup into a failed/rolled-back transaction.
+    from ..celery_app import send_admin_signup_notification_email
+
+    for user_id in admin_notification_user_ids:
+        try:
+            send_admin_signup_notification_email.delay(
+                user_id=str(user_id),
+                volunteer_id=str(volunteer.id),
+                signup_ids=[str(s.id) for s in signups],
+                shift_signup_ids=[str(s.id) for s in shift_signups],
+                event_id=str(event_id),
+            )
+        except Exception:
+            logger.exception(
+                "admin_signup_notification_enqueue_failed user_id=%s event_id=%s",
+                user_id,
+                event_id,
+            )
 
     return PublicSignupResponse(**response_kwargs)

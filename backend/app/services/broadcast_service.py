@@ -40,9 +40,16 @@ RATE_LIMIT_PER_HOUR = 5
 RATE_LIMIT_WINDOW_SECONDS = 3600
 PT = ZoneInfo("America/Los_Angeles")
 
-# Recipients: signups holding or past a confirmed spot at send time.
-# Waitlisted / pending / cancelled / no_show are excluded per 26-CONTEXT.
+# Recipients: signups holding or past a spot at send time.
+#
+# SCRUM-49: pending was previously excluded per 26-CONTEXT, which left a
+# volunteer who had signed up but not yet been confirmed in total silence — no
+# broadcast, no reminder — even though capacity math already counts them as
+# holding the seat. A pending signup is a real commitment awaiting an admin, not
+# a non-participant, so it belongs on every recipient list.
+# Waitlisted / cancelled / no_show remain excluded.
 RECIPIENT_STATUSES = (
+    models.SignupStatus.pending,
     models.SignupStatus.confirmed,
     models.SignupStatus.checked_in,
     models.SignupStatus.attended,
@@ -52,8 +59,13 @@ RECIPIENT_STATUSES = (
 # permits just pending/confirmed/waitlisted/cancelled, because attendance
 # outcomes live in session_attendance instead. So the checked_in/attended half of
 # RECIPIENT_STATUSES can never match here, and filtering on it would be dead SQL
-# implying a state a shift commitment cannot reach.
-SHIFT_RECIPIENT_STATUSES = (models.SignupStatus.confirmed,)
+# implying a state a shift commitment cannot reach. pending, by contrast, is not
+# only reachable but the ShiftSignup default (models.py:541) — which made this
+# the path where volunteers most commonly got stranded without email.
+SHIFT_RECIPIENT_STATUSES = (
+    models.SignupStatus.pending,
+    models.SignupStatus.confirmed,
+)
 
 
 # ------------------------------------------------------------------

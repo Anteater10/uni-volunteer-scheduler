@@ -42,6 +42,19 @@ class UserRole(str, enum.Enum):
     participant = "participant"
 
 
+class SchoolBranch(str, enum.Enum):
+    high_school = "high_school"
+    middle_school = "middle_school"
+    both = "both"
+
+
+def _default_user_school_branch(context):
+    """Give ORM-created admins the backwards-compatible ``both`` default."""
+    role = context.get_current_parameters().get("role")
+    role_value = role.value if isinstance(role, UserRole) else role
+    return SchoolBranch.both if role_value == UserRole.admin.value else None
+
+
 class SignupStatus(str, enum.Enum):
     pending = "pending"
     confirmed = "confirmed"
@@ -50,6 +63,28 @@ class SignupStatus(str, enum.Enum):
     no_show = "no_show"
     waitlisted = "waitlisted"
     cancelled = "cancelled"
+
+
+# SCRUM-49: the statuses that make a signup a mail recipient.
+#
+# Every signup-tied email — reminders, admin broadcasts, reschedule notices,
+# the weekly digest — used to filter on `confirmed` alone, so a volunteer left
+# in `pending` got total silence despite already occupying the seat as far as
+# capacity math was concerned. Pending is a real commitment awaiting an admin,
+# and it is the ShiftSignup default (see ck_shift_signups_status_is_lifecycle
+# below), so it was the single most common way to be silently unreachable.
+#
+# Waitlisted stays out: those volunteers have no seat yet, and the paths that
+# want them (e.g. notify_event_participants' include_waitlisted) opt in
+# explicitly. Cancelled and no_show stay out for obvious reasons.
+#
+# One constant, so widening or narrowing "who gets mail" is a single edit
+# rather than a hunt through five modules. Kept as a tuple for use directly in
+# `.in_()` filters.
+EMAIL_RECIPIENT_STATUSES = (
+    SignupStatus.pending,
+    SignupStatus.confirmed,
+)
 
 
 class MagicLinkPurpose(str, enum.Enum):
@@ -144,6 +179,19 @@ class User(Base):
         nullable=False,
     )
 
+    # Only admins participate in school-branch signup notification routing.
+    # The callable default keeps direct ORM construction backwards-compatible
+    # while the database CHECK below prevents branches leaking onto organizers.
+    school_branch = Column(
+        SqlEnum(
+            SchoolBranch,
+            values_callable=lambda x: [e.value for e in x],
+            name="schoolbranch",
+        ),
+        nullable=True,
+        default=_default_user_school_branch,
+    )
+
     university_id = Column(String(64), nullable=True)
     notify_email = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -168,6 +216,14 @@ class User(Base):
     notifications = relationship("Notification", back_populates="user")
     refresh_tokens = relationship("RefreshToken", back_populates="user")
     audit_logs = relationship("AuditLog", back_populates="actor")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(role = 'admin' AND school_branch IS NOT NULL) OR "
+            "(role <> 'admin' AND school_branch IS NULL)",
+            name="ck_users_school_branch_admin_only",
+        ),
+    )
 
 
 # -------------------------
@@ -846,6 +902,17 @@ class Module(Base):
 
     slug = Column(String, primary_key=True)
     name = Column(String(255), nullable=False)
+    school_branch = Column(
+        SqlEnum(
+            SchoolBranch,
+            values_callable=lambda x: [e.value for e in x],
+            name="schoolbranch",
+            create_type=False,
+        ),
+        nullable=False,
+        default=SchoolBranch.both,
+        server_default=SchoolBranch.both.value,
+    )
     # Phase 08: prereq_slugs column dropped (D-05)
     default_capacity = Column(Integer, nullable=False, server_default="20")
     duration_minutes = Column(Integer, nullable=False, server_default="90")

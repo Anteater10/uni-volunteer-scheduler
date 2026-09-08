@@ -13,7 +13,15 @@ from pydantic import (
     model_validator,
 )
 
-from .models import UserRole, SignupStatus, NotificationType, PrivacyMode, Quarter, SlotType
+from .models import (
+    NotificationType,
+    PrivacyMode,
+    Quarter,
+    SchoolBranch,
+    SignupStatus,
+    SlotType,
+    UserRole,
+)
 
 
 # -------------------------
@@ -66,6 +74,7 @@ class UserBase(BaseModel):
     role: UserRole = UserRole.participant
     university_id: Optional[str] = None
     notify_email: bool = True
+    school_branch: Optional[SchoolBranch] = None
 
 
 class UserCreate(UserBase):
@@ -90,6 +99,7 @@ class UserInvite(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: EmailStr
     role: Literal["admin", "organizer"]
+    school_branch: Optional[SchoolBranch] = None
 
 
 class UserUpdate(BaseModel):
@@ -103,6 +113,7 @@ class UserAdminUpdate(BaseModel):
     university_id: Optional[str] = None
     notify_email: Optional[bool] = None
     role: Optional[UserRole] = None
+    school_branch: Optional[SchoolBranch] = None
 
 
 # =========================
@@ -731,6 +742,7 @@ class EventCheckInByEmailResponse(BaseModel):
 # =========================
 class ModuleBase(BaseModel):
     name: str
+    school_branch: SchoolBranch = SchoolBranch.both
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
@@ -750,6 +762,7 @@ class ModuleCreate(ModuleBase):
 
 class ModuleUpdate(BaseModel):
     name: Optional[str] = None
+    school_branch: Optional[SchoolBranch] = None
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: Optional[int] = None
     duration_minutes: Optional[int] = None
@@ -763,6 +776,7 @@ class ModuleUpdate(BaseModel):
 class ModuleRead(ORMBase):
     slug: str
     name: str
+    school_branch: SchoolBranch = SchoolBranch.both
     # Phase 08 (D-05): prerequisite slugs field removed
     default_capacity: int = 20
     duration_minutes: int = 90
@@ -934,6 +948,10 @@ class PublicEventRead(BaseModel):
     quarter_id: Optional[UUID] = None
     school: Optional[str] = None
     module_slug: Optional[str] = None
+    # SCRUM-48: the school level the event's module targets, resolved through
+    # module_slug. None when the slug is NULL or matches no module — such an
+    # event is shown under every level rather than hidden.
+    school_branch: Optional[SchoolBranch] = None
     start_date: datetime  # Event.start_date is DateTime not Date in model
     end_date: datetime
     # Phase 29 (LOCK-01) — expose signup window so the public UI can render

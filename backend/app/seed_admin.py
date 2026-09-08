@@ -23,6 +23,7 @@ def main():
         if existing:
             if existing.role != models.UserRole.admin:
                 existing.role = models.UserRole.admin
+                existing.school_branch = models.SchoolBranch.both
                 db.add(existing)
                 db.commit()
             print(f"Admin already exists: {email}")
@@ -32,6 +33,7 @@ def main():
             name=name,
             email=email,
             role=models.UserRole.admin,
+            school_branch=models.SchoolBranch.both,
             hashed_password=hash_password(password),
             notify_email=True,
         )

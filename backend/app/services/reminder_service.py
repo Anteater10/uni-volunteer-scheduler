@@ -225,7 +225,11 @@ def send_reminder(
     """Attempt to send a reminder for ``(signup_id, kind)``.
 
     Rules, applied in order:
-      1. Signup must exist with confirmed status (or the caller's force flag).
+      1. Signup must exist. Status is NOT checked here — recipient eligibility
+         is decided upstream by the candidate scans, which filter on
+         ``models.EMAIL_RECIPIENT_STATUSES`` (pending + confirmed). This
+         docstring previously claimed a confirmed-status requirement that the
+         function never enforced.
       2. Volunteer preferences: ``email_reminders_enabled`` must be True.
       3. Quiet hours: skip unless ``force=True`` (admin send-now overrides).
       4. Idempotency: INSERT ON CONFLICT DO NOTHING on sent_notifications;
@@ -343,7 +347,7 @@ def list_upcoming_reminders(db: Session, days: int = 7) -> List[dict]:
         db.query(models.Signup)
         .join(models.Slot, models.Slot.id == models.Signup.slot_id)
         .filter(
-            models.Signup.status == models.SignupStatus.confirmed,
+            models.Signup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
             models.Slot.start_time >= now - timedelta(hours=2),
             models.Slot.start_time <= horizon + timedelta(hours=24),
         )
@@ -453,7 +457,7 @@ def candidate_signups_for_scan(
         db.query(models.Signup)
         .join(models.Slot, models.Slot.id == models.Signup.slot_id)
         .filter(
-            models.Signup.status == models.SignupStatus.confirmed,
+            models.Signup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
             models.Slot.start_time >= lower,
             models.Slot.start_time <= upper,
         )
@@ -482,7 +486,7 @@ def candidate_sessions_for_scan(
         .join(models.Shift, models.Shift.id == models.ShiftSignup.shift_id)
         .join(models.Slot, models.Slot.shift_id == models.Shift.id)
         .filter(
-            models.ShiftSignup.status == models.SignupStatus.confirmed,
+            models.ShiftSignup.status.in_(models.EMAIL_RECIPIENT_STATUSES),
             models.Slot.start_time >= lower,
             models.Slot.start_time <= upper,
         )
