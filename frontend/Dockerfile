@@ -22,7 +22,16 @@ ENV VITE_COPILOT_ENABLED=$VITE_COPILOT_ENABLED
 RUN npm run build
 
 # ---- serve stage ----
-FROM nginx:1.27-alpine
+# nginx-unprivileged, not plain nginx: the stock image starts its master
+# process as root (F4). This variant runs entirely as uid 101 and therefore
+# cannot bind a privileged port, which is why nginx.conf listens on 8080 and
+# Caddy proxies to frontend:8080. Nothing publishes this port to the host —
+# Caddy is the only consumer — so the change is internal to the compose
+# network.
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+# Already the image's default; stated so a future base-image swap that drops
+# it fails review rather than silently restoring root.
+USER 101
+EXPOSE 8080
