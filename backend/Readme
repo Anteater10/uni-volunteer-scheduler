@@ -19,7 +19,7 @@ Key variables (dev):
 - `JWT_SECRET=...` (non-trivial secret)
 - `JWT_ALGORITHM=HS256`
 - `ACCESS_TOKEN_EXPIRES_MINUTES=60`
-- `REFRESH_TOKEN_EXPIRES_DAYS=14`
+- `REFRESH_TOKEN_EXPIRES_DAYS=2`
 - `REDIS_URL=redis://redis:6379/0`
 - `CELERY_BROKER_URL=redis://redis:6379/1`
 - `CELERY_RESULT_BACKEND=redis://redis:6379/2`
