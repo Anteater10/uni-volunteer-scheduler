@@ -15,6 +15,7 @@ from app.celery_app import (
     _send_via_smtp,
     expire_pending_signups,
     send_broadcast_email,
+    send_copilot_email,
     send_email_notification,
     send_magic_link_email,
     send_signup_confirmation_email,
@@ -900,4 +901,80 @@ def test_magic_link_email_missing_event_warns_and_sends_nothing(
     assert sends == [], "sent mail for an event that does not exist"
     assert any(
         "send_magic_link_email: missing event" in r.message for r in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# send_copilot_email (K26)
+# ---------------------------------------------------------------------------
+# The recipient cap and the reminder opt-out are enforced in the tool handler,
+# not here — this task owns delivery and the provider-level daily cap only.
+# Mirrors the send_broadcast_email cases above, plus the ordering detail that
+# the daily cap is checked BEFORE the empty-address guard.
+
+
+def test_copilot_email_sends(db_session, monkeypatch, patch_session_local):
+    sends = []
+    monkeypatch.setattr(
+        celery_mod, "_send_email", lambda *a, **k: sends.append((a, k))
+    )
+
+    send_copilot_email.run(
+        to_email="vol@x.com",
+        subject="We still need volunteers",
+        text_body="t",
+        html_body="<b>h</b>",
+    )
+
+    assert len(sends) == 1
+    args, kwargs = sends[0]
+    assert args[0] == "vol@x.com"
+    assert kwargs["html_body"] == "<b>h</b>"
+
+
+def test_copilot_email_skips_no_to(db_session, monkeypatch, patch_session_local):
+    sends = []
+    monkeypatch.setattr(celery_mod, "_send_email", lambda *a, **k: sends.append(a))
+
+    send_copilot_email.run(
+        to_email="", subject="s", text_body="t", html_body="<b/>"
+    )
+
+    assert sends == []
+
+
+def test_copilot_email_defaults_empty_text_body(
+    db_session, monkeypatch, patch_session_local
+):
+    """``text_body or ""`` — a None body must still send, not raise."""
+    sends = []
+    monkeypatch.setattr(
+        celery_mod, "_send_email", lambda *a, **k: sends.append((a, k))
+    )
+
+    send_copilot_email.run(to_email="vol@x.com", subject="s", text_body=None)
+
+    assert len(sends) == 1
+    args, kwargs = sends[0]
+    assert args[2] == ""
+    assert kwargs["html_body"] is None
+
+
+def test_copilot_email_blocked_by_daily_limit(
+    db_session, monkeypatch, patch_session_local, caplog
+):
+    monkeypatch.setattr(celery_mod.settings, "resend_daily_limit", 1)
+    _seed_n_sent_notifications(db_session, 1, kind_prefix="cplim")
+    db_session.commit()
+    sends = []
+    monkeypatch.setattr(celery_mod, "_send_email", lambda *a, **k: sends.append(a))
+
+    with caplog.at_level("WARNING"):
+        send_copilot_email.run(
+            to_email="vol@x.com", subject="s", text_body="t", html_body="<b/>"
+        )
+
+    assert sends == []
+    assert any(
+        "copilot_email_skipped_daily_cap" in r.message for r in caplog.records
     )

@@ -2,7 +2,7 @@
 
 Resolves a list of participant IDs to volunteer email addresses server-side
 and dispatches a reminder template. The LLM never sees emails — only the
-sent_count / failed_count counters cross the boundary back.
+queued_count / failed_count / skipped_count counters cross back.
 
 Plan-vs-reality:
 - The plan refers to "existing notification module" but Phase 24's
@@ -13,7 +13,7 @@ Plan-vs-reality:
   confirmation gate honest without inventing email plumbing.
 
   K26: that seam used to ``return True``. So the follow-up never happened and
-  nothing ever noticed, because the tool reported a full ``sent_count`` for
+  nothing ever noticed, because the tool reported a full ``queued_count`` for
   a send that did not occur. It now refuses — see ``_outbound`` for why that
   is a raise and not a False.
 - K26: the id list is bounded. It arrives from a model reading a sentence,
@@ -40,17 +40,17 @@ from app.copilot.agent.tools._ask import ask_for
 from app.copilot.agent.tools.base import Tool
 from app.models import Volunteer
 
-_PII_SCHEMA = ["sent_count", "failed_count"]
+_PII_SCHEMA = ["queued_count", "failed_count", "skipped_count"]
 
 
 def _dispatch(email: str, template: str) -> bool:
-    """Side-effect seam. Tests monkeypatch this; prod wiring is TBD.
+    """Side-effect seam. Tests monkeypatch this.
 
-    Returns True on success, False on failure — and raises
-    ``OutboundNotWired`` when there is no transport, which is the state
-    today. A False here means "that one address failed"; the raise means
-    "no send happened at all", and reporting those as the same number is
-    the K26 bug.
+    Returns True once the message is on the broker, False when that one
+    address could not be queued, and raises ``OutboundNotWired`` when
+    sending is off entirely. A False means "that one address failed"; the
+    raise means "no send happened at all", and reporting those as the same
+    number is the K26 bug.
     """
     return _outbound.dispatch(email, kind="reminder", context={"template": template})
 
@@ -71,8 +71,9 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     _outbound.enforce_recipient_limit(len(participant_ids))
 
     reachable = _reachable_volunteer_ids(db, scope)
-    sent = 0
+    queued = 0
     failed = 0
+    skipped = 0
     for pid in participant_ids:
         # Normalize string UUIDs to comparable form.
         if not scope.see_all and pid not in {str(v) for v in reachable} and pid not in reachable:
@@ -84,13 +85,22 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         if volunteer is None:
             failed += 1
             continue
+        # A respected opt-out is not a failure. Counting it as one would
+        # tell the admin something went wrong and invite a retry.
+        if _outbound.is_opted_out(db, volunteer.email):
+            skipped += 1
+            continue
         ok = _dispatch(volunteer.email, template)
         if ok:
-            sent += 1
+            queued += 1
         else:
             failed += 1
 
-    payload = {"sent_count": sent, "failed_count": failed}
+    payload = {
+        "queued_count": queued,
+        "failed_count": failed,
+        "skipped_count": skipped,
+    }
     return schema_apply(payload, allowed_fields=_PII_SCHEMA)
 
 
@@ -120,7 +130,7 @@ SEND_REMINDER_EMAIL_TOOL = Tool(
         "Send a reminder email to the given participants using the named "
         "template. Requires user confirmation before sending, and will refuse "
         "if the list is longer than the recipient cap — narrow it rather than "
-        "retrying."
+        "retrying. " + _outbound.QUEUE_SEMANTICS
     ),
     json_schema={
         "type": "object",

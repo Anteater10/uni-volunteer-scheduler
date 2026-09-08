@@ -60,12 +60,13 @@ A reasonable-looking call like
 every volunteer in the database if the LLM mis-resolved IDs. So:
 
 - The handler resolves each ID to a `Volunteer.email` internally.
-- The output payload is just `{"sent_count": n, "failed_count": m}`.
+- The output payload is just
+  `{"queued_count": n, "failed_count": m, "skipped_count": k}`.
   Emails never appear in the LLM's context.
 - The dispatch side-effect goes through a module-level `_dispatch`
-  function so tests can monkeypatch it. Production wiring of
-  `_dispatch` to a real mail service is a follow-up — the gate is
-  honest either way.
+  function so tests can monkeypatch it. It is now wired to a real
+  transport — see the lecture at the end of this file for why the
+  counter is called `queued_count` and not `sent_count`.
 
 Organizer scope is enforced by building a "reachable volunteer ID" set
 from non-cancelled signups on the organizer's own events. IDs outside
@@ -109,3 +110,96 @@ Two ideas, both worth memorizing:
    no second bite at the apple between proposing and executing. That's
    what makes the confirmation card meaningful — what you see is what
    gets done.
+
+
+---
+
+## Lecture: a stub that lies is worse than a stub that raises
+
+Here is the bug, in one line of code:
+
+```python
+def _dispatch(email: str, template: str) -> bool:
+    return True   # TODO: wire to a real mail service
+```
+
+Read it the way you would in review. It looks like a placeholder. It is
+typed correctly, it is honest about being a TODO, and it does no harm —
+it does not send anything.
+
+Now read the handler that calls it:
+
+```python
+ok = _dispatch(volunteer.email, template)
+if ok:
+    sent += 1
+```
+
+The stub returns `True` 47 times, `sent` reaches 47, and the tool
+returns `sent_count: 47`. The model reads that and tells the admin that
+47 volunteers have been reminded. Nobody has been. The admin now has a
+false belief that they acted on, and the system gave them no way to
+find out — until 47 people do not turn up.
+
+**The lesson: an unimplemented feature that reports success is not a
+gap. It is a gap that has been papered over from the inside.** A normal
+gap gets noticed, because somebody tries it and nothing happens. This
+one reports itself as filled, so nobody tries it again.
+
+The fix, before any transport existed, was to make the stub *raise*:
+
+```python
+raise OutboundNotWired("... nothing was sent")
+```
+
+That is worse ergonomics and better engineering. The tool now fails
+loudly, the agent loop audits the call as `errored`, and the model tells
+the user plainly that it could not send. Every statement in that chain
+is true.
+
+### Then we wired it, and the same lesson came back one level up
+
+Binding a real transport raised a question that looks like naming and
+is really about truth. We enqueue to Celery rather than sending inline,
+because 200 synchronous SMTP round trips would blow the HTTP timeout.
+So at the moment the tool returns, what has actually happened?
+
+A message is sitting on a durable broker. It will very probably be
+delivered. It has not been delivered.
+
+`sent_count` was available, familiar, and already wired through five
+test files. Reusing it would have cost nothing and broken nothing. It
+would also have been the *same defect*: a weaker claim wearing the name
+of a stronger one. So the counter is `queued_count`, and the rename
+rippled through every one of those files, and that was the right price.
+
+Then one more level up: the *model* is what actually talks to the
+admin. A tool that returns `queued_count` and a model that reports
+"sent" have between them told the admin exactly the lie K26 was about.
+So the tool description carries `QUEUE_SEMANTICS`, which instructs the
+model to say queued and never sent.
+
+### The shape to take away
+
+Ask, of any success value your code returns: **what precisely has
+happened at the moment this is true?** Then check that the name says
+that and not something stronger.
+
+- `return True` from an unimplemented stub → claims "sent"
+- `queued_count` named `sent_count` → claims "delivered"
+- A model saying "sent" about a queued message → claims "delivered"
+
+Three different layers, one failure mode. The counter, the exception,
+and the sentence in the tool description are all the same fix applied
+at the three places the claim gets restated.
+
+### A smaller one: skips are not failures
+
+We added a third counter rather than folding opt-outs into
+`failed_count`. A failure means something went wrong and a retry might
+help. A skip means a volunteer turned reminder email off and the system
+honoured it. Same integer, opposite meanings — and if you merge them,
+the admin sees "3 failed" and retries a decision somebody already made.
+
+When two things need different responses from the reader, they need
+different names, even when they are the same type.

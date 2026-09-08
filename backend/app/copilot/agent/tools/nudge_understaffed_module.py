@@ -3,7 +3,7 @@
 Sends a "we still need volunteers" nudge to recipients server-side. The
 recipient list is derived from prior volunteer activity (any non-cancelled
 signup history) but never returned to the LLM — only the module identity
-and a notified_count cross the boundary back.
+and queued/failed/skipped counts cross the boundary back.
 
 Plan-vs-reality:
 - The plan doesn't pin a recipient policy, and the one this tool picked was
@@ -29,7 +29,7 @@ Plan-vs-reality:
 - 2026-08-05: "booking" spans orientation signups and shift commitments (see
   ``_bookings``). Reading ``Signup`` alone made the recipient pool nearly empty
   once events moved to shifts, so a confirmed nudge reported a small
-  notified_count and quietly reached almost nobody.
+  queued_count and quietly reached almost nobody.
 - Side-effect goes through a ``_dispatch`` seam mirrored from
   send_reminder_email; tests monkeypatch it.
 - Organizer scope: organizer cannot nudge for a module owned by a
@@ -49,7 +49,13 @@ from app.copilot.agent.tools._ask import ask_for
 from app.copilot.agent.tools.base import Tool
 from app.models import Event
 
-_PII_SCHEMA = ["module_id", "module_name", "notified_count"]
+_PII_SCHEMA = [
+    "module_id",
+    "module_name",
+    "queued_count",
+    "failed_count",
+    "skipped_count",
+]
 
 _NOT_FOUND = {"error": "module not found or not accessible"}
 
@@ -60,11 +66,11 @@ RECENCY_WINDOW_DAYS = 120
 
 
 def _dispatch(email: str, module_name: str) -> bool:
-    """Side-effect seam. Tests monkeypatch this; prod wiring is TBD.
+    """Side-effect seam. Tests monkeypatch this.
 
-    Raises ``OutboundNotWired`` in production, because there is no
-    transport — see ``_outbound``. Returning True from here is what let the
-    tool report a nudge it never sent.
+    Returns True once the message is on the broker — see ``_outbound``.
+    Returning True unconditionally is what let the tool report a nudge it
+    never sent.
     """
     return _outbound.dispatch(
         email, kind="nudge", context={"module_name": module_name}
@@ -98,15 +104,26 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     # would be both a blast and an understatement of one.
     _outbound.enforce_recipient_limit(len(recipients))
 
-    notified = 0
+    queued = 0
+    failed = 0
+    skipped = 0
     for vol in recipients:
+        # Opt-outs hold for recruiting mail especially: nobody — not even
+        # the admin — sees this recipient list before it goes.
+        if _outbound.is_opted_out(db, vol.email):
+            skipped += 1
+            continue
         if _dispatch(vol.email, event.title):
-            notified += 1
+            queued += 1
+        else:
+            failed += 1
 
     payload = {
         "module_id": str(event.id),
         "module_name": event.title,
-        "notified_count": notified,
+        "queued_count": queued,
+        "failed_count": failed,
+        "skipped_count": skipped,
     }
     return schema_apply(payload, allowed_fields=_PII_SCHEMA)
 
@@ -138,6 +155,7 @@ NUDGE_UNDERSTAFFED_MODULE_TOOL = Tool(
         "as this module and are not already signed up for it. You cannot "
         "choose or see who they are. Requires user confirmation before "
         "sending, and will refuse if the audience is larger than the cap."
+        + " " + _outbound.QUEUE_SEMANTICS
     ),
     json_schema={
         "type": "object",

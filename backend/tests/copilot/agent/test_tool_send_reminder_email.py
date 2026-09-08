@@ -142,7 +142,7 @@ def test_execute_after_confirmation_dispatches(db_session, monkeypatch):
         caller_id=None,
     )
 
-    assert result["result"] == {"sent_count": 1, "failed_count": 0}
+    assert result["result"] == {"queued_count": 1, "failed_count": 0, "skipped_count": 0}
     assert calls == [(vol.email, "T1")]
 
     row = db_session.execute(
@@ -184,7 +184,7 @@ def test_organizer_cannot_email_out_of_scope_participant(db_session, monkeypatch
         caller_id=owner_b.id,
     )
 
-    assert result["result"] == {"sent_count": 0, "failed_count": 1}
+    assert result["result"] == {"queued_count": 0, "failed_count": 1, "skipped_count": 0}
     assert calls == []
 
 
@@ -221,5 +221,5 @@ def test_organizer_can_email_their_own_shift_volunteer(db_session, monkeypatch):
         caller_id=owner_id,
     )
 
-    assert result["result"] == {"sent_count": 1, "failed_count": 0}
+    assert result["result"] == {"queued_count": 1, "failed_count": 0, "skipped_count": 0}
     assert calls == [(vol.email, "T")]

@@ -1,19 +1,23 @@
-"""K31 — end-of-session profile extraction is off, and provably so.
+"""K31 — end-of-session profile extraction defaults to off, and every route
+in respects the flag.
 
-The job is an unattended LLM call, one per closed session plus up to three
-Celery retries, drawing on the same OpenRouter account — and therefore the
-same free-tier request budget — as the chat a user is actually waiting on.
-On an unfunded account that budget is roughly 50 requests a day for
-everything. So a background job nobody triggered can spend the day's
-allowance and leave a real question answered with a rate-limit error the
-user cannot account for.
+Note what this file does and does not claim. Production turns extraction ON
+(``COPILOT_PROFILE_EXTRACTION_ENABLED=true`` in backend/.env.production,
+since the OpenRouter account was funded on 2026-08-20). What is asserted
+here is the *default* in config.py, which stays off deliberately: the job is
+an unattended LLM call on somebody's API key, so a forgotten variable should
+cost a nicety — no cross-session memory — rather than start spending. That
+is the same fail-safe reasoning as ENVIRONMENT's default in config.py.
 
-Turning it off is only worth anything if every route in is closed, so each
-one is asserted here: the beat sweep, the explicit close endpoint, and the
-task itself (for work already sitting in the queue when the flag flipped).
-The things that must keep working when it is off — closing sessions, and
-reading a profile extracted earlier — are asserted too, because a fix that
-quietly breaks those is not a fix.
+A flag is only worth anything if every route in respects it, so each one is
+asserted: the beat sweep, the explicit close endpoint, and the task itself
+(for work already sitting in the queue when the flag flips). The things that
+must keep working while it is off — closing sessions, and reading a profile
+extracted earlier — are asserted too, because a gate that quietly breaks
+those is not a gate.
+
+The retry policy that used to amplify rate-limit failures is covered
+separately, in tests/copilot/tasks/test_extract_profile_retry_policy.py.
 """
 from __future__ import annotations
 
