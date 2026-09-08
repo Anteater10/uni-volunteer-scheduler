@@ -55,6 +55,12 @@ Roadmap items #13–#17. Executed on `main @ fe05585`; `main` itself was **not
 committed to** — everything landed either on `origin` as a branch or on an open
 PR.
 
+Jira: **SCRUM-64** (#13), **SCRUM-67** (#16), **SCRUM-68** (#17) → Done.
+**SCRUM-65** (#14) and **SCRUM-66** (#15) → Testing, moving to Done when PR #89
+merges. Separately, **SCRUM-146** (X1 #120 — merge the two eval branches and
+resolve ~60 PRs of drift) remains open: L0 preserved those branches, it did not
+integrate them.
+
 - **#13 eval branches pushed.** `feature/v1.4-phase-35-02-multimodel-eval`
   (37 commits, `8fb1a54`) and `feature/v1.4-phase-35-03-grounded-eval`
   (45 commits, `b0f2914`) now have upstreams on `origin` and match it exactly.
