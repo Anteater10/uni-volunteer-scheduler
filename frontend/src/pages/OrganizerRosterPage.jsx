@@ -15,6 +15,10 @@ import { PageHeader, Button, Skeleton, Modal, Input, Label } from "../components
 import { toast } from "../state/toast";
 import ResolveEventModal from "../components/ResolveEventModal";
 import BroadcastModal from "../components/BroadcastModal";
+// The same modal the desktop event page uses. Organizers run check-in from
+// a phone as often as a laptop, and every /admin/* route is behind the
+// desktop-only banner, so without this the QR was laptop-only for them.
+import CheckInQRModal from "../components/admin/CheckInQRModal";
 
 // Phase 22 — organizer quick-add custom field modal
 function QuickAddFieldModal({ open, onClose, onSubmit, saving }) {
@@ -168,6 +172,7 @@ function RosterStat({ label, value, tone = "default" }) {
 export default function OrganizerRosterPage() {
   const { eventId } = useParams();
   const qc = useQueryClient();
+  const [qrOpen, setQrOpen] = useState(false);
   const { role } = useAuth();
   const backTarget =
     role === "admin" ? `/admin/events/${eventId}` : "/admin/events";
@@ -410,6 +415,13 @@ export default function OrganizerRosterPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setQrOpen(true)}
+          >
+            Check-in QR
+          </Button>
           <Button
             type="button"
             variant="secondary"
@@ -714,6 +726,16 @@ export default function OrganizerRosterPage() {
         onClose={() => setBroadcastOpen(false)}
         eventId={eventId}
         scope="organizer"
+      />
+
+      {/* Event check-in QR. The modal reads the venue code off the same
+          roster query this page already runs, so opening it costs an
+          organizer nothing extra and needs no permission they lack. */}
+      <CheckInQRModal
+        open={qrOpen}
+        onClose={() => setQrOpen(false)}
+        eventId={eventId}
+        eventTitle={roster.event_name || ""}
       />
     </div>
   );
