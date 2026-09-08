@@ -28,7 +28,7 @@ RUN npm run build
 # Caddy proxies to frontend:8080. Nothing publishes this port to the host —
 # Caddy is the only consumer — so the change is internal to the compose
 # network.
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 # Already the image's default; stated so a future base-image swap that drops
