@@ -32,7 +32,7 @@ jobs:
     container:
       image: semgrep/semgrep:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so --baseline-commit can diff against the merge base.
           fetch-depth: 0
@@ -83,7 +83,7 @@ jobs:
     name: pip-audit (backend dependency CVEs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
