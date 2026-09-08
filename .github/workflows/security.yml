@@ -1,0 +1,119 @@
+# Automated security scanning — the permanent regression net.
+#
+# P1 / SCRUM-8. Every security finding in this project so far came from a human
+# reading code: K33 from one file, the "frontend was never authz-reviewed" gap
+# from the project owner, F1-F5 from a one-off sweep. Those passes do not repeat
+# themselves. This workflow does.
+#
+# Design note — why both jobs are baselined rather than blocking on everything:
+# a scanner that is red on day one against a backlog nobody can clear today is a
+# scanner people learn to ignore. Both jobs below fail on NEW findings and stay
+# green on the recorded backlog, so the signal means something.
+name: Security
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Weekly, so newly-published advisories against unchanged code still surface.
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: semgrep (static analysis)
+    runs-on: ubuntu-latest
+    # Semgrep CE with published rulesets — no account or token required.
+    container:
+      image: semgrep/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so --baseline-commit can diff against the merge base.
+          fetch-depth: 0
+
+      - name: Scan
+        run: |
+          semgrep scan \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --config=p/python \
+            --config=p/javascript \
+            --config=p/react \
+            --sarif --output=semgrep.sarif \
+            --metrics=off \
+            --exclude='**/__pycache__/**' \
+            --exclude='**/node_modules/**' \
+            --exclude='**/*.min.js' \
+            || true
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      # Blocking gate: only findings introduced by THIS pull request fail it.
+      # Pre-existing findings land in the Security tab via the SARIF upload
+      # above and are triaged separately.
+      - name: Fail on new findings (PRs only)
+        if: github.event_name == 'pull_request'
+        run: |
+          semgrep scan \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --config=p/python \
+            --config=p/javascript \
+            --config=p/react \
+            --baseline-commit="$(git merge-base HEAD origin/${{ github.base_ref }})" \
+            --severity=ERROR \
+            --error \
+            --metrics=off \
+            --exclude='**/__pycache__/**' \
+            --exclude='**/node_modules/**' \
+            --exclude='**/*.min.js'
+
+  pip-audit:
+    name: pip-audit (backend dependency CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Prepare requirements for audit
+        # requirements.lock.txt pins torch==2.13.0+cpu from the PyTorch CPU
+        # wheel index. That local version tag does not exist on PyPI, so
+        # pip-audit's resolver fails outright on the file as written. The +cpu
+        # build is the same upstream source for CVE purposes, so strip the tag
+        # and the extra index line, then audit the pinned set with --no-deps.
+        run: |
+          sed -E 's/\+cpu$//' backend/requirements.lock.txt \
+            | grep -v -E '^\s*--' > /tmp/req.audit.txt
+          echo "Prepared $(grep -c '==' /tmp/req.audit.txt) pinned packages"
+
+      - name: Audit (fails only on advisories not in the baseline)
+        run: |
+          IGNORES=$(grep -v -E '^\s*(#|$)' backend/.pip-audit-baseline.txt \
+            | sed 's/^/--ignore-vuln /' | tr '\n' ' ')
+          echo "Ignoring $(echo $IGNORES | wc -w | awk '{print $1/2}') baselined advisories"
+          pip-audit -r /tmp/req.audit.txt --no-deps --progress-spinner off $IGNORES
+
+      - name: Full report (informational, never fails)
+        if: always()
+        run: |
+          echo "### Full backend dependency audit" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          pip-audit -r /tmp/req.audit.txt --no-deps --progress-spinner off \
+            >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
