@@ -13,7 +13,7 @@
 #   pip-audit -r /tmp/req.txt --no-deps --format json
 #
 # One advisory ID per line. Lines starting with # are ignored.
-# 34 advisories across 13 packages
+# 34 advisories across 13 packages (35 after the 2026-09-08 addition below)
 
 
 # click 8.3.1  (fix available: 8.3.3)
@@ -65,12 +65,21 @@ PYSEC-2026-2281
 PYSEC-2026-248
 PYSEC-2026-249
 
-# transformers 4.57.6  (fix available: none)
+# transformers 4.57.6  (fix available: none for the PYSEC set below)
 PYSEC-2025-217
 PYSEC-2026-2288
 PYSEC-2026-2289
 PYSEC-2026-2290
 PYSEC-2026-2290
+# Added 2026-09-08, published after this file was written — the first thing
+# this gate has actually caught, which is the gate working. Baselined rather
+# than fixed: the fix is transformers 5.10.0, a MAJOR jump from 4.57.6, and
+# transformers is what the copilot's embedding model and CrossEncoder
+# reranker run on. That bump changes model-loading behaviour, so it belongs
+# with the corpus/embedding work (and interacts with baking the weights into
+# the image, ROADMAP #43), not with landing this scanner. Triage under
+# SCRUM-45.
+CVE-2026-9856
 
 # werkzeug 3.1.4  (fix available: 3.1.5)
 PYSEC-2026-2044
