@@ -207,11 +207,36 @@ class TestUpdateEvent:
         _run(
             db_session,
             UPDATE_EVENT_TOOL,
-            {"event_id": str(event["event"].id), "title": "New title"},
+            {
+                "event_id": str(event["event"].id),
+                # SCRUM-154: a retitle has to stay in the canonical shape.
+                "title": "Week 3 - Germs - Dos Pueblos High School",
+            },
         )
         db_session.refresh(event["event"])
-        assert event["event"].title == "New title"
+        assert event["event"].title == "Week 3 - Germs - Dos Pueblos High School"
         assert event["event"].school == "Dos Pueblos High School"
+        assert event["event"].location == "Room 12"
+
+    def test_a_retitle_out_of_shape_is_refused_and_writes_nothing(
+        self, db_session, event
+    ):
+        """SCRUM-154: renaming cannot be a way around the naming rule."""
+        before = event["event"].title
+        _, result = _run(
+            db_session,
+            UPDATE_EVENT_TOOL,
+            {
+                "event_id": str(event["event"].id),
+                "title": "Germs at Dos Pueblos",
+                "location": "Lab C",
+            },
+        )
+        assert "Week {N}" in result["error"]
+        db_session.refresh(event["event"])
+        assert event["event"].title == before
+        # The bad title stops the whole call — the location rides along in the
+        # same write and must not land on its own.
         assert event["event"].location == "Room 12"
 
     def test_reports_exactly_what_it_touched(self, db_session, event):

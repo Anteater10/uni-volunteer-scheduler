@@ -475,6 +475,10 @@ async function adminCancelSignup(signupId) {
   return request(`/admin/signups/${signupId}/cancel`, { method: "POST" });
 }
 
+async function adminUncancelSignup(signupId) {
+  return request(`/admin/signups/${signupId}/uncancel`, { method: "POST" });
+}
+
 async function adminPromoteSignup(signupId) {
   return request(`/admin/signups/${signupId}/promote`, { method: "POST" });
 }
@@ -498,7 +502,8 @@ async function publicGetCurrentWeek() {
   return request("/public/current-week", { method: "GET", auth: false });
 }
 async function publicGetQuarters() {
-  // Issue #24: ordered admin-entered quarter rows — powers week navigation.
+  // Issue #24: ordered admin-entered quarter rows. SCRUM-48: powers the
+  // public browse page's quarter × school-level navigation.
   return request("/public/quarters", { method: "GET", auth: false });
 }
 async function publicListEvents(params) {
@@ -847,6 +852,7 @@ export const api = {
       request(`/admin/events/${eventId}/notify`, { method: "POST", body: payload }),
     signups: {
       cancel: (id) => adminCancelSignup(id),
+      uncancel: (id) => adminUncancelSignup(id),
       promote: (id) => adminPromoteSignup(id),
       move: (id, targetSlotId) => adminMoveSignup(id, targetSlotId),
       resend: (id) => adminResendSignup(id),
@@ -857,6 +863,8 @@ export const api = {
         request(`/admin/shift-signups/${id}/promote`, { method: "POST" }),
       cancel: (id) =>
         request(`/admin/shift-signups/${id}/cancel`, { method: "POST" }),
+      uncancel: (id) =>
+        request(`/admin/shift-signups/${id}/uncancel`, { method: "POST" }),
       swap: (id, targetShiftId) => swapShiftSignup(id, targetShiftId),
     },
     analytics: {

@@ -103,12 +103,19 @@ test('admin archives a past quarter; public browses it under Archived quarters',
   await page.getByText('Archived quarters').click();
   await page.getByRole('button', { name: displayName }).click();
 
-  await expect(page.getByText(`${displayName} — Week 1`)).toBeVisible({ timeout: 8000 });
+  // SCRUM-48: the browse page steps quarter × school level, not weeks.
+  await expect(page.getByText(`${displayName} — Middle School`)).toBeVisible({
+    timeout: 8000,
+  });
   const banner = page.getByRole('status').filter({ hasText: /archived/i });
   await expect(banner).toContainText(displayName);
 
-  // Week nav is clamped inside the archived quarter: week 1 disables prev.
-  // exact: true — the empty state's "View next week →" also matches otherwise.
-  await expect(page.getByRole('button', { name: 'Previous week', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Next week', exact: true })).toBeEnabled();
+  // Nav is clamped inside the archived quarter: on the first level prev is
+  // disabled, while next still moves to the other level within the row.
+  await expect(
+    page.getByRole('button', { name: 'Previous quarter or school level', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Next quarter or school level', exact: true }),
+  ).toBeEnabled();
 });

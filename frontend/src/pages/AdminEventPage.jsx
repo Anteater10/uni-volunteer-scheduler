@@ -26,6 +26,7 @@ import EventSettingsModal from "../components/admin/EventSettingsModal";
 import DuplicateEventModal from "../components/admin/DuplicateEventModal";
 import BroadcastModal from "../components/BroadcastModal";
 import CheckInQRModal from "../components/admin/CheckInQRModal";
+import SignupQRModal from "../components/admin/SignupQRModal";
 import { toast } from "../state/toast";
 import { reopenEvent } from "../api/roster";
 import { useQuarters } from "../lib/useQuarters";
@@ -160,6 +161,8 @@ export default function AdminEventPage() {
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   // Event-QR check-in (post-integration)
   const [qrOpen, setQrOpen] = useState(false);
+  // SCRUM-13 — public signup QR (distinct from the check-in QR above)
+  const [signupQrOpen, setSignupQrOpen] = useState(false);
   // Reconfigure title / where / when / slots without going back to the list
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -254,6 +257,22 @@ export default function AdminEventPage() {
       qc.invalidateQueries({ queryKey: ["adminEventAnalytics", eventId] });
     },
     onError: (e) => toast.error(e?.message || "Cancel failed"),
+  });
+
+  // SCRUM-155: reverse a cancellation. The volunteer emailed "I can't make
+  // it", was cancelled, then found they could after all — they cannot sign up
+  // again themselves, because a row already exists for them.
+  const uncancelMut = useMutation({
+    mutationFn: ({ signupId, isShift = false }) =>
+      isShift
+        ? api.admin.shiftSignups.uncancel(signupId)
+        : api.admin.signups.uncancel(signupId),
+    onSuccess: () => {
+      toast.success("Signup reinstated. The volunteer has been emailed.");
+      qc.invalidateQueries({ queryKey: ["adminEventRoster", eventId] });
+      qc.invalidateQueries({ queryKey: ["adminEventAnalytics", eventId] });
+    },
+    onError: (e) => toast.error(e?.message || "Reinstate failed"),
   });
 
   // Phase 25 — admin reorder waitlist (WAIT-05). A shift's waitlist is one
@@ -440,6 +459,14 @@ export default function AdminEventPage() {
             >
               <QrCode className="h-4 w-4" />
               Check-in QR
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setSignupQrOpen(true)}
+              className="whitespace-nowrap"
+            >
+              <QrCode className="h-4 w-4" />
+              Signup QR
             </Button>
             <Button
               variant="secondary"
@@ -916,6 +943,30 @@ export default function AdminEventPage() {
                                 Cancel
                               </Button>
                             )}
+                            {/* SCRUM-155: the way back from a cancellation.
+                                Only offered on a cancelled row — every other
+                                status is already on the event. */}
+                            {r.status === "cancelled" && (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      `Reinstate ${name}'s signup? They will be emailed to say they are back on, and this takes a seat if one is free.`
+                                    )
+                                  ) {
+                                    uncancelMut.mutate({
+                                      signupId: r.signup_id || r.id,
+                                      isShift: Boolean(r.is_shift),
+                                    });
+                                  }
+                                }}
+                                disabled={uncancelMut.isPending}
+                              >
+                                Uncancel
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1079,6 +1130,15 @@ export default function AdminEventPage() {
         onClose={() => setQrOpen(false)}
         eventId={eventId}
         eventTitle={eventTitle}
+      />
+
+      {/* SCRUM-13 — public signup QR */}
+      <SignupQRModal
+        open={signupQrOpen}
+        onClose={() => setSignupQrOpen(false)}
+        eventId={eventId}
+        eventTitle={eventTitle}
+        visibility={eventQ.data?.visibility}
       />
     </div>
   );

@@ -423,3 +423,162 @@ class TestCurrentWeek:
         assert data["quarter"] == "spring"
         assert data["week_number"] == 11
         assert data["starts_on"] is None
+
+
+# ---------------------------------------------------------------------------
+# SCRUM-48 — browse a whole quarter, narrowed by school level
+# ---------------------------------------------------------------------------
+
+
+def _make_module(db_session, *, school_branch):
+    """A module at a given school level, with a slug unique per row.
+
+    Data migrations seed real module rows and the alembic round-trip tests
+    leave that state in the shared test DB, so slugs must not collide.
+    """
+    from app import models as m
+
+    mod = m.Module(
+        slug=f"scrum48-{uuid.uuid4().hex[:8]}",
+        name="Level Fixture",
+        default_capacity=20,
+        duration_minutes=90,
+        session_count=1,
+        school_branch=school_branch,
+    )
+    db_session.add(mod)
+    db_session.flush()
+    return mod
+
+
+class TestSchoolBranchFiltering:
+    """Events carry no school level of their own — it is resolved through the
+    unenforced `module_slug` string. These cover all four cases that join can
+    produce, including the two where the data is broken.
+    """
+
+    def _seed(self, db_session):
+        from app import models as m
+
+        quarter = _make_quarter(db_session)
+        events = {}
+        for key, branch in (
+            ("middle", m.SchoolBranch.middle_school),
+            ("high", m.SchoolBranch.high_school),
+            ("both", m.SchoolBranch.both),
+        ):
+            mod = _make_module(db_session, school_branch=branch)
+            ev = _make_event(
+                db_session, quarter_id=quarter.id, title=f"{key} event",
+                school=f"{key} school",
+            )
+            ev.module_slug = mod.slug
+            events[key] = ev
+
+        # No module at all.
+        orphan_null = _make_event(
+            db_session, quarter_id=quarter.id, title="null slug event",
+            school="null school",
+        )
+        orphan_null.module_slug = None
+        events["null"] = orphan_null
+
+        # A slug pointing at a module that does not exist — reachable because
+        # the FK was dropped in Phase 08 (D-07).
+        orphan_dangling = _make_event(
+            db_session, quarter_id=quarter.id, title="dangling slug event",
+            school="dangling school",
+        )
+        orphan_dangling.module_slug = "scrum48-does-not-exist"
+        events["dangling"] = orphan_dangling
+
+        db_session.commit()
+        return quarter, events
+
+    def _titles(self, client, quarter, branch):
+        resp = client.get(
+            f"/api/v1/public/events?quarter_id={quarter.id}"
+            f"&school_branch={branch}"
+        )
+        assert resp.status_code == 200, resp.text
+        return {e["title"] for e in resp.json()}
+
+    def test_middle_school_includes_both_and_orphans(self, client, db_session):
+        quarter, _ = self._seed(db_session)
+        titles = self._titles(client, quarter, "middle_school")
+        assert "middle event" in titles
+        assert "both event" in titles, "a 'both' module belongs under either level"
+        assert "null slug event" in titles, "no module must not hide the event"
+        assert "dangling slug event" in titles, "a broken slug must not hide the event"
+        assert "high event" not in titles
+
+    def test_high_school_includes_both_and_orphans(self, client, db_session):
+        quarter, _ = self._seed(db_session)
+        titles = self._titles(client, quarter, "high_school")
+        assert "high event" in titles
+        assert "both event" in titles
+        assert "null slug event" in titles
+        assert "dangling slug event" in titles
+        assert "middle event" not in titles
+
+    def test_no_branch_filter_returns_every_level(self, client, db_session):
+        quarter, _ = self._seed(db_session)
+        resp = client.get(f"/api/v1/public/events?quarter_id={quarter.id}")
+        assert resp.status_code == 200, resp.text
+        titles = {e["title"] for e in resp.json()}
+        assert {
+            "middle event", "high event", "both event",
+            "null slug event", "dangling slug event",
+        } <= titles
+
+    def test_response_exposes_resolved_school_branch(self, client, db_session):
+        quarter, _ = self._seed(db_session)
+        resp = client.get(f"/api/v1/public/events?quarter_id={quarter.id}")
+        by_title = {e["title"]: e for e in resp.json()}
+        assert by_title["middle event"]["school_branch"] == "middle_school"
+        assert by_title["both event"]["school_branch"] == "both"
+        # Unresolvable slugs surface as None rather than guessing a level.
+        assert by_title["null slug event"]["school_branch"] is None
+        assert by_title["dangling slug event"]["school_branch"] is None
+
+    def test_invalid_school_branch_is_rejected(self, client, db_session):
+        quarter, _ = self._seed(db_session)
+        resp = client.get(
+            f"/api/v1/public/events?quarter_id={quarter.id}"
+            "&school_branch=elementary_school"
+        )
+        assert resp.status_code == 422
+
+
+class TestWeekNumberNowOptional:
+    """week_number was a required query param — a quarter could not be
+    requested whole. It is optional now but still honoured, so the old
+    week-stepper links and bookmarks keep resolving.
+    """
+
+    def test_omitting_week_number_returns_the_whole_quarter(self, client, db_session):
+        quarter = _make_quarter(db_session)
+        _make_event(db_session, quarter_id=quarter.id, week_number=1, title="w1")
+        _make_event(db_session, quarter_id=quarter.id, week_number=5, title="w5")
+        db_session.commit()
+
+        resp = client.get(f"/api/v1/public/events?quarter_id={quarter.id}")
+        assert resp.status_code == 200, resp.text
+        assert {e["title"] for e in resp.json()} == {"w1", "w5"}
+
+    def test_week_number_still_narrows_when_supplied(self, client, db_session):
+        quarter = _make_quarter(db_session)
+        _make_event(db_session, quarter_id=quarter.id, week_number=1, title="w1")
+        _make_event(db_session, quarter_id=quarter.id, week_number=5, title="w5")
+        db_session.commit()
+
+        resp = client.get(
+            f"/api/v1/public/events?quarter_id={quarter.id}&week_number=5"
+        )
+        assert resp.status_code == 200, resp.text
+        assert {e["title"] for e in resp.json()} == {"w5"}
+
+    def test_still_requires_quarter_identification(self, client, db_session):
+        """Dropping the week requirement must not make the endpoint unscoped."""
+        resp = client.get("/api/v1/public/events")
+        assert resp.status_code == 422

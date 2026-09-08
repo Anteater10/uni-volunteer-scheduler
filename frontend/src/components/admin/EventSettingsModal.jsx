@@ -46,15 +46,26 @@ export default function EventSettingsModal({ open, onClose, event }) {
     onError: (e) => toast.error(e?.message || "Save failed"),
   });
 
+  // SCRUM-156: the discard prompt only fires when the modal knows there is
+  // work to lose, so it needs the form's dirty state — Cancel routes through
+  // the same prompt now.
+  const [dirty, setDirty] = React.useState(false);
+
   if (!open || !event) return null;
 
   return (
-    <FormModal open={open} title="Event settings" onClose={onClose}>
+    <FormModal
+      open={open}
+      title="Event settings"
+      onClose={onClose}
+      dirty={dirty}
+    >
       <EventForm
         mode="edit"
         initial={event}
         onSubmit={(payload) => saveM.mutateAsync(payload)}
         onCancel={onClose}
+        onDirtyChange={setDirty}
         submitting={saveM.isPending}
       />
     </FormModal>

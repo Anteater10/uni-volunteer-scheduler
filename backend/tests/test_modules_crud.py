@@ -65,6 +65,50 @@ def test_create_template(client, db_session, admin_headers):
     assert resp.status_code == 201
     assert resp.json()["slug"] == "advanced-bio"
     assert resp.json()["default_capacity"] == 15
+    assert resp.json()["school_branch"] == "both"
+
+
+def test_module_school_branch_round_trip_and_clone(client, db_session, admin_headers):
+    created = client.post(
+        "/api/v1/admin/modules",
+        json={
+            "slug": "middle-school-module",
+            "name": "Middle School Module",
+            "school_branch": "middle_school",
+        },
+        headers=admin_headers,
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["school_branch"] == "middle_school"
+
+    updated = client.patch(
+        "/api/v1/admin/modules/middle-school-module",
+        json={"school_branch": "high_school"},
+        headers=admin_headers,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["school_branch"] == "high_school"
+
+    cloned = client.post(
+        "/api/v1/admin/modules/middle-school-module/clone",
+        json={"new_slug": "middle-school-module-copy"},
+        headers=admin_headers,
+    )
+    assert cloned.status_code == 201, cloned.text
+    assert cloned.json()["school_branch"] == "high_school"
+
+
+def test_module_rejects_invalid_school_branch(client, db_session, admin_headers):
+    response = client.post(
+        "/api/v1/admin/modules",
+        json={
+            "slug": "invalid-branch-module",
+            "name": "Invalid Branch",
+            "school_branch": "elementary",
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 422
 
 
 def test_create_duplicate_slug_409(client, db_session, admin_headers):

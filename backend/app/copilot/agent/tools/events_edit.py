@@ -40,6 +40,7 @@ from app.copilot.agent.tools._when import (
     resolve_day,
 )
 from app.copilot.agent.tools.base import Tool
+from app.event_title import EVENT_TITLE_FORMAT_HINT, is_valid_event_title
 from app.models import (
     Event,
     Shift,
@@ -265,6 +266,14 @@ def _update_handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str
     if denied is not None:
         return denied
 
+    # SCRUM-154: a retitle has to leave the event still matching
+    # "Week N - Module - School". Checked before anything is written so a bad
+    # title changes nothing.
+    if args.get("title") is not None:
+        new_title = str(args["title"]).strip()
+        if not is_valid_event_title(new_title):
+            return {"error": f"{EVENT_TITLE_FORMAT_HINT} Got {new_title!r}."}
+
     changed = []
     for field in _EVENT_FIELDS:
         if args.get(field) is None:
@@ -312,7 +321,13 @@ UPDATE_EVENT_TOOL = Tool(
         "type": "object",
         "properties": {
             "event_id": {"type": "string"},
-            "title": {"type": "string"},
+            "title": {
+                "type": "string",
+                "description": (
+                    'Must match "Week {N} - {Module Name} - {School}", e.g. '
+                    '"Week 7 - Conservation of Mass - GVJH".'
+                ),
+            },
             "school": {"type": "string"},
             "location": {
                 "type": "string",

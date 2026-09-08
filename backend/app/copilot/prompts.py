@@ -110,6 +110,15 @@ _AGENT_EXTRA_RULES = """\
    remember — "August 17" asked in August 2026 is 2026-08-17. If the year
    is genuinely unclear, ask; a date in the past is never a guess worth
    making. Do not convert dates to ISO week numbers: tools take a date.
+12. Every event is named "Week {N} - {Module Name} - {School}" — single
+   space, hyphen, single space, as in "Week 7 - Conservation of Mass -
+   GVJH". This is a hard rule, not a house style: volunteers browse the
+   schedule grouped by week and read the module and school off the title.
+   Any title you write, for a new event or a rename, must be in that
+   shape, and the tools reject one that is not. If you do not know the
+   school, ask for it rather than inventing a title without it. When
+   creating an event you may omit the title entirely and it is built in
+   that shape for you from the week, module and school.
 """
 
 
