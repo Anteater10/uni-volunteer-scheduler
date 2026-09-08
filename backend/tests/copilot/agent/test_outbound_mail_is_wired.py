@@ -241,3 +241,73 @@ class TestOptOutsHold:
 
         assert out["queued_count"] == 1
         assert out["skipped_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# The seams themselves
+# ---------------------------------------------------------------------------
+# Everything above drives the tools, which means _enqueue is always the test
+# double and the real broker hand-off, the template lookup's failure branch
+# and the two empty-address guards never execute. They are the parts that
+# only run in production, so they are the parts worth pinning directly.
+
+
+def test_enqueue_hands_the_message_to_the_celery_task(monkeypatch):
+    """The one line that actually reaches the broker."""
+    from app import celery_app as celery_mod
+
+    sent = []
+    monkeypatch.setattr(
+        celery_mod.send_copilot_email, "delay", lambda **kw: sent.append(kw)
+    )
+
+    _outbound._enqueue(to_email="vol@x.com", subject="s", text_body="t")
+
+    assert sent == [{"to_email": "vol@x.com", "subject": "s", "text_body": "t"}]
+
+
+def test_build_refuses_an_unknown_kind():
+    """A template that does not exist must not silently send an empty mail."""
+    with pytest.raises(_outbound.OutboundNotWired) as excinfo:
+        _outbound._build("no-such-kind", {})
+
+    assert "no-such-kind" in str(excinfo.value)
+
+
+def test_dispatch_returns_false_for_a_blank_address(wired):
+    """Counted as failed by the handlers, and nothing is queued."""
+    assert _outbound.dispatch("   ", kind="nudge", context={}) is False
+    assert wired == []
+
+
+def test_is_opted_out_is_false_for_a_blank_address(db_session):
+    """No address is not a stated preference, and must not hit the table."""
+    assert _outbound.is_opted_out(db_session, "") is False
+    assert _outbound.is_opted_out(db_session, "   ") is False
+    assert _outbound.is_opted_out(db_session, None) is False
+
+
+def test_nudge_counts_a_broker_failure_as_failed(
+    db_session, admin, admin_scope, wired, monkeypatch
+):
+    """The failed branch: dispatch returning False is not a silent success.
+
+    ``failed_count`` and ``skipped_count`` must stay distinct — a refused
+    hand-off is not the same as an opt-out, and collapsing them would hide
+    a broken broker behind "some people had opted out".
+    """
+    import app.copilot.agent.tools.nudge_understaffed_module as nudge_mod
+
+    soon = datetime.now(timezone.utc) + timedelta(days=7)
+    target = _event(db_session, admin.id, title="Target", start_date=soon)
+    other = _event(db_session, admin.id, title="Other", start_date=soon)
+    _booked(db_session, other, count=2)
+    monkeypatch.setattr(nudge_mod, "_dispatch", lambda *a, **k: False)
+
+    out = NUDGE_UNDERSTAFFED_MODULE_TOOL.handler(
+        db_session, admin_scope, {"module_id": str(target.id)}
+    )
+
+    assert out["failed_count"] == 2
+    assert out["queued_count"] == 0
+    assert out["skipped_count"] == 0
