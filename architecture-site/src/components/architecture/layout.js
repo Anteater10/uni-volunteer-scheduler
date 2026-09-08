@@ -2,9 +2,9 @@
 // Pure functions only — keep this side-effect free so it's trivial to test.
 
 export const NODE_W = 240;
-export const NODE_H = 56;
+export const NODE_H = 76;
 export const COL_GAP = 96;
-export const ROW_HEIGHT = 76;
+export const ROW_HEIGHT = 96;
 export const PAD_X = 32;
 export const PAD_Y = 32;
 
