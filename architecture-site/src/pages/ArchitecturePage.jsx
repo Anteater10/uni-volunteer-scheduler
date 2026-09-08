@@ -24,7 +24,8 @@ export default function ArchitecturePage() {
   const [selectedFlowId, setSelectedFlowId] = useState(
     () => architecture.flows[0]?.id ?? null,
   );
-  const [hoveredNode, setHoveredNode] = useState(null);
+  const [activeMode, setActiveMode] = useState("workflows");
+  const [selectedNode, setSelectedNode] = useState(null);
   const [statusFilter, setStatusFilter] = useState(() => new Set());
 
   const toggleStatus = useCallback((status) => {
@@ -37,7 +38,13 @@ export default function ArchitecturePage() {
   }, []);
 
   const handleNodeActivate = useCallback((node) => {
-    setHoveredNode(node);
+    setActiveMode("nodes");
+    setSelectedNode(node);
+  }, []);
+
+  const handleSelectNodeId = useCallback((nodeId) => {
+    const node = architecture.nodes.find((n) => n.id === nodeId) || null;
+    setSelectedNode(node);
   }, []);
 
   return (
@@ -60,19 +67,24 @@ export default function ArchitecturePage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
         <FlowDiagram
-          selectedFlowId={selectedFlowId}
+          selectedFlowId={activeMode === "workflows" ? selectedFlowId : null}
           statusFilter={statusFilter}
-          onNodeHover={setHoveredNode}
+          selectedNodeId={activeMode === "nodes" ? selectedNode?.id ?? null : null}
           onNodeActivate={handleNodeActivate}
         />
         <div className="flex flex-col gap-4">
           <FlowSidebar
+            activeMode={activeMode}
+            onModeChange={setActiveMode}
             selectedFlowId={selectedFlowId}
-            onSelect={setSelectedFlowId}
+            onSelectFlow={setSelectedFlowId}
+            selectedNodeId={selectedNode?.id ?? ""}
+            onSelectNode={handleSelectNodeId}
           />
           <StepDetails
+            activeMode={activeMode}
             selectedFlowId={selectedFlowId}
-            hoveredNode={hoveredNode}
+            selectedNode={selectedNode}
           />
         </div>
       </div>

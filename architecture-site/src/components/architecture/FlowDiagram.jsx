@@ -49,6 +49,33 @@ const STATUS_GLYPH = {
   [STATUS.UNKNOWN]: "?",
 };
 
+function wrapSvgText(text, maxChars, maxLines = 2) {
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let current = "";
+
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length <= maxChars) {
+      current = next;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = word;
+  }
+  if (current) lines.push(current);
+
+  if (lines.length <= maxLines) return lines;
+
+  const visible = lines.slice(0, maxLines);
+  const last = visible[visible.length - 1];
+  visible[visible.length - 1] =
+    last.length > maxChars - 1
+      ? `${last.slice(0, maxChars - 2)}…`
+      : `${last}…`;
+  return visible;
+}
+
 function ColumnHeaders({ columns, height }) {
   return columns.map((c) => {
     const x = PAD_X + (c.col - 1) * (NODE_W + COL_GAP);
@@ -83,9 +110,12 @@ function NodeRect({ node, dim, selected, onActivate, onHover, onLeave }) {
   const color = STATUS_COLORS[node.status];
   const opacity = dim ? 0.18 : 1;
   const glyph = STATUS_GLYPH[node.status];
+  const labelLines = wrapSvgText(node.label, 24, 2);
+  const subtitleLines = wrapSvgText(node.subtitle, 31, 2);
+  const subtitleY = 22 + labelLines.length * 15;
   const ariaLabel = `${node.label}. ${node.subtitle}. Status: ${
     STATUS_LABELS[node.status]
-  }.`;
+  }. Click to inspect how this node works.`;
 
   function handleKeyDown(e) {
     if (e.key === "Enter" || e.key === " ") {
@@ -125,10 +155,18 @@ function NodeRect({ node, dim, selected, onActivate, onHover, onLeave }) {
         }
       />
       <text x="12" y="22" fill="#e2e8f0" fontSize="13" fontWeight="600">
-        {node.label}
+        {labelLines.map((line, index) => (
+          <tspan key={`${line}-${index}`} x="12" dy={index === 0 ? 0 : 15}>
+            {line}
+          </tspan>
+        ))}
       </text>
-      <text x="12" y="40" fill="#64748b" fontSize="11">
-        {node.subtitle}
+      <text x="12" y={subtitleY} fill="#64748b" fontSize="11">
+        {subtitleLines.map((line, index) => (
+          <tspan key={`${line}-${index}`} x="12" dy={index === 0 ? 0 : 13}>
+            {line}
+          </tspan>
+        ))}
       </text>
       {/* status dot + glyph (so status survives colour blindness / mono) */}
       <g aria-hidden="true">
@@ -189,6 +227,7 @@ function Edge({ edge, fromNode, toNode, dim, selected, stepNumber }) {
 export default function FlowDiagram({
   selectedFlowId,
   statusFilter,
+  selectedNodeId,
   onNodeHover,
   onNodeActivate,
 }) {
@@ -285,7 +324,9 @@ export default function FlowDiagram({
             key={n.id}
             node={n}
             dim={isNodeDim(n)}
-            selected={selectedNodes?.has(n.id) || false}
+            selected={
+              selectedNodeId === n.id || selectedNodes?.has(n.id) || false
+            }
             onHover={onNodeHover}
             onLeave={() => onNodeHover?.(null)}
             onActivate={onNodeActivate}
