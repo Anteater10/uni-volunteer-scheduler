@@ -1,7 +1,7 @@
 # STATE
 
-**Updated:** 2026-09-07
-**Branch:** main @ `fe05585` (PR #88)
+**Updated:** 2026-09-08
+**Branch:** main @ `3af0c15` (PR #89)
 **Roadmap:** `.planning/ROADMAP.md` — the single source of truth
 
 > The previous STATE.md was dated 2026-05-23 and said "next action: merge Phase
@@ -15,7 +15,7 @@ Estimated 4–6 weeks from Gate 0 being answered.
 
 ## Current phase
 
-**Phase L0 — Protect what's fragile. Complete 2026-09-07.** See the L0 outcome
+**Phase L0 — Protect what's fragile. Complete 2026-09-08.** See the L0 outcome
 block below. Gate 0 before it: 11 of 12 decided as of 2026-09-07. Only #12 (write real
 corpus test questions) remains, and it's just Andy's to-do, not a blocking call.
 
@@ -36,30 +36,25 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. Review and merge the open L0 PR (see the L0 outcome block below) — it carries
-   the planning-doc archive move and the `architecture-site` rework. Deliberately
-   left unmerged for Andy's review; `main` is still at `fe05585`.
-2. Pick the next phase — either **L1** (add CNAME records at the `sci-trek.org`
+1. Pick the next phase — either **L1** (add CNAME records at the `sci-trek.org`
    registrar; optional deliverability upgrade, no external approval wait) or
    **L2** (land the three open PRs: #80 CI safety net, #79 close per Gate 0 #2,
    #78 after fixing the recipient query). L2 is the larger unblock.
-3. Answer Gate 0 #12 (write real copilot corpus test questions) — Andy's own
+2. Answer Gate 0 #12 (write real copilot corpus test questions) — Andy's own
    task, not blocking anything else
-4. New Phase P6 (added 2026-09-07) — copilot production hardening: corpus
+3. New Phase P6 (added 2026-09-07) — copilot production hardening: corpus
    refresh, CSV-upload-via-copilot tool, production-grade RAG audit,
    concurrency testing, guardrails. See `.planning/ROADMAP.md` items 133–142.
 
-## Phase L0 outcome (2026-09-07)
+## Phase L0 outcome (completed 2026-09-08)
 
-Roadmap items #13–#17. Executed on `main @ fe05585`; `main` itself was **not
-committed to** — everything landed either on `origin` as a branch or on an open
-PR.
+Roadmap items #13–#17, all five closed. The docs and `architecture-site` work
+went through PR #89, squash-merged to `main` on 2026-09-08 as `3af0c15` (all
+three checks green; branch deleted on merge).
 
-Jira: **SCRUM-64** (#13), **SCRUM-67** (#16), **SCRUM-68** (#17) → Done.
-**SCRUM-65** (#14) and **SCRUM-66** (#15) → Testing, moving to Done when PR #89
-merges. Separately, **SCRUM-146** (X1 #120 — merge the two eval branches and
-resolve ~60 PRs of drift) remains open: L0 preserved those branches, it did not
-integrate them.
+Jira: **SCRUM-64/65/66/67/68** all Done. Separately, **SCRUM-146** (X1 #120 —
+merge the two eval branches and resolve ~60 PRs of drift) remains open: L0
+preserved those branches, it did not integrate them.
 
 - **#13 eval branches pushed.** `feature/v1.4-phase-35-02-multimodel-eval`
   (37 commits, `8fb1a54`) and `feature/v1.4-phase-35-03-grounded-eval`
@@ -70,9 +65,9 @@ integrate them.
   filenames; no `sk-or-v1-*`, `sk-ant-*`, `AKIA…`, private-key headers, bearer
   tokens or `postgres://user:pass@` in either diff), which mattered because the
   repo is public.
-- **#14/#15 docs and `architecture-site` committed.** Landed on branch
-  `chore/L0-housekeeping` as two commits and opened as a **PR left unmerged for
-  review** (Andy's call). Covers `.planning/ROADMAP.md`, `.planning/STATE.md`,
+- **#14/#15 docs and `architecture-site` shipped.** Two commits on
+  `chore/L0-housekeeping`, reviewed as PR #89 and squash-merged to `main` as
+  `3af0c15`. Covers `.planning/ROADMAP.md`, `.planning/STATE.md`,
   the `.planning/archive/superseded-2026-09-04/` move (7 files),
   `PRODUCT-BRIEF.md`, `WORK-INVENTORY.md`, and the 5-file `architecture-site`
   rework (+399/−110). `npm run build` in `architecture-site` verified clean
