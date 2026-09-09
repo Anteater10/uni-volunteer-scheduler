@@ -209,6 +209,67 @@ class TestAdminRosterSlotMetadata:
         assert row["shift_name"] == slot.shift.name
 
 
+class TestAdminRosterContactDetails:
+    """Staff running a session need to reach a volunteer who hasn't shown up.
+
+    Phone rides the same privacy gate as the email: `full` only.
+    """
+
+    def _event_with_volunteer(self, db_session, admin, *, phone):
+        event, orientation = make_event_with_slot(
+            db_session, owner=admin, capacity=5
+        )
+        vol = _make_volunteer(db_session)
+        vol.phone_e164 = phone
+        db_session.add(
+            Signup(
+                volunteer_id=vol.id,
+                slot_id=orientation.id,
+                status=SignupStatus.confirmed,
+            )
+        )
+        db_session.flush()
+        return event
+
+    def test_full_privacy_exposes_the_phone(self, client, db_session):
+        admin = make_user(db_session, role=UserRole.admin)
+        event = self._event_with_volunteer(db_session, admin, phone="+18055551234")
+
+        headers = auth_headers(client, admin)
+        resp = client.get(
+            f"/api/v1/admin/events/{event.id}/roster?privacy=full", headers=headers
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()[0]["participant"]["phone"] == "+18055551234"
+
+    def test_initials_privacy_withholds_the_phone(self, client, db_session):
+        admin = make_user(db_session, role=UserRole.admin)
+        event = self._event_with_volunteer(db_session, admin, phone="+18055551234")
+
+        headers = auth_headers(client, admin)
+        resp = client.get(
+            f"/api/v1/admin/events/{event.id}/roster?privacy=initials",
+            headers=headers,
+        )
+
+        participant = resp.json()[0]["participant"]
+        # Same gate as the email — neither leaks below `full`.
+        assert participant["phone"] is None
+        assert participant["email"] is None
+
+    def test_volunteer_without_a_phone_reports_none(self, client, db_session):
+        admin = make_user(db_session, role=UserRole.admin)
+        event = self._event_with_volunteer(db_session, admin, phone=None)
+
+        headers = auth_headers(client, admin)
+        resp = client.get(
+            f"/api/v1/admin/events/{event.id}/roster?privacy=full", headers=headers
+        )
+
+        assert resp.json()[0]["participant"]["phone"] is None
+
+
 class TestRosterStaffAccess:
     """Any organizer may read any event's roster; non-staff may not.
 

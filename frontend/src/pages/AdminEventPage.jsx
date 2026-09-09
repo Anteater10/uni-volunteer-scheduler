@@ -96,6 +96,15 @@ const STATUS_STYLES = {
  */
 const LIFECYCLE_ONLY = ["cancelled", "waitlisted", "pending"];
 
+// Phones are stored E.164 (+18055551234) because Phase 27 SMS will want them
+// that way. Staff read them off a screen and dial them, so render the familiar
+// US shape and leave anything else — international, malformed, legacy — alone.
+function fmtPhone(raw) {
+  if (!raw) return null;
+  const m = String(raw).match(/^\+1(\d{3})(\d{3})(\d{4})$/);
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : String(raw);
+}
+
 function commitmentStatus(sessions) {
   for (const lifecycle of LIFECYCLE_ONLY) {
     if (sessions.some((s) => s.status === lifecycle)) return lifecycle;
@@ -833,6 +842,7 @@ export default function AdminEventPage() {
                       r.user_id ||
                       "Volunteer";
                     const email = r.participant?.email;
+                    const phone = fmtPhone(r.participant?.phone);
                     return (
                       <tr
                         key={r.signup_id || r.id}
@@ -843,6 +853,16 @@ export default function AdminEventPage() {
                           {email && email !== name ? (
                             <div className="text-xs text-[var(--color-fg-muted)]">
                               {email}
+                            </div>
+                          ) : null}
+                          {phone ? (
+                            <div className="text-xs text-[var(--color-fg-muted)]">
+                              <a
+                                href={`tel:${r.participant.phone}`}
+                                className="hover:underline"
+                              >
+                                {phone}
+                              </a>
                             </div>
                           ) : null}
                           {Array.isArray(r.responses) && r.responses.length > 0 && (
