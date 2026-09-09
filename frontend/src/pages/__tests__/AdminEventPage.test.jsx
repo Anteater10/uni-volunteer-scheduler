@@ -280,4 +280,63 @@ describe("AdminEventPage — uncancel a cancelled signup", () => {
     expect(api.admin.signups.uncancel).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
   });
+
+  // Staff on site need to reach a volunteer who hasn't shown up, without
+  // digging through a CSV export.
+  describe("volunteer contact details", () => {
+    it("shows a formatted, dialable phone under the email", async () => {
+      api.admin.eventRoster.mockResolvedValue([
+        rosterRow({
+          status: "confirmed",
+          participant: {
+            name: "Kim Ciancio",
+            email: "kciancio@ucsb.edu",
+            phone: "+18055551234",
+          },
+        }),
+      ]);
+
+      renderPage();
+
+      const link = await screen.findByRole("link", {
+        name: "(805) 555-1234",
+      });
+      expect(link).toHaveAttribute("href", "tel:+18055551234");
+    });
+
+    it("renders an unrecognised number as-is rather than mangling it", async () => {
+      api.admin.eventRoster.mockResolvedValue([
+        rosterRow({
+          status: "confirmed",
+          participant: {
+            name: "Kim Ciancio",
+            email: "kciancio@ucsb.edu",
+            phone: "+442071234567",
+          },
+        }),
+      ]);
+
+      renderPage();
+
+      expect(await screen.findByText("+442071234567")).toBeInTheDocument();
+    });
+
+    it("renders nothing when the volunteer has no phone on file", async () => {
+      api.admin.eventRoster.mockResolvedValue([
+        rosterRow({
+          status: "confirmed",
+          participant: {
+            name: "Kim Ciancio",
+            email: "kciancio@ucsb.edu",
+            phone: null,
+          },
+        }),
+      ]);
+
+      renderPage();
+
+      expect(await screen.findByText("Kim Ciancio")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /\d/ })).not.toBeInTheDocument();
+    });
+  });
 });

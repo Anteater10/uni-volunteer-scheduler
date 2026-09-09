@@ -85,12 +85,27 @@ def _volunteer_participant_payload(v: models.Volunteer, privacy: PrivacyMode) ->
         return {
             "name": vol_name,
             "email": v.email,
+            # Staff running a session need to reach a no-show without leaving
+            # the roster. Only ever under `full`, same gate as the email, and
+            # the route already writes an admin_event_roster audit entry.
+            # Nullable: pre-Phase-09 and CCPA-scrubbed volunteers have none.
+            "phone": v.phone_e164,
             "university_id": None,  # volunteers have no university_id
         }
     if privacy == PrivacyMode.initials:
         display_name = "".join(p[0].upper() for p in vol_name.split() if p)
-        return {"name": display_name, "email": None, "university_id": None}
-    return {"name": "Volunteer", "email": None, "university_id": None}
+        return {
+            "name": display_name,
+            "email": None,
+            "phone": None,
+            "university_id": None,
+        }
+    return {
+        "name": "Volunteer",
+        "email": None,
+        "phone": None,
+        "university_id": None,
+    }
 
 
 @dataclass
