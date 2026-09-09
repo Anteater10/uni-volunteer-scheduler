@@ -125,7 +125,7 @@ export default function AdminRemindersPage({ embedded = false }) {
     return (
       <EmptyState
         title="No upcoming reminders"
-        body="Once there are confirmed signups in the next 7 days, their kickoff / 24-hour / 2-hour reminders will appear here."
+        body="Reminders appear here about a week before an event — the queue only looks 7 days ahead. Both pending and confirmed volunteers are included."
       />
     );
   }
