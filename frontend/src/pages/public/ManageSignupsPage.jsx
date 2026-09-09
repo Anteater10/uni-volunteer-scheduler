@@ -298,25 +298,35 @@ export default function ManageSignupsPage({ tokenOverride }) {
         );
       })}
 
+      {/* There is no self-serve cancel — the volunteer routes are create,
+          confirm and view. The old wording ("changes are coordinated with the
+          organizers") read as one option among several and left volunteers
+          hunting this page for a Cancel button that does not exist. Say
+          plainly that mailing is the only route. */}
       <Card className="p-4" data-testid="contact-notice">
         <p className="text-sm font-medium text-gray-900">
           Need to change or cancel a signup?
         </p>
         <p className="mt-1 text-sm text-gray-600">
-          Schedule changes are coordinated with the SciTrek organizers —{" "}
           {data?.contact_email ? (
             <>
-              email{" "}
+              Email the SciTrek organizers at{" "}
               <a
                 className="font-medium text-blue-700 underline"
                 href={`mailto:${data.contact_email}`}
               >
                 {data.contact_email}
               </a>{" "}
-              and they&apos;ll take care of it.
+              — that is the only way to cancel. There is no cancel button on
+              this page, and no change takes effect until an organizer makes
+              it.
             </>
           ) : (
-            <>reply to your confirmation email and they&apos;ll take care of it.</>
+            <>
+              Reply to your confirmation email — that is the only way to
+              cancel. There is no cancel button on this page, and no change
+              takes effect until an organizer makes it.
+            </>
           )}
         </p>
       </Card>

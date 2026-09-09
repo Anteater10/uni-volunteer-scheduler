@@ -299,6 +299,14 @@ describe("ManageSignupsPage", () => {
 
     const notice = await screen.findByTestId("contact-notice");
     expect(notice).toHaveTextContent("scitrek@ucsb.edu");
+    // The address is not a suggestion — it is the only route. Volunteers were
+    // reading the old "coordinated with the organizers" wording as one option
+    // and hunting the page for a Cancel button.
+    expect(notice).toHaveTextContent(/only way to cancel/i);
+    expect(notice.querySelector("a")).toHaveAttribute(
+      "href",
+      "mailto:scitrek@ucsb.edu",
+    );
   });
 
   it("10. contact notice falls back when no address configured", async () => {
@@ -311,6 +319,7 @@ describe("ManageSignupsPage", () => {
 
     const notice = await screen.findByTestId("contact-notice");
     expect(notice).toHaveTextContent(/reply to your confirmation email/i);
+    expect(notice).toHaveTextContent(/only way to cancel/i);
   });
 
   // 2026-08-05 shifts: a volunteer whose only booking is a shift has no Signup
