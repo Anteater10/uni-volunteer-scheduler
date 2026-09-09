@@ -90,6 +90,14 @@ describe("AdminRemindersPage", () => {
     expect(
       await screen.findByText(/no upcoming reminders/i)
     ).toBeInTheDocument();
+
+    // The queue includes pending volunteers, not just confirmed ones — the
+    // copy used to say "confirmed signups" and sent admins hunting for a bug
+    // that wasn't there.
+    expect(
+      screen.getByText(/both pending and confirmed volunteers are included/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/confirmed signups/i)).not.toBeInTheDocument();
   });
 
   it("groups many reminders by kind in kickoff → 24h → 2h order, only for kinds present", async () => {
