@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import ensure_event_staff_access, log_action, require_staff
-from ..services import event_deletion_service, quarter_service, shift_service
+from ..services import (
+    attendance_facts,
+    event_deletion_service,
+    quarter_service,
+    shift_service,
+)
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -19,6 +24,24 @@ def _normalize_dt(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _with_volunteer_counts(
+    db: Session, events: List[models.Event]
+) -> List[models.Event]:
+    """Stamp ``volunteer_count`` onto each event before serialization.
+
+    EventRead reads it off the attribute, so setting it on the ORM instance is
+    enough — nothing is flushed, these are transient attributes.
+    """
+    if not events:
+        return events
+    counts = attendance_facts.unique_volunteer_counts(
+        db, event_ids=[e.id for e in events]
+    )
+    for event in events:
+        event.volunteer_count = counts.get(event.id, 0)
+    return events
 
 
 def _validate_event_dates(start_date: datetime, end_date: datetime):
@@ -223,7 +246,8 @@ def list_events(
     query = db.query(models.Event)
     if quarter_id is not None:
         query = query.filter(models.Event.quarter_id == quarter_id)
-    return query.all()
+    events = query.all()
+    return _with_volunteer_counts(db, events)
 
 
 @router.get("/{event_id}", response_model=schemas.EventRead)
@@ -235,7 +259,7 @@ def get_event(
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    return event
+    return _with_volunteer_counts(db, [event])[0]
 
 
 @router.patch("/{event_id}", response_model=schemas.EventRead, include_in_schema=False)

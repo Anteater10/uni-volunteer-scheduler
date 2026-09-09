@@ -357,6 +357,11 @@ class EventRead(ORMBase, EventBase):
     # `shifts` is the bookable view.
     slots: List[SlotRead] = []
     shifts: List[ShiftRead] = []
+    # Distinct people holding a seat on this event — NOT the sum of the seat
+    # counters on `slots`/`shifts`, which count one volunteer once per booking.
+    # Populated by the list and detail routes; see
+    # services/attendance_facts.unique_volunteer_counts.
+    volunteer_count: int = 0
 
     # Same method name as EventBase's validator → replaces it, so Read
     # payloads keep the UTC offset instead of stripping it.
