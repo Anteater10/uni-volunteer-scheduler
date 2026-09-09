@@ -1252,6 +1252,7 @@ const SCOPE_LIST = [
     end_date: futureEnd,
     completed_at: new Date().toISOString(),
     location: "Lab 1",
+    volunteer_count: 4,
   },
   {
     id: "e-ended",
@@ -1260,6 +1261,7 @@ const SCOPE_LIST = [
     end_date: pastEnd,
     completed_at: null,
     location: "Lab 2",
+    volunteer_count: 0,
   },
   {
     id: "e-upcoming",
@@ -1268,6 +1270,8 @@ const SCOPE_LIST = [
     end_date: futureEnd,
     completed_at: null,
     location: "Lab 3",
+    // Server omits the field on older payloads — the cell must not blow up.
+    volunteer_count: undefined,
   },
 ];
 
@@ -1291,6 +1295,18 @@ describe("EventsSection — completion badges and default-All scope", () => {
     expect(
       within(screen.getByRole("table")).getByText("Upcoming"),
     ).toBeInTheDocument();
+  });
+
+  it("shows the unique volunteer count per event, defaulting to 0", async () => {
+    renderWithQuery(<EventsSection />);
+    const table = within(await screen.findByRole("table"));
+    expect(table.getByText("Volunteers")).toBeInTheDocument();
+
+    const row = (title) => screen.getByText(title).closest("tr");
+    expect(within(row("Completed early")).getByText("4")).toBeInTheDocument();
+    // Zero and missing both render as 0, never blank and never "—".
+    expect(within(row("Dates went by")).getByText("0")).toBeInTheDocument();
+    expect(within(row("Still to come")).getByText("0")).toBeInTheDocument();
   });
 
   it("files a completed event under Past even when its dates are ahead", async () => {

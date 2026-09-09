@@ -1960,6 +1960,7 @@ export default function EventsSection() {
                 <th className="py-3 px-4">Start</th>
                 <th className="py-3 px-4">End</th>
                 <th className="py-3 px-4">Location</th>
+                <th className="py-3 px-4">Volunteers</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -1980,6 +1981,12 @@ export default function EventsSection() {
                   <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.start_date)}</td>
                   <td className="py-3 px-4 text-gray-800">{fmtDateTime(e.end_date)}</td>
                   <td className="py-3 px-4 text-gray-800">{e.location || "—"}</td>
+                  {/* Distinct people, not bookings: orientation plus three
+                      shifts is one volunteer. Comes from the server so the
+                      list stays one request. */}
+                  <td className="py-3 px-4 text-gray-800 tabular-nums">
+                    {e.volunteer_count ?? 0}
+                  </td>
                   <td className="py-3 px-4 text-right space-x-5 whitespace-nowrap">
                     {/* Sweep remediation task 5: the server now rejects
                         update/delete against an ended quarter's events
