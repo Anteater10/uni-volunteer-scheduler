@@ -429,11 +429,34 @@ files, backend 2,044 passing, 88.22% coverage (gate 55).
   check-in on phones would hit a login wall. Send staff a one-line "you'll
   need to log in again after the update" first.
 
-  **Also confirm at this deploy:** log in against real prod HTTPS and check
-  that a page reload keeps you logged in. Production is the first place the
-  cookies are actually `Secure` over real TLS behind Caddy; everything so
-  far was verified over plain http locally or `https://testserver` in CI,
-  which covers the logic but not that topology.
+  **Prod topology verified before merge (2026-09-10).** The concern was that
+  real TLS behind Caddy is the first place the cookies are actually `Secure`,
+  and everything else had been checked over plain http locally or
+  `https://testserver` in CI — which covers the logic but not the topology.
+  So the topology was reproduced locally rather than left as an unknown:
+  `docker-compose.prod.yml` under a separate compose project, `DOMAIN=localhost`
+  (Caddy issues a local cert), `ENVIRONMENT=production`. Result, over genuine
+  HTTP/2 TLS through Caddy:
+
+  - `refresh_token` — `HttpOnly; Secure; Path=/api/v1/auth; SameSite=lax`,
+    `Max-Age=172800` (2 days).
+  - `csrf_token` — `Secure; Path=/; SameSite=lax`, **not** HttpOnly.
+  - **`Secure` is present**, which is the part that could not be proved
+    otherwise: it confirms Caddy's `X-Forwarded-Proto` reaches uvicorn's
+    `--proxy-headers` and the scheme is read as https end to end.
+  - Refresh with the CSRF header 200s; without it 403s; with a foreign
+    `Origin` 403s. `/docs` 404s under production.
+  - **chromium, firefox and webkit**: log in, reload, and deep-route
+    navigation all keep the session; `document.cookie` exposes `csrf_token`
+    and never `refresh_token`; `localStorage` is empty.
+
+  Only deviation from a true prod build: the backend image was reused with
+  `BAKE_MODEL_WEIGHTS=0` instead of `1`, to skip a ~1.3GB model download.
+  Model weights have no bearing on cookie or TLS behaviour.
+
+  **Still worth doing at the real deploy:** the same login-then-reload check
+  against the actual AWS instance, since that exercises the real certificate,
+  the real domain and the real `CORS_ALLOWED_ORIGINS` value.
 
 **The e2e seed is not idempotent against a used dev database.**
 `seed_e2e.py` fails with `quarter create failed: 409 Dates overlap Fall 2026`
