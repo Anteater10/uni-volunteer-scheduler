@@ -86,7 +86,7 @@ SCRUM-156), **#94/#95/#96** (SCRUM-27/28/32, still open under Phase P3).
 | 8 | 8 dormant `/admin/imports` endpoints | Pipeline deleted PR #51, endpoints remain | Delete | P5 | **Decided 2026-09-07: Confirmed — delete all 8 dead endpoints** |
 | 9 | OpenRouter unfunded, ~50 req/day | Can't load-test or demo the copilot | Fund it | L6 | **Decided/already done 2026-09-07: $10 credit already added, giving ~1,000 requests — no longer blocked** |
 | 10 | SendGrid CNAMEs not requested | UCSB IT may refuse | Single-sender fallback | L1 | **Resolved 2026-09-07: Moot — `sci-trek.org` is self-registered by SciTrek, not a UCSB domain. No UCSB IT approval needed; whoever holds the registrar login can add the CNAME records directly. AWS deployment already sending real confirmation emails from `no-reply@sci-trek.org` successfully.** |
-| 11 | Power BI seed unpromoted | Licenses/owner/warehouse unknown | Answer all three | D1 | **Decided 2026-09-07: Switched from Power BI to Tableau — no Power BI license exists yet, no stakeholder mandate for it specifically (only general post-launch analytics need), and dev team is Mac-only (Power BI Desktop is Windows-only; Tableau has a native Mac app). Build analytics on Tableau instead once Milestone D starts post-launch. Owner/warehouse-sizing questions deferred until D1 planning.** |
+| 11 | Power BI seed unpromoted | Licenses/owner/warehouse unknown | Answer all three | D1 | **Decided 2026-09-07: Switched from Power BI to Tableau — no Power BI license exists yet, no stakeholder mandate for it specifically (only general post-launch analytics need), and dev team is Mac-only (Power BI Desktop is Windows-only; Tableau has a native Mac app). Build analytics on Tableau instead once Milestone D starts post-launch. Owner/warehouse-sizing questions deferred until D1 planning.** **Superseded in part 2026-09-10: after a full codebase scan, the BI tool is downgraded from an architecture decision to a client choice — the seam is a read-only Postgres role over `warehouse.*`, so Metabase, Tableau and Power BI are all ordinary clients. Metabase is the primary ($0, open source, native Mac, self-serve for non-technical staff); Tableau stays available and, if wanted, should come from UCSB Data Services' existing institutional deployment rather than a new purchase — note Tableau for Teaching licences explicitly exclude administrative use. Warehouse sizing is also now answered: the existing Postgres 16 instance, indefinitely.** |
 | 12 | Copilot corpus has no real questions | Only you know SciTrek policy | Write them | P6 | **Decided 2026-09-07: Moved into Phase P6 (item #133) — Andy will write these as part of the copilot hardening phase, not standalone** |
 
 **Action status, audited 2026-09-08.** All 12 rows are decided; Jira is now
@@ -352,22 +352,60 @@ production-readiness pass: corpus quality, RAG architecture, concurrency, and gu
 
 ---
 
-# Milestone D — Data & BI (4–6 weeks) — Tableau, not Power BI (Gate 0 #11, decided 2026-09-07)
+# Milestone D — Data & BI (3–4 weeks) — rescoped 2026-09-10
 
-Promoted from `seeds/v1.4-data-pipeline.md`, renumbered off the 30–35 collision.
+Promoted from `seeds/v1.4-data-pipeline.md`, renumbered off the 30–35
+collision, then **rescoped after a full codebase scan on 2026-09-10**. Four of
+the seed's decisions were overturned; see the Decision column. Was 4–6 weeks
+and 5 phases; now 3–4 weeks and 8, because removing parquet and dbt is a bigger
+saving than adding D0 and D6 costs.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 114 | Seed drafted 2026-04-17, never promoted | Its phases 30–35 **collide** with copilot 30–38 | Renumber to D1–D5 | D1 | None |
-| 115 | **D1** No warehouse schema | Nothing exists — no `analytics/`, no exports | Nightly parquet + schema | D2 | Depends on #11 |
-| 116 | **D2** No dbt project | No dims, no facts, no history | Star schema + SCD-2 on signup status | D3 | None |
-| 117 | **D3** No Tableau connection | Switched from Power BI 2026-09-07 (Mac-only dev team, no license) | `bi_reader` role + ops/funnel dashboards in Tableau | D4 | Decided — Tableau |
-| 118 | **D4** No scorecard | Partner reporting done by hand | Orientation compliance + Tableau scorecard | D5 | None |
-| 119 | **D5** No prediction | No-show guessing is manual | scikit-learn → `noshow_probability` → roster dot | — | None |
+| 114 | Seed drafted 2026-04-17, never promoted | Its phases 30–35 **collide** with copilot 30–38 | Renumber to D0–D7 | D0 | Done |
+| 144 | **D0** Public path emits nothing | `backend/app/routers/public/` has **zero** `log_action` calls. Every volunteer who browses and leaves is invisible, and that data is unrecoverable — every week without this is a week of funnel gone | `backend/app/telemetry.py` + `product_events` outbox table. Server-side only, off by default, transaction-scoped, per-event property allowlist | D3 | **New 2026-09-10 — was in no plan and no Jira ticket. Ship FIRST, ahead of the rest of D;** everything else reads tables that already exist and can be built retroactively at any time |
+| 115 | **D1** No warehouse schema | Nothing exists — no `analytics/`, no exports | `warehouse` schema of **materialized views** in the existing Postgres 16, model registry, refresh runner, `etl_run` table, one nightly Celery beat entry at 04:15 PT | D2 | **Changed 2026-09-10: no parquet.** The seed exported Postgres → parquet on disk → back into the same Postgres. No reader, needs a Docker volume (`docker-compose.yml` is PR-only), adds ~90MB `pyarrow`, and — decisive — dated parquet files are a third place PII lives with no deletion story |
+| 116 | **D2** No dims or facts | No star schema, no conformed grain | `dim_date/quarter/volunteer/user/event/module/school/signup_status`; `fct_commitment`, `fct_session_attendance`, `fct_bookable_unit`, `fct_orientation_credit` | D3 | **Changed 2026-09-10: plain versioned `.sql`, not dbt.** ~12 models is ~60% overhead for dbt. Adopt at ~25 models or a second SQL author; structure one model per file with explicit `warehouse.` prefixes so conversion is later a `sed`. **Full-refresh nightly, no incremental** — see #146 |
+| 145 | **D2a** Dual signup grain | `signups` (orientation, own `checked_in_at`) vs `shift_signups` (N rows in `session_attendance`) are genuinely different grains — the hardest modelling call here | **Port `backend/app/services/attendance_facts.py::facts()`**, do not reimplement. One `fct_commitment` with a `commitment_type` discriminator | D2 | **Resolved 2026-09-10 — already solved in code.** `0037_add_shifts.py` moved every PERIOD signup into `shift_signups` and deleted the sources, so the two tables are subtypes, not parallels. Divergence between the matview and `facts()` would make a chart and the admin UI disagree about the same event — pin it with a parity test |
+| 117 | **D3** No SCD-2 history | Full refresh cannot reconstruct last Tuesday's `signups.status` | `snap_signup_status` — the only persistent warehouse table. Derive from D0's event log where available; nightly poll only for pre-instrumentation backfill and reconciliation | D4 | Depends on D0 landing first |
+| 118 | **D4** No BI connection | Switched from Power BI 2026-09-07 (Mac-only dev team, no license) | `bi_reader` role: read-only, `warehouse.*` only, `REVOKE ALL ON SCHEMA public FROM PUBLIC`, per-tool login roles, `statement_timeout`. Idempotent checked-in SQL, **not** Alembic — roles are cluster objects | D5 | **Changed 2026-09-10: Metabase, not Tableau.** Gate 0 #11's Tableau choice is downgraded from an architecture decision to a client choice — the seam is a Postgres role, so Metabase/Tableau/Power BI are all ordinary clients. Metabase is $0, open source, Mac-fine, self-serve for non-technical staff. **Tableau for Teaching explicitly forbids administrative use**, so a student licence cannot legally cover the scorecard; if Tableau is wanted later, get a seat from UCSB Data Services (who already run it institutionally) rather than buying one |
+| 146 | **D4a** ETL readiness | `updated_at` missing on `users`/`events`/`signups`/`shift_signups`/`audit_logs`; `slots` has no timestamps at all; six tables spell `created_at` differently | **Add no columns. Full-refresh every model nightly** | D2 | **Decided 2026-09-10.** Three reasons: (a) largest fact is a few thousand rows — nothing to optimise; (b) SQLAlchemy `onupdate` is client-side and every bulk `.update()` bypasses it, including `ccpa_delete`'s four — an `updated_at` that lies during a deletion is worse than none; (c) full refresh makes CCPA anonymisation propagate to the warehouse in ≤24h with **zero** deletion-propagation code. The naming inconsistency is aliased in each staging model's SELECT |
+| 119 | **D5** No new questions answered | Existing ~20 endpoints answer "how did X do", never "where do people drop out" or "do they come back" | Funnel, cohort retention, time-to-confirm, cancellation lead time, volunteer lifecycle, partner scorecard, pipeline health — all reading `warehouse.*` | D6 | None |
+| 147 | **D6** Nothing notices a dead pipeline | No monitoring of any kind; a stale warehouse would serve three-week-old numbers silently | `etl_run` table, freshness assertions that refuse to swap an empty rebuild, `/api/v1/health/warehouse` 503 past 26h, and an amber staleness banner in `OverviewSection.jsx` | — | **New 2026-09-10.** The banner is the layer that actually works — it appears in front of the person reading the number, not in a tool nobody has open |
+| 148 | **D7** No-show guessing is manual | — | **Rules-based risk flag**: prior no-show ≥1, OR still `pending` within 48h of start, OR no orientation credit for the family. Roster dot | — | **Changed 2026-09-10: no ML model.** A few thousand labelled rows, heavily imbalanced, ~six weak features. A rule is more explainable to an organiser, gives a baseline any later model must beat, and accumulates labelled data while it runs. Revisit after two quarters. Gate 0 #4 already limits this to soft tracking — it informs, never acts |
 
-Addition not in the original seed: tool success/failure/retry rate per tool,
+**Cost: $0/year.** The warehouse is a schema in the existing Postgres; Metabase
+is open source. Self-hosted PostHog was considered and rejected — its cost is a
+fixed ~8GB infrastructure floor (ClickHouse + Kafka + ZooKeeper + its own
+Postgres + Redis) regardless of volume, i.e. ~$100/month for an idle cluster at
+our ~4,000 events/month. PostHog Cloud's free tier (1M/month, ~250× our volume)
+remains a $0 upgrade if a prebuilt funnel UI is ever wanted; Andy confirmed
+2026-09-10 that no UCSB policy blocks pseudonymous behavioural data leaving
+campus.
+
+**Two defects found during the 2026-09-10 scan, both fixable ahead of D:**
+
+- `analytics_event_fill_rates` (`backend/app/routers/admin.py:2130`) is
+  **numerically wrong today** — it sums `slot.capacity` (a placeholder `1` for
+  shift sessions, see `models.py:427-429`) and counts only `models.Signup`, so a
+  15-shift × 6-seat event reports capacity 15 and fill 0. Both numbers wrong.
+  `tests/test_admin_analytics_counts_shifts.py` covers this bug class but not
+  this endpoint. ~1 hour.
+- The Celery `statement_timeout` override documented at
+  `backend/app/database.py:22` and `backend/.env.production.example:31`
+  **does not exist** — `celery_app.py:23` imports the same `SessionLocal`
+  carrying the 15s cap. The nightly refresh will hit it. Implement it, or fix
+  both comments.
+
+Addition kept from the original seed: tool success/failure/retry rate per tool,
 sourced from `copilot_tool_calls` — a table currently write-only and never read,
-so BI would be its first consumer.
+so BI would be its first consumer. **Promoted to the first task for the DS
+undergrad** — self-contained, no schema change, clones an existing pattern.
+
+**Retained from the seed:** the four north-star questions, the `warehouse`
+schema, the star schema, SCD-2 on signup status, `bi_reader`.
+**Dropped:** parquet, dbt, Tableau-as-architecture, the scikit-learn no-show
+model.
 
 ---
 
@@ -406,7 +444,7 @@ so BI would be its first consumer.
 | Gate 0 | your time | decisions made |
 | **L (L0–L11)** | **4–6 weeks** | **live + handed over** |
 | P (P1–P5) | 3–4 weeks | product complete |
-| D (D1–D5) | 4–6 weeks | BI live |
+| D (D0–D7) | 3–4 weeks | BI live |
 | X (X1–X4) | 5–6 weeks | paper submitted |
 
 L is 4–6 weeks rather than 3: the token migration (L3) and the missing hardening
