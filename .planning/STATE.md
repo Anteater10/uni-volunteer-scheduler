@@ -390,11 +390,50 @@ files, backend 2,044 passing, 88.22% coverage (gate 55).
   hosts* for cookies (ports are ignored, hosts are not) — the SPA origin and
   `VITE_API_URL` must agree on which one they use, or the browser stores
   cookies the app can never read.
-- **Existing sessions survive the deploy but their localStorage copies do
-  not get revoked.** The new build deletes the legacy keys from each browser
-  that loads it, but the tokens they held stay valid server-side until they
-  expire (≤2 days). A `DELETE FROM refresh_tokens` at deploy time would
-  close that window at the cost of logging everyone out once — Andy's call.
+- **REQUIRED DEPLOY STEP — revoke every pre-L3 refresh token.** Decided
+  2026-09-10 (Andy). Run this once, in the same maintenance window, straight
+  after the backend is on L3 code:
+
+  ```sql
+  UPDATE refresh_tokens SET revoked_at = now() WHERE revoked_at IS NULL;
+  ```
+
+  **Why it is needed.** Every member of staff who used the pre-L3 build
+  still has a real, server-valid refresh token in their browser's
+  localStorage. The new build deletes those keys from each browser that
+  loads it, but the token *values* stay valid server-side for up to
+  `refresh_token_expires_days` (2). Without this, the exposure the whole
+  phase exists to close stays open for 2 more days for exactly the people
+  who were exposed to it.
+
+  **Why it costs nothing.** The deploy already logs everyone out regardless:
+  `/auth/refresh` now reads the token *only* from a cookie, and a pre-L3
+  user has no cookies — the boot refresh hits `NO_SESSION` and drops them to
+  the login screen. So the forced re-login is happening either way; this
+  just makes the old tokens useless at the same moment.
+
+  **`UPDATE ... revoked_at`, not `DELETE`.** `_consume_refresh_token`'s own
+  comment is the reason: "Retain, do not delete. The row is what makes a
+  later replay detectable; deleting it threw that evidence away." Revoking
+  gets the same security outcome and keeps the reuse-detection evidence and
+  the audit trail.
+
+  **Do NOT rotate `JWT_SECRET` as a belt-and-braces measure.** It is the
+  obvious instinct and it backfires: `services/invite.py` and
+  `services/password_reset.py` sign with the same secret, so rotating it
+  silently kills every outstanding invite and password-reset link — leaving
+  anyone who needs a reset after the forced logout with a dead email.
+  Access tokens expire in 60 minutes on their own; there is nothing to gain.
+
+  **Timing.** Weekday morning, never mid-event — organizers doing QR
+  check-in on phones would hit a login wall. Send staff a one-line "you'll
+  need to log in again after the update" first.
+
+  **Also confirm at this deploy:** log in against real prod HTTPS and check
+  that a page reload keeps you logged in. Production is the first place the
+  cookies are actually `Secure` over real TLS behind Caddy; everything so
+  far was verified over plain http locally or `https://testserver` in CI,
+  which covers the logic but not that topology.
 
 **The e2e seed is not idempotent against a used dev database.**
 `seed_e2e.py` fails with `quarter create failed: 409 Dates overlap Fall 2026`
