@@ -1,7 +1,7 @@
 // src/state/authContext.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import api from "../lib/api";
-import authStorage from "../lib/authStorage";
+import { refreshAccessToken } from "../lib/authToken";
 import { AuthContext } from "./AuthContext";
 
 export function AuthProvider({ children }) {
@@ -21,9 +21,16 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     (async () => {
-      // only try /me if a token exists
-      const tok = authStorage.getToken();
-      if (tok) await reloadMe();
+      // The access token lives in memory only (Phase L3), so it never
+      // survives a page reload — recover it via a silent refresh against
+      // the HttpOnly refresh cookie before deciding whether to call /me.
+      // No cookie (or an expired one) means genuinely logged out.
+      try {
+        await refreshAccessToken();
+        await reloadMe();
+      } catch {
+        setUser(null);
+      }
       setInitializing(false);
     })();
   }, []);

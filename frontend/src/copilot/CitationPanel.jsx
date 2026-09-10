@@ -10,7 +10,7 @@
 // in RESEARCH §Pattern 6 + Open Q #1 (keeps chat context visible on mobile).
 import React, { useEffect, useState } from "react";
 import { X, ExternalLink, Loader2 } from "lucide-react";
-import authStorage from "../lib/authStorage";
+import { authorizedFetch } from "../lib/authToken";
 import { COPILOT_BASE } from "./api";
 
 export default function CitationPanel({ chunkId, onClose }) {
@@ -26,13 +26,9 @@ export default function CitationPanel({ chunkId, onClose }) {
     setData(null);
     (async () => {
       try {
-        const tok = authStorage.getToken();
-        const res = await fetch(`${COPILOT_BASE}/citations/${chunkId}`, {
+        const res = await authorizedFetch(`${COPILOT_BASE}/citations/${chunkId}`, {
           method: "GET",
-          headers: {
-            Accept: "application/json",
-            ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
-          },
+          headers: { Accept: "application/json" },
         });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);

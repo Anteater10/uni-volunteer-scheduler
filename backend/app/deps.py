@@ -1,5 +1,6 @@
 # backend/app/deps.py
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
@@ -103,6 +104,59 @@ def rate_limit(max_requests: int | None = None, window_seconds: int | None = Non
 
 
 # -------------------------
+# CSRF (double-submit cookie)
+# -------------------------
+
+CSRF_COOKIE_NAME = "csrf_token"
+CSRF_HEADER_NAME = "X-CSRF-Token"
+
+
+def verify_csrf(request: Request) -> None:
+    """Double-submit cookie check for the routes that authenticate by cookie.
+
+    The refresh cookie is HttpOnly and sent automatically by the browser on
+    any cross-site request, so without this a malicious page could trigger a
+    refresh. The csrf_token cookie is readable by JS on purpose — proving the
+    caller can read a cookie our own origin set is what rules out a blind
+    cross-site request.
+
+    Two layers, because the double-submit half alone assumes an attacker
+    cannot write cookies for this site. A sibling subdomain (XSS there, or a
+    stale CNAME taken over) breaks that assumption: a cookie set with
+    ``Domain=.example.org`` from ``evil.example.org`` is also sent to the
+    parent host, Starlette's parser is last-wins, and browsers order
+    equal-path cookies oldest-first — so the attacker's pair would be the one
+    read here, and they know their own value. The Origin check is what
+    actually stops that, since a browser always sends Origin on a
+    cross-origin POST and cannot be made to forge it.
+    """
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in settings.cors_origins_list:
+        # Absent Origin is not treated as failure: non-browser callers (curl,
+        # the test client, health probes) legitimately omit it, and browsers
+        # always send it on the cross-site POSTs this guards against.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF origin rejected",
+        )
+
+    cookie_value = request.cookies.get(CSRF_COOKIE_NAME)
+    header_value = request.headers.get(CSRF_HEADER_NAME)
+    if (
+        not cookie_value
+        or not header_value
+        # compare_digest over ==: the value is a 256-bit nonce so a timing
+        # oracle is not a practical attack, but there is no reason to leak
+        # the comparison either.
+        or not secrets.compare_digest(cookie_value, header_value)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF token missing or invalid",
+        )
+
+
+# -------------------------
 # Password helpers
 # -------------------------
 
@@ -139,7 +193,12 @@ def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> st
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=expires_minutes or settings.access_token_expires_minutes
     )
-    to_encode.update({"exp": expire, "purpose": ACCESS_TOKEN_PURPOSE})
+    to_encode.update({
+        "exp": expire,
+        "purpose": ACCESS_TOKEN_PURPOSE,
+        "aud": settings.jwt_audience,
+        "iss": settings.jwt_issuer,
+    })
     encoded_jwt = jwt.encode(
         to_encode,
         settings.jwt_secret,
@@ -179,6 +238,14 @@ def get_current_user(
             token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
+            audience=settings.jwt_audience,
+            issuer=settings.jwt_issuer,
+            # require_* is not the default: python-jose's _validate_aud
+            # returns early (i.e. ACCEPTS) when the token carries no `aud` at
+            # all, so without this the audience check is decorative and only
+            # `iss` is load-bearing. Requiring both means a token that simply
+            # omits them fails, instead of passing whichever half is absent.
+            options={"require_aud": True, "require_iss": True, "require_exp": True},
         )
         if payload.get("purpose") != ACCESS_TOKEN_PURPOSE:
             raise credentials_exception
@@ -215,6 +282,14 @@ def get_optional_user(
             token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
+            audience=settings.jwt_audience,
+            issuer=settings.jwt_issuer,
+            # require_* is not the default: python-jose's _validate_aud
+            # returns early (i.e. ACCEPTS) when the token carries no `aud` at
+            # all, so without this the audience check is decorative and only
+            # `iss` is load-bearing. Requiring both means a token that simply
+            # omits them fails, instead of passing whichever half is absent.
+            options={"require_aud": True, "require_iss": True, "require_exp": True},
         )
         if payload.get("purpose") != ACCESS_TOKEN_PURPOSE:
             return None
@@ -301,63 +376,15 @@ require_admin = require_role(models.UserRole.admin)
 require_staff = require_role(*STAFF_ROLES)
 
 
-# -------------------------
-# Refresh token helpers
-# -------------------------
-
-def create_refresh_token(db: Session, user: models.User) -> str:
-    """
-    Create a refresh token row, but do NOT commit here.
-    Caller controls transaction boundaries.
-    Stores a SHA-256 hex digest in token_hash; returns the raw token to the caller.
-    """
-    import hashlib
-    import secrets
-    raw_token = secrets.token_urlsafe(48)
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    expires = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expires_days)
-    rt = models.RefreshToken(
-        user_id=user.id,
-        token_hash=token_hash,
-        expires_at=expires,
-    )
-    db.add(rt)
-    db.flush()
-    return raw_token
-
-
-def revoke_refresh_token(db: Session, token: str) -> None:
-    """
-    Mark a token revoked, but do NOT commit here.
-    """
-    import hashlib
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == token_hash).first()
-    if rt and rt.revoked_at is None:
-        rt.revoked_at = datetime.now(timezone.utc)
-        db.add(rt)
-
-
-def verify_refresh_token(db: Session, token: str) -> models.User:
-    import hashlib
-    token_hash = hashlib.sha256(token.encode()).hexdigest()
-    rt = db.query(models.RefreshToken).filter(models.RefreshToken.token_hash == token_hash).first()
-    if (
-        rt is None
-        or rt.revoked_at is not None
-        or rt.expires_at < datetime.now(timezone.utc)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
-    user = db.query(models.User).filter(models.User.id == rt.user_id).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-    return user
+# Refresh tokens deliberately have NO helpers here. The full rotation +
+# reuse-detection logic lives in routers/auth.py (_issue_refresh_token /
+# _consume_refresh_token / _revoke_refresh_token) so it stays co-located.
+# Three unused helpers used to sit here — create_refresh_token,
+# revoke_refresh_token and a verify_refresh_token that validated a token
+# WITHOUT rotating it or detecting reuse. Nothing called them, and a
+# plausible-looking verify in a shared module is exactly what a future
+# caller reaches for by mistake, bypassing the rotation the real path
+# enforces. Deleted in Phase L3 rather than left as a footgun.
 
 
 # -------------------------

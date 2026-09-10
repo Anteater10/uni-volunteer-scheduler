@@ -1,45 +1,7 @@
 // src/lib/api.js
 import authStorage from "./authStorage";
 import { API_BASE } from "./apiBase";
-
-// -------------------------
-// Single-flight refresh-on-401
-// -------------------------
-
-/** Module-scoped promise so concurrent 401s queue behind one refresh call. */
-let refreshPromise = null;
-
-/**
- * Attempt to refresh the access token using the stored refresh token.
- * Concurrent callers share the same in-flight promise (thundering-herd guard).
- * On success: updates authStorage with new tokens and returns the new access token.
- * On failure: clears all auth state and throws.
- */
-async function refreshAccessToken() {
-  if (refreshPromise) return refreshPromise;
-  refreshPromise = (async () => {
-    const refreshToken = authStorage.getRefreshToken();
-    if (!refreshToken) throw new Error("NO_REFRESH_TOKEN");
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    if (!res.ok) {
-      authStorage.clearAll();
-      throw new Error("REFRESH_FAILED");
-    }
-    const data = await res.json();
-    authStorage.setToken(data.access_token);
-    authStorage.setRefreshToken(data.refresh_token);
-    return data.access_token;
-  })();
-  try {
-    return await refreshPromise;
-  } finally {
-    refreshPromise = null;
-  }
-}
+import { authorizedFetch, refreshAccessToken, readCsrfCookie } from "./authToken";
 
 function buildQuery(params = {}) {
   const qp = new URLSearchParams();
@@ -90,6 +52,11 @@ async function request(path, { method = "GET", params, body, auth = true, header
       ...(headers || {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
+    // /auth/* responses set/clear the refresh + csrf cookies; the request
+    // needs credentials:"include" for the browser to store or send them
+    // (the default "same-origin" mode ignores Set-Cookie cross-origin, which
+    // dev is — see apiBase.js).
+    ...(path.startsWith("/auth/") ? { credentials: "include" } : {}),
   };
 
   if (body !== undefined) {
@@ -153,16 +120,9 @@ async function request(path, { method = "GET", params, body, auth = true, header
 
 // Download helper (CSV, ICS, etc.)
 export async function downloadBlob(path, filename, { auth = true, params, headers } = {}) {
-  const token = auth ? authStorage.getToken() : "";
   const url = `${API_BASE}${path}${buildQuery(params)}`;
-
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      ...(headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
+  const init = { method: "GET", headers: headers || {} };
+  const res = auth ? await authorizedFetch(url, init) : await fetch(url, init);
 
   if (!res.ok) {
     const json = await safeReadJson(res);
@@ -193,6 +153,7 @@ async function login(email, password) {
   const url = `${API_BASE}/auth/token`;
   const res = await fetch(url, {
     method: "POST",
+    credentials: "include", // receive the HttpOnly refresh + csrf cookies
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
   });
@@ -204,9 +165,8 @@ async function login(email, password) {
     throw new Error(extractErrorMessage(json, fallback));
   }
 
-  // Store both tokens so refresh-on-401 works for the full session lifetime
+  // The refresh token never reaches JS — it arrived as an HttpOnly cookie.
   if (json?.access_token) authStorage.setToken(json.access_token);
-  if (json?.refresh_token) authStorage.setRefreshToken(json.refresh_token);
 
   return json;
 }
@@ -224,21 +184,29 @@ async function login(email, password) {
  * already-expired access token must not leave the user still logged in on this
  * device, which is the outcome they can actually see — so the revoke is
  * best-effort and the clear is unconditional.
+ *
+ * Phase L3: the call is now made UNCONDITIONALLY, not just when an access
+ * token happens to be in memory. The access token is memory-only, so it is
+ * routinely missing at logout time (after any reload, or once it expires) —
+ * and the old `if (accessToken)` guard meant those were exactly the cases
+ * where nothing was revoked, while the UI still said "logged out". The
+ * refresh cookie stayed live for days; on a shared machine the next person's
+ * boot refresh resumed the previous session. The server authenticates this
+ * off the cookie now, so the bearer header is sent when available but is not
+ * required.
  */
 async function logout() {
-  const refreshToken = authStorage.getRefreshToken();
   const accessToken = authStorage.getToken();
+  const csrf = readCsrfCookie();
   try {
-    if (refreshToken && accessToken) {
-      await fetch(`${API_BASE}/auth/logout`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ refresh_token: refreshToken }),
-      });
-    }
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(csrf ? { "X-CSRF-Token": csrf } : {}),
+      },
+    });
   } catch {
     // Offline, or the API is down. Fall through to the local clear.
   } finally {
@@ -252,8 +220,8 @@ async function setPasswordFromInvite(token, password) {
     auth: false,
     body: { token, password },
   });
+  // The refresh token never reaches JS — it arrived as an HttpOnly cookie.
   if (json?.access_token) authStorage.setToken(json.access_token);
-  if (json?.refresh_token) authStorage.setRefreshToken(json.refresh_token);
   return json;
 }
 
@@ -587,13 +555,9 @@ async function getBroadcastRecipientCount(eventId, params) {
 // own, so the server names shift_id in the message rather than guessing.
 async function sendBroadcast(eventId, { subject, body_markdown, slot_id, shift_id }) {
   const url = `${API_BASE}/events/${eventId}/broadcast`;
-  const token = authStorage.getToken();
-  const res = await fetch(url, {
+  const res = await authorizedFetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       subject,
       body_markdown,

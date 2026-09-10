@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage:auth": "vitest run --coverage src/lib/__tests__/authToken.test.js src/lib/__tests__/authStorage.test.js src/lib/__tests__/refreshOn401.test.js src/lib/__tests__/api.logout.test.js",
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium",
     "e2e:install:all": "playwright install chromium webkit firefox"
@@ -36,6 +37,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-v8": "^5.0.0",
     "@vitest/ui": "^5.0.0",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.1.1",

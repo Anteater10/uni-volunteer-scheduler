@@ -25,7 +25,7 @@
 //   done:  {"message_id": "<uuid>"}
 //   error: {"error": "<class>", "message_id": "<uuid>"}
 import { useCallback, useRef, useState } from "react";
-import authStorage from "../lib/authStorage";
+import { authorizedFetch } from "../lib/authToken";
 import { COPILOT_BASE } from "./api";
 
 function parseSseChunk(buffer) {
@@ -82,13 +82,11 @@ export function useCopilotStream(
 
       let res;
       try {
-        const tok = authStorage.getToken();
-        res = await fetch(`${COPILOT_BASE}/sessions/${sessionId}/messages`, {
+        res = await authorizedFetch(`${COPILOT_BASE}/sessions/${sessionId}/messages`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
           },
           body: JSON.stringify({ content }),
           signal: ac.signal,

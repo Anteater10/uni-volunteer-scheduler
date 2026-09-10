@@ -1,21 +1,15 @@
 // Phase 3: Self check-in API helpers
-import authStorage from "../lib/authStorage";
+import { authorizedFetch } from "../lib/authToken";
 import { API_BASE } from "../lib/apiBase";
 
 async function _request(method, path, body) {
-  const token = authStorage.getToken();
   const url = `${API_BASE}${path}`;
-  const init = {
-    method,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  };
+  const init = { method, headers: {} };
   if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
-  const res = await fetch(url, init);
+  const res = await authorizedFetch(url, init);
   if (!res.ok) {
     const json = await res.json().catch(() => null);
     const err = new Error(

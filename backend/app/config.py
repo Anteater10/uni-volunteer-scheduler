@@ -41,13 +41,17 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret: str
     jwt_algorithm: str = "HS256"
+    # aud/iss claims on access tokens (Phase L3). Invite and password-reset
+    # tokens are a separate purpose and deliberately not scoped to these.
+    jwt_audience: str = "uni-volunteer-scheduler"
+    jwt_issuer: str = "uni-volunteer-scheduler"
     access_token_expires_minutes: int = 60
-    # Was 14. Both tokens currently live in localStorage, so a stolen refresh
-    # token is a staff account for its whole lifetime. Narrowing the window is
-    # a compensating control, NOT an acceptance of localStorage — Gate 0 #2
-    # (2026-09-07) ruled that storage gets fixed properly in Phase L3, and the
-    # PR that proposed accepting it (#79) was closed for that reason. Keep this
-    # narrow after L3 lands; the two changes are complementary.
+    # Was 14, narrowed to 2 in L2 as a compensating control while both tokens
+    # still lived in localStorage (Gate 0 #2, 2026-09-07; PR #79 was closed for
+    # proposing to accept that instead of fixing it). Phase L3 landed the real
+    # fix — the refresh token is now an HttpOnly cookie and the access token is
+    # in memory only — and this stays narrow regardless: the two controls are
+    # complementary, and a short window still limits a stolen cookie.
     # Staff-only. Volunteer magic links are a separate system
     # (magic_link_service.SIGNUP_CONFIRM_TTL_MINUTES) and are deliberately
     # still 14 days. Do not "re-sync" these two numbers.

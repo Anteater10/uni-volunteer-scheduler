@@ -57,7 +57,11 @@ def _to_utc_aware(dt: datetime | None) -> datetime | None:
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    refresh_token: str | None = None
+    # No refresh_token field. Phase L3 moved it to an HttpOnly cookie, and
+    # leaving the field declared would keep the response model willing to
+    # serialize a raw refresh token if any handler ever set it again, as well
+    # as advertising it in the OpenAPI schema for clients to be written
+    # against. Its absence is the contract.
 
 
 class TokenData(BaseModel):

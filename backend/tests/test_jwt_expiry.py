@@ -79,6 +79,8 @@ def test_minted_access_token_expires_within_the_configured_window(db_session):
         create_access_token({"sub": str(user.id), "role": user.role.value}),
         settings.jwt_secret,
         algorithms=[settings.jwt_algorithm],
+        audience=settings.jwt_audience,
+        issuer=settings.jwt_issuer,
     )
 
     assert "exp" in payload
