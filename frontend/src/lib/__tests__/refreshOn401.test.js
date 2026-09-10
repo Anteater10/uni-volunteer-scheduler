@@ -4,27 +4,30 @@
  * Verifies that api.js transparently recovers from 401 responses via the
  * refresh-on-401 mechanism, and that concurrent 401s queue behind a single
  * in-flight refresh call (thundering-herd guard, T-00-11).
+ *
+ * Phase L3: the refresh token moved to an HttpOnly cookie the browser
+ * manages — this test never sees it. The access token lives in memory
+ * (authStorage.js), seeded directly rather than via localStorage, and the
+ * refresh call carries credentials + an X-CSRF-Token header read from
+ * document.cookie instead of a JSON body.
  */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
-// We need localStorage available (jsdom provides it).
-// Seed a fake refresh token so refreshAccessToken() doesn't bail early.
-const FAKE_REFRESH_TOKEN = "fake-refresh-token-abc";
+const FAKE_ACCESS = "expired-access-token";
 const FAKE_NEW_ACCESS = "new-access-token-xyz";
-const FAKE_NEW_REFRESH = "new-refresh-token-xyz";
+const FAKE_CSRF = "test-csrf-token";
 
-// Reset module state between tests so `refreshPromise` is null each time.
+// Reset module state between tests so the in-memory access token and
+// `refreshPromise` singleton are both fresh each time.
 beforeEach(() => {
-  localStorage.clear();
-  localStorage.setItem("uvse_refresh_token", FAKE_REFRESH_TOKEN);
-  localStorage.setItem("uvse_access_token", "expired-access-token");
+  document.cookie = `csrf_token=${FAKE_CSRF}`;
   vi.resetModules();
   vi.restoreAllMocks();
 });
 
 afterEach(() => {
-  localStorage.clear();
+  document.cookie = "csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 });
 
 // -----------------------------------------------------------------------
@@ -50,29 +53,34 @@ describe("refresh-on-401", () => {
   it("retries a protected request once after a 401 and returns the 200 body", async () => {
     // Call sequence:
     //   1st call  → original request → 401
-    //   2nd call  → POST /auth/refresh → 200 with new tokens
+    //   2nd call  → POST /auth/refresh → 200 with a new access token
     //   3rd call  → retry original request → 200 with data
     const mockFetch = makeFetch([
       { status: 401, body: { detail: "Not authenticated" } },
-      { status: 200, body: { access_token: FAKE_NEW_ACCESS, refresh_token: FAKE_NEW_REFRESH } },
+      { status: 200, body: { access_token: FAKE_NEW_ACCESS } },
       { status: 200, body: { id: "user-1", name: "Alice" } },
     ]);
     vi.stubGlobal("fetch", mockFetch);
 
     const { api } = await import("../api.js");
+    const authStorage = (await import("../authStorage.js")).default;
+    authStorage.setToken(FAKE_ACCESS);
+
     const result = await api.me();
 
     expect(result).toEqual({ id: "user-1", name: "Alice" });
     expect(mockFetch).toHaveBeenCalledTimes(3);
 
-    // The second call must be to the /auth/refresh endpoint
+    // The second call must be to the /auth/refresh endpoint, cookie-based
     const refreshCall = mockFetch.mock.calls[1];
     expect(refreshCall[0]).toContain("/auth/refresh");
     expect(refreshCall[1].method).toBe("POST");
+    expect(refreshCall[1].credentials).toBe("include");
+    expect(refreshCall[1].headers["X-CSRF-Token"]).toBe(FAKE_CSRF);
+    expect(refreshCall[1].body).toBeUndefined();
 
-    // New tokens stored
-    expect(localStorage.getItem("uvse_access_token")).toBe(FAKE_NEW_ACCESS);
-    expect(localStorage.getItem("uvse_refresh_token")).toBe(FAKE_NEW_REFRESH);
+    // New access token stored in memory
+    expect(authStorage.getToken()).toBe(FAKE_NEW_ACCESS);
   });
 
   it("queues concurrent 401s behind a single refresh — /auth/refresh called exactly once", async () => {
@@ -93,10 +101,7 @@ describe("refresh-on-401", () => {
           ok: true,
           status: 200,
           headers: { get: () => "application/json" },
-          json: async () => ({
-            access_token: FAKE_NEW_ACCESS,
-            refresh_token: FAKE_NEW_REFRESH,
-          }),
+          json: async () => ({ access_token: FAKE_NEW_ACCESS }),
         };
       }
       // Original requests: first 3 calls → 401; subsequent → 200
@@ -118,6 +123,8 @@ describe("refresh-on-401", () => {
     vi.stubGlobal("fetch", mockFetch);
 
     const { api } = await import("../api.js");
+    const authStorage = (await import("../authStorage.js")).default;
+    authStorage.setToken(FAKE_ACCESS);
 
     // Fire three concurrent me() calls
     const [r1, r2, r3] = await Promise.all([api.me(), api.me(), api.me()]);
@@ -143,11 +150,12 @@ describe("refresh-on-401", () => {
     vi.stubGlobal("fetch", mockFetch);
 
     const { api } = await import("../api.js");
+    const authStorage = (await import("../authStorage.js")).default;
+    authStorage.setToken(FAKE_ACCESS);
 
     await expect(api.me()).rejects.toThrow();
 
-    // Auth storage must be cleared after a failed refresh
-    expect(localStorage.getItem("uvse_access_token")).toBeNull();
-    expect(localStorage.getItem("uvse_refresh_token")).toBeNull();
+    // In-memory auth state must be cleared after a failed refresh
+    expect(authStorage.getToken()).toBeFalsy();
   });
 });

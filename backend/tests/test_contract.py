@@ -110,10 +110,15 @@ def _assert_error_shape(body):
 
 
 def test_error_response_shape(client, db_session):
-    # a) auth router — invalid refresh token → coded 401
+    # a) auth router — invalid refresh token → coded 401. Phase L3: the
+    # refresh token and its CSRF double-submit both travel as cookies now,
+    # not a JSON body — set them directly so this probes the "bad token"
+    # path rather than the CSRF check ahead of it.
+    client.cookies.set("refresh_token", "nope")
+    client.cookies.set("csrf_token", "whatever")
     r1 = client.post(
         "/api/v1/auth/refresh",
-        json={"refresh_token": "nope"},
+        headers={"X-CSRF-Token": "whatever"},
     )
     assert r1.status_code == 401
     body1 = r1.json()

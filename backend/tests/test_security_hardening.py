@@ -12,6 +12,41 @@ from tests.fixtures.helpers import auth_headers, make_event_with_slot, make_user
 from app.models import UserRole
 
 
+class TestRefreshEndpointHardening:
+    """Phase L3: /auth/refresh had zero rate limiting and no CSRF check
+    before this — it's unauthenticated (only a cookie is required) and
+    becomes the CSRF target once the refresh token moves off localStorage."""
+
+    def test_refresh_rate_limited_429(self, client, db_session, monkeypatch):
+        """120/min, deliberately higher than the 30/min on login — /auth/refresh
+        is on the boot path of every page load and the bucket is per-IP, so
+        staff behind one NAT share it."""
+        monkeypatch.delenv("EXPOSE_TOKENS_FOR_TESTING", raising=False)
+        client.cookies.set("refresh_token", "not-a-real-token")
+        client.cookies.set("csrf_token", "whatever")
+        headers = {"X-CSRF-Token": "whatever"}
+        statuses = [
+            client.post("/api/v1/auth/refresh", headers=headers).status_code
+            for _ in range(121)
+        ]
+        assert 429 not in statuses[:120]
+        assert statuses[120] == 429
+
+    def test_refresh_missing_csrf_header_is_forbidden(self, client, db_session):
+        client.cookies.set("refresh_token", "not-a-real-token")
+        client.cookies.set("csrf_token", "the-real-value")
+        resp = client.post("/api/v1/auth/refresh")
+        assert resp.status_code == 403
+
+    def test_refresh_mismatched_csrf_header_is_forbidden(self, client, db_session):
+        client.cookies.set("refresh_token", "not-a-real-token")
+        client.cookies.set("csrf_token", "the-real-value")
+        resp = client.post(
+            "/api/v1/auth/refresh", headers={"X-CSRF-Token": "an-attackers-guess"}
+        )
+        assert resp.status_code == 403
+
+
 class TestEventsStaffOnly:
     def test_anonymous_cannot_list_events(self, client, db_session):
         resp = client.get("/api/v1/events/")

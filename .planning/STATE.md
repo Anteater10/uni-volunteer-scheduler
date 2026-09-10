@@ -1,7 +1,8 @@
 # STATE
 
-**Updated:** 2026-09-08
-**Branch:** main @ `89556b8` (PR #93)
+**Updated:** 2026-09-10
+**Branch:** `feature/L3-auth-hardening` (off `main` @ `b4fd214`) — **implemented and
+verified, NOT yet committed or PR'd**
 **Roadmap:** `.planning/ROADMAP.md` — the single source of truth
 
 > The previous STATE.md was dated 2026-05-23 and said "next action: merge Phase
@@ -21,9 +22,11 @@ plus 56–63 Done). L1 closed done-by-circumstance with no DNS work performed.
 Audited across Jira, these planning docs and GitHub on 2026-09-08 before
 starting L3; the gaps that audit found are recorded in the outcome blocks below.
 
-**Next: Phase L3 — auth and abuse hardening.** This is where Gate 0 #2 gets
-implemented. Only #12 (write real
-corpus test questions) remains, and it's just Andy's to-do, not a blocking call.
+**Phase L3 — auth and abuse hardening: code complete on
+`feature/L3-auth-hardening` as of 2026-09-10, awaiting commit + PR.** Gate 0 #2
+is implemented (see the L3 outcome block below). Of Gate 0, only #12 (write
+real corpus test questions) remains, and it's just Andy's to-do, not a
+blocking call.
 
 Decided: #1 Cloudflare Free — yes. #2 Fix tokens properly, close PR #79. #3
 already implemented in code, no action needed. #4 Soft tracking for no-shows.
@@ -42,18 +45,13 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. **Phase L3 — auth and abuse hardening.** The next real phase, and where
-   Gate 0 #2 gets implemented: refresh token to an `HttpOnly` cookie, access
-   token in memory, CSRF on the refresh path, plus the missing throttles and
-   the `aud`/`iss` claims. L2 shipped only the compensating 2-day window, not
-   the fix. **Scoped 2026-09-08:** 13 token reads across 12 source files, of
-   which **7 are copilot call sites** that fetch the token independently
-   instead of going through the shared client — so the copilot is the bulk of
-   the work, not the login form. `useCopilotStream.js` uses `fetch` +
-   `ReadableStream`, **not** `EventSource`, so streaming survives an
-   in-memory `Authorization` header. CSRF is greenfield; CORS already sets
-   `allow_credentials=True`, and prod is same-origin behind Caddy while dev is
-   cross-origin — that split needs handling.
+1. **Commit and PR Phase L3.** The work is done and verified (outcome block
+   below) but the tree is still uncommitted on `feature/L3-auth-hardening`.
+   Nothing else should start before this lands, because it touches the auth
+   path every other phase depends on. Jira: SCRUM-157 (created 2026-09-10);
+   **SCRUM-12's JWT half is absorbed by L3** — its remaining items (S-03 six
+   spellings of "staff", T3 frontend/backend role-map cross-check, W5.6/W5.7)
+   are untouched and stay open.
 2. **At the next AWS deploy** (L9 notes, cumulative): `VITE_COPILOT_ENABLED`
    is now **required** or the deploy fails fast by design; confirm the site
    loads after the frontend's internal port change (80 → 8080); and the Celery
@@ -76,6 +74,110 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
    deliverables — an audit doc and a regression test asserting organizer ==
    admin — do not exist, and `test_admin_modules.py` / `test_modules_crud.py`
    have **zero** organizer coverage.
+
+## Phase L3 outcome (code complete 2026-09-10 — not yet merged)
+
+Gate 0 #2 implemented. Refresh token moved out of `localStorage` into an
+`HttpOnly` cookie; access token now lives in a module-scoped JS variable and
+is re-minted on boot by a silent `/auth/refresh`. Plus CSRF on the
+cookie-authenticated routes, throttles on `/auth/refresh` and `/auth/logout`,
+and `aud`/`iss` claims on access tokens.
+
+Files: `backend/app/routers/auth.py`, `deps.py`, `config.py`, `schemas.py`;
+`frontend/src/lib/authToken.js` (new), `authStorage.js`, `api.js`,
+`state/authContext.jsx`, plus the copilot/check-in/roster call sites.
+
+**Read this part before touching auth again — a showstopper got past a fully
+green test suite.**
+
+The first implementation was reported done with backend 2109 passing,
+frontend 633 passing, and a hand-run curl pass over login → refresh → logout.
+It was broken in a way that would have logged every member of staff out on
+every page reload. Both cookies were set with `Path=/api/v1/auth`;
+`document.cookie` only exposes cookies whose `Path` prefix-matches **the
+current page**, and the SPA's pages are `/`, `/login`, `/admin/...`. So the
+JS-readable csrf cookie was invisible, no `X-CSRF-Token` header could be
+built, and every refresh 403'd.
+
+Why each green signal was worthless here, because the pattern will repeat:
+
+- **vitest/jsdom** — the test did `document.cookie = "csrf_token=..."`, which
+  defaults to the *current document's* path (`/`). It fabricated a cookie the
+  server never sends, so it proved nothing about the server's `Path`.
+- **curl** — matches cookies against the **request** URL
+  (`/api/v1/auth/refresh`, which does match). "The page the JS is running on"
+  has no representation in curl at all.
+- **pytest TestClient** — same jar semantics as curl. The test asserted
+  `HttpOnly` and `Secure` and never asserted `Path`.
+- **Playwright** would have caught it on the first `page.reload()`. It was
+  not run.
+
+Fix: the two cookies now get deliberately different paths —
+`REFRESH_COOKIE_PATH = "/api/v1/auth"` (only the browser sends it, only
+there) and `CSRF_COOKIE_PATH = "/"` (JS must be able to read it from every
+route; it is a random nonce, not a credential). Proven in chromium, firefox
+and webkit, and pinned by `e2e/auth-session.spec.js` plus a backend test
+asserting the literal `Path=/`. Reintroducing the old path was verified to
+fail 4 of the 5 e2e tests — the suite can actually fail.
+
+**Nine further defects found in the same review** (me line-by-line, plus an
+Opus security reviewer and an Opus frontend reviewer in parallel). All fixed:
+
+1. **Logout silently revoked nothing** (HIGH). It depended on
+   `get_current_user`, but the access token is memory-only now and is
+   routinely absent at logout — so those requests 401'd before the body ran:
+   no revoke, no cookie clear, while the UI said "logged out". The refresh
+   cookie stayed live for its full 2 days. **On a shared campus machine the
+   next person's boot refresh resumed the previous session.** Now uses
+   `get_optional_user`, always revokes and clears, returns 200, and requires
+   CSRF (it is cookie-authenticated now, so a Bearer header no longer makes
+   it CSRF-safe).
+2. **Two tabs revoked every session** (HIGH). Refresh moved onto every page
+   load, so two tabs reloading both replay the same cookie; reuse detection
+   read that as theft and revoked the whole rotation family. Now a 15s
+   grace window (`AUTH_REFRESH_RACE`) when the *immediate* successor is still
+   live, plus a `navigator.locks` Web Lock so tabs serialize and the second
+   one picks up the rotated cookie.
+3. **TOCTOU in `_consume_refresh_token`** (HIGH). Plain `.first()` with no
+   row lock: under `--workers 4`, two requests could both see
+   `consumed_at IS NULL` and both mint a successor, so rotation failed
+   **open**. Now `.with_for_update()`.
+4. **Any failed refresh logged the user out** (HIGH). A 429 from the per-IP
+   throttle, a 5xx, or a proxy blip all wiped the session — and staff behind
+   one campus NAT share a throttle bucket. Now only 401/403 clear state.
+   `/auth/refresh` also raised to 120/min from 30, because it is on the boot
+   path of every page load.
+5. **`Secure` failed open** (MED). It was derived from `request.url.scheme`,
+   which only reads "https" because compose passes `--proxy-headers`; the
+   image's own Dockerfile CMD does not, and the trusted CIDR assumes
+   Docker's default address pool. Now always `Secure` outside
+   `development`.
+6. **CSRF was defeatable by cookie tossing** (MED). Double-submit alone
+   assumes an attacker cannot write cookies for the site; a sibling
+   subdomain breaks that (Starlette's parser is last-wins). Added an
+   `Origin` allow-list check and `secrets.compare_digest`.
+7. **`aud` validation was decorative** (MED). python-jose's `_validate_aud`
+   *accepts* a token with no `aud` claim at all, so only `iss` was
+   load-bearing. Now `require_aud`/`require_iss`/`require_exp`.
+8. **Stale tokens on existing staff machines** (LOW). Everyone who used the
+   old build still had a server-valid `uvse_refresh_token` in
+   `localStorage` — the exact exposure this phase closes, left open for the
+   people who already had it. Now cleaned up on module load.
+9. Smaller: `delete_cookie` dropped `Secure`/`HttpOnly`; `schemas.Token`
+   still advertised a `refresh_token` field nothing populates;
+   `authorizedFetch` skipped the retry when no token was held, and
+   `{...new Headers()}` silently drops headers.
+
+**A regression the e2e suite caught that nothing else did.** With the boot
+refresh running on every page load, an anonymous visitor to the *public*
+site had no cookies, so the refresh 403'd — a console error on a surface
+where `public-signup.spec.js` forbids them (PART-02), and a wasted throttle
+slot per public page view. `refreshAccessToken` now returns early when there
+is no csrf cookie, since without it a refresh cannot succeed anyway.
+
+Also deleted: three dead refresh helpers in `deps.py`, including a
+`verify_refresh_token` that validated a token *without* rotating it or
+detecting reuse — a plausible-looking footgun in a shared module.
 
 ## Phase L1 outcome (completed 2026-09-08 — done by circumstance)
 
@@ -231,6 +333,27 @@ These were reported directly by Andy from the live app, not drawn from the
 ROADMAP register — the same "SCRUM stream not in any planning doc" gap that
 PRs #81–#85 had. Worth folding into ROADMAP if the stream continues.
 
+## Verified test status (2026-09-10, `feature/L3-auth-hardening`)
+
+- Backend: **2,145 passing**, 13 skipped (all environmental — see the
+  2026-09-08 reading below for why)
+- Frontend: **676 passing**, 76 files
+- **Changed-line coverage: 100%** on `auth.py`, `deps.py`, `config.py`,
+  `schemas.py` — statements *and* branches, measured by intersecting
+  `git diff` line numbers with coverage.py's missing set
+  (`backend/tools/changed_line_coverage.py`, added this phase). Whole-file
+  coverage was 94%/88% and would have hidden this: a file sits at 94% while
+  every new line is in the missing 6%, which is how the cookie bug shipped.
+- Frontend `authToken.js` + `authStorage.js` at **100%** statements,
+  branches, functions and lines, enforced by thresholds in
+  `vitest.config.js` (`npm run test:coverage:auth`). `@vitest/coverage-v8`
+  was added this phase — the project had no coverage provider at all.
+  Coverage is a separate scoped command on purpose: instrumenting all 76
+  jsdom environments takes ~10 minutes and starts timing out workers.
+- E2E: `e2e/auth-session.spec.js` (5 tests) green on **chromium, firefox and
+  webkit**; the full pre-existing suite green on chromium (38 passed, 7
+  skipped) against L3 code.
+
 ## Verified test status (2026-09-08, main @ `89556b8`)
 
 - Frontend: **629/629 passing**, 74 files (+3 tests, +1 file — the organizer
@@ -253,6 +376,104 @@ passing with 3 environmental failures; 2026-09-03 frontend 609/609 over 72
 files, backend 2,044 passing, 88.22% coverage (gate 55).
 
 ## Operational notes
+
+**L3 deploy notes (carry into L9).**
+
+- **`CORS_ALLOWED_ORIGINS` is now load-bearing for login itself, not just
+  XHR.** `verify_csrf` rejects a request whose `Origin` is not on that list,
+  and the auth cookies need `credentials: "include"`, which CORS must
+  permit. If the SPA is ever served from an origin missing from that list,
+  staff cannot log in at all. Found the hard way: moving the dev server to an
+  unlisted port broke all 15 e2e tests.
+- **Cookie host, not just port.** The cookies are host-scoped to whatever
+  host the API is reached on. `localhost` and `127.0.0.1` are *different
+  hosts* for cookies (ports are ignored, hosts are not) — the SPA origin and
+  `VITE_API_URL` must agree on which one they use, or the browser stores
+  cookies the app can never read.
+- **REQUIRED DEPLOY STEP — revoke every pre-L3 refresh token.** Decided
+  2026-09-10 (Andy). Run this once, in the same maintenance window, straight
+  after the backend is on L3 code:
+
+  ```sql
+  UPDATE refresh_tokens SET revoked_at = now() WHERE revoked_at IS NULL;
+  ```
+
+  **Why it is needed.** Every member of staff who used the pre-L3 build
+  still has a real, server-valid refresh token in their browser's
+  localStorage. The new build deletes those keys from each browser that
+  loads it, but the token *values* stay valid server-side for up to
+  `refresh_token_expires_days` (2). Without this, the exposure the whole
+  phase exists to close stays open for 2 more days for exactly the people
+  who were exposed to it.
+
+  **Why it costs nothing.** The deploy already logs everyone out regardless:
+  `/auth/refresh` now reads the token *only* from a cookie, and a pre-L3
+  user has no cookies — the boot refresh hits `NO_SESSION` and drops them to
+  the login screen. So the forced re-login is happening either way; this
+  just makes the old tokens useless at the same moment.
+
+  **`UPDATE ... revoked_at`, not `DELETE`.** `_consume_refresh_token`'s own
+  comment is the reason: "Retain, do not delete. The row is what makes a
+  later replay detectable; deleting it threw that evidence away." Revoking
+  gets the same security outcome and keeps the reuse-detection evidence and
+  the audit trail.
+
+  **Do NOT rotate `JWT_SECRET` as a belt-and-braces measure.** It is the
+  obvious instinct and it backfires: `services/invite.py` and
+  `services/password_reset.py` sign with the same secret, so rotating it
+  silently kills every outstanding invite and password-reset link — leaving
+  anyone who needs a reset after the forced logout with a dead email.
+  Access tokens expire in 60 minutes on their own; there is nothing to gain.
+
+  **Timing.** Weekday morning, never mid-event — organizers doing QR
+  check-in on phones would hit a login wall. Send staff a one-line "you'll
+  need to log in again after the update" first.
+
+  **Prod topology verified before merge (2026-09-10).** The concern was that
+  real TLS behind Caddy is the first place the cookies are actually `Secure`,
+  and everything else had been checked over plain http locally or
+  `https://testserver` in CI — which covers the logic but not the topology.
+  So the topology was reproduced locally rather than left as an unknown:
+  `docker-compose.prod.yml` under a separate compose project, `DOMAIN=localhost`
+  (Caddy issues a local cert), `ENVIRONMENT=production`. Result, over genuine
+  HTTP/2 TLS through Caddy:
+
+  - `refresh_token` — `HttpOnly; Secure; Path=/api/v1/auth; SameSite=lax`,
+    `Max-Age=172800` (2 days).
+  - `csrf_token` — `Secure; Path=/; SameSite=lax`, **not** HttpOnly.
+  - **`Secure` is present**, which is the part that could not be proved
+    otherwise: it confirms Caddy's `X-Forwarded-Proto` reaches uvicorn's
+    `--proxy-headers` and the scheme is read as https end to end.
+  - Refresh with the CSRF header 200s; without it 403s; with a foreign
+    `Origin` 403s. `/docs` 404s under production.
+  - **chromium, firefox and webkit**: log in, reload, and deep-route
+    navigation all keep the session; `document.cookie` exposes `csrf_token`
+    and never `refresh_token`; `localStorage` is empty.
+
+  Only deviation from a true prod build: the backend image was reused with
+  `BAKE_MODEL_WEIGHTS=0` instead of `1`, to skip a ~1.3GB model download.
+  Model weights have no bearing on cookie or TLS behaviour.
+
+  **Still worth doing at the real deploy:** the same login-then-reload check
+  against the actual AWS instance, since that exercises the real certificate,
+  the real domain and the real `CORS_ALLOWED_ORIGINS` value.
+
+**The e2e seed is not idempotent against a used dev database.**
+`seed_e2e.py` fails with `quarter create failed: 409 Dates overlap Fall 2026`
+against the dev DB, because `_ensure_quarters` cannot reconcile with quarters
+that already exist. Not an L3 issue and not fixed here. Workaround used for
+this phase's e2e run: a throwaway `e2e_uvs` database (create, `alembic
+upgrade head`, `python -m app.seed_admin` with `SEED_ADMIN_EMAIL`/`_PASSWORD`,
+then the seed), with a backend container pointed at it. The seed works
+perfectly on a clean DB — worth fixing before anyone relies on `npm run e2e`
+locally.
+
+**Port 5173 collides with another project on Andy's machine.** A second
+SciTrek app ("SciTrek Bioinformatics") listens on `127.0.0.1:5173` while
+vite binds `*:5173` (IPv6). Chromium resolves `localhost` to `::1` and gets
+the right app; **firefox resolves to IPv4 and gets the wrong one**, which
+looks exactly like a mysterious browser-specific failure. Use an explicit
+free port for e2e.
 
 **The Celery worker must be deployed together with the backend.** Found while
 testing SCRUM-155 on 2026-09-07: with the API on new code and the worker still

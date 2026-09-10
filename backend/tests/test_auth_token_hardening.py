@@ -47,9 +47,188 @@ def test_access_token_carries_the_access_purpose(client, db_session):
 
     token = create_access_token({"sub": str(user.id), "role": user.role.value})
     payload = jwt.decode(
-        token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        audience=settings.jwt_audience,
+        issuer=settings.jwt_issuer,
     )
     assert payload["purpose"] == ACCESS_TOKEN_PURPOSE
+
+
+# ---------------------------------------------------------------- Phase L3 aud/iss
+
+
+def test_access_token_carries_aud_and_iss(client, db_session):
+    user = _admin(db_session, "aud-iss-claim@example.com")
+    db_session.commit()
+
+    from jose import jwt
+
+    from app.config import settings
+
+    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        audience=settings.jwt_audience,
+        issuer=settings.jwt_issuer,
+    )
+    assert payload["aud"] == settings.jwt_audience
+    assert payload["iss"] == settings.jwt_issuer
+
+
+def test_token_with_wrong_audience_is_rejected(client, db_session):
+    user = _admin(db_session, "wrong-aud@example.com")
+    db_session.commit()
+
+    from jose import jwt
+
+    from app.config import settings
+
+    forged = jwt.encode(
+        {
+            "sub": str(user.id),
+            "role": user.role.value,
+            "purpose": ACCESS_TOKEN_PURPOSE,
+            "aud": "some-other-app",
+            "iss": settings.jwt_issuer,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    resp = client.get(
+        "/api/v1/users/me", headers={"Authorization": f"Bearer {forged}"}
+    )
+    assert resp.status_code == 401
+
+
+def test_token_with_aud_omitted_is_rejected(client, db_session):
+    """The half the 'wrong value' tests do not reach.
+
+    python-jose's _validate_aud RETURNS EARLY — i.e. accepts — when the token
+    carries no `aud` claim at all, and jwt.decode defaults to
+    require_aud: False. So passing `audience=` alone made the audience check
+    decorative: only `iss` was load-bearing, because _validate_iss does not
+    return early. The decode sites now pass require_aud/require_iss
+    explicitly; this asserts a token that simply omits `aud` fails, which it
+    would NOT have done before that change.
+    """
+    user = _admin(db_session, "omitted-aud@example.com")
+    db_session.commit()
+
+    from jose import jwt
+
+    from app.config import settings
+
+    forged = jwt.encode(
+        {
+            "sub": str(user.id),
+            "role": user.role.value,
+            "purpose": ACCESS_TOKEN_PURPOSE,
+            # aud deliberately absent; iss present and correct, so this token
+            # is rejected by the audience requirement or by nothing at all.
+            "iss": settings.jwt_issuer,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    resp = client.get(
+        "/api/v1/users/me", headers={"Authorization": f"Bearer {forged}"}
+    )
+    assert resp.status_code == 401
+
+
+def test_token_with_iss_omitted_is_rejected(client, db_session):
+    user = _admin(db_session, "omitted-iss@example.com")
+    db_session.commit()
+
+    from jose import jwt
+
+    from app.config import settings
+
+    forged = jwt.encode(
+        {
+            "sub": str(user.id),
+            "role": user.role.value,
+            "purpose": ACCESS_TOKEN_PURPOSE,
+            "aud": settings.jwt_audience,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    resp = client.get(
+        "/api/v1/users/me", headers={"Authorization": f"Bearer {forged}"}
+    )
+    assert resp.status_code == 401
+
+
+def test_token_without_aud_or_iss_reads_as_anonymous_to_optional_auth(
+    client, db_session
+):
+    """get_optional_user swallows JWT errors and returns None, so a claim
+    regression there surfaces as a stale token being treated as *staff*
+    rather than as a 401. GET /slots/ with no event_id dumps every slot for
+    staff and 404s for everyone else, so it separates the two in one call.
+    """
+    user = _admin(db_session, "omitted-optional@example.com")
+    db_session.commit()
+
+    from jose import jwt
+
+    from app.config import settings
+
+    legacy = jwt.encode(
+        {
+            "sub": str(user.id),
+            "role": user.role.value,
+            "purpose": ACCESS_TOKEN_PURPOSE,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    resp = client.get(
+        "/api/v1/slots/", headers={"Authorization": f"Bearer {legacy}"}
+    )
+    assert resp.status_code == 404, (
+        "a token with no aud/iss must not read as a staff caller"
+    )
+
+
+def test_token_with_wrong_issuer_is_rejected(client, db_session):
+    user = _admin(db_session, "wrong-iss@example.com")
+    db_session.commit()
+
+    from jose import jwt
+
+    from app.config import settings
+
+    forged = jwt.encode(
+        {
+            "sub": str(user.id),
+            "role": user.role.value,
+            "purpose": ACCESS_TOKEN_PURPOSE,
+            "aud": settings.jwt_audience,
+            "iss": "some-other-issuer",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+        },
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    resp = client.get(
+        "/api/v1/users/me", headers={"Authorization": f"Bearer {forged}"}
+    )
+    assert resp.status_code == 401
 
 
 def test_token_without_a_purpose_claim_fails_closed(client, db_session):

@@ -3,15 +3,10 @@
 // Streaming for POST /sessions/:id/messages is handled separately in
 // useCopilotStream.js because fetch + ReadableStream is more flexible
 // than the lib/api wrapper, which assumes JSON responses.
-import authStorage from "../lib/authStorage";
+import { authorizedFetch } from "../lib/authToken";
 import { API_BASE } from "../lib/apiBase";
 
 export const COPILOT_BASE = `${API_BASE}/copilot`;
-
-function authHeaders() {
-  const tok = authStorage.getToken();
-  return tok ? { Authorization: `Bearer ${tok}` } : {};
-}
 
 async function jsonOrThrow(res) {
   if (!res.ok) {
@@ -30,47 +25,40 @@ async function jsonOrThrow(res) {
 }
 
 export async function createSession() {
-  const res = await fetch(`${COPILOT_BASE}/sessions`, {
+  const res = await authorizedFetch(`${COPILOT_BASE}/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
   });
   return jsonOrThrow(res);
 }
 
 export async function listSessions() {
-  const res = await fetch(`${COPILOT_BASE}/sessions`, {
-    headers: authHeaders(),
-  });
+  const res = await authorizedFetch(`${COPILOT_BASE}/sessions`);
   return jsonOrThrow(res);
 }
 
 export async function getSession(sessionId) {
-  const res = await fetch(`${COPILOT_BASE}/sessions/${sessionId}`, {
-    headers: authHeaders(),
-  });
+  const res = await authorizedFetch(`${COPILOT_BASE}/sessions/${sessionId}`);
   return jsonOrThrow(res);
 }
 
 export async function confirmCall(callId, approved) {
-  const res = await fetch(`${COPILOT_BASE}/confirm/${callId}`, {
+  const res = await authorizedFetch(`${COPILOT_BASE}/confirm/${callId}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ approved }),
   });
   return jsonOrThrow(res);
 }
 
 export async function getProfile() {
-  const res = await fetch(`${COPILOT_BASE}/profile`, {
-    headers: authHeaders(),
-  });
+  const res = await authorizedFetch(`${COPILOT_BASE}/profile`);
   return jsonOrThrow(res);
 }
 
 export async function deleteProfile() {
-  const res = await fetch(`${COPILOT_BASE}/profile`, {
+  const res = await authorizedFetch(`${COPILOT_BASE}/profile`, {
     method: "DELETE",
-    headers: authHeaders(),
   });
   if (!res.ok && res.status !== 204) {
     const err = new Error(`HTTP ${res.status}`);

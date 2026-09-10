@@ -109,6 +109,21 @@ def client(db_session):
         finally:
             pass
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
+    # base_url is https, not TestClient's default http://testserver, so that
+    # cookie behaviour does not depend on the ambient ENVIRONMENT.
+    #
+    # Phase L3 put the refresh token in a cookie and marks the auth cookies
+    # Secure outside `development` (see _cookie_secure — it must not depend on
+    # reading the scheme through a proxy). httpx's cookie jar will not send a
+    # Secure cookie back over http, so under http:// the csrf cookie never
+    # returns and every CSRF-guarded route 403s. Locally that was invisible
+    # because backend/.env sets ENVIRONMENT=development; CI sets nothing, so
+    # it defaults to production and the whole auth suite went red there while
+    # passing on the developer's machine.
+    #
+    # https also matches how the app actually runs behind Caddy. Tests that
+    # need the plain-http branch build their own client — see
+    # tests/test_auth_cookies.py.
+    with TestClient(app, base_url="https://testserver") as c:
         yield c
     app.dependency_overrides.clear()

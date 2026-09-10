@@ -1,53 +1,53 @@
 // src/lib/authStorage.js
-// Token storage for UVSE — access token + refresh token
+// Phase L3: access token lives in memory only (never localStorage — an XSS
+// anywhere in the app could otherwise read it). It does not survive a page
+// reload; state/authContext.jsx re-derives it on boot via a silent
+// /auth/refresh call against the HttpOnly refresh cookie (see lib/api.js's
+// refreshAccessToken). The refresh token itself is never handled by JS at
+// all — the backend manages it entirely through that cookie — so this
+// module no longer has any refresh-token functions.
 
-const ACCESS_KEY = "uvse_access_token";
-const REFRESH_KEY = "uvse_refresh_token";
+// Legacy keys from before Phase L3. Every member of staff who used the old
+// build still has a real, server-valid refresh token sitting in
+// localStorage, and it would stay there indefinitely — which is precisely
+// the exposure this phase exists to close, left open for the people who
+// already have it. Clearing on module load means the first load of the new
+// build cleans the machine. Wrapped because localStorage throws outright in
+// some privacy modes, and failing here would take the whole app down.
+const LEGACY_KEYS = ["uvse_access_token", "uvse_refresh_token"];
+try {
+  for (const key of LEGACY_KEYS) localStorage.removeItem(key);
+} catch {
+  // No localStorage (private mode, blocked site data) — nothing to clean.
+}
+
+let accessToken = "";
 
 // -------------------------
 // Access token
 // -------------------------
 
 export function getToken() {
-  return localStorage.getItem(ACCESS_KEY) || "";
+  return accessToken;
 }
 
 export function setToken(token) {
   if (typeof token === "string" && token.length > 0) {
-    localStorage.setItem(ACCESS_KEY, token);
+    accessToken = token;
   }
 }
 
 export function clearToken() {
-  localStorage.removeItem(ACCESS_KEY);
-}
-
-// -------------------------
-// Refresh token
-// -------------------------
-
-export function getRefreshToken() {
-  return localStorage.getItem(REFRESH_KEY) || "";
-}
-
-export function setRefreshToken(token) {
-  if (typeof token === "string" && token.length > 0) {
-    localStorage.setItem(REFRESH_KEY, token);
-  }
-}
-
-export function clearRefreshToken() {
-  localStorage.removeItem(REFRESH_KEY);
+  accessToken = "";
 }
 
 // -------------------------
 // Combined helpers
 // -------------------------
 
-/** Clear ALL auth tokens (access + refresh). Use on logout or auth failure. */
+/** Clear all in-memory auth state. Use on logout or auth failure. */
 export function clearAll() {
   clearToken();
-  clearRefreshToken();
 }
 
 // Back-compat helpers (in case any older code still calls these)
@@ -57,21 +57,11 @@ export function getAccessToken() {
 export function setAccessToken(token) {
   setToken(token);
 }
-export function setTokens({ accessToken, refreshToken }) {
-  if (accessToken) setToken(accessToken);
-  if (refreshToken) setRefreshToken(refreshToken);
-}
-export function clearTokens() {
-  clearAll();
-}
 
 const authStorage = {
   getToken,
   setToken,
   clearToken,
-  getRefreshToken,
-  setRefreshToken,
-  clearRefreshToken,
   clearAll,
   getAccessToken,
   setAccessToken,
