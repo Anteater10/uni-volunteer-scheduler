@@ -57,6 +57,40 @@ def week_start(q: models.AcademicQuarter, week: int) -> date:
     return q.start_date + timedelta(weeks=week - 1)
 
 
+def resolve_week(
+    q: models.AcademicQuarter | None,
+    *,
+    display_week: int | None,
+    first_period: datetime | None,
+    first_orientation: datetime | None,
+    start_date: datetime | None,
+) -> int | None:
+    """Which "Week N" group a volunteer should find this event under.
+
+    Ordered by how directly each signal names the module's week:
+
+    1. ``display_week`` — the week the title states. Authoritative: an admin
+       wrote it, and it is the only signal that survives a module being taught
+       out of calendar order.
+    2. the first classroom session. Orientation is deliberately skipped here —
+       an orientation for the week 8 module is routinely held in week 2, which
+       is the whole reason the calendar date is the wrong answer.
+    3. the orientation, but only when no classroom session is scheduled yet.
+    4. the event's own ``start_date``, for an event carrying no slots at all.
+
+    Returns None when no quarter covers the event, which lists it under
+    "Unscheduled" rather than guessing a week.
+    """
+    if display_week is not None:
+        return display_week
+    if q is None:
+        return None
+    for moment in (first_period, first_orientation, start_date):
+        if moment is not None:
+            return week_number_for(q, moment.date())
+    return None
+
+
 def display_name(q: models.AcademicQuarter) -> str:
     return q.display_name
 

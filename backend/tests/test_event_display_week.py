@@ -156,10 +156,15 @@ class TestPublicListGroupsByTheTitlesWeek:
             "Week 8 - Germs - LaCumbre",
         ]
 
-    def test_titles_stating_no_week_fall_back_to_the_calendar_week(
+    def test_a_title_stating_no_week_leaves_display_week_unset(
         self, client, db_session
     ):
-        """Legacy names predating SCRUM-154 keep their old ordering."""
+        """A legacy name yields no display_week, and is still listed.
+
+        Which week such an event then lands under is the fallback chain's
+        business, not the title parser's — see
+        tests/test_week_fallback_from_sessions.py.
+        """
         quarter = _make_quarter(db_session)
         _make_event(
             db_session,
@@ -177,8 +182,8 @@ class TestPublicListGroupsByTheTitlesWeek:
 
         resp = client.get(f"/api/v1/public/events?quarter_id={quarter.id}")
         assert resp.status_code == 200, resp.text
-        body = resp.json()
+        by_title = {e["title"]: e for e in resp.json()}
 
-        assert [e["title"] for e in body] == ["SciTrek Event", "Week 5 - Germs - GVJH"]
-        assert body[0]["display_week"] is None
-        assert body[0]["week_number"] == 1
+        assert set(by_title) == {"SciTrek Event", "Week 5 - Germs - GVJH"}
+        assert by_title["SciTrek Event"]["display_week"] is None
+        assert by_title["Week 5 - Germs - GVJH"]["display_week"] == 5

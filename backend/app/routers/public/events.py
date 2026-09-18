@@ -102,10 +102,79 @@ def _school_branch_by_slug(
     return {slug: branch for slug, branch in rows}
 
 
+def _earliest_slot_by_event(
+    db: Session, events: list[models.Event]
+) -> dict[UUID, dict[models.SlotType, datetime]]:
+    """Map event_id -> {slot_type: earliest start_time}, in one query.
+
+    Same N+1 reasoning as _school_branch_by_slug above: the week each event is
+    filed under depends on when its first session runs, and asking per event
+    would be a query per card on the browse page.
+    """
+    if not events:
+        return {}
+    rows = (
+        db.query(
+            models.Slot.event_id,
+            models.Slot.slot_type,
+            func.min(models.Slot.start_time),
+        )
+        .filter(models.Slot.event_id.in_([e.id for e in events]))
+        .group_by(models.Slot.event_id, models.Slot.slot_type)
+        .all()
+    )
+    earliest: dict[UUID, dict[models.SlotType, datetime]] = {}
+    for event_id, slot_type, first_start in rows:
+        earliest.setdefault(event_id, {})[slot_type] = first_start
+    return earliest
+
+
+def _quarters_by_id(
+    db: Session, events: list[models.Event]
+) -> dict[UUID, models.AcademicQuarter]:
+    """Load every quarter the given events belong to, in one query.
+
+    The legacy quarter+year filter can return events from more than one row
+    (summer sessions A and B share a season), so this cannot assume one.
+    """
+    ids = {e.quarter_id for e in events if e.quarter_id}
+    if not ids:
+        return {}
+    rows = (
+        db.query(models.AcademicQuarter)
+        .filter(models.AcademicQuarter.id.in_(ids))
+        .all()
+    )
+    return {q.id: q for q in rows}
+
+
+def _effective_weeks(
+    db: Session, events: list[models.Event]
+) -> dict[UUID, int | None]:
+    """Map event_id -> the week each event should be listed under.
+
+    One place for the chain so the list and detail routes cannot drift apart.
+    """
+    earliest = _earliest_slot_by_event(db, events)
+    quarters = _quarters_by_id(db, events)
+    resolved: dict[UUID, int | None] = {}
+    for e in events:
+        by_type = earliest.get(e.id, {})
+        resolved[e.id] = quarter_service.resolve_week(
+            quarters.get(e.quarter_id),
+            display_week=e.display_week,
+            first_period=by_type.get(models.SlotType.PERIOD),
+            first_orientation=by_type.get(models.SlotType.ORIENTATION),
+            start_date=e.start_date,
+        )
+    return resolved
+
+
 def _build_event_response(
     db: Session,
     event: models.Event,
     school_branch: models.SchoolBranch | None = None,
+    effective_week: int | None = None,
 ) -> schemas.PublicEventRead:
     """Build a PublicEventRead for the given event, with slots and shifts hydrated.
 
@@ -188,6 +257,7 @@ def _build_event_response(
         year=event.year,
         week_number=event.week_number,
         display_week=event.display_week,
+        effective_week=effective_week,
         quarter_id=event.quarter_id,
         school=event.school,
         module_slug=event.module_slug,
@@ -285,20 +355,11 @@ def list_events(
     # event is named "Week N - Module - School", so week is the axis they
     # already read off the title. School survives as a per-card label.
     #
-    # Order by the week the title states (display_week), not the week the date
-    # falls in (week_number): an orientation for the week 8 module is routinely
-    # scheduled to run during week 2, and volunteers need it under week 8.
-    # week_number is the fallback for titles that state no week at all (legacy
-    # names predating SCRUM-154), which is what this sorted by before.
-    # NULLS LAST keeps week-less events after the numbered ones instead of at
-    # the top, matching the trailing "Unscheduled" group the browse page
-    # renders them into.
-    events = q.order_by(
-        func.coalesce(models.Event.display_week, models.Event.week_number)
-        .asc()
-        .nullslast(),
-        models.Event.start_date,
-    ).all()
+    # Ordering is applied below rather than here: the week an event belongs to
+    # is resolved through quarter_service.resolve_week, which falls through to
+    # the event's first classroom session, and that lives in slot rows this
+    # query does not join. See _effective_weeks.
+    events = q.order_by(models.Event.start_date).all()
 
     # Phase 29 (HIDE-01): optionally hide events whose last slot end is in
     # the past. Uses slot end, not event date — an event "ends" when its
@@ -316,9 +377,16 @@ def list_events(
         events = visible
 
     branch_by_slug = _school_branch_by_slug(db, events)
+    weeks = _effective_weeks(db, events)
+    # None sorts last, matching the trailing "Unscheduled" group the browse
+    # page renders week-less events into. start_date breaks ties within a week.
+    events.sort(key=lambda e: (weeks[e.id] is None, weeks[e.id] or 0, e.start_date))
     return [
         _build_event_response(
-            db, e, school_branch=branch_by_slug.get(e.module_slug)
+            db,
+            e,
+            school_branch=branch_by_slug.get(e.module_slug),
+            effective_week=weeks[e.id],
         )
         for e in events
     ]
@@ -332,7 +400,9 @@ def list_events(
 def get_event(event_id: UUID, db: Session = Depends(get_db)):
     """Get a single event by ID with slots and current filled/capacity counts."""
     event = _get_visible_event_or_404(db, event_id)
-    return _build_event_response(db, event)
+    return _build_event_response(
+        db, event, effective_week=_effective_weeks(db, [event])[event.id]
+    )
 
 
 @router.get(
