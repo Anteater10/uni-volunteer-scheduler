@@ -596,6 +596,7 @@ def event_roster(
     ensure_event_staff_access(event, actor)
 
     rows = []
+    volunteer_ids = set()
     slots_sorted = sorted(event.slots, key=lambda s: s.start_time)
 
     status_order = {
@@ -625,6 +626,8 @@ def event_roster(
         for signup in signups_sorted:
             # Phase 09: signup.user removed; use signup.volunteer
             v = signup.volunteer
+            if v:
+                volunteer_ids.add(v.id)
             answers = {ans.question.prompt: ans.value for ans in signup.answers}
 
             # Phase 22: join form responses (SignupResponse rows).
@@ -658,6 +661,16 @@ def event_roster(
                     "responses": decorated_responses,
                 }
             )
+
+    # One grouped query after the loop, not a count per row: the roster fans
+    # out to one row per (volunteer, session), so the same few volunteers would
+    # otherwise be counted over and over.
+    no_shows = {
+        str(vid): count
+        for vid, count in attendance_facts.no_show_counts(db, volunteer_ids).items()
+    }
+    for row in rows:
+        row["no_show_count"] = no_shows.get(row["volunteer_id"], 0)
 
     log_action(db, actor, "admin_event_roster", "Event", str(event.id))
     # Committed explicitly. ``log_action`` only stages the row and this
@@ -1743,14 +1756,12 @@ def export_audit_logs_csv(
 # =========================
 
 
-@router.get("/analytics/volunteer-hours", response_model=List[schemas.VolunteerHoursRow])
-def analytics_volunteer_hours(
-    from_date: datetime | None = Query(None),
-    to_date: datetime | None = Query(None),
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_admin),
-):
-    """Volunteer hours grouped by volunteer, joining Signup -> Slot -> Event."""
+def _volunteer_hours_rows(db: Session, from_date, to_date) -> list[dict]:
+    """Attended hours per volunteer, plus which modules those hours came from.
+
+    Shared by the JSON and CSV endpoints so a grant report can never disagree
+    with the table it was read off.
+    """
     # See services/attendance_facts: one row per (volunteer, slot) with an
     # effective status, so this report doesn't care whether the booking was an
     # orientation signup or a session inside a shift.
@@ -1763,34 +1774,50 @@ def analytics_volunteer_hours(
         .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
         .filter(af.c.status == models.SignupStatus.attended)
     )
-    if from_date:
-        query = query.filter(models.Event.start_date >= from_date)
-    if to_date:
-        query = query.filter(models.Event.start_date <= to_date)
-
+    query = _apply_date_filter(query, from_date, to_date)
     rows = query.all()
 
-    # Aggregate by volunteer_id
     from collections import defaultdict
-    vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
+
+    events_by_id = {event.id: event for _, _, event, _ in rows}
+    module_labels = _module_labels(db, events_by_id.values())
+
+    vol_hours: dict = defaultdict(
+        lambda: {"hours": 0.0, "event_ids": set(), "modules": set(), "volunteer": None}
+    )
     for status, slot, event, volunteer in rows:
-        key = volunteer.id
-        duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
-        vol_hours[key]["hours"] += duration_hours
-        vol_hours[key]["event_ids"].add(event.id)
-        vol_hours[key]["volunteer"] = volunteer
+        data = vol_hours[volunteer.id]
+        data["hours"] += (slot.end_time - slot.start_time).total_seconds() / 3600.0
+        data["event_ids"].add(event.id)
+        data["modules"].add(module_labels[event.id])
+        data["volunteer"] = volunteer
 
     result = []
-    for vol_id, data in vol_hours.items():
+    for data in vol_hours.values():
         v = data["volunteer"]
-        result.append(schemas.VolunteerHoursRow(
-            volunteer_id=v.id,
-            volunteer_name=f"{v.first_name} {v.last_name}",
-            email=v.email,
-            hours=round(data["hours"], 2),
-            events=len(data["event_ids"]),
-        ))
+        result.append({
+            "volunteer_id": v.id,
+            "volunteer_name": f"{v.first_name} {v.last_name}",
+            "email": v.email,
+            "hours": round(data["hours"], 2),
+            "events": len(data["event_ids"]),
+            "modules": ", ".join(sorted(data["modules"])),
+        })
+    return result
 
+
+@router.get("/analytics/volunteer-hours", response_model=List[schemas.VolunteerHoursRow])
+def analytics_volunteer_hours(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_admin),
+):
+    """Volunteer hours grouped by volunteer, with the modules they worked."""
+    result = [
+        schemas.VolunteerHoursRow(**row)
+        for row in _volunteer_hours_rows(db, from_date, to_date)
+    ]
     log_action(db, admin_user, "admin_analytics_volunteer_hours", "Analytics", None)
     db.commit()
     return result
@@ -1811,19 +1838,30 @@ def analytics_attendance_rates(
         query = query.filter(models.Event.start_date <= to_date)
 
     events = query.distinct().all()
+
+    # Turning up is per session, so this counts sessions, exactly like the
+    # no-show report sitting next to it on the Exports page. Reading it off
+    # ``Signup`` alone saw only orientations, so a shift-run module showed a
+    # 0% attendance rate while its own no-show rate read correctly — the two
+    # cards contradicted each other on the same screen.
+    from collections import defaultdict
+
+    af = attendance_facts.facts()
+    per_event: dict = defaultdict(lambda: defaultdict(int))
+    for event_id, status, count in (
+        db.query(af.c.event_id, af.c.status, func.count())
+        .select_from(af)
+        .group_by(af.c.event_id, af.c.status)
+        .all()
+    ):
+        per_event[event_id][status] += count
+
     result = []
     for event in events:
-        slot_ids = [s.id for s in event.slots]
-        if not slot_ids:
-            continue
-        signups = (
-            db.query(models.Signup)
-            .filter(models.Signup.slot_id.in_(slot_ids))
-            .all()
-        )
-        confirmed = sum(1 for s in signups if s.status == models.SignupStatus.confirmed)
-        attended = sum(1 for s in signups if s.status == models.SignupStatus.attended)
-        no_show = sum(1 for s in signups if s.status == models.SignupStatus.no_show)
+        status_counts = per_event.get(event.id, {})
+        confirmed = status_counts.get(models.SignupStatus.confirmed, 0)
+        attended = status_counts.get(models.SignupStatus.attended, 0)
+        no_show = status_counts.get(models.SignupStatus.no_show, 0)
         denom = confirmed + attended + no_show
         rate = (attended / denom) if denom > 0 else 0.0
 
@@ -1842,6 +1880,68 @@ def analytics_attendance_rates(
     return result
 
 
+def _no_show_rate_rows(db: Session, from_date, to_date) -> list[dict]:
+    """Sessions attended vs no-showed, per volunteer.
+
+    Counted in SQL rather than in Python, which is not a tidy-up: the old loop
+    selected ``(status, Volunteer)`` rows and tallied them, and a legacy
+    ``Query`` carrying a whole ORM entity hands back *distinct* tuples. Sixteen
+    sessions arrived as four rows. Every volunteer who had ever missed anything
+    reported exactly one no-show, and the rate could only come out 0%, 50% or
+    100% — a number that looked plausible on every screen it appeared on.
+
+    See services/attendance_facts: one row per (volunteer, slot) with an
+    effective status, so this doesn't care whether the booking was an
+    orientation signup or a session inside a shift.
+    """
+    from collections import defaultdict
+
+    af = attendance_facts.facts()
+    query = (
+        db.query(af.c.volunteer_id, af.c.status, func.count())
+        .select_from(af)
+        .join(models.Slot, models.Slot.id == af.c.slot_id)
+        .join(models.Event, models.Event.id == af.c.event_id)
+        .filter(af.c.status.in_([
+            models.SignupStatus.attended,
+            models.SignupStatus.no_show,
+        ]))
+        .group_by(af.c.volunteer_id, af.c.status)
+    )
+    query = _apply_date_filter(query, from_date, to_date)
+
+    counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0})
+    for volunteer_id, status, count in query.all():
+        bucket = "attended" if status == models.SignupStatus.attended else "no_show"
+        counts[volunteer_id][bucket] += count
+    if not counts:
+        return []
+
+    volunteers = {
+        v.id: v
+        for v in db.query(models.Volunteer)
+        .filter(models.Volunteer.id.in_(counts.keys()))
+        .all()
+    }
+
+    result = []
+    for volunteer_id, data in counts.items():
+        attended, no_show = data["attended"], data["no_show"]
+        denom = attended + no_show
+        v = volunteers.get(volunteer_id)
+        if denom == 0 or v is None:
+            continue
+        result.append({
+            "volunteer_id": v.id,
+            "volunteer_name": f"{v.first_name} {v.last_name}",
+            "email": v.email,
+            "attended": attended,
+            "no_show": no_show,
+            "rate": round(no_show / denom, 4),
+        })
+    return result
+
+
 @router.get("/analytics/no-show-rates", response_model=List[schemas.NoShowRateRow])
 def analytics_no_show_rates(
     from_date: datetime | None = Query(None),
@@ -1849,54 +1949,16 @@ def analytics_no_show_rates(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_admin),
 ):
-    """No-show rate per volunteer, joining Signup -> Slot -> Event."""
-    # See services/attendance_facts: one row per (volunteer, slot) with an
-    # effective status, so this report doesn't care whether the booking was an
-    # orientation signup or a session inside a shift.
-    af = attendance_facts.facts()
-    query = (
-        db.query(af.c.status, models.Volunteer)
-        .select_from(af)
-        .join(models.Slot, models.Slot.id == af.c.slot_id)
-        .join(models.Event, models.Event.id == af.c.event_id)
-        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
-        .filter(af.c.status.in_([
-            models.SignupStatus.attended,
-            models.SignupStatus.no_show,
-        ]))
-    )
-    if from_date:
-        query = query.filter(models.Event.start_date >= from_date)
-    if to_date:
-        query = query.filter(models.Event.start_date <= to_date)
-
-    rows = query.all()
-
-    from collections import defaultdict
-    vol_counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
-    for status, volunteer in rows:
-        key = volunteer.id
-        if status == models.SignupStatus.attended:
-            vol_counts[key]["attended"] += 1
-        elif status == models.SignupStatus.no_show:
-            vol_counts[key]["no_show"] += 1
-        vol_counts[key]["volunteer"] = volunteer
-
-    result = []
-    for vol_id, data in vol_counts.items():
-        attended = data["attended"]
-        no_show = data["no_show"]
-        denom = attended + no_show
-        if denom == 0:
-            continue
-        v = data["volunteer"]
-        result.append(schemas.NoShowRateRow(
-            volunteer_id=v.id,
-            volunteer_name=f"{v.first_name} {v.last_name}",
-            rate=round(no_show / denom, 4),
-            count=no_show,
-        ))
-
+    """No-show rate per volunteer, across orientations and shift sessions."""
+    result = [
+        schemas.NoShowRateRow(
+            volunteer_id=row["volunteer_id"],
+            volunteer_name=row["volunteer_name"],
+            rate=row["rate"],
+            count=row["no_show"],
+        )
+        for row in _no_show_rate_rows(db, from_date, to_date)
+    ]
     log_action(db, admin_user, "admin_analytics_no_show_rates", "Analytics", None)
     db.commit()
     return result
@@ -1948,45 +2010,17 @@ def export_volunteer_hours_csv(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_admin),
 ):
-    """Volunteer hours as CSV, joining Signup -> Slot -> Event -> Volunteer."""
-    # See services/attendance_facts: one row per (volunteer, slot) with an
-    # effective status, so this report doesn't care whether the booking was an
-    # orientation signup or a session inside a shift.
-    af = attendance_facts.facts()
-    query = (
-        db.query(af.c.status, models.Slot, models.Event, models.Volunteer)
-        .select_from(af)
-        .join(models.Slot, models.Slot.id == af.c.slot_id)
-        .join(models.Event, models.Event.id == af.c.event_id)
-        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
-        .filter(af.c.status == models.SignupStatus.attended)
-    )
-    if from_date:
-        query = query.filter(models.Event.start_date >= from_date)
-    if to_date:
-        query = query.filter(models.Event.start_date <= to_date)
-
-    rows = query.all()
-
-    from collections import defaultdict
-    vol_hours: dict = defaultdict(lambda: {"hours": 0.0, "event_ids": set(), "volunteer": None})
-    for status, slot, event, volunteer in rows:
-        key = volunteer.id
-        duration_hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
-        vol_hours[key]["hours"] += duration_hours
-        vol_hours[key]["event_ids"].add(event.id)
-        vol_hours[key]["volunteer"] = volunteer
-
+    """Volunteer hours as CSV, with the modules each volunteer's hours came from."""
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["volunteer_name", "email", "hours", "events"])
-    for vol_id, data in vol_hours.items():
-        v = data["volunteer"]
+    writer.writerow(["volunteer_name", "email", "hours", "events", "modules"])
+    for row in _volunteer_hours_rows(db, from_date, to_date):
         writer.writerow([
-            f"{v.first_name} {v.last_name}",
-            v.email,
-            round(data["hours"], 2),
-            len(data["event_ids"]),
+            _csv_safe(row["volunteer_name"]),
+            _csv_safe(row["email"]),
+            row["hours"],
+            row["events"],
+            _csv_safe(row["modules"]),
         ])
 
     log_action(db, admin_user, "admin_analytics_volunteer_hours_csv", "Analytics", None)
@@ -2056,55 +2090,17 @@ def export_no_show_rates_csv(
     admin_user: models.User = Depends(require_admin),
 ):
     """No-show-rate-per-volunteer CSV (mirrors /analytics/no-show-rates JSON)."""
-    # See services/attendance_facts: one row per (volunteer, slot) with an
-    # effective status, so this report doesn't care whether the booking was an
-    # orientation signup or a session inside a shift.
-    af = attendance_facts.facts()
-    query = (
-        db.query(af.c.status, models.Volunteer)
-        .select_from(af)
-        .join(models.Slot, models.Slot.id == af.c.slot_id)
-        .join(models.Event, models.Event.id == af.c.event_id)
-        .join(models.Volunteer, models.Volunteer.id == af.c.volunteer_id)
-        .filter(
-            af.c.status.in_(
-                [models.SignupStatus.attended, models.SignupStatus.no_show]
-            )
-        )
-    )
-    if from_date:
-        query = query.filter(models.Event.start_date >= from_date)
-    if to_date:
-        query = query.filter(models.Event.start_date <= to_date)
-    rows = query.all()
-
-    from collections import defaultdict
-    counts: dict = defaultdict(lambda: {"attended": 0, "no_show": 0, "volunteer": None})
-    for status, volunteer in rows:
-        key = volunteer.id
-        if status == models.SignupStatus.attended:
-            counts[key]["attended"] += 1
-        elif status == models.SignupStatus.no_show:
-            counts[key]["no_show"] += 1
-        counts[key]["volunteer"] = volunteer
-
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Volunteer", "Email", "Attended", "No Show", "No-Show Rate"])
-    for _, data in counts.items():
-        attended = data["attended"]
-        no_show = data["no_show"]
-        denom = attended + no_show
-        if denom == 0:
-            continue
-        v = data["volunteer"]
+    for row in _no_show_rate_rows(db, from_date, to_date):
         writer.writerow(
             [
-                _csv_safe(f"{v.first_name} {v.last_name}"),
-                _csv_safe(v.email),
-                attended,
-                no_show,
-                f"{(no_show / denom):.2%}",
+                _csv_safe(row["volunteer_name"]),
+                _csv_safe(row["email"]),
+                row["attended"],
+                row["no_show"],
+                f"{row['rate']:.2%}",
             ]
         )
 
@@ -2117,6 +2113,88 @@ def export_no_show_rates_csv(
 # =========================
 # ADMIN ANALYTICS — extended reports (Phase 18 Plan 03)
 # =========================
+
+
+NO_MODULE_LABEL = "(no module)"
+
+
+def _module_labels(db: Session, events) -> dict:
+    """Map ``event.id -> module display name`` for a batch of events.
+
+    ``Event.module_slug`` is a plain string, not a foreign key (D-07), so it
+    can name a module that was renamed or never existed. Those used to render
+    as the bare slug, indistinguishable from a real module name — an admin had
+    no way to tell a module from a broken link. They are labelled as unknown
+    instead, so the reports say what is actually in the data.
+    """
+    slugs = {e.module_slug for e in events if e.module_slug}
+    names = {}
+    if slugs:
+        names = {
+            m.slug: m.name
+            for m in db.query(models.Module).filter(models.Module.slug.in_(slugs)).all()
+        }
+    labels = {}
+    for event in events:
+        slug = event.module_slug
+        if not slug:
+            labels[event.id] = NO_MODULE_LABEL
+        else:
+            labels[event.id] = names.get(slug, f"(unknown module: {slug})")
+    return labels
+
+
+def _event_capacity(event) -> int:
+    """Seats an event actually offers.
+
+    Capacity lives in two places: an orientation slot carries its own, while a
+    shift's session slots carry a placeholder 1 each and the real limit sits on
+    the Shift, because the shift is what a volunteer books. Same rule as the
+    event summary card — see ``event_analytics``.
+    """
+    return sum(s.capacity or 0 for s in event.slots if s.shift_id is None) + sum(
+        sh.capacity or 0 for sh in event.shifts
+    )
+
+
+def _booking_counts_by_event(db: Session) -> dict:
+    """Map ``event_id -> {status: bookings}``, counting both kinds of booking.
+
+    One row per booking, not per session: somebody who books a three-day shift
+    holds one seat and made one signup, not three. That is why the seat-shaped
+    reports can't read this off attendance_facts, which deliberately fans out
+    to one row per session for the hours and attendance questions.
+
+    These counts were a direct ``Signup`` query, which predates the 2026-08-02
+    shift split and so saw nobody at all on a module that runs as a shift —
+    the same blind spot already fixed on the event summary card.
+    """
+    from collections import defaultdict
+
+    counts: dict = defaultdict(lambda: defaultdict(int))
+    orientation = (
+        db.query(models.Slot.event_id, models.Signup.status, func.count(models.Signup.id))
+        .join(models.Signup, models.Signup.slot_id == models.Slot.id)
+        .group_by(models.Slot.event_id, models.Signup.status)
+        .all()
+    )
+    shifts = (
+        db.query(
+            models.Shift.event_id,
+            models.ShiftSignup.status,
+            func.count(models.ShiftSignup.id),
+        )
+        .join(models.ShiftSignup, models.ShiftSignup.shift_id == models.Shift.id)
+        .group_by(models.Shift.event_id, models.ShiftSignup.status)
+        .all()
+    )
+    for event_id, status, count in list(orientation) + list(shifts):
+        counts[event_id][status] += count
+    return counts
+
+
+def _seats_held(status_counts: dict) -> int:
+    return sum(status_counts.get(s, 0) for s in attendance_facts.SEAT_HOLDING_STATUSES)
 
 
 def _apply_date_filter(query, from_date, to_date):
@@ -2137,29 +2215,18 @@ def analytics_event_fill_rates(
     """Per-event: total capacity across slots, seats filled, % filled."""
     q = _apply_date_filter(db.query(models.Event), from_date, to_date)
     events = q.all()
+    bookings = _booking_counts_by_event(db)
+    module_labels = _module_labels(db, events)
     result = []
     for event in events:
-        slot_ids = [s.id for s in event.slots]
-        capacity = sum((s.capacity or 0) for s in event.slots)
+        capacity = _event_capacity(event)
         if capacity == 0:
             continue
-        filled = 0
-        if slot_ids:
-            filled = (
-                db.query(models.Signup)
-                .filter(
-                    models.Signup.slot_id.in_(slot_ids),
-                    models.Signup.status.in_([
-                        models.SignupStatus.confirmed,
-                        models.SignupStatus.checked_in,
-                        models.SignupStatus.attended,
-                    ]),
-                )
-                .count()
-            )
+        filled = _seats_held(bookings.get(event.id, {}))
         result.append({
             "event_id": str(event.id),
             "name": event.title,
+            "module": module_labels[event.id],
             "school": event.school or event.location or "",
             "capacity": capacity,
             "filled": filled,
@@ -2180,9 +2247,16 @@ def export_event_fill_rates_csv(
     rows = analytics_event_fill_rates(from_date, to_date, db, admin_user)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Event", "School", "Capacity", "Filled", "Fill Rate"])
+    writer.writerow(["Event", "Module", "School", "Capacity", "Filled", "Fill Rate"])
     for r in rows:
-        writer.writerow([_csv_safe(r["name"]), _csv_safe(r["school"]), r["capacity"], r["filled"], f"{r['rate']:.2%}"])
+        writer.writerow([
+            _csv_safe(r["name"]),
+            _csv_safe(r["module"]),
+            _csv_safe(r["school"]),
+            r["capacity"],
+            r["filled"],
+            f"{r['rate']:.2%}",
+        ])
     return Response(
         content=output.getvalue(),
         media_type="text/csv",
@@ -2197,7 +2271,13 @@ def analytics_hours_by_school(
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_admin),
 ):
-    """Total attended volunteer hours grouped by partner school."""
+    """Total attended volunteer hours grouped by partner school and module.
+
+    Module is a second grouping key rather than an extra column: a school hosts
+    several modules over a quarter, so one row per school could only ever list
+    them, never say how the hours split between them. Totalling a school still
+    works — sum its rows.
+    """
     # See services/attendance_facts: one row per (volunteer, slot) with an
     # effective status, so this report doesn't care whether the booking was an
     # orientation signup or a session inside a shift.
@@ -2210,24 +2290,29 @@ def analytics_hours_by_school(
         .filter(af.c.status == models.SignupStatus.attended)
     )
     q = _apply_date_filter(q, from_date, to_date)
+    rows = q.all()
 
     from collections import defaultdict
-    by_school: dict = defaultdict(lambda: {"hours": 0.0, "events": set(), "volunteers": set()})
-    for volunteer_id, slot, event in q.all():
+
+    module_labels = _module_labels(db, {event.id: event for _, _, event in rows}.values())
+    by_group: dict = defaultdict(lambda: {"hours": 0.0, "events": set(), "volunteers": set()})
+    for volunteer_id, slot, event in rows:
         school = event.school or event.location or "(unspecified)"
+        key = (school, module_labels[event.id])
         hours = (slot.end_time - slot.start_time).total_seconds() / 3600.0
-        by_school[school]["hours"] += hours
-        by_school[school]["events"].add(event.id)
-        by_school[school]["volunteers"].add(volunteer_id)
+        by_group[key]["hours"] += hours
+        by_group[key]["events"].add(event.id)
+        by_group[key]["volunteers"].add(volunteer_id)
 
     result = [
         {
             "school": school,
+            "module": module,
             "hours": round(data["hours"], 2),
             "events": len(data["events"]),
             "volunteers": len(data["volunteers"]),
         }
-        for school, data in sorted(by_school.items(), key=lambda kv: -kv[1]["hours"])
+        for (school, module), data in sorted(by_group.items(), key=lambda kv: -kv[1]["hours"])
     ]
     log_action(db, admin_user, "admin_analytics_hours_by_school", "Analytics", None)
     db.commit()
@@ -2244,9 +2329,15 @@ def export_hours_by_school_csv(
     rows = analytics_hours_by_school(from_date, to_date, db, admin_user)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["School", "Hours", "Events", "Unique Volunteers"])
+    writer.writerow(["School", "Module", "Hours", "Events", "Unique Volunteers"])
     for r in rows:
-        writer.writerow([_csv_safe(r["school"]), r["hours"], r["events"], r["volunteers"]])
+        writer.writerow([
+            _csv_safe(r["school"]),
+            _csv_safe(r["module"]),
+            r["hours"],
+            r["events"],
+            r["volunteers"],
+        ])
     return Response(
         content=output.getvalue(),
         media_type="text/csv",
@@ -2323,14 +2414,14 @@ def analytics_cancellation_rates(
     """Per event: signups made vs cancelled, % cancelled."""
     q = _apply_date_filter(db.query(models.Event), from_date, to_date)
     events = q.all()
+
+    bookings = _booking_counts_by_event(db)
+
     result = []
     for event in events:
-        slot_ids = [s.id for s in event.slots]
-        if not slot_ids:
-            continue
-        signups = db.query(models.Signup).filter(models.Signup.slot_id.in_(slot_ids)).all()
-        total = len(signups)
-        cancelled = sum(1 for s in signups if s.status == models.SignupStatus.cancelled)
+        status_counts = bookings.get(event.id, {})
+        total = sum(status_counts.values())
+        cancelled = status_counts.get(models.SignupStatus.cancelled, 0)
         if total == 0:
             continue
         result.append({
@@ -2375,40 +2466,24 @@ def analytics_module_popularity(
     """Per module: how many events scheduled, how many signups, fill rate."""
     q = _apply_date_filter(db.query(models.Event), from_date, to_date)
     events = q.all()
+    bookings = _booking_counts_by_event(db)
+    module_labels = _module_labels(db, events)
 
     from collections import defaultdict
-    by_mod: dict = defaultdict(lambda: {"events": 0, "capacity": 0, "filled": 0})
+    by_mod: dict = defaultdict(lambda: {"events": 0, "capacity": 0, "filled": 0, "slug": None})
     for event in events:
-        slug = event.module_slug or "(no module)"
-        by_mod[slug]["events"] += 1
-        slot_ids = [s.id for s in event.slots]
-        by_mod[slug]["capacity"] += sum((s.capacity or 0) for s in event.slots)
-        if slot_ids:
-            filled = (
-                db.query(models.Signup)
-                .filter(
-                    models.Signup.slot_id.in_(slot_ids),
-                    models.Signup.status.in_([
-                        models.SignupStatus.confirmed,
-                        models.SignupStatus.checked_in,
-                        models.SignupStatus.attended,
-                    ]),
-                )
-                .count()
-            )
-            by_mod[slug]["filled"] += filled
-
-    # Resolve slug → friendly name
-    slugs = [s for s in by_mod.keys() if s != "(no module)"]
-    templates = db.query(models.Module).filter(models.Module.slug.in_(slugs)).all()
-    name_by_slug = {t.slug: t.name for t in templates}
+        label = module_labels[event.id]
+        by_mod[label]["events"] += 1
+        by_mod[label]["slug"] = event.module_slug or NO_MODULE_LABEL
+        by_mod[label]["capacity"] += _event_capacity(event)
+        by_mod[label]["filled"] += _seats_held(bookings.get(event.id, {}))
 
     result = []
-    for slug, data in by_mod.items():
+    for label, data in by_mod.items():
         cap = data["capacity"]
         result.append({
-            "module_slug": slug,
-            "module_name": name_by_slug.get(slug, slug),
+            "module_slug": data["slug"],
+            "module_name": label,
             "events": data["events"],
             "capacity": cap,
             "filled": data["filled"],

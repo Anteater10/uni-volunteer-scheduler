@@ -19,6 +19,7 @@ id, for drill-through).
 Use `facts()` as a subquery/CTE. Writes must never go through here — it is a
 union, so it is read-only by construction.
 """
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 from uuid import UUID
 
@@ -83,6 +84,51 @@ def facts() -> Subquery:
     )
 
     return union_all(orientation, sessions).subquery("attendance_facts")
+
+
+# How far back a no-show still counts against someone. A flag that never
+# cleared would brand a volunteer for a bad fortnight years ago, in front of
+# the organizers checking them in today.
+NO_SHOW_WINDOW = timedelta(days=365)
+
+
+def no_show_counts(
+    db: Session,
+    volunteer_ids: Optional[Iterable[UUID]] = None,
+    *,
+    window: Optional[timedelta] = NO_SHOW_WINDOW,
+) -> dict[UUID, int]:
+    """Return ``{volunteer_id: shifts they no-showed}`` over the last ``window``.
+
+    Counts distinct ``booking_id``, not rows: missing all three days of one
+    shift is one broken commitment, not three. The roster flag this feeds is
+    meant to say "this has happened repeatedly", so a single missed multi-day
+    shift must not trip it.
+
+    Scoped by time, not by event — it answers "what is this volunteer's recent
+    record", not "what did they do here". Age is the missed session's start,
+    so a no-show ages out a year after it happened, not a year after the event
+    was created. ``window=None`` counts their whole history.
+
+    Volunteers with no no-shows are absent from the mapping — callers default
+    them to 0.
+    """
+    af = facts()
+    q = (
+        select(af.c.volunteer_id, func.count(distinct(af.c.booking_id)))
+        .select_from(af)
+        .where(af.c.status == SignupStatus.no_show)
+        .group_by(af.c.volunteer_id)
+    )
+    if window is not None:
+        cutoff = datetime.now(timezone.utc) - window
+        q = q.join(Slot, Slot.id == af.c.slot_id).where(Slot.start_time >= cutoff)
+    if volunteer_ids is not None:
+        ids = list(volunteer_ids)
+        if not ids:
+            return {}
+        q = q.where(af.c.volunteer_id.in_(ids))
+    return {volunteer_id: count for volunteer_id, count in db.execute(q).all()}
 
 
 def unique_volunteer_counts(

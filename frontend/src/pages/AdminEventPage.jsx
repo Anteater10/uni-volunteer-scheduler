@@ -21,6 +21,7 @@ import {
   QrCode,
   Settings,
 } from "lucide-react";
+import NoShowFlag from "../components/NoShowFlag";
 import FormFieldsDrawer from "../components/admin/FormFieldsDrawer";
 import EventSettingsModal from "../components/admin/EventSettingsModal";
 import DuplicateEventModal from "../components/admin/DuplicateEventModal";
@@ -849,7 +850,10 @@ export default function AdminEventPage() {
                         className="align-top transition-colors hover:bg-[var(--color-brand-soft)]/50"
                       >
                         <td className="px-4 py-2.5">
-                          <div className="font-medium">{name}</div>
+                          <div className="font-medium">
+                            {name}
+                            <NoShowFlag count={r.no_show_count} />
+                          </div>
                           {email && email !== name ? (
                             <div className="text-xs text-[var(--color-fg-muted)]">
                               {email}
