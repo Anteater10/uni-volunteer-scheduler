@@ -25,10 +25,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID, ExcludeConstraint
-from sqlalchemy.orm import backref, relationship
+from sqlalchemy.orm import backref, relationship, validates
 from pgvector.sqlalchemy import Vector
 
 from .database import Base
+from .event_title import week_from_title
 
 
 # -------------------------
@@ -329,11 +330,23 @@ class Event(Base):
     )
     year = Column(Integer, nullable=True)
     week_number = Column(Integer, nullable=True)
+    # The week the *title* claims, kept in sync by the validator below. Sibling
+    # of week_number, not a replacement: week_number is the calendar position
+    # derived from start_date, which is the wrong answer for an orientation
+    # that runs in week 2 for the week 8 module. Volunteer-facing grouping
+    # reads this; reports and copilot tools keep reading week_number.
+    display_week = Column(Integer, nullable=True)
     school = Column(String(255), nullable=True)
     quarter_id = Column(UUID(as_uuid=True), ForeignKey("quarters.id"), nullable=True)
 
     # Phase 22: per-event form schema override. NULL means "use template default".
     form_schema = Column(JSONB, nullable=True, server_default=None)
+
+    @validates("title")
+    def _sync_display_week(self, _key: str, title: str | None) -> str | None:
+        """Re-derive display_week on every title write, from any code path."""
+        self.display_week = week_from_title(title)
+        return title
 
     # Relationships
     owner = relationship("User", back_populates="events")

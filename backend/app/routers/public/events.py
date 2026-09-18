@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ... import models, schemas
@@ -187,6 +187,7 @@ def _build_event_response(
         quarter=event.quarter,
         year=event.year,
         week_number=event.week_number,
+        display_week=event.display_week,
         quarter_id=event.quarter_id,
         school=event.school,
         module_slug=event.module_slug,
@@ -283,11 +284,19 @@ def list_events(
     # SCRUM-154: volunteers browse a quarter by week, not by school — every
     # event is named "Week N - Module - School", so week is the axis they
     # already read off the title. School survives as a per-card label.
-    # NULLS LAST keeps week-less events (no linked quarter) after the
-    # numbered ones instead of at the top, matching the trailing
-    # "Unscheduled" group the browse page renders them into.
+    #
+    # Order by the week the title states (display_week), not the week the date
+    # falls in (week_number): an orientation for the week 8 module is routinely
+    # scheduled to run during week 2, and volunteers need it under week 8.
+    # week_number is the fallback for titles that state no week at all (legacy
+    # names predating SCRUM-154), which is what this sorted by before.
+    # NULLS LAST keeps week-less events after the numbered ones instead of at
+    # the top, matching the trailing "Unscheduled" group the browse page
+    # renders them into.
     events = q.order_by(
-        models.Event.week_number.asc().nullslast(),
+        func.coalesce(models.Event.display_week, models.Event.week_number)
+        .asc()
+        .nullslast(),
         models.Event.start_date,
     ).all()
 

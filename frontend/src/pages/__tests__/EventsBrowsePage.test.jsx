@@ -420,3 +420,79 @@ describe("EventsBrowsePage — ?only=orientation (K22)", () => {
     expect(screen.queryByText(/only events with an orientation session/i)).toBeNull();
   });
 });
+
+// The week heading follows display_week (what the title says), not
+// week_number (where the date falls). They diverge for orientations, which
+// run early for a later module's week.
+describe("EventsBrowsePage — week grouping follows the title's week", () => {
+  const baseEvent = {
+    quarter: "spring",
+    year: 2026,
+    school: "GVJH",
+    module_slug: "germs",
+    start_date: "2026-04-22T00:00:00",
+    end_date: "2026-04-22T00:00:00",
+    slots: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.public.getCurrentWeek.mockResolvedValue({ ...CURRENT_WEEK });
+    api.public.getQuarters.mockResolvedValue(QUARTERS);
+  });
+
+  it("files an early-running orientation under its module's week", async () => {
+    api.public.listEvents.mockResolvedValue([
+      {
+        ...baseEvent,
+        id: "evt-early",
+        title: "Week 8 - Germs - LaCumbre",
+        week_number: 2, // the calendar week it actually runs in
+        display_week: 8, // the module week its title claims
+      },
+    ]);
+
+    renderPage();
+
+    expect(
+      await screen.findByRole("heading", { name: "Week 8" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Week 2" })).toBeNull();
+  });
+
+  it("falls back to the calendar week for titles stating no week", async () => {
+    api.public.listEvents.mockResolvedValue([
+      {
+        ...baseEvent,
+        id: "evt-legacy",
+        title: "SciTrek Event",
+        week_number: 4,
+        display_week: null,
+      },
+    ]);
+
+    renderPage();
+
+    expect(
+      await screen.findByRole("heading", { name: "Week 4" }),
+    ).toBeInTheDocument();
+  });
+
+  it("still collects events with neither week into Unscheduled", async () => {
+    api.public.listEvents.mockResolvedValue([
+      {
+        ...baseEvent,
+        id: "evt-none",
+        title: "SciTrek Event",
+        week_number: null,
+        display_week: null,
+      },
+    ]);
+
+    renderPage();
+
+    expect(
+      await screen.findByRole("heading", { name: "Unscheduled" }),
+    ).toBeInTheDocument();
+  });
+});

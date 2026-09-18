@@ -351,6 +351,9 @@ class EventRead(ORMBase, EventBase):
     quarter: Optional[Quarter] = None
     year: Optional[int] = None
     week_number: Optional[int] = None
+    # Parsed from the title; the week volunteers see the event filed under.
+    # Read-only — the model derives it, so it is absent from EventCreate/Update.
+    display_week: Optional[int] = None
     quarter_id: Optional[UUID] = None
     created_at: Optional[datetime] = None
     # Set once every expected signup is resolved (attended/no_show); null
@@ -954,6 +957,9 @@ class PublicEventRead(BaseModel):
     quarter: Optional[Quarter] = None
     year: Optional[int] = None
     week_number: Optional[int] = None
+    # Parsed from the title; the week volunteers see the event filed under.
+    # Read-only — the model derives it, so it is absent from EventCreate/Update.
+    display_week: Optional[int] = None
     quarter_id: Optional[UUID] = None
     school: Optional[str] = None
     module_slug: Optional[str] = None
