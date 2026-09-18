@@ -138,13 +138,14 @@ export default function ExportsSection() {
         fetchFn={(p) => api.admin.analytics.volunteerHours(p)}
         csvFn={(p) => api.admin.analytics.volunteerHoursCsv(p)}
         queryKey="volunteerHours"
-        columns={["Volunteer", "Email", "Hours", "Events"]}
+        columns={["Volunteer", "Email", "Hours", "Events", "Modules"]}
         renderRow={(r) => (
           <>
             <td className="py-2 pr-3">{r.volunteer_name || r.email}</td>
             <td className="py-2 pr-3">{r.email}</td>
             <td className="py-2 pr-3">{r.hours}</td>
             <td className="py-2 pr-3">{r.events}</td>
+            <td className="py-2 pr-3">{r.modules}</td>
           </>
         )}
       />
@@ -192,10 +193,11 @@ export default function ExportsSection() {
         fetchFn={(p) => api.admin.analytics.eventFillRates(p)}
         csvFn={(p) => api.admin.analytics.eventFillRatesCsv(p)}
         queryKey="eventFillRates"
-        columns={["Event", "School", "Capacity", "Filled", "Fill Rate"]}
+        columns={["Event", "Module", "School", "Capacity", "Filled", "Fill Rate"]}
         renderRow={(r) => (
           <>
             <td className="py-2 pr-3">{r.name}</td>
+            <td className="py-2 pr-3">{r.module}</td>
             <td className="py-2 pr-3">{r.school}</td>
             <td className="py-2 pr-3">{r.capacity}</td>
             <td className="py-2 pr-3">{r.filled}</td>
@@ -208,14 +210,15 @@ export default function ExportsSection() {
 
       <AnalyticsPanel
         title="Hours by school"
-        explainer="Total attended hours split by partner high school. Drop this straight into partner or grant reports."
+        explainer="Total attended hours split by partner high school and module. Drop this straight into partner or grant reports."
         fetchFn={(p) => api.admin.analytics.hoursBySchool(p)}
         csvFn={(p) => api.admin.analytics.hoursBySchoolCsv(p)}
         queryKey="hoursBySchool"
-        columns={["School", "Hours", "Events", "Unique Volunteers"]}
+        columns={["School", "Module", "Hours", "Events", "Unique Volunteers"]}
         renderRow={(r) => (
           <>
             <td className="py-2 pr-3">{r.school}</td>
+            <td className="py-2 pr-3">{r.module}</td>
             <td className="py-2 pr-3">{r.hours}</td>
             <td className="py-2 pr-3">{r.events}</td>
             <td className="py-2 pr-3">{r.volunteers}</td>

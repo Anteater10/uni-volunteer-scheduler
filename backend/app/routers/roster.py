@@ -19,7 +19,7 @@ from ..models import (
     Volunteer,
 )
 from ..schemas import RosterResponse, RosterRow
-from ..services import session_attendance_service
+from ..services import attendance_facts, session_attendance_service
 
 router = APIRouter(tags=["roster"])
 
@@ -63,6 +63,11 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
         .all()
     )
 
+    # One grouped query for the whole roster rather than a count per row.
+    no_shows = attendance_facts.no_show_counts(
+        db, {s.volunteer_id for s in signups if s.volunteer_id}
+    )
+
     rows = []
     for s in signups:
         slot = db.get(Slot, s.slot_id)
@@ -73,6 +78,7 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
             RosterRow(
                 signup_id=s.id,
                 student_name=vol_name,
+                no_show_count=no_shows.get(s.volunteer_id, 0),
                 status=s.status,
                 slot_time=slot.start_time if slot else s.timestamp,
                 checked_in_at=s.checked_in_at,
@@ -132,6 +138,10 @@ def _session_rows(
         .all()
     )
 
+    no_shows = attendance_facts.no_show_counts(
+        db, {ss.volunteer_id for ss in shift_signups if ss.volunteer_id}
+    )
+
     rows: list[RosterRow] = []
     statuses: list[SignupStatus] = []
     for shift_signup in shift_signups:
@@ -152,6 +162,7 @@ def _session_rows(
                     shift_name=shift.name,
                     session_name=session.name,
                     student_name=vol_name,
+                    no_show_count=no_shows.get(shift_signup.volunteer_id, 0),
                     status=status,
                     slot_time=session.start_time,
                     checked_in_at=record.checked_in_at if record else None,

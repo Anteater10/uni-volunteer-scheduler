@@ -10,7 +10,13 @@ vi.mock("../AdminLayout", () => ({
 
 // Mock api — the three read fns and three csv fns.
 const volunteerHours = vi.fn(async () => [
-  { volunteer_name: "Alice", email: "alice@ucsb.edu", hours: 4, events: 2 },
+  {
+    volunteer_name: "Alice",
+    email: "alice@ucsb.edu",
+    hours: 4,
+    events: 2,
+    modules: "Density, Waves and Sound",
+  },
 ]);
 const attendanceRates = vi.fn(async () => [
   { name: "Intro Physics", confirmed: 10, attended: 8, no_show: 2, rate: 0.8 },
@@ -119,6 +125,20 @@ describe("ExportsSection", () => {
     expect(
       container.querySelectorAll('input[type="datetime-local"]'),
     ).toHaveLength(0);
+  });
+
+  // Grant reports are written per programme, so hours have to say which
+  // module they came from — an event title alone doesn't answer that.
+  it("says which modules a volunteer's hours came from", async () => {
+    renderPage();
+
+    // Queried inside waitFor: the quarter presets land a beat after the first
+    // paint and refetch, so a node grabbed before that is detached by the time
+    // the assertion runs.
+    await waitFor(() => {
+      expect(screen.getByText("Modules")).toBeInTheDocument();
+      expect(screen.getByText("Density, Waves and Sound")).toBeInTheDocument();
+    });
   });
 
   it("clicking each Download CSV button calls the correct csvFn with from_date/to_date", async () => {

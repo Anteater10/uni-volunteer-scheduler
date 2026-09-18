@@ -569,6 +569,9 @@ class VolunteerHoursRow(BaseModel):
     email: str
     hours: float
     events: int
+    # Comma-joined module names behind those hours — grant reports are written
+    # per programme, not per calendar entry.
+    modules: str = ""
 
 
 class AttendanceRateRow(BaseModel):
@@ -651,6 +654,10 @@ class RosterRow(BaseModel):
     slot_type: str | None = None
     slot_end: datetime | None = None
     slot_location: str | None = None
+    # This volunteer's no-shows over the last 12 months, across all events —
+    # not this event's. Staff see it as a flag on repeat no-shows; the raw
+    # number travels so the threshold lives in one place in the UI.
+    no_show_count: int = 0
 
 
 class RosterResponse(BaseModel):

@@ -13,6 +13,7 @@ import {
 import api from "../lib/api";
 import { PageHeader, Button, Skeleton, Modal, Input, Label } from "../components/ui";
 import { toast } from "../state/toast";
+import NoShowFlag from "../components/NoShowFlag";
 import ResolveEventModal from "../components/ResolveEventModal";
 import BroadcastModal from "../components/BroadcastModal";
 // The same modal the desktop event page uses. Organizers run check-in from
@@ -657,8 +658,11 @@ export default function OrganizerRosterPage() {
                     }}
                   >
                     <div className="min-w-0 flex-1">
-                      <span className="block text-base font-semibold text-gray-900 truncate">
-                        {row.student_name}
+                      {/* Flag sits outside the truncating span so a long name
+                          can't clip it away. */}
+                      <span className="flex items-center text-base font-semibold text-gray-900">
+                        <span className="truncate">{row.student_name}</span>
+                        <NoShowFlag count={row.no_show_count} />
                       </span>
                       <span className="block text-sm text-[var(--color-fg-muted)] mt-0.5">
                         {new Date(row.slot_time).toLocaleTimeString([], {
