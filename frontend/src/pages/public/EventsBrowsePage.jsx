@@ -334,16 +334,16 @@ export default function EventsBrowsePage() {
   // SCRUM-154: grouped by week, not school. Events are named
   // "Week N - Module - School", so the week is the axis volunteers already
   // read off the card; school stays visible on the card itself.
-  // display_week is the week the title states; week_number is where the date
-  // falls. They diverge on purpose for orientations, which run early for a
-  // later module's week — group by what the card says, falling back to the
-  // date only for legacy titles that state no week.
-  // Events with neither collect in a trailing "Unscheduled" section rather
-  // than vanishing.
+  // effective_week is resolved server-side: the week the title states, else
+  // the first classroom session, else the orientation, else the event's own
+  // date. The whole chain lives in one place on the backend rather than being
+  // half-reimplemented here — see quarter_service.resolve_week.
+  // A null means nothing could be resolved; those collect in a trailing
+  // "Unscheduled" section rather than vanishing.
   const weekGroups = new Map();
   const unscheduled = [];
   for (const e of events) {
-    const week = e.display_week ?? e.week_number;
+    const week = e.effective_week;
     if (week == null) {
       unscheduled.push(e);
       continue;

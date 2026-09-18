@@ -960,6 +960,10 @@ class PublicEventRead(BaseModel):
     # Parsed from the title; the week volunteers see the event filed under.
     # Read-only — the model derives it, so it is absent from EventCreate/Update.
     display_week: Optional[int] = None
+    # The week this event is actually listed under: display_week, else the
+    # first classroom session, else the orientation, else start_date. Resolved
+    # per request because it depends on slot rows. None means "Unscheduled".
+    effective_week: Optional[int] = None
     quarter_id: Optional[UUID] = None
     school: Optional[str] = None
     module_slug: Optional[str] = None

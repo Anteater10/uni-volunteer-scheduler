@@ -424,7 +424,11 @@ describe("EventsBrowsePage — ?only=orientation (K22)", () => {
 // The week heading follows display_week (what the title says), not
 // week_number (where the date falls). They diverge for orientations, which
 // run early for a later module's week.
-describe("EventsBrowsePage — week grouping follows the title's week", () => {
+describe("EventsBrowsePage — week grouping", () => {
+  // The page renders whatever week the backend resolved into effective_week.
+  // The chain behind that value (title, then first classroom session, then
+  // orientation, then the event's own date) is quarter_service.resolve_week's
+  // job and is tested there — duplicating it here would let the two drift.
   const baseEvent = {
     quarter: "spring",
     year: 2026,
@@ -441,14 +445,15 @@ describe("EventsBrowsePage — week grouping follows the title's week", () => {
     api.public.getQuarters.mockResolvedValue(QUARTERS);
   });
 
-  it("files an early-running orientation under its module's week", async () => {
+  it("files an event under its resolved week", async () => {
     api.public.listEvents.mockResolvedValue([
       {
         ...baseEvent,
         id: "evt-early",
         title: "Week 8 - Germs - LaCumbre",
         week_number: 2, // the calendar week it actually runs in
-        display_week: 8, // the module week its title claims
+        display_week: 8,
+        effective_week: 8,
       },
     ]);
 
@@ -460,25 +465,28 @@ describe("EventsBrowsePage — week grouping follows the title's week", () => {
     expect(screen.queryByRole("heading", { name: "Week 2" })).toBeNull();
   });
 
-  it("falls back to the calendar week for titles stating no week", async () => {
+  it("uses effective_week even when the other week fields disagree", async () => {
+    // Guards against the page quietly reintroducing its own fallback chain.
     api.public.listEvents.mockResolvedValue([
       {
         ...baseEvent,
-        id: "evt-legacy",
-        title: "SciTrek Event",
-        week_number: 4,
+        id: "evt-sessions",
+        title: "Germs - LaCumbre", // no week stated
+        week_number: 1,
         display_week: null,
+        effective_week: 6, // backend resolved this from the first session
       },
     ]);
 
     renderPage();
 
     expect(
-      await screen.findByRole("heading", { name: "Week 4" }),
+      await screen.findByRole("heading", { name: "Week 6" }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Week 1" })).toBeNull();
   });
 
-  it("still collects events with neither week into Unscheduled", async () => {
+  it("collects events with no resolved week into Unscheduled", async () => {
     api.public.listEvents.mockResolvedValue([
       {
         ...baseEvent,
@@ -486,6 +494,7 @@ describe("EventsBrowsePage — week grouping follows the title's week", () => {
         title: "SciTrek Event",
         week_number: null,
         display_week: null,
+        effective_week: null,
       },
     ]);
 
