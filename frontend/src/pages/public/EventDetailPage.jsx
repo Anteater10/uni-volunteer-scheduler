@@ -679,14 +679,10 @@ function formatModuleName(slug) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function capitalizeQuarter(q) {
-  if (!q) return "";
-  return q.charAt(0).toUpperCase() + q.slice(1);
-}
-
 function EventDescription({ event, orientationSlots }) {
   const moduleName = formatModuleName(event.module_slug);
-  const quarter = capitalizeQuarter(event.quarter);
+  // Bioinformatics modules run online, so there is no van to catch.
+  const isOnline = !!event.module_slug?.startsWith("bioinformatics");
   const hasCustomDescription = !!(event.description && event.description.trim());
 
   return (
@@ -705,8 +701,7 @@ function EventDescription({ event, orientationSlots }) {
       ) : (
         <p>
           SciTrek will be conducting the {moduleName || event.title} Module
-          {event.school ? ` at ${event.school}` : ""}
-          {event.week_number ? ` for Week ${event.week_number} of ${quarter} quarter` : ""}.
+          {event.school ? ` at ${event.school}` : ""}.
         </p>
       )}
 
@@ -737,11 +732,13 @@ function EventDescription({ event, orientationSlots }) {
 
       {!hasCustomDescription && (
         <>
-          <p className="mt-3">
-            All shifts meet at the SciTrek office in room Chem 1204 and travel by van to the school.
-            We begin boarding vans at the exact start time of your shift. Please be on time
-            (we are not able to accommodate late arrivals).
-          </p>
+          {!isOnline && (
+            <p className="mt-3">
+              All shifts meet at the SciTrek office in room Chem 1204 and travel by van to the school.
+              We begin boarding vans at the exact start time of your shift. Please be on time
+              (we are not able to accommodate late arrivals).
+            </p>
+          )}
 
           <p className="mt-3">We look forward to working with you!</p>
 

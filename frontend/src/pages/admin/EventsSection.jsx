@@ -1713,6 +1713,25 @@ function EventStatusBadge({ event }) {
   );
 }
 
+// HS / MS comes from the event's module (Modules page → school branch).
+const LEVEL_BADGES = {
+  high_school: { label: "HS", className: "bg-purple-100 text-purple-800" },
+  middle_school: { label: "MS", className: "bg-amber-100 text-amber-800" },
+  both: { label: "HS/MS", className: "bg-gray-200 text-gray-700" },
+};
+
+function LevelBadge({ branch }) {
+  const badge = LEVEL_BADGES[branch];
+  if (!badge) return <span className="text-gray-400">—</span>;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${badge.className}`}
+    >
+      {badge.label}
+    </span>
+  );
+}
+
 export default function EventsSection() {
   useAdminPageTitle("Events");
   const qc = useQueryClient();
@@ -1762,6 +1781,20 @@ export default function EventsSection() {
   });
 
   const events = q.data || [];
+
+  // Archived modules included so older events still resolve their level.
+  const modulesQ = useQuery({
+    queryKey: ["adminModulesForEventsList"],
+    queryFn: () => api.admin.modules.list({ include_archived: true }),
+    staleTime: 30_000,
+  });
+  const branchBySlug = useMemo(() => {
+    const map = {};
+    for (const m of Array.isArray(modulesQ.data) ? modulesQ.data : []) {
+      map[m.slug] = m.school_branch;
+    }
+    return map;
+  }, [modulesQ.data]);
 
   const filtered = useMemo(() => {
     const now = Date.now();
@@ -1956,6 +1989,7 @@ export default function EventsSection() {
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-600">
               <tr>
                 <th className="py-3 px-4">Title</th>
+                <th className="py-3 px-4">Level</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4">Start</th>
                 <th className="py-3 px-4">End</th>
@@ -1974,6 +2008,9 @@ export default function EventsSection() {
                     >
                       {e.title || "(untitled)"}
                     </Link>
+                  </td>
+                  <td className="py-3 px-4">
+                    <LevelBadge branch={branchBySlug[e.module_slug]} />
                   </td>
                   <td className="py-3 px-4">
                     <EventStatusBadge event={e} />

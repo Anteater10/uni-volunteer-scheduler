@@ -703,4 +703,33 @@ describe("EventDetailPage — orientation gate refreshes slot data", () => {
       expect(api.public.getEvent.mock.calls.length).toBeGreaterThan(callsAfterLoad),
     );
   });
+
+  // -------------------------------------------------------------------------
+  // "About this event" default copy
+  // -------------------------------------------------------------------------
+
+  it("does not state the week or quarter in the default description", async () => {
+    renderDetailPage();
+    const intro = await screen.findByText(/SciTrek will be conducting/);
+    expect(intro.textContent).not.toMatch(/week/i);
+    expect(intro.textContent).not.toMatch(/quarter/i);
+    expect(intro.textContent).toMatch(/at Carpinteria HS\.$/);
+  });
+
+  it("keeps the van paragraph for in-person modules", async () => {
+    renderDetailPage();
+    await screen.findByText(/SciTrek will be conducting/);
+    expect(screen.getByText(/travel by van/)).toBeInTheDocument();
+  });
+
+  it("drops the van paragraph for online Bioinformatics modules", async () => {
+    api.public.getEvent.mockResolvedValue({
+      ...MOCK_EVENT,
+      module_slug: "bioinformatics-gene-expression-cancer",
+    });
+    renderDetailPage();
+    await screen.findByText(/SciTrek will be conducting/);
+    expect(screen.queryByText(/travel by van/)).not.toBeInTheDocument();
+    expect(screen.getByText(/We look forward to working with you!/)).toBeInTheDocument();
+  });
 });
