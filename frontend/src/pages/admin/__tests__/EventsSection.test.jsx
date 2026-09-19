@@ -1328,6 +1328,36 @@ describe("EventsSection — completion badges and default-All scope", () => {
   });
 });
 
+describe("EventsSection — HS/MS level column", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    api.events.list.mockResolvedValue([
+      { ...FIXTURE_EVENT, id: "e-hs", title: "HS event", module_slug: "hs-mod" },
+      { ...FIXTURE_EVENT, id: "e-ms", title: "MS event", module_slug: "ms-mod" },
+      { ...FIXTURE_EVENT, id: "e-both", title: "Both event", module_slug: "both-mod" },
+      { ...FIXTURE_EVENT, id: "e-none", title: "No module event", module_slug: null },
+    ]);
+    api.admin.modules.list.mockResolvedValue([
+      { slug: "hs-mod", name: "HS Mod", school_branch: "high_school" },
+      { slug: "ms-mod", name: "MS Mod", school_branch: "middle_school" },
+      { slug: "both-mod", name: "Both Mod", school_branch: "both" },
+    ]);
+  });
+
+  it("badges each event with its module's school level", async () => {
+    renderWithQuery(<EventsSection />);
+    const table = within(await screen.findByRole("table"));
+    expect(table.getByText("Level")).toBeInTheDocument();
+
+    const row = (title) => within(screen.getByText(title).closest("tr"));
+    expect(await row("HS event").findByText("HS")).toBeInTheDocument();
+    expect(row("MS event").getByText("MS")).toBeInTheDocument();
+    expect(row("Both event").getByText("HS/MS")).toBeInTheDocument();
+    expect(row("No module event").getByText("—")).toBeInTheDocument();
+    expect(api.admin.modules.list).toHaveBeenCalledWith({ include_archived: true });
+  });
+});
+
 describe("EventsSection — ended quarter history mode", () => {
   const OLD_Q = {
     id: "q-old",
