@@ -186,6 +186,40 @@ def test_send_magic_link_email_task_delivers_a_link(db_session, monkeypatch):
     assert "/auth/magic/" not in html
 
 
+def test_resent_link_also_opens_the_manage_view(client, db_session, monkeypatch):
+    """The confirm page renders the manage view inline with the same token, so
+    a resend token that confirms but 400s on manage leaves the volunteer
+    looking at an error where their bookings belong. Resend was the one mint
+    that left volunteer_id off the token."""
+    signup, event, slot, volunteer = _make_pending_signup(db_session, "resend-manage@example.com")
+    db_session.commit()
+
+    mock_redis = MagicMock()
+    pipe = MagicMock()
+    pipe.execute = MagicMock(return_value=[1, True, 1, True])
+    mock_redis.pipeline = MagicMock(return_value=pipe)
+    monkeypatch.setattr("app.routers.magic._get_redis", lambda: mock_redis)
+
+    enqueued = []
+    monkeypatch.setattr(
+        "app.celery_app.send_magic_link_email.delay",
+        lambda *a, **kw: enqueued.append(a),
+    )
+
+    resp = client.post(
+        "/api/v1/auth/magic/resend",
+        json={"email": "resend-manage@example.com", "event_id": str(event.id)},
+    )
+    assert resp.status_code == 200
+    token = enqueued[0][1]
+
+    confirm = client.post("/api/v1/public/signups/confirm", params={"token": token})
+    assert confirm.status_code == 200
+    manage = client.get("/api/v1/public/signups/manage", params={"token": token})
+    assert manage.status_code == 200, manage.json()
+    assert manage.json()["volunteer_first_name"] == volunteer.first_name
+
+
 def test_resend_returns_200_for_unknown_email(client, db_session, monkeypatch):
     """Should not leak signup existence."""
     mock_redis = MagicMock()

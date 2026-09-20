@@ -259,3 +259,9 @@ class TestDispatchEmailPromotionPurpose:
             .one()
         )
         assert token.purpose == MagicLinkPurpose.SIGNUP_CONFIRM
+        # A token with no volunteer_id is rejected by the manage view
+        # ("token references missing volunteer"), and the confirm page renders
+        # manage inline — so a resent link confirmed the booking and then
+        # showed an error where the volunteer's signups belong. Every other
+        # mint sets this; resend did not.
+        assert token.volunteer_id == signup.volunteer_id

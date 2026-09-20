@@ -462,7 +462,14 @@ def dispatch_email(db: Session, signup: Anchor, event, frontend_url: str):
 
         return _send
 
-    raw = issue_token(db, email=email, **anchor_kwargs)
+    # volunteer_id matters beyond batch confirm: the manage view refuses a
+    # token without one ("token references missing volunteer", 400), and the
+    # confirm page renders manage inline. Resend minted its token without it
+    # while every other mint (public_signup_service, the promotion branch
+    # above) passes it, so a resent link confirmed the signup and then showed
+    # an error where the volunteer's bookings belong. Caught in Chrome once the
+    # resend link started landing on a page that exists (L4 #33).
+    raw = issue_token(db, email=email, volunteer_id=signup.volunteer_id, **anchor_kwargs)
 
     def _send():
         from .celery_app import send_magic_link_email

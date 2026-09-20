@@ -11,7 +11,7 @@
 // resolves with the relevant slot), an "Add to calendar" PRIMARY button
 // appears that downloads a .ics file via the shared calendar util.
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Modal, Button } from "./ui";
 import api from "../lib/api";
 import { downloadIcs, buildGoogleCalendarUrl } from "../lib/calendar";
@@ -97,12 +97,46 @@ export default function SignupSuccessCard({
   const [resendError, setResendError] = useState("");
   const canResend = Boolean(email) && Boolean(event?.id);
 
+  // dispatch_email skips any send within 60s of the last token it minted
+  // (magic_link_service.py — D-11 idempotency). The signup that opened this
+  // card minted one a moment ago, so a click now returns {"status": "ok"} and
+  // mails nothing: the card would promise a mail that was never sent. Verified
+  // in Chrome against a local stack. Hold the control until the window closes
+  // rather than reporting per-address send state, which would tell a stranger
+  // whether an address has a pending signup.
+  const COOLDOWN_SECONDS = 60;
+  const [cooldown, setCooldown] = useState(COOLDOWN_SECONDS);
+
+  // Counts down against a wall-clock deadline, not by subtracting 1 per tick:
+  // Chrome throttles timers in a background tab to about once a minute, and a
+  // volunteer waiting on this card is by definition off in their mail client.
+  // Ticking would freeze the countdown exactly when it is running. Observed in
+  // real Chrome — a headless run does not throttle and hid it.
+  //
+  // Restarts on open and after a send; both begin a fresh window.
+  useEffect(() => {
+    if (!open || !canResend || resendState === "error") return undefined;
+    const until = Date.now() + COOLDOWN_SECONDS * 1000;
+    const tick = () =>
+      setCooldown(Math.max(0, Math.ceil((until - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    // A throttled tab can return with the window long past; recompute on the
+    // way back in rather than waiting for the next throttled tick.
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [open, canResend, resendState]);
+
   async function handleResend() {
     setResendState("sending");
     setResendError("");
     try {
       await api.resendMagicLink({ email, eventId: event.id });
       setResendState("sent");
+      setCooldown(COOLDOWN_SECONDS);
     } catch (err) {
       // The endpoint answers 429 with its own copy (how long to wait, who to
       // email if stuck) — show that rather than a generic failure.
@@ -159,6 +193,11 @@ export default function SignupSuccessCard({
             <p className="text-[var(--color-fg-muted)]">
               Sent again to <span className="font-medium">{email}</span>. It can
               take a minute — check your spam folder too.
+            </p>
+          ) : cooldown > 0 ? (
+            <p className="text-[var(--color-fg-muted)]">
+              Nothing yet? Give it a minute — it can take that long to arrive,
+              and it may be in spam. You can ask for another in {cooldown}s.
             </p>
           ) : (
             <p className="text-[var(--color-fg-muted)]">
