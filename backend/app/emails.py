@@ -558,7 +558,7 @@ def _humanise_minutes(minutes: int) -> str:
 
 
 def build_magic_link_email(
-    email: str, token: str, event, base_url: str, ttl_minutes: int | None = None
+    email: str, token: str, event, frontend_url: str, ttl_minutes: int | None = None
 ) -> dict:
     """Build and return a magic-link confirmation email payload.
 
@@ -574,12 +574,21 @@ def build_magic_link_email(
     ``ttl_minutes`` is the lifetime the token was issued with, so the copy can
     state it. Defaults to the signup-confirm TTL, which is what every caller
     mints here.
+
+    L4 #33/A: the link used to be ``{backend}/auth/magic/{token}``, built from
+    ``settings.backend_base_url`` — which does not include the ``/api/v1``
+    prefix every router is mounted under (main.py), so the resend link 404'd
+    before it could even reach the redirect. And that redirect then pointed at
+    ``/signup/confirmed``, a frontend route that does not exist. The link is
+    now the same frontend confirm URL the signup and promotion mails already
+    send (see build_signup_confirmation_email), which consumes the identical
+    SIGNUP_CONFIRM token through ``POST /public/signups/confirm``.
     """
     if ttl_minutes is None:
         from .magic_link_service import SIGNUP_CONFIRM_TTL_MINUTES
 
         ttl_minutes = SIGNUP_CONFIRM_TTL_MINUTES
-    url = f"{base_url.rstrip('/')}/auth/magic/{token}"
+    url = f"{frontend_url.rstrip('/')}/signup/confirm?token={token}"
     event_name = getattr(event, "title", None) or getattr(event, "name", "your event")
 
     subject = f"Confirm your SciTrek signup for {event_name}"

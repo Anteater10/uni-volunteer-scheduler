@@ -16,7 +16,8 @@ def test_magic_link_email_html_contains_url():
     )
     assert result["to"] == "user@example.com"
     assert "Test Event" in result["subject"]
-    assert "https://example.com/auth/magic/abc123def456" in result["html"]
+    assert "https://example.com/signup/confirm?token=abc123def456" in result["html"]
+    assert "/auth/magic/" not in result["html"]
     assert "font-size:16px" in result["html"]
     assert "#0b5ed7" in result["html"]
     assert 'role="presentation"' in result["html"]
@@ -29,7 +30,7 @@ def test_magic_link_email_text_contains_url():
         SimpleNamespace(title="Test Event"),
         "https://example.com",
     )
-    assert "https://example.com/auth/magic/abc123def456" in result["text"]
+    assert "https://example.com/signup/confirm?token=abc123def456" in result["text"]
     # K20: this used to assert "15 minutes" — the settings default, not the
     # lifetime a signup-confirm token is ever issued with. The sentence now
     # tracks the real TTL.
@@ -92,15 +93,15 @@ def test_magic_link_email_log_redacted(caplog):
     assert "abc123def456" not in log_output
 
 
-def test_magic_link_strips_trailing_slash_from_base_url():
+def test_magic_link_strips_trailing_slash_from_frontend_url():
     result = build_magic_link_email(
         "user@example.com",
         "tok123",
         SimpleNamespace(title="Evt"),
         "https://example.com/",
     )
-    assert "https://example.com/auth/magic/tok123" in result["html"]
-    assert "https://example.com//auth" not in result["html"]
+    assert "https://example.com/signup/confirm?token=tok123" in result["html"]
+    assert "https://example.com//signup" not in result["html"]
 
 
 def test_magic_link_uses_title_attribute():

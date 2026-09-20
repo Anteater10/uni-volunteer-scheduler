@@ -1723,6 +1723,7 @@ export default function EventDetailPage() {
         slots={successData?.slots || []}
         signups={successData?.signups || []}
         event={event}
+        email={identity.email}
         onDismiss={handleDismissSuccess}
       />
     </div>

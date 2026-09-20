@@ -197,7 +197,7 @@ class TestDispatchEmailPromotionPurpose:
             lambda *a, **kw: ("subject", "<html></html>"),
         )
 
-        dispatch_email(db_session, signup, event, "http://backend.example")
+        dispatch_email(db_session, signup, event, "http://frontend.example")
 
         tokens = (
             db_session.query(MagicLinkToken)
@@ -233,7 +233,7 @@ class TestDispatchEmailPromotionPurpose:
             lambda *a, **kw: calls.__setitem__("generic", calls["generic"] + 1),
         )
 
-        send = dispatch_email(db_session, signup, event, "http://backend.example")
+        send = dispatch_email(db_session, signup, event, "http://frontend.example")
         assert send is not None, "a promotion-pending resend must have something to send"
         send()
 
@@ -249,7 +249,7 @@ class TestDispatchEmailPromotionPurpose:
             "app.celery_app.send_magic_link_email.delay", lambda *a, **kw: None
         )
 
-        send = dispatch_email(db_session, signup, event, "http://backend.example")
+        send = dispatch_email(db_session, signup, event, "http://frontend.example")
         assert send is not None
         send()
 
@@ -259,3 +259,9 @@ class TestDispatchEmailPromotionPurpose:
             .one()
         )
         assert token.purpose == MagicLinkPurpose.SIGNUP_CONFIRM
+        # A token with no volunteer_id is rejected by the manage view
+        # ("token references missing volunteer"), and the confirm page renders
+        # manage inline — so a resent link confirmed the booking and then
+        # showed an error where the volunteer's signups belong. Every other
+        # mint sets this; resend did not.
+        assert token.volunteer_id == signup.volunteer_id

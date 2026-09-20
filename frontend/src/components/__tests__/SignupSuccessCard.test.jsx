@@ -8,8 +8,8 @@
  */
 
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import SignupSuccessCard from "../SignupSuccessCard";
 
 vi.mock("../../lib/calendar", () => ({
@@ -19,9 +19,13 @@ vi.mock("../../lib/calendar", () => ({
 vi.mock("../../state/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
+vi.mock("../../lib/api", () => ({
+  default: { resendMagicLink: vi.fn() },
+}));
 
 import { downloadIcs, buildGoogleCalendarUrl } from "../../lib/calendar";
 import { toast } from "../../state/toast";
+import api from "../../lib/api";
 
 const EVENT = { id: "evt-1", title: "CRISPR at Carpinteria HS", slug: "crispr" };
 const SLOT_A = {
@@ -55,7 +59,11 @@ function setup(props = {}) {
 const icsButton = () => screen.getByRole("button", { name: /download \.ics/i });
 
 describe("SignupSuccessCard", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => vi.useRealTimers());
 
   it("lists the confirmed slots", () => {
     setup({ slots: [SLOT_A, SLOT_B] });
@@ -192,6 +200,66 @@ describe("SignupSuccessCard", () => {
     expect(
       screen.queryByRole("button", { name: /download \.ics/i }),
     ).not.toBeInTheDocument();
+  });
+
+  // L4 #34: /auth/magic/resend had no caller anywhere in the app, so a
+  // confirmation email that never arrived left the volunteer stuck — this
+  // card told them to open a link they did not have.
+  describe("resend (L4 #34)", () => {
+    // The backend skips any send within 60s of the last token it minted, and
+    // the signup that opened this card minted one — so the control waits out
+    // that window instead of promising a mail the server will not send.
+    it("holds the control for the backend's 60s idempotency window", () => {
+      setup({ email: "ada@example.com" });
+      expect(screen.getByText(/ask for another in 60s/i)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /resend the confirmation/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("offers the resend once the window has passed", () => {
+      setup({ email: "ada@example.com" });
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(
+        screen.getByRole("button", { name: /resend the confirmation/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("resends to the address the confirmation went to", async () => {
+      api.resendMagicLink.mockResolvedValueOnce({ status: "ok" });
+      setup({ email: "ada@example.com" });
+      act(() => vi.advanceTimersByTime(60_000));
+
+      fireEvent.click(screen.getByRole("button", { name: /resend the confirmation/i }));
+
+      expect(api.resendMagicLink).toHaveBeenCalledWith({
+        email: "ada@example.com",
+        eventId: "evt-1",
+      });
+      expect(await screen.findByText(/sent again to/i)).toBeInTheDocument();
+    });
+
+    it("shows the server's own message when the resend is rate limited", async () => {
+      const err = new Error("You've asked for too many links this hour.");
+      err.status = 429;
+      api.resendMagicLink.mockRejectedValueOnce(err);
+      setup({ email: "ada@example.com" });
+      act(() => vi.advanceTimersByTime(60_000));
+
+      fireEvent.click(screen.getByRole("button", { name: /resend the confirmation/i }));
+
+      expect(
+        await screen.findByText(/too many links this hour/i),
+      ).toBeInTheDocument();
+    });
+
+    it("hides the resend control when there is no address to resend to", () => {
+      setup({ email: undefined });
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(
+        screen.queryByRole("button", { name: /resend the confirmation/i }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("calls onDismiss from Done", () => {

@@ -4,16 +4,11 @@ Phase 09: Rewired — Signup now uses volunteer_id (D-01).
 """
 import pytest
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from app.magic_link_service import (
-    SIGNUP_CONFIRM_TTL_MINUTES,
-    issue_token,
-    _hash_token,
-)
-from app.models import MagicLinkPurpose, MagicLinkToken, SignupStatus
-from app.signup_service import mark_promoted_pending
+from app.magic_link_service import issue_token, _hash_token
+from app.models import MagicLinkToken, SignupStatus
 from tests.fixtures.helpers import make_event_with_slot, make_user, _bind_factories
 from tests.fixtures.factories import SignupFactory, VolunteerFactory
 
@@ -32,124 +27,60 @@ def _make_pending_signup(db_session, email="router@example.com"):
     return signup, event, slot, volunteer
 
 
-def test_consume_valid_token_redirects_to_confirmed(client, db_session, monkeypatch):
+def test_legacy_link_forwards_the_token_to_the_confirm_page(
+    client, db_session, monkeypatch
+):
+    """L4 #33: the GET link used to consume the token and redirect to
+    /signup/confirmed — a route the frontend does not have, so the volunteer
+    landed on the 404 page with their token already burned. It now forwards
+    to the confirm page, which is the route that exists."""
     signup, event, slot, volunteer = _make_pending_signup(db_session, "valid1@example.com")
     raw = issue_token(db_session, signup, volunteer.email)
     db_session.commit()
 
     resp = client.get(f"/api/v1/auth/magic/{raw}", follow_redirects=False)
     assert resp.status_code == 302
-    assert "/signup/confirmed" in resp.headers["location"]
-    assert f"event={event.id}" in resp.headers["location"]
-
-    # Verify signup is confirmed in DB
-    db_session.expire_all()
-    db_session.refresh(signup)
-    assert signup.status == SignupStatus.confirmed
+    location = resp.headers["location"]
+    assert f"/signup/confirm?token={raw}" in location
+    # The dead routes must not come back.
+    assert "/signup/confirmed" not in location
+    assert "/signup/confirm-failed" not in location
 
 
-def test_consume_expired_token_redirects_with_reason(client, db_session):
-    signup, event, slot, volunteer = _make_pending_signup(db_session, "expired1@example.com")
-    raw = issue_token(db_session, signup, volunteer.email)
-    # Expire the token
-    row = db_session.query(MagicLinkToken).first()
-    row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
-    db_session.flush()
-    db_session.commit()
-
-    resp = client.get(f"/api/v1/auth/magic/{raw}", follow_redirects=False)
-    assert resp.status_code == 302
-    assert "reason=expired" in resp.headers["location"]
-
-
-def test_consume_used_token_redirects_with_reason(client, db_session):
-    signup, event, slot, volunteer = _make_pending_signup(db_session, "used1@example.com")
+def test_legacy_link_does_not_consume_the_token(client, db_session):
+    """The confirm page this forwards to consumes the token itself. Burning it
+    here would hand the page a dead token and show "expired" on a link the
+    volunteer just clicked for the first time."""
+    signup, event, slot, volunteer = _make_pending_signup(db_session, "unburnt@example.com")
     raw = issue_token(db_session, signup, volunteer.email)
     db_session.commit()
 
-    # First consume
-    resp1 = client.get(f"/api/v1/auth/magic/{raw}", follow_redirects=False)
-    assert resp1.status_code == 302
-    assert "/signup/confirmed" in resp1.headers["location"]
+    client.get(f"/api/v1/auth/magic/{raw}", follow_redirects=False)
 
-    # Second consume
-    resp2 = client.get(f"/api/v1/auth/magic/{raw}", follow_redirects=False)
-    assert resp2.status_code == 302
-    assert "reason=used" in resp2.headers["location"]
-
-
-def test_consume_unknown_token_redirects_not_found(client, db_session):
-    resp = client.get("/api/v1/auth/magic/totally_unknown_token_value", follow_redirects=False)
-    assert resp.status_code == 302
-    assert "reason=not_found" in resp.headers["location"]
-
-
-def test_consume_original_batch_link_after_promotion_redirects_not_confirmed(
-    client, db_session
-):
-    """2026-07-29 sweep remediation, Finding #1: the GET redirect endpoint
-    must not send a volunteer to /signup/confirmed when their only signup is
-    promotion-pending and this is the ORIGINAL batch link, not the
-    promotion link — consume_token legitimately burns the token but
-    confirms nothing."""
-    signup, event, slot, volunteer = _make_pending_signup(
-        db_session, "promoted-router@example.com"
-    )
-    signup.status = SignupStatus.waitlisted
-    db_session.flush()
-    batch_raw = issue_token(
-        db_session,
-        signup=signup,
-        email=volunteer.email,
-        purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
-        volunteer_id=volunteer.id,
-        ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
-    )
-    mark_promoted_pending(db_session, signup)
-    db_session.commit()
-
-    resp = client.get(f"/api/v1/auth/magic/{batch_raw}", follow_redirects=False)
-
-    assert resp.status_code == 302
-    assert "reason=promotion_pending" in resp.headers["location"]
-    assert "/signup/confirmed" not in resp.headers["location"]
     db_session.expire_all()
     db_session.refresh(signup)
     assert signup.status == SignupStatus.pending
+    row = db_session.query(MagicLinkToken).filter_by(token_hash=_hash_token(raw)).one()
+    assert row.consumed_at is None
+
+    # ...and the token still works on the endpoint that is meant to spend it.
+    resp = client.post("/api/v1/public/signups/confirm", params={"token": raw})
+    assert resp.status_code == 200
+    assert resp.json()["confirmed"] is True
 
 
-def test_consume_own_link_for_plain_waitlisted_signup_redirects_waitlisted(
-    client, db_session
-):
-    """Regression guard: confirmed_count == 0 is also reachable with no
-    promotion anywhere — a signup landed straight on the waitlist because
-    its slot was already full, and the volunteer clicks their OWN emailed
-    link. Must redirect with reason=waitlisted, not reason=promotion_pending."""
-    signup, event, slot, volunteer = _make_pending_signup(
-        db_session, "plain-waitlisted-router@example.com"
-    )
-    signup.status = SignupStatus.waitlisted
-    db_session.flush()
-    batch_raw = issue_token(
-        db_session,
-        signup=signup,
-        email=volunteer.email,
-        purpose=MagicLinkPurpose.SIGNUP_CONFIRM,
-        volunteer_id=volunteer.id,
-        ttl_minutes=SIGNUP_CONFIRM_TTL_MINUTES,
-    )
-    db_session.commit()
-    # NOTE: no mark_promoted_pending — this signup was never promoted.
-
-    resp = client.get(f"/api/v1/auth/magic/{batch_raw}", follow_redirects=False)
-
+@pytest.mark.parametrize(
+    "token",
+    ["totally_unknown_token_value", "expired-token-value"],
+    ids=["unknown", "expired-looking"],
+)
+def test_legacy_link_forwards_without_judging_the_token(client, db_session, token):
+    """Expired, used and unknown tokens all forward too: the confirm page
+    reports which one it was (see test_public_signups.py), so this handler has
+    no reason to resolve the token itself."""
+    resp = client.get(f"/api/v1/auth/magic/{token}", follow_redirects=False)
     assert resp.status_code == 302
-    assert "reason=waitlisted" in resp.headers["location"]
-    assert "promotion_pending" not in resp.headers["location"]
-    assert "/signup/confirmed" not in resp.headers["location"]
-    db_session.expire_all()
-    db_session.refresh(signup)
-    assert signup.status == SignupStatus.waitlisted
+    assert f"/signup/confirm?token={token}" in resp.headers["location"]
 
 
 def test_resend_returns_200_on_valid_request(client, db_session, monkeypatch):
@@ -192,6 +123,12 @@ def test_resend_returns_200_on_valid_request(client, db_session, monkeypatch):
     assert args[0] == "resend1@example.com"
     assert args[1], "a resend with no token is a dead link"
     assert str(args[2]) == str(event.id)
+    # L4 #33/A: the base handed to the mail must be the frontend origin. It
+    # used to be backend_base_url, which omits the /api/v1 prefix the router
+    # is mounted under, so the emailed link 404'd.
+    from app.config import settings
+
+    assert args[3] == settings.frontend_url
 
     # The token handed to the transport must be the one just minted, not a
     # stale row — a resend that mails an already-consumed link is the bug in a
@@ -241,9 +178,46 @@ def test_send_magic_link_email_task_delivers_a_link(db_session, monkeypatch):
     to, subject, body, html = sent[0]
     assert to == "task-send@example.com"
     assert event.title in subject
-    # The link is the entire point of the mail, in both parts.
-    assert "/auth/magic/raw-token-abc123" in html
-    assert "/auth/magic/raw-token-abc123" in body
+    # The link is the entire point of the mail, in both parts. L4 #33/A: it is
+    # the frontend confirm page now — the old backend path was missing the
+    # /api/v1 prefix and 404'd before it reached the app at all.
+    assert "http://x.test/signup/confirm?token=raw-token-abc123" in html
+    assert "http://x.test/signup/confirm?token=raw-token-abc123" in body
+    assert "/auth/magic/" not in html
+
+
+def test_resent_link_also_opens_the_manage_view(client, db_session, monkeypatch):
+    """The confirm page renders the manage view inline with the same token, so
+    a resend token that confirms but 400s on manage leaves the volunteer
+    looking at an error where their bookings belong. Resend was the one mint
+    that left volunteer_id off the token."""
+    signup, event, slot, volunteer = _make_pending_signup(db_session, "resend-manage@example.com")
+    db_session.commit()
+
+    mock_redis = MagicMock()
+    pipe = MagicMock()
+    pipe.execute = MagicMock(return_value=[1, True, 1, True])
+    mock_redis.pipeline = MagicMock(return_value=pipe)
+    monkeypatch.setattr("app.routers.magic._get_redis", lambda: mock_redis)
+
+    enqueued = []
+    monkeypatch.setattr(
+        "app.celery_app.send_magic_link_email.delay",
+        lambda *a, **kw: enqueued.append(a),
+    )
+
+    resp = client.post(
+        "/api/v1/auth/magic/resend",
+        json={"email": "resend-manage@example.com", "event_id": str(event.id)},
+    )
+    assert resp.status_code == 200
+    token = enqueued[0][1]
+
+    confirm = client.post("/api/v1/public/signups/confirm", params={"token": token})
+    assert confirm.status_code == 200
+    manage = client.get("/api/v1/public/signups/manage", params={"token": token})
+    assert manage.status_code == 200, manage.json()
+    assert manage.json()["volunteer_first_name"] == volunteer.first_name
 
 
 def test_resend_returns_200_for_unknown_email(client, db_session, monkeypatch):

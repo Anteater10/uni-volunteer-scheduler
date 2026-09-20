@@ -11,8 +11,9 @@
 // resolves with the relevant slot), an "Add to calendar" PRIMARY button
 // appears that downloads a .ics file via the shared calendar util.
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { Modal, Button } from "./ui";
+import api from "../lib/api";
 import { downloadIcs, buildGoogleCalendarUrl } from "../lib/calendar";
 import { toast } from "../state/toast";
 
@@ -75,6 +76,8 @@ function openGoogleCalendar(event, slot) {
  *   signups       {object[]?}  — OPTIONAL. Per-signup result items from the signup
  *                                response ({slot_id, status, position}); drives the
  *                                waitlist badges and the promotion warning.
+ *   email         {string?}    — OPTIONAL. The address the confirmation was sent to.
+ *                                With `event`, enables the resend control (L4 #34).
  */
 export default function SignupSuccessCard({
   open,
@@ -84,7 +87,65 @@ export default function SignupSuccessCard({
   event,
   slot,
   signups,
+  email,
 }) {
+  // L4 #34: POST /auth/magic/resend has existed since Phase 02 and nothing
+  // ever called it, so a confirmation email that never arrived was the end of
+  // the volunteer's signup — the card told them to open a link they did not
+  // have. This is the caller. idle | sending | sent | error
+  const [resendState, setResendState] = useState("idle");
+  const [resendError, setResendError] = useState("");
+  const canResend = Boolean(email) && Boolean(event?.id);
+
+  // dispatch_email skips any send within 60s of the last token it minted
+  // (magic_link_service.py — D-11 idempotency). The signup that opened this
+  // card minted one a moment ago, so a click now returns {"status": "ok"} and
+  // mails nothing: the card would promise a mail that was never sent. Verified
+  // in Chrome against a local stack. Hold the control until the window closes
+  // rather than reporting per-address send state, which would tell a stranger
+  // whether an address has a pending signup.
+  const COOLDOWN_SECONDS = 60;
+  const [cooldown, setCooldown] = useState(COOLDOWN_SECONDS);
+
+  // Counts down against a wall-clock deadline, not by subtracting 1 per tick:
+  // Chrome throttles timers in a background tab to about once a minute, and a
+  // volunteer waiting on this card is by definition off in their mail client.
+  // Ticking would freeze the countdown exactly when it is running. Observed in
+  // real Chrome — a headless run does not throttle and hid it.
+  //
+  // Restarts on open and after a send; both begin a fresh window.
+  useEffect(() => {
+    if (!open || !canResend || resendState === "error") return undefined;
+    const until = Date.now() + COOLDOWN_SECONDS * 1000;
+    const tick = () =>
+      setCooldown(Math.max(0, Math.ceil((until - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    // A throttled tab can return with the window long past; recompute on the
+    // way back in rather than waiting for the next throttled tick.
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [open, canResend, resendState]);
+
+  async function handleResend() {
+    setResendState("sending");
+    setResendError("");
+    try {
+      await api.resendMagicLink({ email, eventId: event.id });
+      setResendState("sent");
+      setCooldown(COOLDOWN_SECONDS);
+    } catch (err) {
+      // The endpoint answers 429 with its own copy (how long to wait, who to
+      // email if stuck) — show that rather than a generic failure.
+      setResendError(
+        err?.message || "We couldn't resend it. Try again in a moment."
+      );
+      setResendState("error");
+    }
+  }
   // What the calendar buttons export. `slot` used to be required, which meant
   // the buttons never appeared for the signup flow — it confirms a list of
   // slots, not one — so the most useful moment to add to a calendar had no way
@@ -125,6 +186,39 @@ export default function SignupSuccessCard({
         Unconfirmed signups expire, and your spot can be released to another
         volunteer.
       </p>
+
+      {canResend ? (
+        <div className="mt-3 text-sm" aria-live="polite">
+          {resendState === "sent" ? (
+            <p className="text-[var(--color-fg-muted)]">
+              Sent again to <span className="font-medium">{email}</span>. It can
+              take a minute — check your spam folder too.
+            </p>
+          ) : cooldown > 0 ? (
+            <p className="text-[var(--color-fg-muted)]">
+              Nothing yet? Give it a minute — it can take that long to arrive,
+              and it may be in spam. You can ask for another in {cooldown}s.
+            </p>
+          ) : (
+            <p className="text-[var(--color-fg-muted)]">
+              Didn&apos;t get it?{" "}
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={resendState === "sending"}
+                className="font-medium text-[var(--color-brand)] underline underline-offset-2 disabled:opacity-60"
+              >
+                {resendState === "sending"
+                  ? "Resending…"
+                  : "Resend the confirmation email"}
+              </button>
+            </p>
+          )}
+          {resendState === "error" ? (
+            <p className="mt-1 text-[var(--color-danger,#b42318)]">{resendError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {slots && slots.length > 0 && (
         <div className="mt-4">
