@@ -948,7 +948,7 @@ def send_magic_link_email(
     email: str,
     token: str,
     event_id: str,
-    base_url: str,
+    frontend_url: str,
     ttl_minutes: int | None = None,
 ) -> None:
     """Send the single-link "confirm your signup" email.
@@ -982,7 +982,7 @@ def send_magic_link_email(
             )
             return
         payload = build_magic_link_email(
-            email, token, event, base_url, ttl_minutes=ttl_minutes
+            email, token, event, frontend_url, ttl_minutes=ttl_minutes
         )
         _send_email(
             payload["to"],

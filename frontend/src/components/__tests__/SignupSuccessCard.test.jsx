@@ -19,9 +19,13 @@ vi.mock("../../lib/calendar", () => ({
 vi.mock("../../state/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
+vi.mock("../../lib/api", () => ({
+  default: { resendMagicLink: vi.fn() },
+}));
 
 import { downloadIcs, buildGoogleCalendarUrl } from "../../lib/calendar";
 import { toast } from "../../state/toast";
+import api from "../../lib/api";
 
 const EVENT = { id: "evt-1", title: "CRISPR at Carpinteria HS", slug: "crispr" };
 const SLOT_A = {
@@ -192,6 +196,44 @@ describe("SignupSuccessCard", () => {
     expect(
       screen.queryByRole("button", { name: /download \.ics/i }),
     ).not.toBeInTheDocument();
+  });
+
+  // L4 #34: /auth/magic/resend had no caller anywhere in the app, so a
+  // confirmation email that never arrived left the volunteer stuck — this
+  // card told them to open a link they did not have.
+  describe("resend (L4 #34)", () => {
+    it("resends to the address the confirmation went to", async () => {
+      api.resendMagicLink.mockResolvedValueOnce({ status: "ok" });
+      setup({ email: "ada@example.com" });
+
+      fireEvent.click(screen.getByRole("button", { name: /resend the confirmation/i }));
+
+      expect(api.resendMagicLink).toHaveBeenCalledWith({
+        email: "ada@example.com",
+        eventId: "evt-1",
+      });
+      expect(await screen.findByText(/sent again to/i)).toBeInTheDocument();
+    });
+
+    it("shows the server's own message when the resend is rate limited", async () => {
+      const err = new Error("You've asked for too many links this hour.");
+      err.status = 429;
+      api.resendMagicLink.mockRejectedValueOnce(err);
+      setup({ email: "ada@example.com" });
+
+      fireEvent.click(screen.getByRole("button", { name: /resend the confirmation/i }));
+
+      expect(
+        await screen.findByText(/too many links this hour/i),
+      ).toBeInTheDocument();
+    });
+
+    it("hides the resend control when there is no address to resend to", () => {
+      setup({ email: undefined });
+      expect(
+        screen.queryByRole("button", { name: /resend the confirmation/i }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("calls onDismiss from Done", () => {

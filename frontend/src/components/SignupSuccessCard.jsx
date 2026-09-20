@@ -11,8 +11,9 @@
 // resolves with the relevant slot), an "Add to calendar" PRIMARY button
 // appears that downloads a .ics file via the shared calendar util.
 
-import React from "react";
+import React, { useState } from "react";
 import { Modal, Button } from "./ui";
+import api from "../lib/api";
 import { downloadIcs, buildGoogleCalendarUrl } from "../lib/calendar";
 import { toast } from "../state/toast";
 
@@ -75,6 +76,8 @@ function openGoogleCalendar(event, slot) {
  *   signups       {object[]?}  — OPTIONAL. Per-signup result items from the signup
  *                                response ({slot_id, status, position}); drives the
  *                                waitlist badges and the promotion warning.
+ *   email         {string?}    — OPTIONAL. The address the confirmation was sent to.
+ *                                With `event`, enables the resend control (L4 #34).
  */
 export default function SignupSuccessCard({
   open,
@@ -84,7 +87,31 @@ export default function SignupSuccessCard({
   event,
   slot,
   signups,
+  email,
 }) {
+  // L4 #34: POST /auth/magic/resend has existed since Phase 02 and nothing
+  // ever called it, so a confirmation email that never arrived was the end of
+  // the volunteer's signup — the card told them to open a link they did not
+  // have. This is the caller. idle | sending | sent | error
+  const [resendState, setResendState] = useState("idle");
+  const [resendError, setResendError] = useState("");
+  const canResend = Boolean(email) && Boolean(event?.id);
+
+  async function handleResend() {
+    setResendState("sending");
+    setResendError("");
+    try {
+      await api.resendMagicLink({ email, eventId: event.id });
+      setResendState("sent");
+    } catch (err) {
+      // The endpoint answers 429 with its own copy (how long to wait, who to
+      // email if stuck) — show that rather than a generic failure.
+      setResendError(
+        err?.message || "We couldn't resend it. Try again in a moment."
+      );
+      setResendState("error");
+    }
+  }
   // What the calendar buttons export. `slot` used to be required, which meant
   // the buttons never appeared for the signup flow — it confirms a list of
   // slots, not one — so the most useful moment to add to a calendar had no way
@@ -125,6 +152,34 @@ export default function SignupSuccessCard({
         Unconfirmed signups expire, and your spot can be released to another
         volunteer.
       </p>
+
+      {canResend ? (
+        <div className="mt-3 text-sm" aria-live="polite">
+          {resendState === "sent" ? (
+            <p className="text-[var(--color-fg-muted)]">
+              Sent again to <span className="font-medium">{email}</span>. It can
+              take a minute — check your spam folder too.
+            </p>
+          ) : (
+            <p className="text-[var(--color-fg-muted)]">
+              Didn&apos;t get it?{" "}
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={resendState === "sending"}
+                className="font-medium text-[var(--color-brand)] underline underline-offset-2 disabled:opacity-60"
+              >
+                {resendState === "sending"
+                  ? "Resending…"
+                  : "Resend the confirmation email"}
+              </button>
+            </p>
+          )}
+          {resendState === "error" ? (
+            <p className="mt-1 text-[var(--color-danger,#b42318)]">{resendError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {slots && slots.length > 0 && (
         <div className="mt-4">

@@ -1,6 +1,6 @@
 """Magic-link confirmation endpoints.
 
-GET  /auth/magic/{token}   — consume token, flip pending→confirmed, redirect
+GET  /auth/magic/{token}   — legacy link: forward the token to the confirm page
 POST /auth/magic/resend    — re-issue a magic-link token with rate limiting
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,12 +11,9 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..magic_link_service import (
-    ConsumeResult,
     anchor_event_id,
     check_rate_limit,
-    consume_token,
     dispatch_email,
-    zero_confirm_reason,
 )
 from ..models import Event, Shift, ShiftSignup, Signup, SignupStatus
 
@@ -41,32 +38,28 @@ def consume_magic_link(token: str, db: Session = Depends(get_db)):
     Follow-up: confirmed_count == 0 is also reachable with no promotion
     anywhere (see zero_confirm_reason) — the reason must reflect the
     anchor's actual status, not assume every zero-flip is a promotion.
+
+    L4 #33: every one of those redirects pointed at ``/signup/confirmed`` or
+    ``/signup/confirm-failed``, and NEITHER route exists in the frontend
+    router (App.jsx has ``signup/confirm`` and ``signup/manage``) — so a
+    volunteer who clicked through landed on the 404 page whatever the outcome,
+    with their token already burned and no way back.
+
+    Rather than mint two more routes, this hands the token to the confirm page
+    the signup and promotion mails already use. That page consumes it through
+    ``POST /public/signups/confirm`` and renders every outcome this handler
+    used to encode in a query string: the burned-but-confirmed-nothing case
+    (``confirmed: false`` plus the same reason-specific message from
+    zero_confirm_reason) and expired/used/not_found alike. The token is
+    deliberately NOT consumed here — consuming it and then redirecting to a
+    page whose whole job is to consume it is what left the volunteer with a
+    dead link in hand.
+
+    Kept as a redirect, not deleted, because links minted before this fix are
+    sitting in inboxes with a 14-day TTL.
     """
-    result, signup, confirmed_count = consume_token(db, token)
-    if result == ConsumeResult.ok:
-        db.commit()
-        # The anchor is a Signup (orientation) or a ShiftSignup (a shift
-        # commitment); anchor_event_id resolves either.
-        event_id = anchor_event_id(db, signup) or ""
-        if confirmed_count == 0:
-            return RedirectResponse(
-                url=(
-                    f"{settings.frontend_base_url}/signup/confirm-failed"
-                    f"?reason={zero_confirm_reason(signup)}&event={event_id}"
-                ),
-                status_code=302,
-            )
-        return RedirectResponse(
-            url=f"{settings.frontend_base_url}/signup/confirmed?event={event_id}",
-            status_code=302,
-        )
-    reason_map = {
-        ConsumeResult.expired: "expired",
-        ConsumeResult.used: "used",
-        ConsumeResult.not_found: "not_found",
-    }
     return RedirectResponse(
-        url=f"{settings.frontend_base_url}/signup/confirm-failed?reason={reason_map[result]}",
+        url=f"{settings.frontend_base_url}/signup/confirm?token={token}",
         status_code=302,
     )
 
@@ -126,7 +119,10 @@ def resend_magic_link(
         # Do not leak signup existence — return success regardless
         return {"status": "ok"}
     event = db.query(Event).filter_by(id=anchor_event_id(db, signup)).first()
-    send = dispatch_email(db, signup, event, settings.backend_base_url)
+    # L4 #33/A: the resend mail links to the frontend confirm page, not to the
+    # backend redirect below — backend_base_url omits the /api/v1 prefix the
+    # router is mounted under, so that link never reached this app.
+    send = dispatch_email(db, signup, event, settings.frontend_url)
     db.commit()
     # After the commit, never before: the send tasks look the booking and the
     # token up in their own session, so enqueuing first is a race the worker

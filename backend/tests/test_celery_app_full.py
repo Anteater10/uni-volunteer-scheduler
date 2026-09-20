@@ -895,7 +895,7 @@ def test_magic_link_email_missing_event_warns_and_sends_nothing(
             email="nobody@example.com",
             token="raw-token",
             event_id=str(gone),
-            base_url="https://example.test",
+            frontend_url="https://example.test",
         )
 
     assert sends == [], "sent mail for an event that does not exist"

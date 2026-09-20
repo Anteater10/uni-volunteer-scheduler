@@ -383,7 +383,7 @@ def check_rate_limit(redis_client, email: str, ip: str) -> bool:
     return True
 
 
-def dispatch_email(db: Session, signup: Anchor, event, base_url: str):
+def dispatch_email(db: Session, signup: Anchor, event, frontend_url: str):
     """Issue a token and return a callable that sends the email after commit.
 
     2026-07-29 sweep remediation, Finding #2: a promotion-pending signup (see
@@ -474,7 +474,7 @@ def dispatch_email(db: Session, signup: Anchor, event, base_url: str):
         # email built from it would list one booking and imply the others were
         # lost. The single-link copy is accurate whatever the batch contains.
         send_magic_link_email.delay(
-            email, raw, event_id, base_url, SIGNUP_CONFIRM_TTL_MINUTES
+            email, raw, event_id, frontend_url, SIGNUP_CONFIRM_TTL_MINUTES
         )
 
     return _send
