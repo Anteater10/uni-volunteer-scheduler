@@ -27,36 +27,29 @@ def _get_redis():
 
 
 @router.get("/{token}")
-def consume_magic_link(token: str, db: Session = Depends(get_db)):
-    """
-    2026-07-29 sweep remediation, Finding #1: a token can be legitimately
-    burned (``ConsumeResult.ok``) while confirming zero signups — the
-    volunteer's only signup was promotion-pending and this is the ORIGINAL
-    batch link, not the promotion link, so consume_token's consent scoping
-    deliberately left it pending. The redirect must not claim success.
+def consume_magic_link(token: str):
+    """Forward a legacy emailed link to the confirm page.
 
-    Follow-up: confirmed_count == 0 is also reachable with no promotion
-    anywhere (see zero_confirm_reason) — the reason must reflect the
-    anchor's actual status, not assume every zero-flip is a promotion.
+    L4 #33: this used to consume the token itself and redirect to
+    ``/signup/confirmed`` or ``/signup/confirm-failed``. NEITHER route exists
+    in the frontend router (App.jsx has ``signup/confirm`` and
+    ``signup/manage``), so a volunteer who clicked through landed on the 404
+    page whatever the outcome, with their token already burned and no way back.
 
-    L4 #33: every one of those redirects pointed at ``/signup/confirmed`` or
-    ``/signup/confirm-failed``, and NEITHER route exists in the frontend
-    router (App.jsx has ``signup/confirm`` and ``signup/manage``) — so a
-    volunteer who clicked through landed on the 404 page whatever the outcome,
-    with their token already burned and no way back.
-
-    Rather than mint two more routes, this hands the token to the confirm page
+    Rather than mint two more routes, it hands the token to the confirm page
     the signup and promotion mails already use. That page consumes it through
     ``POST /public/signups/confirm`` and renders every outcome this handler
-    used to encode in a query string: the burned-but-confirmed-nothing case
-    (``confirmed: false`` plus the same reason-specific message from
-    zero_confirm_reason) and expired/used/not_found alike. The token is
-    deliberately NOT consumed here — consuming it and then redirecting to a
-    page whose whole job is to consume it is what left the volunteer with a
-    dead link in hand.
+    used to encode in a query string — including the case the 2026-07-29 sweep
+    found, where a token is legitimately burned while confirming zero signups
+    (``confirmed: false`` carries the same reason-specific message from
+    zero_confirm_reason) — as well as expired/used/not_found.
 
-    Kept as a redirect, not deleted, because links minted before this fix are
-    sitting in inboxes with a 14-day TTL.
+    The token is deliberately NOT consumed here: burning it and then
+    redirecting to the page whose whole job is to consume it is what left the
+    volunteer holding a dead link.
+
+    Kept as a redirect rather than deleted, because links minted before this
+    fix are sitting in inboxes with a 14-day TTL.
     """
     return RedirectResponse(
         url=f"{settings.frontend_base_url}/signup/confirm?token={token}",
