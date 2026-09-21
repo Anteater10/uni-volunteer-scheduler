@@ -40,6 +40,7 @@ def _discover_paths() -> tuple[Path, Path, Path]:
 CI_YAML, COVERAGERC, TESTS_DIR = _discover_paths()
 
 MIN_THRESHOLD = 95
+WHOLE_APP_FLOOR = 89.5
 PACKAGES = (
     "app.copilot",
     "app.copilot.retrieval",
@@ -102,11 +103,11 @@ def test_per_package_threshold_at_least_95(ci_run_blob: str, package: str) -> No
     for line in ci_run_blob.splitlines():
         if not pkg_re.search(line):
             continue
-        m = re.search(r"--cov-fail-under=(\d+)", line)
+        m = re.search(r"--cov-fail-under=(\d+(?:\.\d+)?)", line)
         assert m, (
             f"Line invoking --cov={package} is missing --cov-fail-under: {line!r}"
         )
-        threshold = int(m.group(1))
+        threshold = float(m.group(1))
         assert threshold >= MIN_THRESHOLD, (
             f"--cov-fail-under for {package} dropped to {threshold}; "
             f"Phase 32-08 requires >= {MIN_THRESHOLD}."
@@ -115,6 +116,32 @@ def test_per_package_threshold_at_least_95(ci_run_blob: str, package: str) -> No
     assert matched_threshold is not None, (
         f"No --cov={package} invocation found to inspect for --cov-fail-under."
     )
+
+
+@pytest.mark.parametrize("package", PACKAGES)
+def test_per_package_gate_is_not_rounded(ci_run_blob: str, package: str) -> None:
+    """Roadmap #168: pytest-cov decides pass/fail at the report precision,
+    which defaults to 0 decimals — so 94.59% rounded to 95 and passed while
+    the log printed FAIL. Every gate line must carry --cov-precision=2."""
+    pkg_re = re.compile(rf"--cov={re.escape(package)}(?![.\w])")
+    lines = [l for l in ci_run_blob.splitlines() if pkg_re.search(l)]
+    assert lines, f"No --cov={package} invocation found."
+    for line in lines:
+        assert "--cov-precision=2" in line, (
+            f"--cov={package} gate is missing --cov-precision=2, so its "
+            f"threshold is checked after rounding: {line!r}"
+        )
+
+
+def test_whole_app_floor_only_rises() -> None:
+    """The pytest.ini floor is a ratchet (Phase S #168): measured 89.94% on
+    2026-09-21, floor 89.5. Raise WHOLE_APP_FLOOR when you raise the ini."""
+    ini = (TESTS_DIR.parent / "pytest.ini").read_text()
+    addopts = next(l for l in ini.splitlines() if l.startswith("addopts"))
+    m = re.search(r"--cov-fail-under=(\d+(?:\.\d+)?)", addopts)
+    assert m, "pytest.ini addopts lost its --cov-fail-under"
+    assert float(m.group(1)) >= WHOLE_APP_FLOOR
+    assert "--cov-precision=2" in addopts
 
 
 def test_coveragerc_has_branch_coverage_on() -> None:

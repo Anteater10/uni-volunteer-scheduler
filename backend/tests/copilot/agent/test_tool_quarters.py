@@ -219,3 +219,133 @@ class TestUpdateQuarter:
             {"quarter_id": str(summer.id), "end_date": "2026-07-01"},
         )
         assert "events_unlinked" in result
+
+
+# ------------------------------------------------ handler edges (roadmap #168)
+#
+# The paths below are the ones a model rarely takes but a real calendar edit
+# can: no signed-in caller, a season it misspelled, a field it half-parsed.
+# Called on the handlers directly — the confirm gate is covered above and
+# would only add noise here.
+
+from app.copilot.agent.boundary.role_scope import Scope  # noqa: E402
+from app.copilot.agent.tools.quarters import (  # noqa: E402
+    _create_handler,
+    _parse_date,
+    _update_handler,
+)
+
+_NO_CALLER = Scope(role="admin", caller_id=None, module_owner_id=None, see_all=True)
+
+
+def _admin_scope(db_session):
+    admin = make_user(db_session, role=UserRole.admin)
+    db_session.flush()
+    return scope_for(role="admin", caller_id=admin.id)
+
+
+class TestHandlerEdges:
+    def test_a_date_object_passes_straight_through(self):
+        assert _parse_date(date(2026, 1, 5), "start_date") == date(2026, 1, 5)
+
+    def test_create_with_no_caller_and_no_admin_refuses(self, db_session):
+        out = _create_handler(
+            db_session,
+            _NO_CALLER,
+            {"season": "fall", "year": 2026,
+             "start_date": "2026-09-21", "end_date": "2026-12-04"},
+        )
+        assert out == {"error": "no admin available to record this change"}
+
+    def test_update_with_no_caller_and_no_admin_refuses(self, db_session, summer):
+        out = _update_handler(
+            db_session, _NO_CALLER,
+            {"quarter_id": str(summer.id), "end_date": "2026-09-30"},
+        )
+        assert out == {"error": "no admin available to record this change"}
+
+    def test_no_caller_falls_back_to_an_admin(self, db_session, summer):
+        """A system-initiated call is recorded against an admin, not nobody."""
+        make_user(db_session, role=UserRole.admin)
+        db_session.flush()
+        out = _update_handler(
+            db_session, _NO_CALLER,
+            {"quarter_id": str(summer.id), "end_date": "2026-09-30"},
+        )
+        assert out["ends"] == "2026-09-30"
+
+    def test_create_rejects_a_season_that_does_not_exist(self, db_session):
+        out = _create_handler(
+            db_session,
+            _admin_scope(db_session),
+            {"season": "monsoon", "year": 2026,
+             "start_date": "2026-09-21", "end_date": "2026-12-04"},
+        )
+        assert "unknown season" in out["error"]
+        assert db_session.query(AcademicQuarter).count() == 0
+
+    def test_update_changes_season_year_and_label(self, db_session, summer):
+        out = _update_handler(
+            db_session,
+            _admin_scope(db_session),
+            {"quarter_id": str(summer.id), "season": " Fall ",
+             "year": "2027", "label": "  Session B  "},
+        )
+        db_session.refresh(summer)
+        assert summer.season == Quarter.FALL
+        assert summer.year == 2027
+        assert summer.label == "Session B"
+        assert out["label"] == "Session B"
+
+    def test_update_rejects_a_season_that_does_not_exist(self, db_session, summer):
+        out = _update_handler(
+            db_session,
+            _admin_scope(db_session),
+            {"quarter_id": str(summer.id), "season": "monsoon"},
+        )
+        assert "unknown season" in out["error"]
+        db_session.refresh(summer)
+        assert summer.season == Quarter.SUMMER
+
+    def test_update_names_an_unreadable_date(self, db_session, summer):
+        out = _update_handler(
+            db_session,
+            _admin_scope(db_session),
+            {"quarter_id": str(summer.id), "end_date": "end of September"},
+        )
+        assert "end_date" in out["error"]
+        db_session.refresh(summer)
+        assert summer.end_date == date(2026, 8, 28)
+
+    def test_update_refuses_a_year_that_is_not_a_number(self, db_session, summer):
+        out = _update_handler(
+            db_session,
+            _admin_scope(db_session),
+            {"quarter_id": str(summer.id), "year": "next year"},
+        )
+        assert "error" in out
+        db_session.refresh(summer)
+        assert summer.year == 2026
+
+    def test_update_passes_the_service_complaint_back(self, db_session, summer):
+        """An update that would overlap another quarter is refused in the
+        service's words, not as a 500."""
+        AcademicQuarterFactory(
+            season=Quarter.FALL,
+            year=2026,
+            start_date=date(2026, 9, 21),
+            end_date=date(2026, 12, 4),
+        )
+        db_session.flush()
+        out = _update_handler(
+            db_session,
+            _admin_scope(db_session),
+            {"quarter_id": str(summer.id), "end_date": "2026-10-01"},
+        )
+        assert "overlap" in out["error"].lower()
+
+    def test_create_with_nothing_asks_for_season_and_year_too(self, db_session):
+        _out, result = _run(db_session, CREATE_QUARTER_TOOL, {})
+        asked = " ".join(result["needs_answers"])
+        assert "which season" in asked
+        assert "which year" in asked
