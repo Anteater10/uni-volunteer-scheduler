@@ -155,3 +155,37 @@ def test_second_sweep_recovers_from_a_transient_upstream_429(monkeypatch):
     assert "".join(chunks) == "recovered"
     # Both failed on sweep 1; the primary succeeded on sweep 2.
     assert called == ["primary/m:free", "fallback/m:free", "primary/m:free"]
+
+
+def test_stream_one_skips_chunks_with_no_text():
+    """Roadmap #168 ratchet. Providers send role-only, empty-content and
+    usage-only chunks; none of them may reach the user as a token."""
+    from types import SimpleNamespace as NS
+
+    def chunk(content=None, *, usage=None, choices=True):
+        return NS(
+            usage=usage,
+            choices=[NS(delta=NS(content=content))] if choices else [],
+        )
+
+    stream = [
+        chunk(None),
+        chunk(""),
+        chunk("Hel"),
+        NS(usage=None, choices=[NS(delta=None)]),
+        chunk("lo"),
+        chunk(choices=False, usage=NS(prompt_tokens=7, completion_tokens=2)),
+    ]
+    client = NS(chat=NS(completions=NS(create=lambda **_: iter(stream))))
+
+    out = list(
+        copilot_llm._stream_one(
+            client=client, model_id="m", messages=[], max_tokens=None
+        )
+    )
+
+    tokens = [t for t, meta in out if t]
+    assert tokens == ["Hel", "lo"]
+    final = out[-1][1]
+    assert final["completion_text"] == "Hello"
+    assert (final["prompt_tokens"], final["completion_tokens"]) == (7, 2)

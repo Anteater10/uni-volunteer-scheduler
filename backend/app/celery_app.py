@@ -810,7 +810,8 @@ def send_signup_confirmation_email(
                 continue
             if isinstance(s, models.ShiftSignup):
                 booked_slots.extend(s.shift.sessions)
-            elif s.slot is not None:
+            else:
+                # signups.slot_id is a non-null FK: a slot signup always has one.
                 booked_slots.append(s.slot)
         attachments = (
             [("scitrek-sessions.ics", build_signup_ics(event, booked_slots))]

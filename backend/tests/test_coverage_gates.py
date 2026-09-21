@@ -40,7 +40,7 @@ def _discover_paths() -> tuple[Path, Path, Path]:
 CI_YAML, COVERAGERC, TESTS_DIR = _discover_paths()
 
 MIN_THRESHOLD = 95
-WHOLE_APP_FLOOR = 89.5
+WHOLE_APP_FLOOR = 90.5
 PACKAGES = (
     "app.copilot",
     "app.copilot.retrieval",
@@ -135,7 +135,8 @@ def test_per_package_gate_is_not_rounded(ci_run_blob: str, package: str) -> None
 
 def test_whole_app_floor_only_rises() -> None:
     """The pytest.ini floor is a ratchet (Phase S #168): measured 89.94% on
-    2026-09-21, floor 89.5. Raise WHOLE_APP_FLOOR when you raise the ini."""
+    2026-09-21, floor 89.5; raised to 90.5 at 90.61%. Raise WHOLE_APP_FLOOR when
+    you raise the ini."""
     ini = (TESTS_DIR.parent / "pytest.ini").read_text()
     addopts = next(l for l in ini.splitlines() if l.startswith("addopts"))
     m = re.search(r"--cov-fail-under=(\d+(?:\.\d+)?)", addopts)
