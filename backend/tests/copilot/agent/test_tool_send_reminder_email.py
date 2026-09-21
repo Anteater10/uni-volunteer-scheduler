@@ -155,7 +155,10 @@ def test_execute_after_confirmation_dispatches(db_session, monkeypatch):
     assert row.confirmation_status == "executed"
 
 
-def test_organizer_cannot_email_out_of_scope_participant(db_session, monkeypatch):
+def test_organizer_can_email_another_organizers_participant(db_session, monkeypatch):
+    """L4 #36: staff roles are no longer owner-scoped (see role_scope). The
+    reachability check now spans every event, so a volunteer on a colleague's
+    module is addressable — as they already were through the app."""
     # Organizer A owns the event volunteer signed up to.
     owner_a_id, vol_a = _seed_org_with_volunteer(db_session)
     # Organizer B has their own world.
@@ -184,8 +187,8 @@ def test_organizer_cannot_email_out_of_scope_participant(db_session, monkeypatch
         caller_id=owner_b.id,
     )
 
-    assert result["result"] == {"queued_count": 0, "failed_count": 1, "skipped_count": 0}
-    assert calls == []
+    assert result["result"] == {"queued_count": 1, "failed_count": 0, "skipped_count": 0}
+    assert [e for e, _t in calls] == [vol_a.email]
 
 
 def test_organizer_can_email_their_own_shift_volunteer(db_session, monkeypatch):

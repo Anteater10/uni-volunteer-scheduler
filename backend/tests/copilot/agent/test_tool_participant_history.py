@@ -83,7 +83,11 @@ def test_admin_sees_all_modules_for_participant(db_session, seed_events):
     assert sorted(out["result"]["modules_attended"]) == ["A-evt-1", "B-evt-1"]
 
 
-def test_organizer_scope_limits_to_own_events(db_session, seed_events):
+def test_organizer_history_covers_every_event(db_session, seed_events):
+    """L4 #36: an organizer is no longer confined to events they own —
+    the REST API grants any staff role any event, so the assistant
+    matches it (see deps.ensure_event_staff_access)."""
+
     uuid_a, _uuid_b, ids = seed_events
     v = _make_volunteer(db_session)
     _signup_on(db_session, ids[0], v)  # A's event
@@ -98,7 +102,7 @@ def test_organizer_scope_limits_to_own_events(db_session, seed_events):
         args={"participant_id": str(v.id)},
         session_id=session_id,
     )
-    assert out["result"]["modules_attended"] == ["A-evt-1"]
+    assert sorted(out["result"]["modules_attended"]) == ["A-evt-1", "B-evt-1"]
 
 
 def test_pii_schema_excludes_email(db_session, seed_events):

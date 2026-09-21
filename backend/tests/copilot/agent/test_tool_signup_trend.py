@@ -108,9 +108,13 @@ def test_admin_sees_recent_weeks(db_session, seed_events):
     assert by_week["2026-W19"]["total_signups"] == 0
 
 
-def test_organizer_scoped_to_own_weeks(db_session, seed_events):
+def test_organizer_trend_covers_every_week(db_session, seed_events):
+    """L4 #36: an organizer is no longer confined to events they own —
+    the REST API grants any staff role any event, so the assistant
+    matches it (see deps.ensure_event_staff_access)."""
+
     uuid_a, uuid_b, _ids = seed_events
-    # Only B has events in W21 — A's organizer scope should not see it.
+    # Only B has events in W21 — an organizer sees it now.
     _add_event_with_slot(db_session, uuid_b, 2026, 21, 10, 5)
 
     session_id = _make_session(db_session, uuid_a)
@@ -123,7 +127,7 @@ def test_organizer_scoped_to_own_weeks(db_session, seed_events):
         session_id=session_id,
     )
     labels = [w["week"] for w in out["result"]["weeks"]]
-    assert "2026-W21" not in labels
+    assert "2026-W21" in labels
     assert "2026-W22" in labels
 
 

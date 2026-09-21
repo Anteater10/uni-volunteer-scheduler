@@ -1,9 +1,11 @@
 """Boundary layer 2: role-scoped query helper.
 
 Produces an immutable Scope object that each tool uses to add WHERE clauses
-to its DB queries. Admins are unrestricted (see_all=True); organizers are
-scoped to rows where module.owner_id matches their user id. Unknown roles
-raise ScopeError. Caller_id must be present for organizer scope."""
+to its DB queries. Both staff roles are unrestricted (see_all=True) — the
+boundary that matters is the set of admin-only routes, not a per-event owner
+check (L4 #36; deps.ensure_event_staff_access is the same rule for the REST
+API). Unknown roles raise ScopeError. Caller_id must still be present for an
+organizer: it records who acted."""
 
 from __future__ import annotations
 
@@ -33,11 +35,22 @@ def scope_for(*, role: str, caller_id) -> Scope:
     if role == "organizer":
         if caller_id is None:
             raise ScopeError("organizer requires caller_id")
+        # L4 #36: organizers used to be confined here to events whose
+        # owner_id was their own user id. The REST API stopped working that
+        # way — see deps.ensure_event_staff_access, which grants any staff
+        # role any event, because the staff event list is global and nothing
+        # in the product can transfer ownership, so owner-scoping only ever
+        # meant "events you personally created". The copilot kept the old
+        # rule, so the same organizer got different answers depending on
+        # whether they asked the app or asked the assistant.
+        #
+        # caller_id stays on the Scope: it is who acted, which the write
+        # tools record, and is not the same question as what they may touch.
         return Scope(
             role=role,
             caller_id=caller_id,
-            module_owner_id=caller_id,
-            see_all=False,
+            module_owner_id=None,
+            see_all=True,
         )
     raise ScopeError(f"role {role!r} not allowed in agent")
 

@@ -44,6 +44,19 @@ function sortedByStart(quarters) {
   );
 }
 
+/**
+ * The quarter that ended most recently before `date`.
+ *
+ * L4 #41: the Exports "Last quarter" preset needs the one *before* the current
+ * one, which activeOrRecentQuarter cannot give — it returns the quarter you
+ * are standing in whenever there is one.
+ */
+export function previousQuarter(quarters, date) {
+  const iso = toIsoDate(date);
+  const ended = sortedByStart(quarters).filter((q) => q.end_date < iso);
+  return ended.length ? ended[ended.length - 1] : null;
+}
+
 /** Non-archived rows, ordered by start date. */
 export function activeQuarters(quarters) {
   return sortedByStart(quarters).filter((q) => !q.archived_at);

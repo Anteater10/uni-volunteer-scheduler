@@ -266,9 +266,15 @@ class TestTheNudgeAudienceIsBounded:
         assert exc.value.requested == 3
         assert sent == [], "refused, but some mail had already gone out"
 
-    def test_an_organizer_still_only_reaches_their_own(
+    def test_an_organizer_reaches_the_same_audience_an_admin_would(
         self, db_session, admin, monkeypatch
     ):
+        """L4 #36: an organizer's nudge audience used to stop at events they
+        owned. Staff roles are no longer owner-scoped (see role_scope), so the
+        pool is the same one an admin gets — recently active volunteers, minus
+        the people already on the module. That widening is the point of the
+        change, and it is what the recency and already-booked filters above
+        exist to keep sane."""
         seen: list[str] = []
         monkeypatch.setattr(ADMIN, lambda email, name: seen.append(email) or True)
 
@@ -293,9 +299,10 @@ class TestTheNudgeAudienceIsBounded:
             scope_for(role="organizer", caller_id=org.id),
             {"module_id": str(target.id)},
         )
-        assert out["queued_count"] == 1
+        # 1 from the organizer's own event + 4 from the admin's.
+        assert out["queued_count"] == 5
         for v in others:
-            assert v.email not in seen
+            assert v.email in seen
 
 
 class TestTheRecipientQueriesDegradeQuietly:

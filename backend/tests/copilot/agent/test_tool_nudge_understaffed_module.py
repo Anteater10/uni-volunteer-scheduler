@@ -166,7 +166,10 @@ def test_execute_after_confirmation_dispatches(db_session, monkeypatch):
     assert row.confirmation_status == "executed"
 
 
-def test_organizer_cannot_nudge_out_of_scope_module(db_session, monkeypatch):
+def test_organizer_can_nudge_another_organizers_module(db_session, monkeypatch):
+    """L4 #36: staff roles are no longer owner-scoped (see role_scope), so an
+    organizer can nudge any understaffed module — the same one they can open
+    in the staff event list."""
     owner_a = make_user(db_session, role=UserRole.organizer)
     event_a, _vol_a = _seed(db_session, owner_id=owner_a.id)
     owner_b = make_user(db_session, role=UserRole.organizer)
@@ -192,5 +195,4 @@ def test_organizer_cannot_nudge_out_of_scope_module(db_session, monkeypatch):
         scope_role="organizer",
         caller_id=owner_b.id,
     )
-    assert "error" in result["result"]
-    assert calls == []
+    assert "error" not in result["result"]

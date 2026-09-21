@@ -82,7 +82,11 @@ def test_admin_sees_all_understaffed(db_session, seed_events):
     assert names == ["A-evt-1", "B-evt-1"]
 
 
-def test_organizer_scoped_to_own(db_session, seed_events):
+def test_organizer_sees_every_understaffed_module(db_session, seed_events):
+    """L4 #36: an organizer is no longer confined to events they own —
+    the REST API grants any staff role any event, so the assistant
+    matches it (see deps.ensure_event_staff_access)."""
+
     uuid_a, _uuid_b, ids = seed_events
     _add_slot(db_session, ids[0], capacity=10, filled=1)
     _add_slot(db_session, ids[2], capacity=10, filled=1)
@@ -97,8 +101,8 @@ def test_organizer_scoped_to_own(db_session, seed_events):
         session_id=session_id,
     )
     names = [m["name"] for m in out["result"]["modules"]]
-    assert "B-evt-1" not in names
     assert "A-evt-1" in names
+    assert "B-evt-1" in names
 
 
 def test_pii_schema_strips_owner_id(db_session, seed_events):

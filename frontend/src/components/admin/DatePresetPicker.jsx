@@ -1,11 +1,18 @@
 import React, { useMemo } from "react";
-import { activeOrRecentQuarter } from "../../lib/weekUtils";
+import { activeOrRecentQuarter, previousQuarter } from "../../lib/weekUtils";
 
+// L4 #41/C: "last-quarter" and "last-12-months" were offered by the Exports
+// screen but had no entry here, so their buttons rendered their raw keys as
+// labels — "last-quarter" — and rangeForPreset fell through to {null, null},
+// which the export reads as "no filter". Two buttons that looked like date
+// filters silently downloaded every record ever, PII included.
 const LABELS = {
   "24h": "Last 24h",
   "7d": "Last 7d",
   "30d": "Last 30d",
   quarter: "This quarter",
+  "last-quarter": "Last quarter",
+  "last-12-months": "Last 12 months",
   custom: "Custom range",
 };
 
@@ -25,8 +32,14 @@ export function rangeForPreset(preset, now = new Date(), quarters = []) {
   if (preset === "24h") return { from: isoDaysAgo(1, now), to: now.toISOString() };
   if (preset === "7d") return { from: isoDaysAgo(7, now), to: now.toISOString() };
   if (preset === "30d") return { from: isoDaysAgo(30, now), to: now.toISOString() };
-  if (preset === "quarter") {
-    const row = activeOrRecentQuarter(quarters, now);
+  if (preset === "last-12-months") {
+    return { from: isoDaysAgo(365, now), to: now.toISOString() };
+  }
+  if (preset === "quarter" || preset === "last-quarter") {
+    const row =
+      preset === "quarter"
+        ? activeOrRecentQuarter(quarters, now)
+        : previousQuarter(quarters, now);
     if (!row) return { from: null, to: null };
     const from = new Date(`${row.start_date}T00:00:00Z`);
     // end_date is inclusive; the exclusive filter bound is the next midnight.
@@ -41,9 +54,9 @@ export function rangeForPreset(preset, now = new Date(), quarters = []) {
  * Props:
  *  - value: { preset, from?, to? }
  *  - onChange: ({ preset, from, to }) => void
- *  - presets: Array<"24h"|"7d"|"30d"|"quarter"|"custom">
- *  - quarters: admin-entered quarter rows (from useQuarters). The "quarter"
- *      preset is hidden when none are available.
+ *  - presets: Array<"24h"|"7d"|"30d"|"quarter"|"last-quarter"|"last-12-months"|"custom">
+ *  - quarters: admin-entered quarter rows (from useQuarters). The quarter-derived
+ *      presets are hidden when they cannot resolve to a real range.
  */
 export default function DatePresetPicker({
   value = { preset: "7d" },
@@ -51,9 +64,19 @@ export default function DatePresetPicker({
   presets = ["24h", "7d", "30d", "quarter", "custom"],
   quarters = null,
 }) {
-  const visiblePresets = presets.filter(
-    (p) => p !== "quarter" || (Array.isArray(quarters) && quarters.length > 0),
-  );
+  // A quarter preset that cannot resolve a range returns {null, null}, which
+  // the exports read as "no filter" — the whole point of L4 #41 is that a
+  // button labelled with a date range must never quietly mean "everything".
+  // "quarter" was already hidden without quarter rows; "last-quarter" needs
+  // the stronger test, since rows can exist with none of them yet ended.
+  const hasQuarters = Array.isArray(quarters) && quarters.length > 0;
+  const hasPreviousQuarter =
+    hasQuarters && previousQuarter(quarters, new Date()) !== null;
+  const visiblePresets = presets.filter((p) => {
+    if (p === "quarter") return hasQuarters;
+    if (p === "last-quarter") return hasPreviousQuarter;
+    return true;
+  });
   const current = value?.preset || visiblePresets[0];
 
   function selectPreset(p) {

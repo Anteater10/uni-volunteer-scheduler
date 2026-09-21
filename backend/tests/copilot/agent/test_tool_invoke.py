@@ -56,7 +56,8 @@ def test_invoke_writes_audit_row_and_returns_result(db_session, seed_events):
     assert row.role == "admin"
 
 
-def test_organizer_cannot_see_other_organizers_modules(db_session, seed_events):
+def test_organizer_sees_every_organizers_modules(db_session, seed_events):
+    """L4 #36 — see role_scope: staff roles are no longer owner-scoped."""
     uuid_a, _uuid_b, _ids = seed_events
     session_id = _make_session(db_session, uuid_a)
     scope = scope_for(role="organizer", caller_id=uuid_a)
@@ -70,9 +71,8 @@ def test_organizer_cannot_see_other_organizers_modules(db_session, seed_events):
     )
 
     names = [m["name"] for m in out["result"]["modules"]]
-    # Organizer A sees their own two events, never B's.
-    assert sorted(names) == ["A-evt-1", "A-evt-2"]
-    assert "B-evt-1" not in names
+    # Organizer A sees B's event too, the same as the staff event list does.
+    assert sorted(names) == ["A-evt-1", "A-evt-2", "B-evt-1"]
 
     row = db_session.execute(
         text(

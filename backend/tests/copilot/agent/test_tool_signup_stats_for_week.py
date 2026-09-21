@@ -85,7 +85,11 @@ def test_admin_aggregates_across_all_events(db_session, seed_events):
     assert r["fill_rate"] == round(10 / 30, 4)
 
 
-def test_organizer_scoped_to_own(db_session, seed_events):
+def test_organizer_stats_cover_every_module(db_session, seed_events):
+    """L4 #36: an organizer is no longer confined to events they own —
+    the REST API grants any staff role any event, so the assistant
+    matches it (see deps.ensure_event_staff_access)."""
+
     uuid_a, _uuid_b, ids = seed_events
     _add_slot_with_signups(db_session, ids[0], capacity=10, filled=3)
     _add_slot_with_signups(db_session, ids[2], capacity=10, filled=5)
@@ -100,9 +104,9 @@ def test_organizer_scoped_to_own(db_session, seed_events):
         session_id=session_id,
     )
     r = out["result"]
-    # only A's events (2) are seen — one slot with 3 signups out of 10.
-    assert r["modules_count"] == 2
-    assert r["total_signups"] == 3
+    # All three seeded events are in scope: A's slot (3 signups) and B's (5).
+    assert r["modules_count"] == 3
+    assert r["total_signups"] == 8
 
 
 def test_pii_schema_locks_keys(db_session, seed_events):

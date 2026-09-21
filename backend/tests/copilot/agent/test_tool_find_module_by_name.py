@@ -37,7 +37,11 @@ def test_admin_sees_all_matching(db_session, seed_events):
     assert names == ["A-evt-1", "A-evt-2", "B-evt-1"]
 
 
-def test_organizer_only_own_matches(db_session, seed_events):
+def test_organizer_matches_every_module(db_session, seed_events):
+    """L4 #36: an organizer is no longer confined to events they own —
+    the REST API grants any staff role any event, so the assistant
+    matches it (see deps.ensure_event_staff_access)."""
+
     uuid_a, _uuid_b, _ids = seed_events
     session_id = _make_session(db_session, uuid_a)
     scope = scope_for(role="organizer", caller_id=uuid_a)
@@ -49,7 +53,7 @@ def test_organizer_only_own_matches(db_session, seed_events):
         session_id=session_id,
     )
     names = sorted(m["name"] for m in out["result"]["modules"])
-    assert names == ["A-evt-1", "A-evt-2"]
+    assert names == ["A-evt-1", "A-evt-2", "B-evt-1"]
 
 
 def test_pii_schema_strips_owner_id_keeps_owner_name(db_session, seed_events):
