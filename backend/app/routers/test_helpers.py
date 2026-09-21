@@ -53,8 +53,9 @@ def seed_cleanup(
             Signup.status == SignupStatus.cancelled,
         )
     ]
-    if not cancelled_ids:
-        return
+    # No early return when there are no cancelled slot signups: a shift-only
+    # volunteer has none, and returning here skipped the shift cleanup below,
+    # so their cancelled commitment kept blocking re-signup forever (#170).
 
     # Dependent rows first — sent_notifications (reminder/magic-link sends
     # recorded by celery) and custom_answers both FK onto signups, and a

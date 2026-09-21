@@ -117,56 +117,100 @@ def _season_for(d: date) -> str:
     return "fall"
 
 
+def _plan_quarter(rows: list[dict], today: date) -> tuple[str, dict | None]:
+    """Decide how to make a live quarter cover today through today+2.
+
+    Pure (no HTTP) so it can be unit-tested. Returns one of:
+      ("reuse", None)            a live row already covers the window
+      ("widen", {"id", ...})     a live row touches the window; stretch it
+      ("create", payload)        POST this; it overlaps nothing
+
+    Roadmap #170. Two things the old version got wrong on a real dev DB:
+    it "reused" an archived row, which current-week ignores; and on a 409 it
+    only knew how to widen a same-(season, year) row, so any other overlap —
+    e.g. an archived Fall row a week earlier — crashed the seed.
+    """
+    need_start = today.isoformat()
+    need_end = (today + timedelta(days=2)).isoformat()
+    live = [r for r in rows if not r.get("archived_at")]
+
+    for row in live:
+        if row["start_date"] <= need_start and row["end_date"] >= need_end:
+            return "reuse", None
+
+    touching = [
+        r for r in rows
+        if r["start_date"] <= need_end and r["end_date"] >= need_start
+    ]
+    if touching:
+        row = touching[0]
+        if row.get("archived_at"):
+            # The service counts archived rows as overlaps and refuses to
+            # edit them, so there is nothing safe to do automatically.
+            raise RuntimeError(
+                f"archived quarter {row.get('display_name', row['id'])} covers "
+                "today; unarchive it or change its dates before seeding"
+            )
+        others = [r for r in rows if r["id"] != row["id"]]
+        return "widen", {
+            "id": row["id"],
+            "start_date": min(row["start_date"], need_start),
+            "end_date": _clip_end(others, max(row["end_date"], need_end), need_end),
+        }
+
+    start = (today - timedelta(days=21)).isoformat()
+    for r in rows:
+        if start <= r["end_date"] < need_start:
+            start = max(start, (date.fromisoformat(r["end_date"]) + timedelta(days=1)).isoformat())
+    end = _clip_end(rows, (today + timedelta(days=42)).isoformat(), need_end)
+
+    season = _season_for(today)
+    taken = {(r["season"], r["year"], r.get("label") or "") for r in rows}
+    label = "" if (season, today.year, "") not in taken else "E2E"
+    return "create", {
+        "season": season,
+        "year": today.year,
+        "label": label,
+        "start_date": start,
+        "end_date": end,
+    }
+
+
+def _clip_end(rows: list[dict], end: str, need_end: str) -> str:
+    """Pull ``end`` back to the day before the next row that starts after
+    the needed window, so a new or widened range never overlaps it."""
+    for r in rows:
+        if need_end < r["start_date"] <= end:
+            end = (date.fromisoformat(r["start_date"]) - timedelta(days=1)).isoformat()
+    return end
+
+
 def _ensure_quarters(admin_token: str) -> None:
-    """Ensure an admin-entered quarter covers today through day-after-tomorrow.
+    """Ensure a live admin-entered quarter covers today through day-after-tomorrow.
 
     Issue #24: quarter-dependent features (current-week, event create) are
     blocked until a covering quarter exists, so the seed must enter one first.
-    Idempotent: reuses a covering row; widens the same-(season, year, label)
-    row if it exists but no longer covers; creates otherwise.
+    Idempotent: see _plan_quarter.
     """
-    today = date.today()
-    need_start = today.isoformat()
-    need_end = (today + timedelta(days=2)).isoformat()
-
     s, rows = _req("GET", "/admin/quarters", token=admin_token)
     if s != 200 or not isinstance(rows, list):
         raise RuntimeError(f"quarter list failed: {s} {rows}")
 
-    for row in rows:
-        if row["start_date"] <= need_start and row["end_date"] >= need_end:
-            print(f"[seed] reusing quarter {row.get('display_name', row['id'])}", file=sys.stderr)
-            return
-
-    season = _season_for(today)
-    desired = {
-        "season": season,
-        "year": today.year,
-        "label": "",
-        "start_date": (today - timedelta(days=21)).isoformat(),
-        "end_date": (today + timedelta(days=42)).isoformat(),
-    }
-    s, body = _req("POST", "/admin/quarters", token=admin_token, json_body=desired)
-    if s in (200, 201):
-        print(f"[seed] created quarter {season} {today.year} ({desired['start_date']} → {desired['end_date']})", file=sys.stderr)
+    action, payload = _plan_quarter(rows, date.today())
+    if action == "reuse":
+        print("[seed] reusing covering quarter", file=sys.stderr)
         return
-
-    if s == 409:
-        # Same-key row exists with stale dates (or the new range overlaps it):
-        # widen that row so it covers the needed window.
-        for row in rows:
-            if row["season"] == season and row["year"] == today.year and row.get("label", "") == "":
-                patch = {
-                    "start_date": min(row["start_date"], desired["start_date"]),
-                    "end_date": max(row["end_date"], desired["end_date"]),
-                }
-                ps, pb = _req("PATCH", f"/admin/quarters/{row['id']}", token=admin_token, json_body=patch)
-                if ps == 200:
-                    print(f"[seed] widened quarter {season} {today.year} to {patch['start_date']} → {patch['end_date']}", file=sys.stderr)
-                    return
-                raise RuntimeError(f"quarter widen failed: {ps} {pb}")
-
-    raise RuntimeError(f"quarter create failed: {s} {body}")
+    if action == "widen":
+        qid = payload.pop("id")
+        ps, pb = _req("PATCH", f"/admin/quarters/{qid}", token=admin_token, json_body=payload)
+        if ps != 200:
+            raise RuntimeError(f"quarter widen failed: {ps} {pb}")
+        print(f"[seed] widened quarter to {payload['start_date']} → {payload['end_date']}", file=sys.stderr)
+        return
+    s, body = _req("POST", "/admin/quarters", token=admin_token, json_body=payload)
+    if s not in (200, 201):
+        raise RuntimeError(f"quarter create failed: {s} {body}")
+    print(f"[seed] created quarter {payload['season']} {payload['year']} ({payload['start_date']} → {payload['end_date']})", file=sys.stderr)
 
 
 def _get_current_week() -> dict:
@@ -421,6 +465,21 @@ def _find_signup_in_roster(
     return None
 
 
+def _booking_of(row: dict) -> tuple[str, bool]:
+    """(id, is_shift) for a roster row.
+
+    L4 #37 split the row's booking id into ``signup_id`` (slot signup) and
+    ``shift_signup_id`` (shift commitment); exactly one is set. The seed kept
+    reading ``signup_id`` and an ``is_shift`` field that no longer exists, so
+    on a re-run it cancelled signup "None" (a 500), the pending volunteer was
+    never recreated, and ``confirm_token`` came back null — which silently
+    turns the confirm-page e2e tests into skips. Roadmap #170.
+    """
+    if row.get("shift_signup_id"):
+        return row["shift_signup_id"], True
+    return row["signup_id"], False
+
+
 def _cancel_signup(signup_id: str, organizer_token: str, *, is_shift: bool = False) -> None:
     """Cancel a signup via the staff cancel endpoint.
 
@@ -583,9 +642,8 @@ def _create_seeded_pending(
         status = row.get("status")
         if status not in ("cancelled",):
             # Cancel the existing signup so we can recreate fresh
-            _cancel_signup(
-                row["signup_id"], organizer_token, is_shift=bool(row.get("is_shift"))
-            )
+            booking_id, is_shift = _booking_of(row)
+            _cancel_signup(booking_id, organizer_token, is_shift=is_shift)
 
     # Always clean up any cancelled rows before re-signing up.
     # UNIQUE(volunteer_id, shift_id) blocks re-signup even for cancelled rows.
