@@ -24,6 +24,12 @@ from .database import SessionLocal
 from . import models
 from .services import notification_dedup
 from .emails import BUILDERS, SessionBooking
+
+# L4 #35: the builders whose copy carries a "View your signups" link. Each one
+# needs a freshly minted manage token; the rest take no manage_token argument.
+_KINDS_WITH_MANAGE_LINK = frozenset(
+    {"reminder_kickoff", "reminder_pre_24h", "reminder_pre_2h"}
+)
 from .magic_link_service import CONFIRM_PURPOSES
 from .observability import init_sentry, mask_email
 
@@ -373,7 +379,21 @@ def send_email_notification(
                 if session is None:
                     return
                 target = SessionBooking(signup, session)
-            payload = builder(target)
+
+            # L4 #35: the manage link in a reminder has to carry a token the
+            # manage page can read, and only the hash of a token is stored —
+            # so the raw value has to be minted here, at send time, and
+            # committed before the mail leaves. Builders that take no
+            # manage_token are unaffected.
+            build_kwargs = {}
+            if kind in _KINDS_WITH_MANAGE_LINK:
+                from .magic_link_service import issue_manage_token
+
+                raw_manage = issue_manage_token(db, signup)
+                if raw_manage:
+                    db.commit()
+                    build_kwargs["manage_token"] = raw_manage
+            payload = builder(target, **build_kwargs)
             # Phase 09: signup.user removed — use volunteer
             v = signup.volunteer
             subject = payload["subject"]

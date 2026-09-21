@@ -169,7 +169,7 @@ describe("ManageSignupsPage", () => {
     expect(screen.getByText("Period")).toBeInTheDocument();
   });
 
-  it("2. token error — shows 'Link expired or invalid' card", async () => {
+  it("2. token error — says the link is dead, not the network", async () => {
     const err = new Error("token invalid or expired");
     err.status = 400;
     api.public.getManageSignups.mockRejectedValue(err);
@@ -177,9 +177,25 @@ describe("ManageSignupsPage", () => {
     renderPage();
 
     await waitFor(() => {
-      // Phase 15-05: shared ErrorState with UI-SPEC network-error copy.
+      // L4 #35: a 400 is the server refusing this link for good. Telling the
+      // volunteer to check their connection and retry sends them after a
+      // fault that isn't there — and the retry cannot succeed.
+      expect(screen.getByText("This link no longer works")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+  });
+
+  it("2b. a dropped connection still offers a retry", async () => {
+    // No status: fetch never reached the server, so retrying is the right
+    // advice and the old copy stands.
+    api.public.getManageSignups.mockRejectedValue(new Error("network down"));
+
+    renderPage();
+
+    await waitFor(() => {
       expect(screen.getByText("We couldn't load this page")).toBeInTheDocument();
     });
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
   });
 
   it("3. loading state — shows skeleton elements", () => {

@@ -40,6 +40,14 @@ SIGNUP_CONFIRM_TTL_MINUTES = 20160  # 14 days * 24h * 60min
 # window than fresh signups — a ghost promotee must not block the seat.
 PROMOTION_CONFIRM_TTL_MINUTES = 4320  # 3 days * 24h * 60min
 
+# L4 #35: manage links live in reminders and broadcasts, which arrive weeks
+# after the booking, so the generic 15-minute setting would make every one of
+# them look dead on arrival. Manage itself does not enforce expiry (see
+# routers/public/signups.manage_signups — a manage token stays usable while
+# its row lives), but a row that reads as long-expired invites someone to
+# "fix" it by rejecting it later.
+SIGNUP_MANAGE_TTL_MINUTES = 129600  # 90 days * 24h * 60min
+
 # K20: the default lifetime for each purpose. A caller that omits ttl_minutes
 # gets the one this table names rather than the generic 15-minute setting —
 # see issue_token. SIGNUP_MANAGE and the two legacy purposes are absent on
@@ -381,6 +389,37 @@ def check_rate_limit(redis_client, email: str, ip: str) -> bool:
     if ip_count > settings.magic_link_max_per_ip_per_hour:
         return False
     return True
+
+
+def issue_manage_token(db: Session, anchor: Anchor) -> str | None:
+    """Mint a manage token for this booking and return its raw value.
+
+    L4 #35: only the hash of a token is stored, so no later caller can recover
+    the raw value of an existing one — which is why reminder and broadcast
+    mails ended up linking to a bare ``/signup/manage`` with nothing to
+    authenticate, and the page answered with an error. A mail that wants a
+    working manage link has to mint its own at send time, which is what this
+    is for. The caller must commit before the mail goes out: the volunteer
+    clicks a link whose row has to already be there.
+
+    Returns None when the booking has no volunteer to address.
+    """
+    volunteer = anchor.volunteer
+    if volunteer is None or not volunteer.email:
+        return None
+    anchor_kwargs = (
+        {"shift_signup": anchor}
+        if isinstance(anchor, ShiftSignup)
+        else {"signup": anchor}
+    )
+    return issue_token(
+        db,
+        email=volunteer.email,
+        purpose=MagicLinkPurpose.SIGNUP_MANAGE,
+        volunteer_id=volunteer.id,
+        ttl_minutes=SIGNUP_MANAGE_TTL_MINUTES,
+        **anchor_kwargs,
+    )
 
 
 def dispatch_email(db: Session, signup: Anchor, event, frontend_url: str):
