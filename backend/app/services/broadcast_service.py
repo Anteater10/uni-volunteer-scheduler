@@ -32,6 +32,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models
+from ..magic_link_service import issue_manage_token
 from . import notification_dedup
 
 logger = logging.getLogger(__name__)
@@ -206,10 +207,12 @@ def _footer_html(event: "models.Event", manage_url: Optional[str]) -> str:
     )
 
 
-def render_html(
-    body_markdown: str, *, event: "models.Event", manage_url: Optional[str] = None
-) -> str:
-    """Render the broadcast body to sanitized HTML + event-context footer.
+def render_body_html(body_markdown: str) -> str:
+    """Render the markdown body to sanitized HTML, without the footer.
+
+    Split out from render_html for L4 #35: the footer now differs per
+    recipient (each carries their own manage token), while this part is
+    identical for everyone and is rendered once per broadcast.
 
     ``markdown`` library HTML-escapes inline ``<script>``-style input by
     default; we also strip any ``<script>``/``<iframe>``/``<object>`` tags
@@ -223,14 +226,29 @@ def render_html(
     # Belt + suspenders: drop any dangerous tags that slipped through
     # (markdown's default HTML escaping stops most of this, but
     # ``extensions=["extra"]`` enables raw inline HTML so we filter again).
-    safe = _SCRIPT_TAG.sub("", rendered)
+    return _SCRIPT_TAG.sub("", rendered)
+
+
+def wrap_body_html(
+    body_html: str, *, event: "models.Event", manage_url: Optional[str] = None
+) -> str:
+    """Wrap a rendered body in the mail layout and this recipient's footer."""
     footer = _footer_html(event, manage_url)
     return (
         '<div style="font-family:system-ui,-apple-system,sans-serif;'
         "font-size:16px;line-height:1.5;color:#1a1a1a;max-width:640px;"
         'margin:0 auto;padding:16px;">'
-        f"{safe}{footer}"
+        f"{body_html}{footer}"
         "</div>"
+    )
+
+
+def render_html(
+    body_markdown: str, *, event: "models.Event", manage_url: Optional[str] = None
+) -> str:
+    """Render body + footer in one call — the preview path and older callers."""
+    return wrap_body_html(
+        render_body_html(body_markdown), event=event, manage_url=manage_url
     )
 
 
@@ -365,13 +383,21 @@ def count_recipients(db: Session, event_id, slot_id=None, shift_id=None) -> int:
 # ------------------------------------------------------------------
 
 
-def _manage_url_for_volunteer(volunteer: "models.Volunteer") -> Optional[str]:
+def _manage_url_for_token(manage_token: Optional[str]) -> Optional[str]:
+    """The footer's manage link for one recipient.
+
+    L4 #35: this used to return a bare ``{frontend}/signup/manage`` — the same
+    URL for everyone, carrying nothing to identify the volunteer.
+    ManageSignupsPage reads ``?token=`` and nothing else, so every broadcast's
+    "Manage your SciTrek signups" link opened an error page. The link is per
+    recipient now, built from a token minted for their own booking.
+    """
     from ..config import settings
 
-    base = (settings.frontend_url or "").rstrip("/")
-    if not base or volunteer is None:
+    if not manage_token:
         return None
-    return f"{base}/signup/manage"
+    base = (settings.frontend_url or "").rstrip("/")
+    return f"{base}/signup/manage?token={manage_token}" if base else None
 
 
 def _dedup_insert_broadcast(db: Session, signup_id, kind: str) -> bool:
@@ -441,17 +467,16 @@ def send_broadcast(
     #    booking kinds, since shifts carry most of the classroom roster now.
     recipients = list_recipients(db, event_id, slot_id=slot_id, shift_id=shift_id)
 
-    # 4. Render bodies once — same copy goes to every recipient.
-    manage_url = None
-    # Prefer the first recipient for the footer's manage link anchor; the
-    # link is a volunteer-generic manage URL so one is sufficient.
-    if recipients:
-        manage_url = _manage_url_for_volunteer(recipients[0].volunteer)
-    html_body = render_html(body_markdown, event=event, manage_url=manage_url)
-    text_body = render_plaintext(html_body)
-
-    # 5. Per-recipient dedup + dispatch.
-    recipient_count = 0
+    # 4. Claim each recipient and build their copy.
+    #
+    # L4 #35: the body is no longer rendered once for everyone. The footer's
+    # manage link has to carry a token minted for that recipient's own
+    # booking, because ManageSignupsPage authenticates on ``?token=`` alone —
+    # the shared, tokenless URL this used to send opened an error page for
+    # every volunteer who clicked it. Only the footer differs; the markdown
+    # body is rendered once and reused.
+    body_html = render_body_html(body_markdown)
+    pending: list[tuple[BroadcastRecipient, str, str]] = []
     for r in recipients:
         if r.volunteer is None or not r.volunteer.email:
             continue
@@ -459,6 +484,25 @@ def send_broadcast(
             # Either a retry of the same broadcast_id or a rare row race —
             # either way, some other caller owns this delivery.
             continue
+        anchor = (
+            db.get(models.ShiftSignup, r.shift_signup_id)
+            if r.shift_signup_id is not None
+            else db.get(models.Signup, r.signup_id)
+        )
+        manage_url = _manage_url_for_token(
+            issue_manage_token(db, anchor) if anchor is not None else None
+        )
+        html_body = wrap_body_html(body_html, event=event, manage_url=manage_url)
+        pending.append((r, html_body, render_plaintext(html_body)))
+
+    # 5. Commit the dedup markers and the manage tokens BEFORE dispatching.
+    # The workers send links whose token rows have to be on disk by the time
+    # the volunteer clicks, and a task that beats this commit would also be
+    # sending against a dedup marker that does not exist yet.
+    db.commit()
+
+    recipient_count = 0
+    for r, html_body, text_body in pending:
         send_broadcast_email.delay(
             signup_id=str(r.signup_id) if r.signup_id else None,
             shift_signup_id=str(r.shift_signup_id) if r.shift_signup_id else None,

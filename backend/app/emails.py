@@ -400,39 +400,36 @@ def _contact_instruction(db_obj) -> str:
     )
 
 
-def _manage_url_for_signup(signup: "models.Signup") -> str | None:
-    """Return a magic-link manage URL for the signup, if one exists.
+def _manage_url_for_signup(
+    signup: "models.Signup", manage_token: str | None = None
+) -> str | None:
+    """Return a working manage URL for the signup, or None.
 
-    Looks up the freshest un-consumed manage-capable token stored against this
-    signup (signup_manage / signup_confirm / promotion_confirm). Used in
-    reminder emails so the unsubscribe link is already authenticated and the
-    manage page loads without re-challenging the volunteer.
+    L4 #35: this used to hunt for a stored manage-capable token and then link
+    to ``/signup/manage?signup_id=…`` — because only the token's hash is kept,
+    never the raw value. ManageSignupsPage reads ``?token=`` and nothing else,
+    so every reminder's "View your signups" link opened an error page, and the
+    copy told volunteers to paste a token into a page with no box to paste it
+    into. A caller that wants a usable link mints one at send time
+    (magic_link_service.issue_manage_token) and passes the raw value here.
+
+    No token means no link: a link that cannot authenticate is worse than the
+    absence of one, because it spends the volunteer's trust to reach an error.
     """
     from .config import settings
-    from .magic_link_service import MANAGE_PURPOSES
 
-    tokens = getattr(signup, "magic_link_tokens", None) or []
-    manage_tokens = [
-        t for t in tokens
-        if t.consumed_at is None and t.purpose in MANAGE_PURPOSES
-    ]
-    if not manage_tokens:
+    if not manage_token:
         return None
-    # Pick the most recently issued — expires_at is a reasonable proxy.
-    latest = max(manage_tokens, key=lambda t: t.expires_at)
-    token_hash = latest.token_hash
     base = (settings.frontend_url or "").rstrip("/")
-    # token_hash is stored — not the raw token. When there is no raw token
-    # available (typical for passive reminder builds) we link to the manage
-    # page without a prefilled token so the volunteer can paste theirs from
-    # the original confirmation email. The hash stays server-side.
-    return f"{base}/signup/manage?signup_id={signup.id}" if base else None
+    return f"{base}/signup/manage?token={manage_token}" if base else None
 
 
-def _reminder_common_context(signup: "models.Signup") -> dict:
+def _reminder_common_context(
+    signup: "models.Signup", manage_token: str | None = None
+) -> dict:
     v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
-    manage_url = _manage_url_for_signup(signup) or ""
+    manage_url = _manage_url_for_signup(signup, manage_token) or ""
     return {
         "user_name": vol_name,
         "event_title": event.title,
@@ -443,9 +440,11 @@ def _reminder_common_context(signup: "models.Signup") -> dict:
     }
 
 
-def send_reminder_kickoff(signup: "models.Signup") -> dict:
+def send_reminder_kickoff(
+    signup: "models.Signup", manage_token: str | None = None
+) -> dict:
     """Weekly kickoff reminder: 'Your SciTrek event this week.'"""
-    ctx = _reminder_common_context(signup)
+    ctx = _reminder_common_context(signup, manage_token)
     subject = f"Heads up: you're volunteering this week for '{ctx['event_title']}'"
     text_body = (
         f"Hi {ctx['user_name']},\n\n"
@@ -468,12 +467,14 @@ def send_reminder_kickoff(signup: "models.Signup") -> dict:
     return {"to": ctx["to"], "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
-def send_reminder_pre_24h(signup: "models.Signup") -> dict:
+def send_reminder_pre_24h(
+    signup: "models.Signup", manage_token: str | None = None
+) -> dict:
     """24-hour reminder — separate from the legacy send_reminder_24h so
     Phase 24's idempotency kind (reminder_pre_24h) doesn't collide with the
     legacy reminder_24h dedup key used by send_reminders_24h.
     """
-    ctx = _reminder_common_context(signup)
+    ctx = _reminder_common_context(signup, manage_token)
     subject = f"Tomorrow: '{ctx['event_title']}'"
     text_body = (
         f"Hi {ctx['user_name']},\n\n"
@@ -495,10 +496,12 @@ def send_reminder_pre_24h(signup: "models.Signup") -> dict:
     return {"to": ctx["to"], "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
-def send_reminder_pre_2h(signup: "models.Signup") -> dict:
+def send_reminder_pre_2h(
+    signup: "models.Signup", manage_token: str | None = None
+) -> dict:
     """2-hour reminder. Fires inside the venue-time send window and skipped
     during quiet hours by reminder_service."""
-    ctx = _reminder_common_context(signup)
+    ctx = _reminder_common_context(signup, manage_token)
     subject = f"Starting soon: '{ctx['event_title']}'"
     text_body = (
         f"Hi {ctx['user_name']},\n\n"

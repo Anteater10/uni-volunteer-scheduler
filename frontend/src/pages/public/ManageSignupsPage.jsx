@@ -123,10 +123,14 @@ export default function ManageSignupsPage({ tokenOverride }) {
   // Guard: no token in URL and no override
   // ------------------------------------------------------------------
   if (!token) {
+    // L4 #35: this said "Check your connection and try again", sending people
+    // after a network fault that isn't there. Reaching here means the link
+    // carried no token — an address bar typed by hand, or a link truncated by
+    // a mail client — and no amount of retrying will change that.
     return (
       <ErrorState
-        title="We couldn't load this page"
-        body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
+        title="This link is missing its sign-in code"
+        body="Open the link straight from your confirmation or reminder email — the whole address matters. If it keeps failing, email scitrek@ucsb.edu."
         action={
           <Button variant="primary" onClick={() => navigate("/volunteer")}>
             Back to events
@@ -153,14 +157,31 @@ export default function ManageSignupsPage({ tokenOverride }) {
   // Token / fetch error state
   // ------------------------------------------------------------------
   if (error) {
+    // L4 #35: a rejected link and a dropped connection used to share one
+    // message — "Check your connection and try again" — with a Try again
+    // button. The server answers 400 for a link it will never accept, so
+    // retrying that one just fails again, and the volunteer is left hunting a
+    // network problem that was never there. Their real way back is the newest
+    // email they have.
+    const linkRejected = error.status >= 400 && error.status < 500;
     return (
       <ErrorState
-        title="We couldn't load this page"
-        body="Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
+        title={linkRejected ? "This link no longer works" : "We couldn't load this page"}
+        body={
+          linkRejected
+            ? "Open the most recent SciTrek email you have and use the link in it. If you can't find one, email scitrek@ucsb.edu."
+            : "Check your connection and try again. If the problem continues, email scitrek@ucsb.edu."
+        }
         action={
-          <Button variant="secondary" onClick={() => refetch()}>
-            Try again
-          </Button>
+          linkRejected ? (
+            <Button variant="primary" onClick={() => navigate("/volunteer")}>
+              Back to events
+            </Button>
+          ) : (
+            <Button variant="secondary" onClick={() => refetch()}>
+              Try again
+            </Button>
+          )
         }
       />
     );
