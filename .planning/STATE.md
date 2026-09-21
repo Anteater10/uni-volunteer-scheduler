@@ -1,8 +1,8 @@
 # STATE
 
 **Updated:** 2026-09-21
-**Branch:** `main` — L3 merged as #117 (2026-09-10); L4 merged as #129, #130 and
-L4 PR 3 (2026-09-20/21)
+**Branch:** `main` — L4 done (#129, #130, #132). L3 is **2 of 6** (#117) and
+reopened. Current phase: **S — Stabilization**
 **Roadmap:** `.planning/ROADMAP.md` — the single source of truth
 
 > The previous STATE.md was dated 2026-05-23 and said "next action: merge Phase
@@ -22,19 +22,22 @@ plus 56–63 Done). L1 closed done-by-circumstance with no DNS work performed.
 Audited across Jira, these planning docs and GitHub on 2026-09-08 before
 starting L3; the gaps that audit found are recorded in the outcome blocks below.
 
-**Phase L3 — auth and abuse hardening: merged 2026-09-10 as #117.** Gate 0 #2
-is implemented (see the L3 outcome block below). This file said "awaiting
-commit + PR" for nine days after that merge — the STATE.md inside #117 was
-already stale on landing. Four L3 rows were **not** done and remain open:
-#27 (throttles on three endpoint groups), #28 (fail closed on Redis error),
-#29 (cap and paginate four unbounded queries) and #31 (refresh-token reaper).
-They block L5, L6 and L8, not L4.
+**Phase L3 — auth and abuse hardening: 2 of 6 rows done, reopened.** PR #117
+(2026-09-10) shipped #26 and #30, and the session that merged it reported "L3 is
+done"; this file then recorded L3 as merged. It is not done: #27 (throttles on
+three endpoint groups), #28 (fail closed on Redis error — recommended rules
+never confirmed), #29 (cap and paginate four unbounded queries) and #31
+(refresh-token reaper) were never built, verified against `main` on 2026-09-21.
+They don't block L4 (the roadmap's Blocks column puts them on L5, L6 and L8),
+which is why L4 could go ahead.
 
-**Phase L4 — known bugs: done 2026-09-21.** See the L4 outcome block below.
-Of Gate 0, only #12 (write real corpus test questions) remains, and it's just
-Andy's to-do, not a blocking call.
+**Phase L4 — known bugs: done 2026-09-21** (11 of 12, #38 dropped). See the L4
+outcome block below.
 
-**Next phase: L5 — hardening and scale.**
+**Current phase: S — Stabilization** (roadmap #164–#173): make Jira, the roadmap
+and the kanban board agree with `main`, and take the known false signals out of
+CI and dev tooling. **Then L3 completion, then L5.** From here on a phase is done
+only when every row is (roadmap structural rule 4).
 
 Decided: #1 Cloudflare Free — yes. #2 Fix tokens properly, close PR #79. #3
 already implemented in code, no action needed. #4 Soft tracking for no-shows.
@@ -53,14 +56,13 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. **Start Phase L5.** L3 and L4 are merged. L5 is also where L3's four
-   unfinished rows naturally land (#27, #28, #29, #31), plus L4's follow-ups
-   #149–#152 (SCRUM-162/163/164/175) — #149 and #31 are the same unbounded-growth
-   problem on two token tables and want one reaper. Jira: SCRUM-157 still
-   sits in *Testing* for L3; **SCRUM-12's JWT half is absorbed by L3** — its
-   remaining items (S-03 six spellings of "staff", T3 frontend/backend
-   role-map cross-check, W5.6/W5.7) are untouched and stay open.
-2. **At the next AWS deploy** (L9 notes, cumulative) — **nothing shows L3 or
+1. **Finish Phase S** (roadmap #164–#173): this PR (#164), Andy's review and
+   merge of the Milestone D rescope #118 (#165), Jira (#166), the kanban board
+   (#167), then the CI and tooling fixes (#168–#173).
+2. **Then finish L3:** #27, #28 (confirm the fail-closed rules first), #29, and
+   #31 built together with #149 as one reaper for both token tables. Every PR
+   fully tests the files it touches (#163 ratchet). Then L5.
+3. **At the next AWS deploy** (L9 notes, cumulative) — **nothing shows L3 or
    L4 is on AWS yet**: no deploy workflow, no tags, no version endpoint. Check
    the EC2 host before assuming. The one step that is *not* optional is L3's
    **revoke every pre-L3 refresh token** (see "L3 deploy notes" below); the
@@ -73,13 +75,13 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
    `backend/.env.production.example:176` already ships it as `true` and the
    K31 note in `backend/app/tasks/extract_profile.py:32-36` records the budget
    objection as resolved on 2026-08-20, so check whether it is already set.
-3. **Answer Gate 0 #12** — write real copilot corpus test questions. Andy's
+4. **Answer Gate 0 #12** — write real copilot corpus test questions. Andy's
    own task, tracked as P6 item #133, blocking nothing else.
-4. **Phase P6** — copilot production hardening: corpus refresh,
+5. **Phase P6** — copilot production hardening: corpus refresh,
    CSV-upload-via-copilot tool (its starting material is the deliberately-kept
    `fix/imports-templates` branch), production-grade RAG audit, concurrency
    testing, guardrails. See `.planning/ROADMAP.md` items 133–142.
-5. **Open, not gating L3:** SCRUM-45 dependency triage — now 35 advisories,
+6. **Open, not gating L3:** SCRUM-45 dependency triage — now 35 advisories,
    including `CVE-2026-9856` against `transformers 4.57.6`, whose fix is a
    major version jump that wants the embedding pipeline re-verified. Only
    anyio is fixed so far (#128). Separately, Dependabot's weekly pip update
@@ -132,7 +134,7 @@ pytest-cov rounds before deciding the exit code. Found when this PR's first
 push dropped to 93.63%; `main` was already at 94.60%, printing FAIL on every
 green run.
 
-## Phase L3 outcome (merged 2026-09-10 as #117)
+## Phase L3 outcome (2 of 6 rows — #117 merged 2026-09-10; reopened 2026-09-21)
 
 Gate 0 #2 implemented. Refresh token moved out of `localStorage` into an
 `HttpOnly` cookie; access token now lives in a module-scoped JS variable and
