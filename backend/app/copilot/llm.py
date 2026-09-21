@@ -148,7 +148,7 @@ def stream_completion(
                 last_exc = exc
                 continue
 
-    assert last_exc is not None  # pragma: no cover - defensive
+    assert last_exc is not None
     raise last_exc
 
 

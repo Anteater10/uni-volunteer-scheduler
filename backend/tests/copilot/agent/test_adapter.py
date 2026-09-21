@@ -415,3 +415,34 @@ class TestToolWireNamesAreReal:
         names = [w["function"]["name"] for w in seen["wire"]]
         assert names == ["named_tool"]
         assert all(n for n in names)
+
+
+# ---------------------------------------------------------------------------
+# Roadmap #168 ratchet: the two paths no test reached
+# ---------------------------------------------------------------------------
+
+
+def test_a_second_sweep_waits_before_retrying(monkeypatch):
+    """Every candidate failing once is not the end: the adapter backs off
+    and sweeps again, and the second sweep's answer is the one returned."""
+    slept = []
+    monkeypatch.setattr(adapter_mod, "_candidates", lambda: ["p"])
+    monkeypatch.setattr(adapter_mod, "_MAX_SWEEPS", 2)
+    monkeypatch.setattr(adapter_mod.time, "sleep", slept.append)
+    a = _adapter(
+        [APIConnectionError(request=SimpleNamespace()), _response(content="second sweep")]
+    )
+
+    out = a.chat(messages=[{"role": "user", "content": "q"}])
+
+    assert out == {"final_answer": "second sweep"}
+    assert slept == [adapter_mod._SWEEP_BACKOFF_SECONDS]
+
+
+def test_a_tool_call_with_no_function_is_skipped():
+    """A tool_calls entry without a function names nothing to run. Dropped,
+    and with no real call left the turn falls through to its content."""
+    out = _parse_choice(
+        _response(content="plain answer", tool_calls=[SimpleNamespace(function=None)])
+    )
+    assert out == {"final_answer": "plain answer"}

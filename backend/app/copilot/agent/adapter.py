@@ -152,7 +152,7 @@ class ToolCallingAdapter:
                 elapsed_ms = int((time.monotonic() - started) * 1000)
                 return response, model_id, elapsed_ms
 
-        assert last_exc is not None  # pragma: no cover - defensive
+        assert last_exc is not None
         raise last_exc
 
     def _record_usage(self, response, model_id: str, elapsed_ms: int) -> None:

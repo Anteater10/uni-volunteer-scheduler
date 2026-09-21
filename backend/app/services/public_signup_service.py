@@ -53,17 +53,16 @@ logger = logging.getLogger(__name__)
 # Phase 29 (LOCK-01) — PT-localized copy for participant-facing errors. We
 # store UTC and format the timezone label as "PT" because users don't
 # mentally distinguish PST/PDT on signup copy.
-try:
-    from zoneinfo import ZoneInfo  # py >= 3.9
-    _PT = ZoneInfo("America/Los_Angeles")
-except Exception:  # pragma: no cover — defensive fallback
-    _PT = None
+from zoneinfo import ZoneInfo
+
+# tzdata is pinned in requirements.txt, so this always loads.
+_PT = ZoneInfo("America/Los_Angeles")
 
 
 def _fmt_pt(dt: datetime) -> str:
-    """Format a UTC-aware datetime in Pacific Time (or raw ISO as fallback)."""
-    if _PT is None or dt is None:
-        return dt.isoformat() if dt else ""
+    """Format a UTC-aware datetime in Pacific Time; "" for None."""
+    if dt is None:
+        return ""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(_PT).strftime("%b %d %Y %I:%M %p PT")

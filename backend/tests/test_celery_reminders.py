@@ -179,3 +179,35 @@ def test_send_reminders_24h_respects_window(
         send_reminders_24h.apply().get()
 
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "task, kind, sent_at, hours_ahead",
+    [
+        (send_reminders_24h, "reminder_24h", "reminder_24h_sent_at", 24),
+        (send_reminders_1h, "reminder_1h", "reminder_1h_sent_at", 1),
+    ],
+    ids=["24h", "1h"],
+)
+def test_a_reminder_another_worker_already_claimed_is_not_sent_again(
+    db_session, monkeypatch, patch_session_local, task, kind, sent_at, hours_ahead
+):
+    """Roadmap #168 ratchet. The sent_notifications row is the real dedup:
+    if one exists while the denormalised *_sent_at column is still empty
+    (another worker claimed it and has not committed the column yet), this
+    run must skip the signup, not mail it twice."""
+    now = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
+    s = _seed_confirmed_signup(
+        db_session, start_time=now + timedelta(hours=hours_ahead), email_tag=f"claimed{kind}"
+    )
+    db_session.add(models.SentNotification(signup_id=s.id, kind=kind))
+    db_session.commit()
+    calls = []
+    monkeypatch.setattr(send_email_notification, "delay", lambda *a, **k: calls.append(k))
+
+    with freeze_time(now):
+        task.apply().get()
+
+    assert calls == []
+    db_session.refresh(s)
+    assert getattr(s, sent_at) is None

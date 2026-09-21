@@ -674,14 +674,11 @@ def weekly_digest(self) -> None:
         # listed slot. Signup and shift-commitment anchors are separate
         # tables, so keep track of which one each volunteer came from.
         for volunteer_id, slots in by_volunteer.items():
+            # No missing-row checks: volunteer_id is a RESTRICT FK and nothing
+            # deletes volunteers (CCPA anonymizes in place), and every key in
+            # by_volunteer got its anchor in the same loop that added it.
             v = db.get(models.Volunteer, volunteer_id)
-            if not v:  # pragma: no cover - FK constraint makes this unreachable
-                continue
-
-            anchor = anchors.get(volunteer_id)
-            if anchor is None:  # pragma: no cover - defensive
-                continue
-            anchor_kind, anchor_id = anchor
+            anchor_kind, anchor_id = anchors[volunteer_id]
             claimed = (
                 _dedup_insert_shift(db, anchor_id, week_key)
                 if anchor_kind == "shift"
@@ -813,7 +810,8 @@ def send_signup_confirmation_email(
                 continue
             if isinstance(s, models.ShiftSignup):
                 booked_slots.extend(s.shift.sessions)
-            elif s.slot is not None:
+            else:
+                # signups.slot_id is a non-null FK: a slot signup always has one.
                 booked_slots.append(s.slot)
         attachments = (
             [("scitrek-sessions.ics", build_signup_ics(event, booked_slots))]

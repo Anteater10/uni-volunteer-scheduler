@@ -147,3 +147,26 @@ def test_no_token_means_no_manage_link_rather_than_a_broken_one():
 
     assert _manage_url_for_signup(object(), None) is None
     assert _manage_url_for_signup(object(), "") is None
+
+
+def test_a_reminder_still_sends_when_no_manage_token_can_be_minted(
+    db_session, monkeypatch, patch_session_local
+):
+    """Roadmap #168 ratchet. issue_manage_token returns None when the booking
+    has no address to mint for; the reminder goes out without a link rather
+    than not at all."""
+    from app import magic_link_service
+
+    signup, _event, _vol = _seed(db_session, "notoken")
+    sent = []
+    monkeypatch.setattr(magic_link_service, "issue_manage_token", lambda db, anchor: None)
+    monkeypatch.setattr(
+        celery_mod,
+        "_send_email",
+        lambda to, subject, body, html_body=None, attachments=None: sent.append(body),
+    )
+
+    celery_mod.send_email_notification(signup_id=str(signup.id), kind="reminder_pre_24h")
+
+    assert len(sent) == 1
+    assert not TOKEN_IN_URL.search(sent[0])
