@@ -176,7 +176,7 @@ all Done. Order mattered once: #91 had to precede #80, see #20.
 | 28 | Every throttle fails **open** on Redis error | Fine for uptime, useless for cost control | Fail closed on the expensive ones | L5 | Per-endpoint call |
 | 29 | 4 query paths unbounded | `CONFIG-24` = ~20,000 SELECTs in one request | Row-cap + paginate | L5 | None |
 | 30 | No `aud`/`iss` claims minted or verified | `SEC-36` | Add both | L8 | None |
-| 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap | L8 | None |
+| 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap — see #144, `magic_link_tokens` has the same problem and should share the job | L8 | None |
 
 ## Phase L4 — Known bugs (2–3 days)
 
@@ -207,6 +207,9 @@ all Done. Order mattered once: #91 had to precede #80, see #20.
 | 49 | No Celery time limits; no API request timeout | Tasks hold DB sessions; fetches hang forever | Add both | L8 | None |
 | 50 | 2 of ~10 indexes landed; 13 FKs unindexed | W0.5 half-done | Add the rest | L8 | None |
 | 51 | CrossEncoder ~200s cold start | First request after boot stalls | Warm on startup or sidecar | L9 | None |
+| 144 | `magic_link_tokens` grows unbounded | Found in L4 (PR #130). Only a token's hash is stored, so a working manage link has to be *minted* per send — ~3 rows per signup from reminders, plus one per recipient per broadcast. No reaper, no cap. Same shape as #31, now on a second table and on a faster clock | One reaper covering both tables: consumed rows, and rows past a retention age (SCRUM-162) | L8 | None |
+| 145 | Broadcast send does one INSERT per recipient, inline | Found in L4 (PR #130). Minting a per-recipient manage token added an insert to a synchronous request that already did per-recipient dedup work. Fine at current roster sizes (16 recipients was instant); a 500-volunteer event is untested | Measure under #48's load test; move the send loop to a task if it bites (SCRUM-163) | L9 | None |
+| 146 | `broadcast_service.render_html` has no production caller | Found in L4 (PR #130). The send path uses `render_body_html` + `wrap_body_html` since the footer went per recipient; the old one-shot wrapper survives for a single test | Delete it and fold the test into the two it replaced (SCRUM-164) | L6 | None |
 
 ## Phase L6 — Verification (3–4 days) — *the long pole*
 
