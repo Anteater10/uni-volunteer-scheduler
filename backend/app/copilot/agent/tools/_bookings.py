@@ -167,13 +167,11 @@ def unit_count_for_events(db: Session, event_ids: Sequence) -> int:
     )
 
 
-def events_for_volunteer(
-    db: Session, volunteer_id, *, owner_id=None
-) -> list[tuple[Event, SignupStatus]]:
+def events_for_volunteer(db: Session, volunteer_id) -> list[tuple[Event, SignupStatus]]:
     """(event, status) for every active booking this volunteer holds.
 
-    ``owner_id`` restricts to one organizer's events — the scope check the
-    calling tools apply before deciding a participant is visible at all.
+    L4 #36 removed the ``owner_id`` filter: no staff role is owner-scoped any
+    more, so every caller passed None and the branch could not run.
     """
     out: list[tuple[Event, SignupStatus]] = []
 
@@ -196,40 +194,9 @@ def events_for_volunteer(
             _active(ShiftSignup.status),
         )
     )
-    if owner_id is not None:
-        orient_q = orient_q.filter(Event.owner_id == owner_id)
-        shift_q = shift_q.filter(Event.owner_id == owner_id)
-
     out += list(orient_q.all())
     out += list(shift_q.all())
     return out
-
-
-def reachable_volunteer_ids(db: Session, *, owner_id=None) -> set:
-    """Volunteers the caller may contact — anyone with an active booking.
-
-    Both write tools (``send_reminder_email``, ``nudge_understaffed_module``)
-    gate on this set. While it read signups only, a volunteer whose entire
-    history was classroom work was unreachable through the copilot, and the
-    tool reported them as a failure rather than saying why.
-    """
-    orient_q = (
-        db.query(Signup.volunteer_id)
-        .join(Slot, Slot.id == Signup.slot_id)
-        .join(Event, Event.id == Slot.event_id)
-        .filter(Slot.shift_id.is_(None), _active(Signup.status))
-    )
-    shift_q = (
-        db.query(ShiftSignup.volunteer_id)
-        .join(Shift, Shift.id == ShiftSignup.shift_id)
-        .join(Event, Event.id == Shift.event_id)
-        .filter(_active(ShiftSignup.status))
-    )
-    if owner_id is not None:
-        orient_q = orient_q.filter(Event.owner_id == owner_id)
-        shift_q = shift_q.filter(Event.owner_id == owner_id)
-
-    return {row[0] for row in orient_q.all()} | {row[0] for row in shift_q.all()}
 
 
 # K26: ``volunteers_with_active_bookings`` used to live here — "every
@@ -259,7 +226,7 @@ def volunteer_ids_on_events(db: Session, event_ids: Sequence) -> set:
 
 
 def volunteers_active_between(
-    db: Session, *, start, end, owner_id=None, exclude_ids=None
+    db: Session, *, start, end, exclude_ids=None
 ) -> list[Volunteer]:
     """Volunteers with an active booking on an event starting in [start, end).
 
@@ -289,10 +256,6 @@ def volunteers_active_between(
             Event.start_date < end,
         )
     )
-    if owner_id is not None:
-        orient_q = orient_q.filter(Event.owner_id == owner_id)
-        shift_q = shift_q.filter(Event.owner_id == owner_id)
-
     ids = {row[0] for row in orient_q.all()} | {row[0] for row in shift_q.all()}
     ids -= set(exclude_ids or ())
     if not ids:
@@ -312,7 +275,6 @@ __all__ = [
     "events_for_volunteer",
     "filled_for_events",
     "orientation_signup_query",
-    "reachable_volunteer_ids",
     "shift_signup_query",
     "unit_count_for_events",
     "volunteer_ids_on_events",

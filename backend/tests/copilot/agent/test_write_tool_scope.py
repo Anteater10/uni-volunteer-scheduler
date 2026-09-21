@@ -30,7 +30,7 @@ from app.copilot.agent.tools.events_edit import (
     _schedule_handler,
     _update_handler,
 )
-from app.copilot.agent.tools.operations import _move_handler
+from app.copilot.agent.tools.operations import _attendance_handler, _move_handler
 from app.models import UserRole
 from tests.fixtures.helpers import make_event_with_slot, make_user
 
@@ -147,21 +147,67 @@ def test_admin_is_unaffected(db_session, foreign_event):
     assert _OUT_OF_SCOPE not in str(out.get("error", ""))
 
 
-def test_the_refusal_path_is_still_wired_up(db_session, foreign_event):
-    """No role builds an owner-scoped Scope any more, but the handlers still
-    consult one. Construct that Scope directly: if a per-event rule ever comes
-    back, this is the behaviour it gets, and the tools must not have quietly
-    stopped asking in the meantime."""
-    event, _ = foreign_event
-    owner_scoped = Scope(
+def _owner_scoped(event):
+    """A Scope no role produces any more — owner-scoped to somebody else."""
+    return Scope(
         role="organizer",
         caller_id=event.owner_id,
         module_owner_id="00000000-0000-0000-0000-000000000000",
         see_all=False,
     )
-    assert deny_if_not_owned(owner_scoped, event) == {
+
+
+def test_deny_if_not_owned_refuses_an_owner_scoped_caller(db_session, foreign_event):
+    event, _ = foreign_event
+    assert deny_if_not_owned(_owner_scoped(event), event) == {
         "error": "that event is not one of yours"
     }
 
-    out = _schedule_handler(db_session, owner_scoped, {"event_id": str(event.id)})
+
+@pytest.mark.parametrize(
+    "handler, build_args",
+    [
+        (_schedule_handler, lambda ev, sl: {"event_id": str(ev.id)}),
+        (
+            _update_handler,
+            lambda ev, sl: {
+                "event_id": str(ev.id),
+                "title": "Week 7 - Conservation of Mass - GVJH",
+            },
+        ),
+        (_reschedule_handler, lambda ev, sl: {"slot_id": str(sl.id), "start_time": "10:00"}),
+        (_delete_handler, lambda ev, sl: {"event_id": str(ev.id)}),
+        (
+            _move_handler,
+            lambda ev, sl: {
+                "event_id": str(ev.id),
+                "participant_id": "00000000-0000-0000-0000-00000000000a",
+                "to_shift_id": "00000000-0000-0000-0000-00000000000b",
+            },
+        ),
+        (
+            _attendance_handler,
+            lambda ev, sl: {
+                "slot_id": str(sl.id),
+                "participant_id": "00000000-0000-0000-0000-00000000000a",
+                "outcome": "attended",
+            },
+        ),
+    ],
+    ids=["schedule", "update", "reschedule", "delete", "move", "attendance"],
+)
+def test_every_write_handler_still_consults_the_seam(
+    db_session, foreign_event, handler, build_args
+):
+    """No role builds an owner-scoped Scope any more, but every write handler
+    still routes through deny_if_not_owned. Hand each one that Scope: if a
+    per-event rule ever comes back this is the behaviour it gets, and none of
+    them may have quietly stopped asking in the meantime. One case per
+    handler, because a seam checked in one of six proves nothing about the
+    other five."""
+    event, slot = foreign_event
+    before_title = event.title
+    out = handler(db_session, _owner_scoped(event), build_args(event, slot))
     assert _OUT_OF_SCOPE in str(out.get("error", ""))
+    db_session.refresh(event)
+    assert event.title == before_title

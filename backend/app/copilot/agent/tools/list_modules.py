@@ -32,8 +32,6 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     )
     if args.get("school"):
         q = q.filter(Event.school == args["school"])
-    if not scope.see_all:
-        q = q.filter(Event.owner_id == scope.module_owner_id)
 
     rows = [
         {

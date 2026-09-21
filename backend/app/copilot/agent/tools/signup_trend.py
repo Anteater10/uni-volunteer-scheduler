@@ -44,8 +44,6 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     week_col = func.date_trunc("week", Event.start_date).label("week_start")
 
     base_q = db.query(week_col).distinct().filter(Event.start_date.isnot(None))
-    if not scope.see_all:
-        base_q = base_q.filter(Event.owner_id == scope.module_owner_id)
     week_starts = [
         row[0]
         for row in base_q.order_by(desc("week_start")).limit(weeks_n).all()
@@ -58,8 +56,6 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
             Event.start_date >= week_start,
             Event.start_date < week_end,
         )
-        if not scope.see_all:
-            events_q = events_q.filter(Event.owner_id == scope.module_owner_id)
         events = events_q.all()
         event_ids = [e.id for e in events]
         slots_total = _bookings.capacity_for_events(db, event_ids)

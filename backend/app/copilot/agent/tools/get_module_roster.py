@@ -48,8 +48,6 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     event = db.query(Event).filter(Event.id == module_id).one_or_none()
     if event is None:
         return dict(_NOT_FOUND)
-    if not scope.see_all and event.owner_id != scope.module_owner_id:
-        return dict(_NOT_FOUND)
 
     bookings = _bookings.bookings_for_events(db, [event.id])
     status_filter = args.get("status")

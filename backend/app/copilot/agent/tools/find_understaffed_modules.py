@@ -66,8 +66,6 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     include_past = bool(args.get("include_past", False))
 
     q = db.query(Event)
-    if not scope.see_all:
-        q = q.filter(Event.owner_id == scope.module_owner_id)
 
     if week:
         # An explicit week is an explicit window; don't also apply the

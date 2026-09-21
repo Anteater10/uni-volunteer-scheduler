@@ -5,7 +5,13 @@ to its DB queries. Both staff roles are unrestricted (see_all=True) — the
 boundary that matters is the set of admin-only routes, not a per-event owner
 check (L4 #36; deps.ensure_event_staff_access is the same rule for the REST
 API). Unknown roles raise ScopeError. Caller_id must still be present for an
-organizer: it records who acted."""
+organizer: it records who acted.
+
+With no role owner-scoped, the read tools' own ``if not scope.see_all``
+filters could never run and were removed. The one seam kept is
+``deny_if_not_owned`` below, which every *write* handler still calls: a future
+per-event rule belongs there, and the read tools would need their filters
+back alongside it."""
 
 from __future__ import annotations
 

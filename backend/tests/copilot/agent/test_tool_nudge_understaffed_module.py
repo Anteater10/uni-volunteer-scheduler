@@ -196,3 +196,25 @@ def test_organizer_can_nudge_another_organizers_module(db_session, monkeypatch):
         caller_id=owner_b.id,
     )
     assert "error" not in result["result"]
+
+
+def test_an_unknown_module_nudges_nobody(db_session, monkeypatch):
+    """The not-found path. It used to be reached only by accident — an
+    out-of-scope module filtered to nothing looked the same as a missing one —
+    so once staff stopped being owner-scoped (L4 #36) it needed its own case."""
+    import uuid
+
+    calls = []
+    monkeypatch.setattr(
+        "app.copilot.agent.tools.nudge_understaffed_module._dispatch",
+        lambda email, name: calls.append((email, name)) or True,
+    )
+    admin = make_user(db_session, role=UserRole.admin)
+    scope = scope_for(role="admin", caller_id=admin.id)
+
+    out = NUDGE_UNDERSTAFFED_MODULE_TOOL.handler(
+        db_session, scope, {"module_id": str(uuid.uuid4())}
+    )
+
+    assert "error" in out
+    assert calls == []

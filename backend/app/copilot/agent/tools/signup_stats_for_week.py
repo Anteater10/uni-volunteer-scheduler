@@ -44,8 +44,6 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         Event.start_date >= week_start,
         Event.start_date < week_end,
     )
-    if not scope.see_all:
-        events_q = events_q.filter(Event.owner_id == scope.module_owner_id)
     events = events_q.all()
     event_ids = [e.id for e in events]
 

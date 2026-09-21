@@ -19,13 +19,12 @@ Plan-vs-reality:
 - K26: the id list is bounded. It arrives from a model reading a sentence,
   so "remind everyone" can become an arbitrarily long array; the cap is
   checked before a single message is attempted.
-- Organizer scope: only participants who have a non-cancelled booking on the
-  organizer's events are reachable. Out-of-scope IDs are counted as failed
-  (without leaking which ones).
-- 2026-08-05: "booking" now means an orientation signup *or* a shift
-  commitment (see ``_bookings``). While this read ``Signup`` alone, a volunteer
-  whose history was entirely classroom work was unreachable — the tool counted
-  them as failed, so a confirmed send silently skipped most of the roster.
+- L4 #36: there is no reachability gate any more. It used to confine an
+  organizer to volunteers booked on their own events, and it never applied to
+  an admin (the check was skipped under ``see_all``). Organizers are ``see_all``
+  now too, so the gate could not run for anyone and was removed rather than
+  left as dead code. An unknown id still fails on the volunteer lookup below.
+  What survives is the recipient cap and the confirmation step.
 """
 from __future__ import annotations
 
@@ -35,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
-from app.copilot.agent.tools import _bookings, _outbound
+from app.copilot.agent.tools import _outbound
 from app.copilot.agent.tools._ask import ask_for
 from app.copilot.agent.tools.base import Tool
 from app.models import Volunteer
@@ -55,13 +54,6 @@ def _dispatch(email: str, template: str) -> bool:
     return _outbound.dispatch(email, kind="reminder", context={"template": template})
 
 
-def _reachable_volunteer_ids(db: Session, scope: Scope) -> set:
-    """Return the set of volunteer ids the caller is allowed to email."""
-    return _bookings.reachable_volunteer_ids(
-        db, owner_id=None if scope.see_all else scope.module_owner_id
-    )
-
-
 def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     participant_ids = args["participant_ids"]
     template = args["template"]
@@ -70,15 +62,10 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     # send is the outcome the cap exists to prevent.
     _outbound.enforce_recipient_limit(len(participant_ids))
 
-    reachable = _reachable_volunteer_ids(db, scope)
     queued = 0
     failed = 0
     skipped = 0
     for pid in participant_ids:
-        # Normalize string UUIDs to comparable form.
-        if not scope.see_all and pid not in {str(v) for v in reachable} and pid not in reachable:
-            failed += 1
-            continue
         volunteer = (
             db.query(Volunteer).filter(Volunteer.id == pid).one_or_none()
         )
