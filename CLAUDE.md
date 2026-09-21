@@ -1,42 +1,52 @@
 # uni-volunteer-scheduler — project notes for Claude
 
-UCSB SciTrek volunteer scheduling app. **v1.2-prod milestone — production-ready by role.**
-Two developers are running Claude Code + GSD on this repo from their own machines:
+UCSB SciTrek volunteer scheduling app. Current milestone: **L — Launch**
+(live, verified, handed to Rafael). Where things stand is in
+`.planning/STATE.md`; what is left is in `.planning/ROADMAP.md`, the single
+source of truth.
 
-- **Andy** — admin pillar (Phases 16, 17, 18) and organizer pillar (Phase 19); project owner
-- **Hung** — participant pillar (Phase 15)
-- Phase 20 (cross-role integration) is shared
+**Who works here (updated 2026-09-21, roadmap #172):**
 
-Both developers use single checkout + branch switching on their own clones. Coordination
-happens via push/pull/PRs against shared `main`. See `docs/COLLABORATION.md` for the full
-collaboration contract (file-ownership rules, PR-only list, sync cadence, tie-breaker).
+- **Andy** does all backlog work and owns the project. He commits as both
+  "Andy" and "Siddhant Subramanian". He prefers plain-language explanations
+  and short replies.
+- **Rafael** (`rsolorzano-ucsb`) does deployment only. Nothing in the backlog is
+  a handoff to him.
+- **Hung** built the participant pillar in v1.2. His last commit on `main` was
+  2026-08-03.
 
-Andy prefers plain-language explanations and short replies.
+The v1.2 setup (two developers, long-lived `feature/v1.2-*` role branches,
+pillar ownership) is over. `docs/COLLABORATION.md` describes that setup and
+is kept for history. Only its PR-only list still applies.
 
-## Branch awareness
+## How work flows
 
-Before starting any work in a session, run:
+1. **Start of a session:** run `git branch --show-current`. If you are on
+   `main`, do not edit anything. Create a short-lived branch off an up-to-date
+   `main`, named after the roadmap phase: `chore/S-ci-honesty`,
+   `feature/L4-quick-fixes`, `docs/L4-followups-...`.
+2. **One PR per small piece of work.** It merges to `main` once CI is green and
+   Andy says so. Delete the branch after the merge.
+3. **Every PR fully tests the files it touches.** Coverage floors only go up
+   (roadmap #163/#168). The hard 100% gate, for backend *and* frontend, lands
+   after L5.
+4. **Keep the three trackers in step, in the same PR:** the roadmap row
+   (`.planning/ROADMAP.md`), its Jira ticket (project `SCRUM`, tagged
+   `[SCRUM-N]` on the row), and, for GitHub issues, the "KanBan Board" project
+   (#2).
+5. **A phase is done only when every row is.** Every row ✅ with a merged PR,
+   its Jira ticket at Done, and STATE.md updated. Report "N of M rows done",
+   never "phase done". This is roadmap structural rule 4, added because L3 was
+   once reported done at 2 of 6.
 
-```bash
-git branch --show-current
-```
+**PR-only files** need Andy's explicit OK before any edit: `.planning/ROADMAP.md`,
+`.planning/STATE.md`, `CLAUDE.md`, `.github/workflows/*`,
+`backend/app/models.py`, `backend/alembic/versions/*`, `docker-compose.yml`, the
+Dockerfiles, and the shared frontend contract files listed in
+`docs/COLLABORATION.md`.
 
-Then check the table below and only edit files in the matching pillar. Files on the
-PR-only list in `docs/COLLABORATION.md` require explicit user permission before editing.
-
-| Branch | Pillar | Owner |
-|---|---|---|
-| `feature/v1.2-participant` | participant pillar | Hung |
-| `feature/v1.2-admin` | admin pillar | Andy |
-| `feature/v1.2-organizer` | organizer pillar | Andy |
-| `main` | integration / shared | read-only between phase merges |
-
-**Rule:** Only edit files in the pillar that owns the current branch. The PR-only list
-(in `docs/COLLABORATION.md`) covers files where concurrent edits cause hard-to-reverse
-damage — those need explicit user permission regardless of which branch you are on.
-
-**If you find yourself on `main`, do NOT make changes.** Switch to the appropriate
-role branch first, or ask the user which branch they want.
+**No Claude attribution** in commit messages or PR bodies: no footer, no
+co-author trailer.
 
 ## Stack
 - **Backend:** FastAPI + SQLAlchemy + Alembic + Postgres 16 + Celery + Redis
@@ -80,19 +90,12 @@ This project uses the **GSD (get-shit-done)** harness. Project state lives in
 `.planning/` — `ROADMAP.md`, `STATE.md`, per-phase `PLAN.md` / `SUMMARY.md`,
 and `remote-run.log`.
 
-**Milestone status (v1.2-prod complete — 2026-04-17):**
-
-- v1.0 phases 0–7 shipped (2026-04-08). Phase 8 (deployment) remains deferred
-  to a later milestone.
-- v1.1 phases 8–13 shipped (2026-04-10) — account-less realignment, magic-link
-  infrastructure, 16-scenario Playwright baseline.
-- v1.2-prod phases 14–20 shipped (2026-04-17) — production-ready by role
-  (participant, admin, organizer) with cross-role Playwright integration.
-
-Cross-role regression coverage lives in `e2e/cross-role.spec.js` (5 scenarios
-× 6 browser projects). Manual smoke verification: see
-[docs/smoke-checklist.md](docs/smoke-checklist.md) for the ~30-minute
-three-window pass. Next milestone (deployment / v1.3 polish) TBD.
+Milestone history: v1.0 (phases 0–7), v1.1 (8–13) and v1.2-prod (14–20)
+shipped by 2026-04-17, and v1.4 added the copilot. Since 2026-09 the work has
+been organised as the Launch roadmap (Gate 0, then phases L0–L8, P, D and X)
+in `.planning/ROADMAP.md`. Cross-role regression coverage lives in
+`e2e/cross-role.spec.js`. For manual smoke verification, see
+[docs/smoke-checklist.md](docs/smoke-checklist.md).
 
 ## Teaching style
 Andy prefers **one concept per turn** with a check-in question at the end.

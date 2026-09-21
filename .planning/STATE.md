@@ -1,7 +1,7 @@
 # STATE
 
 **Updated:** 2026-09-21
-**Branch:** `main` — L4 done (#129, #130, #132). L3 is **2 of 6** (#117) and
+**Branch:** `main` — L4 done (#129, #130, #132). L3 is **2 of 7** (#117) and
 reopened. Current phase: **S — Stabilization**
 **Roadmap:** `.planning/ROADMAP.md` — the single source of truth
 
@@ -22,7 +22,8 @@ plus 56–63 Done). L1 closed done-by-circumstance with no DNS work performed.
 Audited across Jira, these planning docs and GitHub on 2026-09-08 before
 starting L3; the gaps that audit found are recorded in the outcome blocks below.
 
-**Phase L3 — auth and abuse hardening: 2 of 6 rows done, reopened.** PR #117
+**Phase L3 — auth and abuse hardening: 2 of 7 rows done, reopened.** (Row #177,
+malformed path ids 500, added 2026-09-21 from Phase S.) PR #117
 (2026-09-10) shipped #26 and #30, and the session that merged it reported "L3 is
 done"; this file then recorded L3 as merged. It is not done: #27 (throttles on
 three endpoint groups), #28 (fail closed on Redis error — recommended rules
@@ -56,9 +57,11 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. **Finish Phase S** (roadmap #164–#173): this PR (#164), Andy's review and
-   merge of the Milestone D rescope #118 (#165), Jira (#166), the kanban board
-   (#167), then the CI and tooling fixes (#168–#173).
+1. **Finish Phase S** (roadmap #164–#173), **6 of 10 rows done** as of
+   2026-09-21: #164 (PR #134), #166 (Jira), #169 (PR #135), #170 and #171
+   (PR #136), #172 (PR #137). Left: #165 (Andy reviews #118), #167 (kanban,
+   needs `gh auth refresh -s project`), #168 (gate fixed in PR #135; dead-code
+   deletion waits on Andy's OK of the list), #173 (branch cleanup).
 2. **Then finish L3:** #27, #28 (confirm the fail-closed rules first), #29, and
    #31 built together with #149 as one reaper for both token tables. Every PR
    fully tests the files it touches (#163 ratchet). Then L5.
@@ -134,7 +137,7 @@ pytest-cov rounds before deciding the exit code. Found when this PR's first
 push dropped to 93.63%; `main` was already at 94.60%, printing FAIL on every
 green run.
 
-## Phase L3 outcome (2 of 6 rows — #117 merged 2026-09-10; reopened 2026-09-21)
+## Phase L3 outcome (2 of 7 rows — #117 merged 2026-09-10; reopened 2026-09-21)
 
 Gate 0 #2 implemented. Refresh token moved out of `localStorage` into an
 `HttpOnly` cookie; access token now lives in a module-scoped JS variable and

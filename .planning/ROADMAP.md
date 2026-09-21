@@ -186,18 +186,18 @@ done row. Then L3 completion, then L5.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 164 | Roadmap and STATE.md lag `main` | Done work unrecorded (L3 #26/#30, L5 #47, P4 #99–#102, P6 #141); open work on no plan | Record it; add rows #153–#163; add structural rule 4 | L3 | **⏳ This PR** [SCRUM-176] |
+| 164 | Roadmap and STATE.md lag `main` | Done work unrecorded (L3 #26/#30, L5 #47, P4 #99–#102, P6 #141); open work on no plan | Record it; add rows #153–#163; add structural rule 4 | L3 | **✅ Done — PR #134** (2026-09-21). [SCRUM-176] |
 | 165 | Milestone D rescope sits in draft PR #118 | `main` says D1–D5 and Tableau; Jira and #118 say D0–D7 and Metabase | Review, rebase, merge #118 | D | **Decided 2026-09-21:** merge after Andy reviews [SCRUM-177] |
-| 166 | Jira lags `main` | 16 done items still open; #38 not closed; unlinked and missing tickets | Close with PR comments; label drops `wont-do` (no Won't Do status exists); ticket every open row | L3 | None [SCRUM-178] |
+| 166 | Jira lags `main` | 16 done items still open; #38 not closed; unlinked and missing tickets | Close with PR comments; label drops `wont-do` (no Won't Do status exists); ticket every open row | L3 | **✅ Done 2026-09-21** (no PR; Jira only). 18 tickets moved to Done with PR comments, #38 labelled `wont-do`, about 17 renamed to carry row numbers, 29 created (SCRUM-176–204), so every open row has a ticket. [SCRUM-178] |
 | 167 | Two kanban boards disagree | Project #1 duplicates #2; closed issues #24/#27 show "In review"; duplicate issues #12/#34, #10/#35 | Keep "KanBan Board" (#2), close #1, fix cards | — | **Decided 2026-09-21:** keep #2 [SCRUM-179] |
-| 168 | Coverage gate is rounded and floors are stale | #152: 94.5% passes a 95% gate while printing FAIL | `--cov-precision=2`, floors = current measured values, only ever raised; delete confirmed-dead code | L3 | **Decided 2026-09-21:** ratchet [SCRUM-180] |
-| 169 | Dependabot's pip update crashes | Rewrites the `torch 2.13.0+cpu` pin into one pip rejects; no backend update PRs open | Ignore torch in `dependabot.yml`; bump by hand | — | None [SCRUM-181] |
-| 170 | E2E seed fails on an existing dev DB | `seed_e2e.py::_ensure_quarters` 409s on overlapping quarters | Reuse a covering quarter | — | None [SCRUM-182] |
-| 171 | Three e2e specs flake in parallel | admin-a11y Exports, cross-role 1B and 6 collide on shared seed data | Isolate their data or run those files serially | L6 | None [SCRUM-183] |
-| 172 | CLAUDE.md describes a dead workflow | v1.2 two-developer branch table; tells sessions on `main` to switch to `feature/v1.2-*` | Current one-developer workflow + rule 4 | — | None [SCRUM-184] |
+| 168 | Coverage gate is rounded and floors are stale | #152: 94.5% passes a 95% gate while printing FAIL | `--cov-precision=2`, floors = current measured values, only ever raised; delete confirmed-dead code | L3 | **✅ Gate fix done — PR #135** (`80787ea`). `--cov-precision=2` on all four gates. Copilot really at 95.23% after `quarters.py` tests. Whole-app floor 55 → 89.5 (measured 89.94%). Tripwire test covers both. **Still open:** dead-code deletion waits for Andy to confirm the list. [SCRUM-180] |
+| 169 | Dependabot's pip update crashes | Rewrites the `torch 2.13.0+cpu` pin into one pip rejects; no backend update PRs open | Ignore torch in `dependabot.yml`; bump by hand | — | **✅ Done — PR #135** (`80787ea`). torch ignored at every level. [SCRUM-181] |
+| 170 | E2E seed fails on an existing dev DB | `seed_e2e.py::_ensure_quarters` 409s on overlapping quarters | Reuse a covering quarter | — | **✅ Done — PR #136** (`cff7119`). There were three bugs, not one: quarter overlap (incl. archived rows), roster `shift_signup_id` read as `signup_id` (cancelled "None" → null confirm token → confirm e2e silently skipped), and `/test/seed-cleanup` returning before deleting cancelled shift commitments. Three reruns clean. [SCRUM-182] |
+| 171 | Three e2e specs flake in parallel | Named: admin-a11y Exports, cross-role 1B and 6. **Wrong diagnosis:** they passed 6 of 6 full runs at normal load. Their failures were `loginAs` timeouts at load average 40+. The real flake was the logout test reading the csrf cookie while the boot refresh rotated it (403, 1 run in 3) | Wait for the boot refresh before logout | L6 | **✅ Done — PR #136** (`cff7119`). 120/120 across six browsers; full chromium suite 3 runs green in a row [SCRUM-183] |
+| 172 | CLAUDE.md describes a dead workflow | v1.2 two-developer branch table; tells sessions on `main` to switch to `feature/v1.2-*` | Current one-developer workflow + rule 4 | — | **✅ Done — PR #137.** Rewritten for the current workflow: short-lived branches off `main`, one PR per piece, three trackers in step, rule 4. [SCRUM-184] |
 | 173 | ~60 stale branches | Merged branches never deleted | Delete merged ones; list unmerged for Andy | — | None [SCRUM-185] |
 
-## Phase L3 — Auth and abuse hardening (3–4 days) — **2 of 6 done · reopened 2026-09-21**
+## Phase L3 — Auth and abuse hardening (3–4 days) — **2 of 7 done · reopened 2026-09-21**
 
 PR #117 (2026-09-10) shipped the auth half, #26 and #30, and the session that
 merged it reported "L3 is done". It was not: #27, #28, #29 and #31 were never
@@ -212,6 +212,7 @@ reopened and finishes before L5; see Phase S for how the trackers drifted.
 | 29 | 4 query paths unbounded | `CONFIG-24` = ~20,000 SELECTs in one request | Row-cap + paginate | L5 | **⬜ Open — never built.** The four unbounded query paths (`CONFIG-24`) are still uncapped |
 | 30 | No `aud`/`iss` claims minted or verified | `SEC-36` | Add both | L8 | **✅ Done — PR #117** (2026-09-10). `aud`/`iss` minted and verified on access tokens |
 | 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap — see #149, `magic_link_tokens` has the same problem and should share the job | L8 | **⬜ Open — never built.** Nothing reaps `refresh_tokens`. Build as one reaper with #149, which has the same problem on `magic_link_tokens` |
+| 177 | Malformed ids in URL paths 500 | Found 2026-09-21 by the e2e seed: `POST /signups/None/cancel` → 500 (`InvalidTextRepresentation` from Postgres). 52 path params across 9 routers are typed `str`, not `UUID`, so garbage reaches the DB. `/public/events/None` already 422s | Type the id params as `UUID` so FastAPI 422s before the query | L6 | None [SCRUM-205] |
 
 ## Phase L4 — Known bugs (2–3 days) — **done 2026-09-21**
 
