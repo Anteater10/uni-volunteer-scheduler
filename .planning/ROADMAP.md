@@ -24,7 +24,7 @@ Assembled from a full audit on 2026-09-03/04: Jira, all 492 markdown files, the
 paper track, and a DB → endpoint → feature → frontend map (30 tables, 160
 endpoints, 46 features, 39 routes). Source register: 506 numbered findings.
 
-## Three structural rules
+## Four structural rules
 
 These are why the ordering differs from the old plan.
 
@@ -37,6 +37,11 @@ These are why the ordering differs from the old plan.
 3. **Nothing is "done" on a branch.** Three items the old roadmap marked ✅ are
    sitting unmerged (PR #80, K31's `569c3ff`, F1's acceptance on PR #79).
    Merged to `main` or it is not done.
+4. **A phase is done only when every row is.** Every row ✅ with a merged PR,
+   its Jira ticket moved to Done, and STATE.md updated — all three, in the PR
+   that lands the last row. A session reports "N of M rows done", never "phase
+   done". Added 2026-09-21 after L3 was reported done at 2 of 6 rows and the
+   trackers drifted from there (see Phase S).
 
 ---
 
@@ -167,16 +172,46 @@ all Done. Order mattered once: #91 had to precede #80, see #20.
 | 25 | 9 branches with unmerged work | Includes 39-commit `origin/v1.3` | Merge or delete each | Nothing | **✅ Every branch dispositioned.** Method matters: `git diff` totals are useless here because they don't say which side is newer — the reliable test is *which files does this branch add that `main` lacks*. Deleted `fix/confirmation-email-silent-failure` (its only unique lines would have **reverted** PRs #83 and #84). **`feat/deploy-baseline` is fully landed** — all 12 files it adds are on `main`, four are byte-identical including migration `0009`, and `main` leads every other file; my earlier "1,837 lines missing" was the diff trap. **`organizer-audit` likewise superseded** — `main`'s form-schema endpoints already admit organizers via `require_staff` with no owner filter, which is what the 2026-09-08 ruling wants. **Keep `v1.3`** — sole copy of ~837 lines of SMS work (someone else owns SMS). **Keep `fix/imports-templates`** — sole copy of the bulk-add UI, input to P6 #135. ~52 further remote branches are fully-merged clutter, not yet cleared. |
 | 26.1 | Check-in QR unreachable on a phone | `CheckInQRModal` rendered only by `AdminEventPage`, and `AdminLayout` swaps every `/admin/*` page for `DesktopOnlyBanner` below the desktop breakpoint | Surface it on the organizer roster | Nothing | **✅ #94 — added 2026-09-08 on Andy's requirement that organizers use both phone and laptop.** The desktop half was already correct (no `isAdmin` gate on the button; the route admits both roles) — this was a missing surface, not a permission bug. Reuses the existing modal, reading `venue_code` off the roster query the page already runs. A slice of P1 #80/#81, pulled forward because check-in is a live daily flow. |
 
-## Phase L3 — Auth and abuse hardening (3–4 days)
+## Phase S — Stabilization (1–2 days) — *added 2026-09-21*
+
+Before more feature or hardening work: make every tracker agree with `main`, and
+remove the known false signals from CI and dev tooling. Why it exists: L3 was
+reported done at 2 of 6 rows (see L3), so STATE.md, Jira and the next session all
+moved on; Jira never recorded work being finished (16 done items still open,
+all 12 L4 tickets "Idea"); roadmap updates sat in unmerged PRs; two kanban
+boards disagreed; 53 Jira tickets and 13 GitHub issues were on no plan.
+
+Exit criteria: every row below ✅, and the tracker audit shows no ❌ for any
+done row. Then L3 completion, then L5.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 26 | Access + refresh in `localStorage` | One XSS takes the account | Cookie + in-memory + CSRF; ~21 files | L6 | Depends on #2 |
-| 27 | 3 endpoint groups have zero throttle | `magic/{token}`, `slots/{id}/resolve`, 5 organizer routes | Add limits | L6 | None |
-| 28 | Every throttle fails **open** on Redis error | Fine for uptime, useless for cost control | Fail closed on the expensive ones | L5 | Per-endpoint call |
-| 29 | 4 query paths unbounded | `CONFIG-24` = ~20,000 SELECTs in one request | Row-cap + paginate | L5 | None |
-| 30 | No `aud`/`iss` claims minted or verified | `SEC-36` | Add both | L8 | None |
-| 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap — see #149, `magic_link_tokens` has the same problem and should share the job | L8 | None |
+| 164 | Roadmap and STATE.md lag `main` | Done work unrecorded (L3 #26/#30, L5 #47, P4 #99–#102, P6 #141); open work on no plan | Record it; add rows #153–#163; add structural rule 4 | L3 | **⏳ This PR** [SCRUM-176] |
+| 165 | Milestone D rescope sits in draft PR #118 | `main` says D1–D5 and Tableau; Jira and #118 say D0–D7 and Metabase | Review, rebase, merge #118 | D | **Decided 2026-09-21:** merge after Andy reviews [SCRUM-177] |
+| 166 | Jira lags `main` | 16 done items still open; #38 not closed; unlinked and missing tickets | Close with PR comments; label drops `wont-do` (no Won't Do status exists); ticket every open row | L3 | None [SCRUM-178] |
+| 167 | Two kanban boards disagree | Project #1 duplicates #2; closed issues #24/#27 show "In review"; duplicate issues #12/#34, #10/#35 | Keep "KanBan Board" (#2), close #1, fix cards | — | **Decided 2026-09-21:** keep #2 [SCRUM-179] |
+| 168 | Coverage gate is rounded and floors are stale | #152: 94.5% passes a 95% gate while printing FAIL | `--cov-precision=2`, floors = current measured values, only ever raised; delete confirmed-dead code | L3 | **Decided 2026-09-21:** ratchet [SCRUM-180] |
+| 169 | Dependabot's pip update crashes | Rewrites the `torch 2.13.0+cpu` pin into one pip rejects; no backend update PRs open | Ignore torch in `dependabot.yml`; bump by hand | — | None [SCRUM-181] |
+| 170 | E2E seed fails on an existing dev DB | `seed_e2e.py::_ensure_quarters` 409s on overlapping quarters | Reuse a covering quarter | — | None [SCRUM-182] |
+| 171 | Three e2e specs flake in parallel | admin-a11y Exports, cross-role 1B and 6 collide on shared seed data | Isolate their data or run those files serially | L6 | None [SCRUM-183] |
+| 172 | CLAUDE.md describes a dead workflow | v1.2 two-developer branch table; tells sessions on `main` to switch to `feature/v1.2-*` | Current one-developer workflow + rule 4 | — | None [SCRUM-184] |
+| 173 | ~60 stale branches | Merged branches never deleted | Delete merged ones; list unmerged for Andy | — | None [SCRUM-185] |
+
+## Phase L3 — Auth and abuse hardening (3–4 days) — **2 of 6 done · reopened 2026-09-21**
+
+PR #117 (2026-09-10) shipped the auth half, #26 and #30, and the session that
+merged it reported "L3 is done". It was not: #27, #28, #29 and #31 were never
+built. The 2026-09-21 audit verified each against the code on `main`. L3 is
+reopened and finishes before L5; see Phase S for how the trackers drifted.
+
+| # | Current situation | What's wrong | Recommendation | Blocks | Decision |
+|---|---|---|---|---|---|
+| 26 | Access + refresh in `localStorage` | One XSS takes the account | Cookie + in-memory + CSRF; ~21 files | L6 | **✅ Done — PR #117** (2026-09-10). Refresh token in an `HttpOnly` cookie, access token in memory, CSRF on cookie-authenticated routes, throttles on `/auth/refresh` and `/auth/logout` |
+| 27 | 3 endpoint groups have zero throttle | `magic/{token}`, `slots/{id}/resolve`, 5 organizer routes | Add limits | L6 | **⬜ Open — never built.** Verified on `main` 2026-09-21: the 5 `@router.post` routes in `organizer.py`, `POST /slots/{id}/resolve` in `check_in.py` and `GET /auth/magic/{token}` have no `rate_limit`. (#117 throttled only `/auth/refresh` and `/auth/logout`) |
+| 28 | Every throttle fails **open** on Redis error | Fine for uptime, useless for cost control | Fail closed on the expensive ones | L5 | **⬜ Open — decision pending.** Recommended 2026-09-08, never confirmed: fail closed on email fan-out, admin exports, the copilot, and the *unauthenticated* venue-code check-in routes; signup, login and staff roster check-in stay open. Andy's question in that session was "shouldn't it be all of them?" — confirm before building |
+| 29 | 4 query paths unbounded | `CONFIG-24` = ~20,000 SELECTs in one request | Row-cap + paginate | L5 | **⬜ Open — never built.** The four unbounded query paths (`CONFIG-24`) are still uncapped |
+| 30 | No `aud`/`iss` claims minted or verified | `SEC-36` | Add both | L8 | **✅ Done — PR #117** (2026-09-10). `aud`/`iss` minted and verified on access tokens |
+| 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap — see #149, `magic_link_tokens` has the same problem and should share the job | L8 | **⬜ Open — never built.** Nothing reaps `refresh_tokens`. Build as one reaper with #149, which has the same problem on `magic_link_tokens` |
 
 ## Phase L4 — Known bugs (2–3 days) — **done 2026-09-21**
 
@@ -207,7 +242,7 @@ all fixed before merge — see #34.
 | 44 | Phase 37 has no directory, no plan | Load test, PII encryption, pending store all deferred here | Write the phase | L6 | None |
 | 45 | No WAF, no bot protection | App throttles fail open; nothing above them | Cloudflare rules | L9 | Depends on #1 |
 | 46 | No AWS spend cap | **The actual credit protection.** Throttles can't stop what fails open | Hard budget alarm + cap | L9 | None |
-| 47 | `_PENDING` store is in-memory | **Blocks running more than one worker** | Move to DB | L9 | None |
+| 47 | `_PENDING` store is in-memory | **Blocks running more than one worker** | Move to DB | L9 | **✅ Done — PR #67** (`39d6b59`). Pending confirmations moved to Redis (`copilot/agent/confirmation.py`), not the DB, so more than one worker is no longer blocked. Recorded 2026-09-21; it had shipped weeks earlier |
 | 48 | Zero load testing ever | Instance sizing is a guess; 512MB already OOM'd | Establish P50/P95 | L9 | None |
 | 49 | No Celery time limits; no API request timeout | Tasks hold DB sessions; fetches hang forever | Add both | L8 | None |
 | 50 | 2 of ~10 indexes landed; 13 FKs unindexed | W0.5 half-done | Add the rest | L8 | None |
@@ -215,7 +250,12 @@ all fixed before merge — see #34.
 | 149 | `magic_link_tokens` grows unbounded | Found in L4 (PR #130). Only a token's hash is stored, so a working manage link has to be *minted* per send — ~3 rows per signup from reminders, plus one per recipient per broadcast. No reaper, no cap. Same shape as #31, now on a second table and on a faster clock | One reaper covering both tables: consumed rows, and rows past a retention age (SCRUM-162) | L8 | None |
 | 150 | Broadcast send does one INSERT per recipient, inline | Found in L4 (PR #130). Minting a per-recipient manage token added an insert to a synchronous request that already did per-recipient dedup work. Fine at current roster sizes (16 recipients was instant); a 500-volunteer event is untested | Measure under #48's load test; move the send loop to a task if it bites (SCRUM-163) | L9 | None |
 | 151 | `broadcast_service.render_html` has no production caller | Found in L4 (PR #130). The send path uses `render_body_html` + `wrap_body_html` since the footer went per recipient; the old one-shot wrapper survives for a single test | Delete it and fold the test into the two it replaced (SCRUM-164) | L6 | None |
-| 152 | Copilot coverage gate enforces 94.5%, not 95% | Found in L4 (PR #132). pytest-cov decides the exit code after rounding to a whole percent (`precision` defaults to 0) but prints FAIL from the unrounded total — so 94.5% and up passes while the log says FAIL. `main` has sat at 94.60% under the stated 95% bar, 0.10 above the real one, and every green run prints FAIL | Test the existing gaps (`operations`, `quarters`, `create_event_with_schedule`, `events_edit`, `orientation_credits`) until it clears 95% for real, *then* add `--cov-precision=2` to the four gate steps and update `test_coverage_gates.py` (SCRUM-175) | L6 | None |
+| 152 | Copilot coverage gate enforces 94.5%, not 95% | Found in L4 (PR #132). pytest-cov decides the exit code after rounding to a whole percent (`precision` defaults to 0) but prints FAIL from the unrounded total — so 94.5% and up passes while the log says FAIL. `main` has sat at 94.60% under the stated 95% bar, 0.10 above the real one, and every green run prints FAIL | Test the existing gaps (`operations`, `quarters`, `create_event_with_schedule`, `events_edit`, `orientation_credits`) until it clears 95% for real, *then* add `--cov-precision=2` to the four gate steps and update `test_coverage_gates.py` (SCRUM-175) | L6 | None. Fixed by #168 in Phase S |
+| 153 | `audit_logs` retention decided, never built | Gate 0 #7 set 3 months on 2026-09-07; nothing on `main` deletes old rows and no row tracked building it | Celery beat purge of `audit_logs` older than 3 months | L9 | None. Added 2026-09-21 from the tracker audit [SCRUM-186] |
+| 156 | Venue codes are 4 digits and never expire | GitHub #46: follow-ups from the #31 hardening review. The throttle is the only ceiling on guessing (residual S-02); ties to #28 | Rotate or expire venue codes; revisit with #28's fail-closed rule for unauthenticated check-in | L6 | None. Added 2026-09-21 from the tracker audit (GH #46) [SCRUM-187] |
+| 157 | Celery `statement_timeout` override documented, never built | SCRUM-161: described in two files but absent; long tasks share the web 15s DB timeout | Add the Celery-side override | L9 | None. Added 2026-09-21 from the tracker audit (SCRUM-161) |
+| 158 | Large CSV exports are uncapped | SCRUM-173: event, privacy-request and attendance exports load everything in memory. Close to #29, which doesn't cover them | Cap or stream them | L6 | None. Added 2026-09-21 from the tracker audit (SCRUM-173) |
+| 163 | Coverage is not 100% and code is excluded | 88.75% measured strictly: ~1,000 lines + 600 branch paths untested; 4 files omitted and 15 `pragma: no cover` lines. `tasks/reminders.py` and `seed_admin.py` run in production with 0% coverage | Ratchet from #168 (every PR fully tests what it touches), then the final PR empties the omit/exclude lists and raises every gate to a hard 100% | L6 | **Decided 2026-09-21:** 100% of code tested, no exclusions; raised as we go, final gate after L5 [SCRUM-188] |
 
 ## Phase L6 — Verification (3–4 days) — *the long pole*
 
@@ -230,6 +270,8 @@ all fixed before merge — see #34.
 | 58 | INTEG-04 blocked on a human since Phase 20 | Status literally `human_needed` | Do the dry run | L7 | None |
 | 59 | 11 unrun UAT tests across phases 15/16/17 | All marked `[pending]` | Fold into this pass | L7 | None |
 | 60 | W6.5 regression tests | P0s found by hand won't stay fixed | One test per P0 | L8 | None |
+| 155 | Nothing tests real event-day conditions | SCRUM-23 / SCRUM-33: school wifi, phones, several people checking in at once. No L6 row covers it | A rehearsal under event conditions before L9 | L7 | None. Added 2026-09-21 from the tracker audit (SCRUM-23, SCRUM-33) |
+| 176 | QR check-in never had a real test pass | GitHub #31: QR check-in exists (#45, #74) but was never tested end to end or promoted to preview | Test pass, then enable in preview | L7 | None. Added 2026-09-21 from the kanban board (GH #31) [SCRUM-204] |
 
 ## Phase L7 — Fix what L6 finds (2–3 days, unbounded)
 
@@ -274,6 +316,8 @@ all fixed before merge — see #34.
 | 77 | `ccpa-policy.md` has 7 `TODO(copy)` | **The copilot cites this document** | Fill them in | — | Hung owns |
 | 78 | No runbook | Rafael can't operate it | Write it | 79 | None |
 | 79 | No walkthrough done | This is the exit criterion | Live walkthrough with Rafael | — | None |
+| 154 | Orientation credit never expires | Gate 0 #6 (2026-09-07) decided credit expires after 1 year; `has_orientation_credit` is still permanent | Add the expiry check and fix `PRODUCT-BRIEF.md` (K39) | — | None. Added 2026-09-21 from the tracker audit (SCRUM-151) |
+| 162 | Help document is out of date | GitHub #15: rewrite to cover full functionality and policy; matters for the handoff | Rewrite it | — | None. Added 2026-09-21 from the tracker audit (GH #15) [SCRUM-189] |
 
 ---
 
@@ -285,12 +329,13 @@ Nothing here blocks launch. Ordered by value per day.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 80 | Organizers: 67 endpoints, 2 screens | Admin shell is desktop-only; their device is a phone | Mobile-capable roster | — | None |
-| 81 | Bottom-nav "Events" → `DesktopOnlyBanner` | Dead end on the device they actually use | Fix the nav target | — | None |
+| 80 | Organizers: 67 endpoints, 2 screens | Admin shell is desktop-only; their device is a phone | Mobile-capable roster | — | None [SCRUM-191] |
+| 81 | Bottom-nav "Events" → `DesktopOnlyBanner` | Dead end on the device they actually use | Fix the nav target | — | None [SCRUM-192] |
 | 82 | 2 `/organizer/promote` endpoints exist | No button anywhere | Add to roster | — | None |
 | 83 | Cancel/move/swap/resend staff-allowed | No organizer control for any of them | Add to roster | — | None |
 | 84 | Grant-credit button is desktop-only | Endpoint is organizer-namespaced | Add to roster | — | None |
 | 85 | Fill rate is admin-only | Organizers can't see staffing on a phone | Add to roster | — | None |
+| 160 | Rosters don't show who is oriented | GitHub #12 / #34 (the same request filed twice). Orientation blocks signup, so organizers need it on event day | Show oriented status on module and period rosters | — | None. Added 2026-09-21 from the tracker audit (GH #12, #34) [SCRUM-190] |
 
 ## Phase P2 — Role gaps (4–5 days)
 
@@ -303,6 +348,7 @@ Nothing here blocks launch. Ordered by value per day.
 | 90 | CCPA acts on staff rows only | Statutory gap for CA volunteers; export omits answers + credits | Volunteer request path | — | None |
 | 91 | Organizers grant credit, can't list/revoke | Inconsistent with the endpoint they already have | Give them the list | — | None |
 | 92 | `Forbidden` is a bare `<h2>` | No way back | Style it | — | None |
+| 161 | "Staff" spelled six ways; role maps never cross-checked | SCRUM-12 remainder: S-03 six spellings of staff, T3 frontend/backend role-map cross-check. SCRUM-12's JWT half shipped in L3 | One spelling; one test pinning frontend and backend role maps together | — | None. Added 2026-09-21 from the tracker audit (SCRUM-12) |
 
 ## Phase P3 — UX epics (2 weeks)
 
@@ -314,15 +360,18 @@ Nothing here blocks launch. Ordered by value per day.
 | 96 | Admin event page IA | SCRUM-32 | Restructure | — | None |
 | 97 | Events list + ops dashboard | Operations shows **no** signup or fill numbers | Add them | — | None |
 | 98 | 4 overlay impls, 3 toast systems, 3 headers | K37 | Consolidate | — | None |
+| 159 | Volunteer pages are hard to use on a phone | SCRUM-30 (high): L6 tests on phones, nothing builds for them | Mobile pass on the volunteer pages | — | None. Added 2026-09-21 from the tracker audit (SCRUM-30) |
+| 174 | No contextual help on actions | GitHub #10 (duplicate #35 closed): a '?' tooltip on every action | Add tooltips | — | None. Added 2026-09-21 from the kanban board (GH #10) [SCRUM-202] |
+| 175 | Login page looks empty on a laptop | GitHub #14: mobile-first layout, centered in a void on wide screens. Check first whether closed card #27 (login redesign) already covered it | Laptop layout without regressing mobile | — | None. Added 2026-09-21 from the kanban board (GH #14) [SCRUM-203] |
 
 ## Phase P4 — Copilot completion (1 week)
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 99 | Read tools written, switched off | Docs: "not finished enough to turn on" | Finish, then enable | — | None |
-| 100 | Organizer scoping wrong | Must fix #36 first or copilot is stricter than the API | Fix then ship | — | None |
-| 101 | `_dispatch` seams are stubs | Return the planned action; call no real task | Wire to Celery | — | None |
-| 102 | Both mail tools raise `OutboundNotWired` | No transport bound | Depends on #22 | — | None |
+| 99 | Read tools written, switched off | Docs: "not finished enough to turn on" | Finish, then enable | — | **⏳ Enabled on `main`** (#67, #69: tools registered, `copilot_agent_loop_enabled=True`). Left to close it: `docs/knowledge-base/31-about-the-copilot.md` still says the tools are off, and the copilot cites that doc to users |
+| 100 | Organizer scoping wrong | Must fix #36 first or copilot is stricter than the API | Fix then ship | — | **✅ Done — PR #132** (2026-09-21). Organizers are `see_all` in the copilot, matching `deps.ensure_event_staff_access`; see L4 #36 |
+| 101 | `_dispatch` seams are stubs | Return the planned action; call no real task | Wire to Celery | — | **✅ Done — PR #78** (`5f54bce`). `_dispatch` calls `_outbound.dispatch`. Sending is off by default in config |
+| 102 | Both mail tools raise `OutboundNotWired` | No transport bound | Depends on #22 | — | **✅ Done — PR #78** (`5f54bce`), the same change as L2 #22 |
 | 103 | Corpus has no real test questions | Highest-value KB docs missing | You write them | — | Depends on #12 |
 | 104 | `copilot_tool_calls` write-only | Never read back by anything | "What did the copilot do" view | D3 | None |
 
@@ -338,7 +387,7 @@ Nothing here blocks launch. Ordered by value per day.
 | 110 | Coverage floor 55, target 70 | "Plan 07 follow-up", never done | Raise it | — | None |
 | 111 | No `app.eval` CI gate | Absent entirely, not just lowered | Add it | — | None |
 | 112 | v1.3 suite skipped **and** body is `expect(true)` | Un-skipping tests nothing | Write it or delete it | — | Write or delete |
-| 113 | ~113 baseline findings open | 9 High, 68 Medium, 36 Low | Work by severity | — | None |
+| 113 | ~113 baseline findings open | 9 High, 68 Medium, 36 Low | Work by severity | — | None [SCRUM-193] |
 
 ## Phase P6 — Copilot production hardening (added 2026-09-07)
 
@@ -348,16 +397,16 @@ production-readiness pass: corpus quality, RAG architecture, concurrency, and gu
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 133 | Corpus has no real test questions | Ties to Gate 0 #12 — only Andy knows real SciTrek policy | Write real Q&A pairs against the actual corpus | 137 | Andy's to write |
-| 134 | Corpus content itself unaudited | Never reviewed for completeness/accuracy since ingestion | Update/refresh corpus content, not just add tests | 137 | None |
-| 135 | No CSV-driven event creation via the copilot | **Reverses PR #51** (CSV import removed on purpose — "modules made by hand in admin UI"). Andy confirmed 2026-09-07 this is intentional. **Update: not a clean-room build — refactor/reuse the old removed CSV-import pipeline code as the basis, wired into the copilot as a file-upload tool instead of the old standalone `/admin/imports` surface** | Refactor old CSV-import logic into a copilot file-upload tool; parse CSV, create events via existing admin endpoints | None | **Confirmed 2026-09-07: build it, via refactor of old pipeline** |
-| 136 | RAG pipeline architecture unverified | Unknown whether retrieval is naive top-k similarity or a proper production pipeline (chunking strategy, hybrid search, reranking) | Audit current retrieval code; upgrade to production-grade if naive (proper chunking, reranking via the CrossEncoder already in the stack per ROADMAP #51, evaluation against the corpus) | 137 | None |
-| 137 | RAG concurrency behavior unverified | No load/concurrency testing has been done on the copilot pipeline (ties to ROADMAP #48, zero load testing ever) | Test concurrent requests specifically against the RAG/retrieval path, not just the API layer | L6 | None |
-| 138 | No prompt-injection defense | Untested whether corpus content or user input can hijack copilot behavior | Add input/output guardrails: system-prompt hardening, output filtering, refuse out-of-scope requests | None | None |
-| 139 | No scope-limiting / topic guardrail | Copilot could be asked about anything, not just SciTrek volunteer topics | Add a scope check — refuse or redirect off-topic requests | None | None |
-| 140 | PII handling in copilot unaudited | Copilot has tool access to volunteer data (phone, email per roster tools) — no check on what it's allowed to surface to whom | Audit tool outputs for PII over-disclosure; scope tool results by caller's role | Depends on #36 fix | None |
-| 141 | No per-user/per-session rate limit on copilot specifically | Gate 0 #9 funded the account (~1,000 req budget) but nothing stops one user/session burning it all | Add a rate limit on the copilot endpoint itself, not just the general API throttles | None | None |
-| 142 | No abuse/cost monitoring on copilot usage | No visibility into who's using it or how much, until the bill arrives | Log usage per session/day; alert on anomalous spikes | Ties to #46 (AWS spend cap) | None |
+| 133 | Corpus has no real test questions | Ties to Gate 0 #12 — only Andy knows real SciTrek policy | Write real Q&A pairs against the actual corpus | 137 | Andy's to write [SCRUM-38] |
+| 134 | Corpus content itself unaudited | Never reviewed for completeness/accuracy since ingestion | Update/refresh corpus content, not just add tests | 137 | None [SCRUM-194] |
+| 135 | No CSV-driven event creation via the copilot | **Reverses PR #51** (CSV import removed on purpose — "modules made by hand in admin UI"). Andy confirmed 2026-09-07 this is intentional. **Update: not a clean-room build — refactor/reuse the old removed CSV-import pipeline code as the basis, wired into the copilot as a file-upload tool instead of the old standalone `/admin/imports` surface** | Refactor old CSV-import logic into a copilot file-upload tool; parse CSV, create events via existing admin endpoints | None | **Confirmed 2026-09-07: build it, via refactor of old pipeline** [SCRUM-195] |
+| 136 | RAG pipeline architecture unverified | Unknown whether retrieval is naive top-k similarity or a proper production pipeline (chunking strategy, hybrid search, reranking) | Audit current retrieval code; upgrade to production-grade if naive (proper chunking, reranking via the CrossEncoder already in the stack per ROADMAP #51, evaluation against the corpus) | 137 | None [SCRUM-196] |
+| 137 | RAG concurrency behavior unverified | No load/concurrency testing has been done on the copilot pipeline (ties to ROADMAP #48, zero load testing ever) | Test concurrent requests specifically against the RAG/retrieval path, not just the API layer | L6 | None [SCRUM-197] |
+| 138 | No prompt-injection defense | Untested whether corpus content or user input can hijack copilot behavior | Add input/output guardrails: system-prompt hardening, output filtering, refuse out-of-scope requests | None | None [SCRUM-198] |
+| 139 | No scope-limiting / topic guardrail | Copilot could be asked about anything, not just SciTrek volunteer topics | Add a scope check — refuse or redirect off-topic requests | None | None [SCRUM-199] |
+| 140 | PII handling in copilot unaudited | Copilot has tool access to volunteer data (phone, email per roster tools) — no check on what it's allowed to surface to whom | Audit tool outputs for PII over-disclosure; scope tool results by caller's role | Depends on #36 fix | None [SCRUM-200] |
+| 141 | No per-user/per-session rate limit on copilot specifically | Gate 0 #9 funded the account (~1,000 req budget) but nothing stops one user/session burning it all | Add a rate limit on the copilot endpoint itself, not just the general API throttles | None | **✅ Per-user limit already exists** — `copilot/guardrails.py::enforce_user_rate_limit` (Redis, 60s window), wired in `copilot/router.py`; `872d62e` (2026-07-06), #73. This row was written after it shipped. A separate per-*session* limit does not exist; add one only if needed |
+| 142 | No abuse/cost monitoring on copilot usage | No visibility into who's using it or how much, until the bill arrives | Log usage per session/day; alert on anomalous spikes | Ties to #46 (AWS spend cap) | None [SCRUM-201] |
 
 ---
 
@@ -413,10 +462,11 @@ so BI would be its first consumer.
 | Milestone | Duration | Ends at |
 |---|---|---|
 | Gate 0 | your time | decisions made |
+| **S (Stabilization)** | **1–2 days** | **trackers agree with `main`, CI honest** |
 | **L (L0–L11)** | **4–6 weeks** | **live + handed over** |
 | P (P1–P5) | 3–4 weeks | product complete |
 | D (D1–D5) | 4–6 weeks | BI live |
-| X (X1–X4) | 5–6 weeks | paper submitted |
+| X (X1–X5) | 5–6 weeks | paper submitted |
 
 L is 4–6 weeks rather than 3: the token migration (L3) and the missing hardening
 phase (L5) add about a week, and L7 is genuinely unbounded because nobody has
