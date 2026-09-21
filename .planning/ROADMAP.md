@@ -271,6 +271,7 @@ all fixed before merge — see #34.
 | 59 | 11 unrun UAT tests across phases 15/16/17 | All marked `[pending]` | Fold into this pass | L7 | None |
 | 60 | W6.5 regression tests | P0s found by hand won't stay fixed | One test per P0 | L8 | None |
 | 155 | Nothing tests real event-day conditions | SCRUM-23 / SCRUM-33: school wifi, phones, several people checking in at once. No L6 row covers it | A rehearsal under event conditions before L9 | L7 | None. Added 2026-09-21 from the tracker audit (SCRUM-23, SCRUM-33) |
+| 176 | QR check-in never had a real test pass | GitHub #31: QR check-in exists (#45, #74) but was never tested end to end or promoted to preview | Test pass, then enable in preview | L7 | None. Added 2026-09-21 from the kanban board (GH #31) [SCRUM-204] |
 
 ## Phase L7 — Fix what L6 finds (2–3 days, unbounded)
 
@@ -360,6 +361,8 @@ Nothing here blocks launch. Ordered by value per day.
 | 97 | Events list + ops dashboard | Operations shows **no** signup or fill numbers | Add them | — | None |
 | 98 | 4 overlay impls, 3 toast systems, 3 headers | K37 | Consolidate | — | None |
 | 159 | Volunteer pages are hard to use on a phone | SCRUM-30 (high): L6 tests on phones, nothing builds for them | Mobile pass on the volunteer pages | — | None. Added 2026-09-21 from the tracker audit (SCRUM-30) |
+| 174 | No contextual help on actions | GitHub #10 (duplicate #35 closed): a '?' tooltip on every action | Add tooltips | — | None. Added 2026-09-21 from the kanban board (GH #10) [SCRUM-202] |
+| 175 | Login page looks empty on a laptop | GitHub #14: mobile-first layout, centered in a void on wide screens. Check first whether closed card #27 (login redesign) already covered it | Laptop layout without regressing mobile | — | None. Added 2026-09-21 from the kanban board (GH #14) [SCRUM-203] |
 
 ## Phase P4 — Copilot completion (1 week)
 
