@@ -57,11 +57,11 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. **Finish Phase S** (roadmap #164–#173), **2 of 10 rows done** as of
-   2026-09-21: #164 (PR #134) and #166 (Jira). In review: #168/#169 (PR #135,
-   green), #170/#171 (PR #136), #172 (CLAUDE.md PR). Left: #165 (Andy reviews
-   #118), #167 (kanban, needs `gh auth refresh -s project`), #173 (branch
-   cleanup, after the PRs merge).
+1. **Finish Phase S** (roadmap #164–#173), **6 of 10 rows done** as of
+   2026-09-21: #164 (PR #134), #166 (Jira), #169 (PR #135), #170 and #171
+   (PR #136), #172 (PR #137). Left: #165 (Andy reviews #118), #167 (kanban,
+   needs `gh auth refresh -s project`), #168 (gate fixed in PR #135; dead-code
+   deletion waits on Andy's OK of the list), #173 (branch cleanup).
 2. **Then finish L3:** #27, #28 (confirm the fail-closed rules first), #29, and
    #31 built together with #149 as one reaper for both token tables. Every PR
    fully tests the files it touches (#163 ratchet). Then L5.
