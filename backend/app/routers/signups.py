@@ -65,18 +65,16 @@ def cancel_signup(
     # admin.py's /admin/signups/{id}/cancel. The reaper cancels stale rows too.
     #
     # Lock the slot row
+    # .one(), not a 404 check: the signup row is locked above, and deleting
+    # its slot or event has to delete this signup first (non-null FKs), so
+    # that delete waits on our lock. Neither can be missing here.
     slot = (
         db.query(models.Slot)
         .filter(models.Slot.id == signup.slot_id)
         .with_for_update()
-        .first()
+        .one()
     )
-    if not slot:  # pragma: no cover - FK constraint makes this unreachable
-        raise HTTPException(status_code=404, detail="Slot not found")
-
-    event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:  # pragma: no cover - FK constraint makes this unreachable
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = db.query(models.Event).filter(models.Event.id == slot.event_id).one()
 
     # Defensive heal
     actual_confirmed = _confirmed_count_for_slot(db, slot.id)
@@ -130,19 +128,23 @@ def signup_ics(
     """
     Export a single signup as an .ics calendar event.
     """
-    signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
-
     # Staff-only (require_staff above); volunteer self-serve ICS lives on the
     # public manage-token endpoints, not here.
-    slot = db.query(models.Slot).filter(models.Slot.id == signup.slot_id).first()
-    if not slot:  # pragma: no cover - FK constraint makes this unreachable
-        raise HTTPException(status_code=404, detail="Slot not found")
-
-    event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:  # pragma: no cover - FK constraint makes this unreachable
-        raise HTTPException(status_code=404, detail="Event not found")
+    #
+    # One joined query, not three. Nothing is locked here, so with separate
+    # reads an event deleted between "load signup" and "load slot" left the
+    # slot None and crashed (roadmap #168). A single statement sees one
+    # consistent snapshot: the three rows are all there, or none are.
+    row = (
+        db.query(models.Signup, models.Slot, models.Event)
+        .join(models.Slot, models.Slot.id == models.Signup.slot_id)
+        .join(models.Event, models.Event.id == models.Slot.event_id)
+        .filter(models.Signup.id == signup_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Signup not found")
+    signup, slot, event = row
 
     def fmt(dt: datetime) -> str:
         return dt.strftime("%Y%m%dT%H%M%SZ")

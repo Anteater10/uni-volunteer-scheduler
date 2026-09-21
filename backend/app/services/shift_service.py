@@ -27,12 +27,10 @@ ACTIVE_SHIFT_SIGNUP_STATUSES = (
 )
 
 
-try:
-    from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo
 
-    _DISPLAY_TZ = ZoneInfo("America/Los_Angeles")
-except Exception:  # pragma: no cover — defensive fallback
-    _DISPLAY_TZ = None
+# tzdata is pinned in requirements.txt, so this always loads.
+_DISPLAY_TZ = ZoneInfo("America/Los_Angeles")
 
 
 def default_shift_name(start_time: datetime, end_time: datetime) -> str:
@@ -45,9 +43,8 @@ def default_shift_name(start_time: datetime, end_time: datetime) -> str:
     """
     start = _normalize_dt(start_time)
     end = _normalize_dt(end_time)
-    if _DISPLAY_TZ is not None:
-        start = start.astimezone(_DISPLAY_TZ)
-        end = end.astimezone(_DISPLAY_TZ)
+    start = start.astimezone(_DISPLAY_TZ)
+    end = end.astimezone(_DISPLAY_TZ)
 
     def _hm(dt: datetime) -> str:
         return f"{dt.hour}:{dt.minute:02d}"

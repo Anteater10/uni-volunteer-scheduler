@@ -3,7 +3,6 @@ branch = True
 source = app
 omit =
     app/seed_admin.py
-    app/utils.py
     app/routers/test_helpers.py
     app/tasks/reminders.py
 

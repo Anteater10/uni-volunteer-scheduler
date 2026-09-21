@@ -201,7 +201,7 @@ def invite_user(
     # Best-effort: never roll back user creation on email failure.
     try:
         send_invite_email(user, db)
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         logger.error("invite email dispatch failed for %s: %s", user.email, e)
 
     return user
