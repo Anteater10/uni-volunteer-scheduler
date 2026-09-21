@@ -33,8 +33,6 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         .join(User, User.id == Event.owner_id)
         .filter(Event.title.ilike(pattern))
     )
-    if not scope.see_all:
-        q = q.filter(Event.owner_id == scope.module_owner_id)
 
     rows = []
     for event, owner in q.all():

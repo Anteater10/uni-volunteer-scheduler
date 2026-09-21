@@ -1,8 +1,8 @@
 # STATE
 
-**Updated:** 2026-09-10
-**Branch:** `feature/L3-auth-hardening` (off `main` @ `b4fd214`) — **implemented and
-verified, NOT yet committed or PR'd**
+**Updated:** 2026-09-21
+**Branch:** `main` — L3 merged as #117 (2026-09-10); L4 merged as #129, #130 and
+L4 PR 3 (2026-09-20/21)
 **Roadmap:** `.planning/ROADMAP.md` — the single source of truth
 
 > The previous STATE.md was dated 2026-05-23 and said "next action: merge Phase
@@ -22,11 +22,19 @@ plus 56–63 Done). L1 closed done-by-circumstance with no DNS work performed.
 Audited across Jira, these planning docs and GitHub on 2026-09-08 before
 starting L3; the gaps that audit found are recorded in the outcome blocks below.
 
-**Phase L3 — auth and abuse hardening: code complete on
-`feature/L3-auth-hardening` as of 2026-09-10, awaiting commit + PR.** Gate 0 #2
-is implemented (see the L3 outcome block below). Of Gate 0, only #12 (write
-real corpus test questions) remains, and it's just Andy's to-do, not a
-blocking call.
+**Phase L3 — auth and abuse hardening: merged 2026-09-10 as #117.** Gate 0 #2
+is implemented (see the L3 outcome block below). This file said "awaiting
+commit + PR" for nine days after that merge — the STATE.md inside #117 was
+already stale on landing. Four L3 rows were **not** done and remain open:
+#27 (throttles on three endpoint groups), #28 (fail closed on Redis error),
+#29 (cap and paginate four unbounded queries) and #31 (refresh-token reaper).
+They block L5, L6 and L8, not L4.
+
+**Phase L4 — known bugs: done 2026-09-21.** See the L4 outcome block below.
+Of Gate 0, only #12 (write real corpus test questions) remains, and it's just
+Andy's to-do, not a blocking call.
+
+**Next phase: L5 — hardening and scale.**
 
 Decided: #1 Cloudflare Free — yes. #2 Fix tokens properly, close PR #79. #3
 already implemented in code, no action needed. #4 Soft tracking for no-shows.
@@ -45,14 +53,19 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. **Commit and PR Phase L3.** The work is done and verified (outcome block
-   below) but the tree is still uncommitted on `feature/L3-auth-hardening`.
-   Nothing else should start before this lands, because it touches the auth
-   path every other phase depends on. Jira: SCRUM-157 (created 2026-09-10);
-   **SCRUM-12's JWT half is absorbed by L3** — its remaining items (S-03 six
-   spellings of "staff", T3 frontend/backend role-map cross-check, W5.6/W5.7)
-   are untouched and stay open.
-2. **At the next AWS deploy** (L9 notes, cumulative): `VITE_COPILOT_ENABLED`
+1. **Start Phase L5.** L3 and L4 are merged. L5 is also where L3's four
+   unfinished rows naturally land (#27, #28, #29, #31), plus L4's follow-ups
+   #149–#152 (SCRUM-162/163/164/175) — #149 and #31 are the same unbounded-growth
+   problem on two token tables and want one reaper. Jira: SCRUM-157 still
+   sits in *Testing* for L3; **SCRUM-12's JWT half is absorbed by L3** — its
+   remaining items (S-03 six spellings of "staff", T3 frontend/backend
+   role-map cross-check, W5.6/W5.7) are untouched and stay open.
+2. **At the next AWS deploy** (L9 notes, cumulative) — **nothing shows L3 or
+   L4 is on AWS yet**: no deploy workflow, no tags, no version endpoint. Check
+   the EC2 host before assuming. The one step that is *not* optional is L3's
+   **revoke every pre-L3 refresh token** (see "L3 deploy notes" below); the
+   2026-09-19 audit found it tracked nowhere but this file. Then:
+   `VITE_COPILOT_ENABLED`
    is now **required** or the deploy fails fast by design; confirm the site
    loads after the frontend's internal port change (80 → 8080); and the Celery
    worker must deploy together with the backend. On
@@ -68,14 +81,58 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
    testing, guardrails. See `.planning/ROADMAP.md` items 133–142.
 5. **Open, not gating L3:** SCRUM-45 dependency triage — now 35 advisories,
    including `CVE-2026-9856` against `transformers 4.57.6`, whose fix is a
-   major version jump that wants the embedding pipeline re-verified. GitHub
-   issue #9 also stays open: its RBAC is already correct (all seven
-   module/template endpoints use `require_staff`, unscoped) but its two
-   deliverables — an audit doc and a regression test asserting organizer ==
-   admin — do not exist, and `test_admin_modules.py` / `test_modules_crud.py`
-   have **zero** organizer coverage.
+   major version jump that wants the embedding pipeline re-verified. Only
+   anyio is fixed so far (#128). Separately, Dependabot's weekly pip update
+   crashes on the `torch 2.13.0+cpu` pin, so no backend update PRs are being
+   opened at all. (GitHub issue #9, listed here before, was closed by #112 on
+   2026-09-08 — the organizer == admin regression test exists.)
 
-## Phase L3 outcome (code complete 2026-09-10 — not yet merged)
+## Phase L4 outcome (done 2026-09-21)
+
+Readiness was checked first (2026-09-19): backend and frontend suites green,
+one migration head, CI green. That check found four of the twelve L4 rows
+already fixed by later PRs — #32 (#82), #39 (#76), #40 (#70), #42 (#63).
+
+| PR | Rows | What changed |
+|---|---|---|
+| #129 | #33, #34 | Resend mail links to the frontend confirm page; the legacy `/auth/magic/{token}` forwards instead of burning the token; "Resend" on the post-signup card |
+| #130 | #35 | Reminder and broadcast manage links minted at send time — only hashes are stored, so no existing token can be re-read — per recipient for broadcasts |
+| L4 PR 3 | #36, #37, #41, #43 | Organizer copilot scope aligned with the REST API; `SentNotificationRead` accepts shift anchors; Exports presets implemented; local-BGE tests skip without weights |
+
+#38 dropped: no backend test pins the orientation gate open. #6's 1-year
+credit expiry stays deferred with L11.
+
+**Decided 2026-09-21 (#36): full alignment.** Organizers are `see_all` in the
+copilot, as they already were in the REST API (`deps.ensure_event_staff_access`).
+25 tests across 14 files were inverted, and the organizer `cross_scope_leak`
+adversarial cases were re-pointed at the PII boundary, since ownership is no
+longer one. This widens what an organizer can reach through the assistant,
+including outbound email to volunteers on any event.
+
+**What verification found that the tests did not.** Every PR was clicked
+through in Chrome against an isolated local stack, and #130 again against a
+production-mode backend and the minified bundle. That found three faults
+with every suite green, all fixed before merge:
+- resend inside the backend's 60s idempotency window said "sent" and sent
+  nothing — the one moment a volunteer would click it;
+- resend minted tokens without `volunteer_id`, so the manage view 400'd right
+  after a successful confirm;
+- the resend countdown froze in a background tab, because Chrome throttles
+  timers — exactly where a volunteer waiting on email is.
+
+**Local test notes.** `e2e/global-setup.js` cannot seed a database that
+already holds quarters (409 on overlapping dates), so e2e was run against a
+separate database. The parallel e2e run fails three specs on shared seed data
+that pass serially — matching the CI flakes. The frontend suite times out at
+5s when the machine is under heavy load; that is load, not code.
+
+Follow-ups filed: #149 (SCRUM-162), #150 (SCRUM-163), #151 (SCRUM-164), and
+#152 (SCRUM-175) — the copilot coverage gate enforces 94.5%, not 95%, because
+pytest-cov rounds before deciding the exit code. Found when this PR's first
+push dropped to 93.63%; `main` was already at 94.60%, printing FAIL on every
+green run.
+
+## Phase L3 outcome (merged 2026-09-10 as #117)
 
 Gate 0 #2 implemented. Refresh token moved out of `localStorage` into an
 `HttpOnly` cookie; access token now lives in a module-scoped JS variable and

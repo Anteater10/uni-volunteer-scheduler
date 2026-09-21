@@ -116,7 +116,10 @@ def test_admin_sees_full_roster(db_session, seed_events):
     assert by_name["Bob Brown"]["unit"] == "orientation"
 
 
-def test_organizer_cross_scope_returns_not_found(db_session, seed_events):
+def test_organizer_reaches_another_organizers_roster(db_session, seed_events):
+    """L4 #36: rosters were owner-scoped, so an organizer asking about an
+    event they could open in the UI was told it did not exist. The REST API
+    grants any staff role any event (deps.ensure_event_staff_access)."""
     uuid_a, uuid_b, ids = seed_events
     _seed_roster(db_session, ids[2])  # event owned by B
     session_id = _make_session(db_session, uuid_a)
@@ -129,7 +132,8 @@ def test_organizer_cross_scope_returns_not_found(db_session, seed_events):
         args={"module_id": str(ids[2])},
         session_id=session_id,
     )
-    assert out["result"] == {"error": "module not found or not accessible"}
+    assert "error" not in out["result"]
+    assert out["result"]["module_id"] == str(ids[2])
 
 
 def test_roster_strips_emails_and_phones(db_session, seed_events):

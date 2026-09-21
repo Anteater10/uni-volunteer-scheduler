@@ -81,14 +81,12 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     module_id = args["module_id"]
 
     q = db.query(Event).filter(Event.id == module_id)
-    if not scope.see_all:
-        q = q.filter(Event.owner_id == scope.module_owner_id)
     event = q.one_or_none()
     if event is None:
         return dict(_NOT_FOUND)
 
-    # Recipient pool: volunteers active near this module in time, in the
-    # caller's scope, who are not already on it. Asking someone who has
+    # Recipient pool: volunteers active near this module in time who are not
+    # already on it. Asking someone who has
     # already signed up to please sign up is noise, and it inflates the
     # count the admin reads.
     window = timedelta(days=RECENCY_WINDOW_DAYS)
@@ -96,7 +94,6 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
         db,
         start=event.start_date - window,
         end=event.start_date + window,
-        owner_id=None if scope.see_all else scope.module_owner_id,
         exclude_ids=_bookings.volunteer_ids_on_events(db, [event.id]),
     )
 

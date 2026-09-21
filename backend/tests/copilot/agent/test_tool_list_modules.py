@@ -16,13 +16,17 @@ def test_admin_sees_all_modules(db_session, seed_events):
     assert len(result["modules"]) == 3
 
 
-def test_organizer_sees_only_their_modules(db_session, seed_events):
+def test_organizer_sees_every_module(db_session, seed_events):
+    """L4 #36: an organizer is no longer confined to events they own —
+    the REST API grants any staff role any event, so the assistant
+    matches it (see deps.ensure_event_staff_access)."""
+
     uuid_a, _uuid_b, _ids = seed_events
     scope = scope_for(role="organizer", caller_id=uuid_a)
     result = LIST_MODULES_TOOL.handler(
         db_session, scope, {"week": "2026-W22"}
     )
-    assert len(result["modules"]) == 2
+    assert len(result["modules"]) == 3
     # owner_id must be stripped by the schema filter
     assert all("owner_id" not in m for m in result["modules"])
 

@@ -178,22 +178,27 @@ all Done. Order mattered once: #91 had to precede #80, see #20.
 | 30 | No `aud`/`iss` claims minted or verified | `SEC-36` | Add both | L8 | None |
 | 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap | L8 | None |
 
-## Phase L4 — Known bugs (2–3 days)
+## Phase L4 — Known bugs (2–3 days) — **done 2026-09-21**
+
+Four of the twelve were already fixed by later PRs when L4 began (#32, #39, #40, #42), found by the
+readiness check on 2026-09-19; #38 was dropped; the other seven shipped in PRs #129, #130 and L4 PR 3.
+Verification clicked the real flows in Chrome and turned up three faults the test suites passed over,
+all fixed before merge — see #34.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 32 | Missing SendGrid var → task returns normally | Mail silently vanishes; looks like "nobody signed up" | Fail loudly. ~1h, highest value fix | L6 | None |
-| 33 | `magic.py:54,60,69` → `/signup/confirmed` | **Route doesn't exist; every confirmation 404s** | Add routes or fix redirect | L6 | None |
-| 34 | `/auth/magic/resend` has zero callers | A lost email is a dead end | Wire a button | L6 | None |
-| 35 | Broadcast footer + unsubscribe links | Both broken in every email sent | Fix both | L6 | None |
-| 36 | `role_scope.py:39` scopes organizers by `owner_id` | Contradicts the 2026-08-12 ruling | Fix before any read tool ships | P4 | None |
-| 37 | `/admin/notifications/recent` | 500s **permanently** once a shift notification exists | Fix query | L6 | None |
-| 38 | A test pins orientation gate failing **open** | Contradicts the hard block | Invert the test | L6 | Depends on #6 |
-| 39 | School field dropped on event save | Accepted by form, lost server-side | Fix | L6 | None |
-| 40 | Deactivation doesn't end sign-in | Deactivated staff can still log in | Revoke on deactivate | L8 | None |
-| 41 | 2 Exports range buttons unimplemented | Silently return all-time PII exports | Implement or remove | L6 | None |
-| 42 | Legacy 24h reminder still sends | Volunteers get **two** day-before emails | Retire the legacy pair | L6 | None |
-| 43 | 3 backend tests fail | Missing `/opt/hf-cache` mount, not broken code | Add mount to the documented command | L6 | None |
+| 32 | Missing SendGrid var → task returns normally | Mail silently vanishes; looks like "nobody signed up" | Fail loudly. ~1h, highest value fix | L6 | **Done — already fixed by PR #82** (workers refuse to start without mail config; a send with no key raises). Found in the L4 readiness check, 2026-09-19 |
+| 33 | `magic.py:54,60,69` → `/signup/confirmed` | **Route doesn't exist; every confirmation 404s** | Add routes or fix redirect | L6 | **Done — PR #129.** Resend mail now links to the frontend confirm page; the legacy `/auth/magic/{token}` forwards the token there instead of burning it. Neither dead route was needed |
+| 34 | `/auth/magic/resend` has zero callers | A lost email is a dead end | Wire a button | L6 | **Done — PR #129.** Resend lives on the post-signup card, held for the backend's 60s idempotency window. Also fixed: resend minted tokens without `volunteer_id`, so the manage view 400'd after confirm |
+| 35 | Broadcast footer + unsubscribe links | Both broken in every email sent | Fix both | L6 | **Done — PR #130.** Manage tokens are minted at send time (only hashes are stored), per recipient for broadcasts. Left a growth follow-up: #149 |
+| 36 | `role_scope.py:39` scopes organizers by `owner_id` | Contradicts the 2026-08-12 ruling | Fix before any read tool ships | P4 | **Done — L4 PR 3.** Organizers are `see_all` in the copilot, matching `deps.ensure_event_staff_access`. Decided 2026-09-21: full alignment — 25 tests across 14 files inverted, and the organizer `cross_scope_leak` adversarial cases re-pointed at the PII boundary, since ownership is no longer one |
+| 37 | `/admin/notifications/recent` | 500s **permanently** once a shift notification exists | Fix query | L6 | **Done — L4 PR 3.** Schema bug, not a query bug: `signup_id` was required while shift rows carry `shift_signup_id` instead. Both are optional now |
+| 38 | A test pins orientation gate failing **open** | Contradicts the hard block | Invert the test | L6 | **Dropped 2026-09-20.** No backend test pins the gate open — the hard block holds (`public_signup_service.py`). The only fail-open test covers the client pre-check, and the server still returns 422. #6's 1-year credit expiry stays deferred with L11 |
+| 39 | School field dropped on event save | Accepted by form, lost server-side | Fix | L6 | **Done — already fixed by PR #76** (`EventUpdate.school`, 5 round-trip tests) |
+| 40 | Deactivation doesn't end sign-in | Deactivated staff can still log in | Revoke on deactivate | L8 | **Done — already fixed by PR #70** (`deps._account_usable` checked on every token path) |
+| 41 | 2 Exports range buttons unimplemented | Silently return all-time PII exports | Implement or remove | L6 | **Done — L4 PR 3.** Both presets implemented and labelled. Quarter presets that cannot resolve a range are now hidden rather than shown, since an empty range is read as "no filter" |
+| 42 | Legacy 24h reminder still sends | Volunteers get **two** day-before emails | Retire the legacy pair | L6 | **Done — already fixed by PR #63** (legacy beats removed from the schedule) |
+| 43 | 3 backend tests fail | Missing `/opt/hf-cache` mount, not broken code | Add mount to the documented command | L6 | **Done — L4 PR 3.** The three local-BGE tests skip, with instructions, when the weights are neither cached nor downloadable. They still run with a cache mounted. `CLAUDE.md` untouched |
 
 ## Phase L5 — Hardening and scale (2–3 days) — *the missing Phase 37*
 

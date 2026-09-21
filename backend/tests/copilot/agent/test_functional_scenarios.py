@@ -54,8 +54,12 @@ def _make_session(db_session, user_id):
 # ---------------------------------------------------------------------------
 
 
-def test_f1_organizer_lists_own_understaffed_modules(db_session, seed_full_world):
-    """Organizer sees only their own understaffed events; final answer name-drops one."""
+def test_f1_organizer_lists_understaffed_modules(db_session, seed_full_world):
+    """Organizer gets every understaffed event; final answer name-drops one.
+
+    L4 #36: the tool used to filter to events the caller owned. Staff roles
+    are no longer owner-scoped (see role_scope) — the same rule the REST API
+    has always applied."""
     registry.register(FIND_UNDERSTAFFED_MODULES_TOOL)
     org_a_id = seed_full_world["org_a_id"]
     sess = _make_session(db_session, org_a_id)
@@ -94,12 +98,11 @@ def test_f1_organizer_lists_own_understaffed_modules(db_session, seed_full_world
     final = [e for e in events if e.type == "final_answer"][0]
     assert "A-evt-1" in final.text
 
-    # Result row(s) must be scoped to org_a's events.
     tool_result = [e for e in events if e.type == "tool_result"][0]
     titles = {row["name"] for row in tool_result.result["modules"]}
     assert "A-evt-1" in titles
-    # No B-events leaked across organizer scope.
-    assert not any(t.startswith("B-") for t in titles)
+    # B's events are in scope now, the same as they are in the staff event list.
+    assert any(t.startswith("B-") for t in titles)
 
 
 # ---------------------------------------------------------------------------

@@ -815,8 +815,20 @@ class ModuleRead(ORMBase):
 # SENT NOTIFICATION SCHEMAS (Phase 6)
 # =========================
 class SentNotificationRead(ORMBase):
+    """One row of the sent-notification log.
+
+    L4 #37: ``signup_id`` was required here while the model has allowed it to
+    be NULL since the 2026-08-02 shift work — a shift commitment anchors on
+    ``shift_signup_id`` instead, and exactly one of the two is ever set. So
+    ``GET /admin/notifications/recent`` returned 500 from response validation
+    the moment any shift notification existed, and stayed broken from then on,
+    because the endpoint returns the last 100 rows and that row does not age
+    out on its own. Both anchors are optional and both are reported.
+    """
+
     id: UUID
-    signup_id: UUID
+    signup_id: Optional[UUID] = None
+    shift_signup_id: Optional[UUID] = None
     kind: str
     sent_at: datetime
     provider_id: Optional[str] = None

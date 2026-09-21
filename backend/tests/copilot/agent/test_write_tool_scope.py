@@ -1,31 +1,36 @@
-"""BASE-SEC-03 / BASE-SEC-26 — the write tools had no owner boundary at all.
+"""BASE-SEC-03 / BASE-SEC-26, as amended by L4 #36 — the write tools' boundary.
 
-The read tools each carry a scope filter (``get_module_roster.py:51`` is the
-canonical one): an organizer sees their own events and nothing else. Every
-*write* handler in ``events_edit.py`` and ``operations.py`` resolved its
-event by id and acted on it, with no such check anywhere. An organizer who
-knew — or guessed, or was told by the model — another organizer's event id
-could rename it, move its times, or move volunteers around inside it.
+The original problem: every *write* handler in ``events_edit.py`` and
+``operations.py`` resolved its event by id and acted on it with no check at
+all, while the read tools each carried a scope filter. The boundary was
+centralised into ``role_scope.deny_if_not_owned`` so a tool added later
+inherits it rather than having to remember it.
 
-``get_event_schedule`` is the one that made this cheap: organizer-callable,
-read-shaped, and it hands back the ids the write tools take.
+What changed in L4 #36: the boundary is no longer per-owner. The REST API
+grants any staff role any event (``deps.ensure_event_staff_access``), because
+the staff event list is global and nothing in the product can transfer
+ownership — so owner-scoping only ever meant "events you personally created",
+and the assistant refused work the same person could do in the UI two clicks
+away. Both staff roles now carry ``see_all``.
 
-The boundary now lives in one place, ``role_scope.deny_if_not_owned``, so a
-tool added later inherits it instead of having to remember it. These tests
-pin both halves: refused across the boundary, unchanged within it.
+The seam stays, and so do these tests: they pin that every write tool routes
+through ``deny_if_not_owned`` rather than resolving ids blind, which is what
+makes a future per-event rule a one-line change instead of an audit. What they
+assert now is that a staff caller is admitted, and that the refusal path is
+still wired up for a scope that lacks ``see_all``.
 """
 from __future__ import annotations
 
 import pytest
 
-from app.copilot.agent.boundary.role_scope import scope_for
+from app.copilot.agent.boundary.role_scope import Scope, deny_if_not_owned, scope_for
 from app.copilot.agent.tools.events_edit import (
     _delete_handler,
     _reschedule_handler,
     _schedule_handler,
     _update_handler,
 )
-from app.copilot.agent.tools.operations import _move_handler
+from app.copilot.agent.tools.operations import _attendance_handler, _move_handler
 from app.models import UserRole
 from tests.fixtures.helpers import make_event_with_slot, make_user
 
@@ -44,7 +49,8 @@ def foreign_event(db_session):
 
 
 @pytest.fixture
-def intruder(db_session):
+def other_organizer(db_session):
+    """A staff caller who did not create the event in question."""
     user = make_user(
         db_session, email="scope_intruder@example.com", role=UserRole.organizer
     )
@@ -52,66 +58,67 @@ def intruder(db_session):
     return scope_for(role="organizer", caller_id=user.id)
 
 
-def test_get_event_schedule_refuses_another_organizers_event(
-    db_session, foreign_event, intruder
+def test_get_event_schedule_admits_another_organizers_event(
+    db_session, foreign_event, other_organizer
 ):
-    """The reconnaissance step — this is what hands out the ids."""
+    """The read-shaped tool that hands out the ids the write tools take."""
     event, _ = foreign_event
-    out = _schedule_handler(db_session, intruder, {"event_id": str(event.id)})
-    assert _OUT_OF_SCOPE in out.get("error", "")
+    out = _schedule_handler(db_session, other_organizer, {"event_id": str(event.id)})
+    assert _OUT_OF_SCOPE not in str(out.get("error", ""))
 
 
-def test_update_event_refuses_another_organizers_event(
-    db_session, foreign_event, intruder
+def test_update_event_admits_another_organizers_event(
+    db_session, foreign_event, other_organizer
 ):
     event, _ = foreign_event
-    before = event.title
     out = _update_handler(
-        db_session, intruder, {"event_id": str(event.id), "title": "Hijacked"}
+        db_session,
+        other_organizer,
+        # SCRUM-154 shape — a retitle that does not match is refused on format,
+        # which would mask the thing this test is about.
+        {"event_id": str(event.id), "title": "Week 7 - Conservation of Mass - GVJH"},
     )
-    assert _OUT_OF_SCOPE in out.get("error", "")
+    assert _OUT_OF_SCOPE not in str(out.get("error", ""))
     db_session.refresh(event)
-    assert event.title == before
+    assert event.title == "Week 7 - Conservation of Mass - GVJH"
 
 
-def test_reschedule_slot_refuses_another_organizers_slot(
-    db_session, foreign_event, intruder
+def test_reschedule_slot_admits_another_organizers_slot(
+    db_session, foreign_event, other_organizer
 ):
     event, slot = foreign_event
-    before = slot.start_time
     out = _reschedule_handler(
-        db_session, intruder, {"slot_id": str(slot.id), "start_time": "10:00"}
+        db_session, other_organizer, {"slot_id": str(slot.id), "start_time": "10:00"}
     )
-    assert _OUT_OF_SCOPE in out.get("error", "")
-    db_session.refresh(slot)
-    assert slot.start_time == before
+    assert _OUT_OF_SCOPE not in str(out.get("error", ""))
 
 
-def test_delete_event_refuses_another_organizers_event(
-    db_session, foreign_event, intruder
+def test_delete_event_admits_another_organizers_event(
+    db_session, foreign_event, other_organizer
 ):
     event, _ = foreign_event
-    out = _delete_handler(db_session, intruder, {"event_id": str(event.id)})
-    assert _OUT_OF_SCOPE in out.get("error", "")
+    out = _delete_handler(db_session, other_organizer, {"event_id": str(event.id)})
+    assert _OUT_OF_SCOPE not in str(out.get("error", ""))
 
 
-def test_move_participant_refuses_another_organizers_event(
-    db_session, foreign_event, intruder
+def test_move_participant_admits_another_organizers_event(
+    db_session, foreign_event, other_organizer
 ):
+    """This one fails on the participant id, which is the point: it gets past
+    the ownership gate and on to the real work."""
     import uuid
 
     event, _ = foreign_event
     out = _move_handler(
         db_session,
-        intruder,
+        other_organizer,
         {
             "event_id": str(event.id),
             "participant_id": str(uuid.uuid4()),
             "to_shift_id": str(uuid.uuid4()),
         },
     )
-    # Refused on ownership, before any of the ids above are even looked up.
-    assert _OUT_OF_SCOPE in out.get("error", "")
+    assert _OUT_OF_SCOPE not in str(out.get("error", ""))
 
 
 def test_the_owner_is_unaffected(db_session):
@@ -138,3 +145,69 @@ def test_admin_is_unaffected(db_session, foreign_event):
 
     out = _schedule_handler(db_session, scope, {"event_id": str(event.id)})
     assert _OUT_OF_SCOPE not in str(out.get("error", ""))
+
+
+def _owner_scoped(event):
+    """A Scope no role produces any more — owner-scoped to somebody else."""
+    return Scope(
+        role="organizer",
+        caller_id=event.owner_id,
+        module_owner_id="00000000-0000-0000-0000-000000000000",
+        see_all=False,
+    )
+
+
+def test_deny_if_not_owned_refuses_an_owner_scoped_caller(db_session, foreign_event):
+    event, _ = foreign_event
+    assert deny_if_not_owned(_owner_scoped(event), event) == {
+        "error": "that event is not one of yours"
+    }
+
+
+@pytest.mark.parametrize(
+    "handler, build_args",
+    [
+        (_schedule_handler, lambda ev, sl: {"event_id": str(ev.id)}),
+        (
+            _update_handler,
+            lambda ev, sl: {
+                "event_id": str(ev.id),
+                "title": "Week 7 - Conservation of Mass - GVJH",
+            },
+        ),
+        (_reschedule_handler, lambda ev, sl: {"slot_id": str(sl.id), "start_time": "10:00"}),
+        (_delete_handler, lambda ev, sl: {"event_id": str(ev.id)}),
+        (
+            _move_handler,
+            lambda ev, sl: {
+                "event_id": str(ev.id),
+                "participant_id": "00000000-0000-0000-0000-00000000000a",
+                "to_shift_id": "00000000-0000-0000-0000-00000000000b",
+            },
+        ),
+        (
+            _attendance_handler,
+            lambda ev, sl: {
+                "slot_id": str(sl.id),
+                "participant_id": "00000000-0000-0000-0000-00000000000a",
+                "outcome": "attended",
+            },
+        ),
+    ],
+    ids=["schedule", "update", "reschedule", "delete", "move", "attendance"],
+)
+def test_every_write_handler_still_consults_the_seam(
+    db_session, foreign_event, handler, build_args
+):
+    """No role builds an owner-scoped Scope any more, but every write handler
+    still routes through deny_if_not_owned. Hand each one that Scope: if a
+    per-event rule ever comes back this is the behaviour it gets, and none of
+    them may have quietly stopped asking in the meantime. One case per
+    handler, because a seam checked in one of six proves nothing about the
+    other five."""
+    event, slot = foreign_event
+    before_title = event.title
+    out = handler(db_session, _owner_scoped(event), build_args(event, slot))
+    assert _OUT_OF_SCOPE in str(out.get("error", ""))
+    db_session.refresh(event)
+    assert event.title == before_title

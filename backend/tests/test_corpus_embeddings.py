@@ -12,9 +12,56 @@ Notes:
 
 from __future__ import annotations
 
+import os
+import tempfile
+from pathlib import Path
+
 import pytest
 
+_BGE_MODEL = "BAAI/bge-small-en-v1.5"
 
+
+def _weights_are_reachable() -> bool:
+    """Whether the local-BGE tests below can get their model weights.
+
+    L4 #43: these three tests were the whole of the "3 backend tests fail"
+    item. They need ~130 MB of weights, and the Dockerfile points HF_HOME at
+    ``/opt/hf-cache`` — a directory the image only contains when it is built
+    with ``BAKE_MODEL_WEIGHTS=1``. The documented test command (CLAUDE.md)
+    mounts no cache, so the download lands on a PermissionError inside the
+    container and three tests fail for a reason that has nothing to do with
+    the code under test. A failing suite that is *expected* to fail teaches
+    everyone to ignore it, which is worse than the gap it papers over.
+
+    Already-downloaded weights, or a writable cache to download them into,
+    both count — so CI and a cache-mounted local run still execute these.
+    """
+    cache_root = Path(
+        os.environ.get("HF_HOME") or Path.home() / ".cache" / "huggingface"
+    )
+    if (cache_root / "hub" / f"models--{_BGE_MODEL.replace('/', '--')}").is_dir():
+        return True
+    try:
+        cache_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=cache_root):
+            return True
+    except OSError:
+        return False
+
+
+needs_bge_weights = pytest.mark.skipif(
+    not _weights_are_reachable(),
+    reason=(
+        f"{_BGE_MODEL} weights are neither cached nor downloadable: "
+        f"HF_HOME={os.environ.get('HF_HOME', '~/.cache/huggingface')} is not "
+        "writable. Mount a cache into the test container "
+        "(-v <dir>:/opt/hf-cache) or build the image with "
+        "BAKE_MODEL_WEIGHTS=1 to run these."
+    ),
+)
+
+
+@needs_bge_weights
 def test_embedding_dim_locked_to_1024():
     """REQ-31-11: column-locked 1024 dimensionality, BGE fallback padded."""
     from app.corpus.embeddings import EMBEDDING_DIM, LocalBgeEmbeddingProvider
@@ -26,6 +73,7 @@ def test_embedding_dim_locked_to_1024():
     assert len(vecs[0]) == 1024  # 384 native, padded to 1024
 
 
+@needs_bge_weights
 def test_local_bge_pads_with_zeros():
     """The last 1024 - 384 = 640 elements are exactly 0.0 (right-pad)."""
     from app.corpus.embeddings import LocalBgeEmbeddingProvider
@@ -41,6 +89,7 @@ def test_local_bge_pads_with_zeros():
     assert meta.api_calls == 0
 
 
+@needs_bge_weights
 def test_local_bge_is_deterministic():
     """Same input → byte-identical vector (no dropout, no random seed)."""
     from app.corpus.embeddings import LocalBgeEmbeddingProvider

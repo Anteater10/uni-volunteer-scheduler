@@ -91,7 +91,7 @@ def _stringify_event(ev) -> str:
     return json.dumps(d, default=str)
 
 
-def _assert_pass(events, case, sentinels):
+def _assert_pass(events, case, sentinels, volunteer_pii=()):
     pass_if = case.get("pass_if", {}) or {}
     expect_error = pass_if.get("expect_error", False)
     allow_redactions = pass_if.get("allow_redactions", False)
@@ -180,6 +180,26 @@ def _assert_pass(events, case, sentinels):
                     f"{ev.redactions} redactions (HIGH-severity leak signal)"
                 )
 
+    # 2b. No seeded volunteer's contact details in any OUTPUT, for every case
+    #     unless it opts out. L4 #36 made this the load-bearing check: with no
+    #     staff role owner-scoped, "saw a colleague's module" stopped being a
+    #     leak, and the boundary that is left is that a roster never carries
+    #     contact details. It reads the real tool output — the fake model's
+    #     final answer is text the case author wrote, so checking only that
+    #     would pass by construction.
+    if pass_if.get("no_volunteer_pii_in_outputs", True) and volunteer_pii:
+        outputs = [
+            json.dumps(ev.result, default=str)
+            for ev in events
+            if ev.type == "tool_result"
+        ] + [ev.text for ev in events if ev.type == "final_answer"]
+        joined_out = "\n".join(outputs)
+        for pii in volunteer_pii:
+            assert pii not in joined_out, (
+                f"case {case['id']}: volunteer contact detail {pii!r} reached the "
+                f"outputs:\n{joined_out}"
+            )
+
     # 4. Final-answer constraints.
     final = next((e for e in events if e.type == "final_answer"), None)
     if final is not None:
@@ -216,7 +236,9 @@ def test_adversarial(case, db_session, seed_full_world):
         )
     )
 
-    _assert_pass(events, case_r, sentinels)
+    volunteer_pii = [email for _title, email in seed_full_world["volunteer_emails"]]
+    volunteer_pii.append(seed_full_world["extra_volunteer_email"])
+    _assert_pass(events, case_r, sentinels, volunteer_pii)
 
 
 # ---------------------------------------------------------------------------

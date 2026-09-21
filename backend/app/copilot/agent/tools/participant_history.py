@@ -44,14 +44,7 @@ def _handler(db: Session, scope: Scope, args: dict[str, Any]) -> dict[str, Any]:
     if volunteer is None:
         return dict(_NOT_FOUND)
 
-    events = _bookings.events_for_volunteer(
-        db,
-        volunteer.id,
-        owner_id=None if scope.see_all else scope.module_owner_id,
-    )
-    if not scope.see_all and not events:
-        # Organizer cannot see this participant at all → not found sentinel.
-        return dict(_NOT_FOUND)
+    events = _bookings.events_for_volunteer(db, volunteer.id)
 
     modules_attended = sorted({e.title for e, _ in events})
     # School: pick the most-recent event's school (None when no signups).
