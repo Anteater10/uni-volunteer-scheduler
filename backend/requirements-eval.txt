@@ -35,5 +35,5 @@ langchain-community>=0.3
 sentence-transformers>=2.7
 matplotlib>=3.8,<4
 datasets>=2.16
-pandas>=2.0
+pandas>=3.0.6
 numpy>=1.26
