@@ -157,33 +157,39 @@ jobs:
       # measures only the requested package. A future PR that loosens any of
       # these gates (e.g. drops --cov-fail-under to 90) will fail the regression
       # test in backend/tests/test_coverage_gates.py.
+      #
+      # --cov-precision=2 is load-bearing (roadmap #168). pytest-cov decides the
+      # exit code at the report precision, which defaults to 0 decimals, so a
+      # package at 94.59% rounded up to 95 and passed while the log printed
+      # "FAIL Required test coverage of 95% not reached". At two decimals 95
+      # means 95.00.
       - name: Coverage gate — app.copilot
         env:
           TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
         run: |
           cd backend
-          pytest -o addopts="" --cov=app.copilot --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
+          pytest -o addopts="" --cov=app.copilot --cov-branch --cov-fail-under=95 --cov-precision=2 --cov-report=term-missing tests/
 
       - name: Coverage gate — app.copilot.retrieval
         env:
           TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
         run: |
           cd backend
-          pytest -o addopts="" --cov=app.copilot.retrieval --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
+          pytest -o addopts="" --cov=app.copilot.retrieval --cov-branch --cov-fail-under=95 --cov-precision=2 --cov-report=term-missing tests/
 
       - name: Coverage gate — app.corpus
         env:
           TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
         run: |
           cd backend
-          pytest -o addopts="" --cov=app.corpus --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
+          pytest -o addopts="" --cov=app.corpus --cov-branch --cov-fail-under=95 --cov-precision=2 --cov-report=term-missing tests/
 
       - name: Coverage gate — app.copilot.feedback
         env:
           TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/test_uvs
         run: |
           cd backend
-          pytest -o addopts="" --cov=app.copilot.feedback --cov-branch --cov-fail-under=95 --cov-report=term-missing tests/
+          pytest -o addopts="" --cov=app.copilot.feedback --cov-branch --cov-fail-under=95 --cov-precision=2 --cov-report=term-missing tests/
 
   phase0-frontend-tests:
     name: phase0 frontend vitest

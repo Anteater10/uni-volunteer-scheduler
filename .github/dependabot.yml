@@ -25,8 +25,14 @@ updates:
       # precisely because two builds days apart installed different versions.
       # Model weights are baked at image build (BAKE_MODEL_WEIGHTS), so a
       # surprise major bump changes the image, not just a dependency.
+      #
+      # torch is ignored at every level, not just majors (roadmap #169). Its
+      # lock pin carries a local version (`2.13.0+cpu`); Dependabot's minor
+      # bump rewrote it into `torch>=2.14.0+cpu,<3`, which pip rejects — a
+      # local version segment is not allowed in a range. That crashed the
+      # whole weekly pip job, so no backend update PR opened at all. torch is
+      # bumped by hand, with the CPU index and a rebuilt image.
       - dependency-name: "torch"
-        update-types: ["version-update:semver-major"]
       - dependency-name: "transformers"
         update-types: ["version-update:semver-major"]
 
