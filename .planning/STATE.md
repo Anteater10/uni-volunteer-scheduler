@@ -55,7 +55,7 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 1. **Start Phase L5.** L3 and L4 are merged. L5 is also where L3's four
    unfinished rows naturally land (#27, #28, #29, #31), plus L4's follow-ups
-   #144–#146 (SCRUM-162/163/164) — #144 and #31 are the same unbounded-growth
+   #149–#152 (SCRUM-162/163/164/175) — #149 and #31 are the same unbounded-growth
    problem on two token tables and want one reaper. Jira: SCRUM-157 still
    sits in *Testing* for L3; **SCRUM-12's JWT half is absorbed by L3** — its
    remaining items (S-03 six spellings of "staff", T3 frontend/backend
@@ -126,7 +126,11 @@ separate database. The parallel e2e run fails three specs on shared seed data
 that pass serially — matching the CI flakes. The frontend suite times out at
 5s when the machine is under heavy load; that is load, not code.
 
-Follow-ups filed: #144 (SCRUM-162), #145 (SCRUM-163), #146 (SCRUM-164).
+Follow-ups filed: #149 (SCRUM-162), #150 (SCRUM-163), #151 (SCRUM-164), and
+#152 (SCRUM-175) — the copilot coverage gate enforces 94.5%, not 95%, because
+pytest-cov rounds before deciding the exit code. Found when this PR's first
+push dropped to 93.63%; `main` was already at 94.60%, printing FAIL on every
+green run.
 
 ## Phase L3 outcome (merged 2026-09-10 as #117)
 
