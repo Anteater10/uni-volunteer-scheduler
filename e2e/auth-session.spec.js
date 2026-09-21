@@ -113,7 +113,18 @@ test.describe('Phase L3 — cookie-based session', () => {
     page,
   }) => {
     await loginAsAdmin(page);
+    // A full navigation drops the in-memory access token, so the page boots
+    // with a refresh — and every refresh rotates the csrf cookie. Reading
+    // the cookie before that response lands sends a stale token and logout
+    // 403s (seen 1 run in 3, roadmap #171). Wait for the rotation first.
+    const bootRefresh = page.waitForResponse(
+      (r) => r.url().includes('/auth/refresh') && r.request().method() === 'POST',
+    );
     await page.goto('/admin');
+    await bootRefresh;
+    // A request that 401'd before the boot refresh landed retries through a
+    // second refresh, which rotates the cookie again. Let that settle too.
+    await page.waitForLoadState('networkidle');
 
     // Drive the real logout path rather than clearing cookies by hand — the
     // point is that the server revokes and clears, not that Playwright can

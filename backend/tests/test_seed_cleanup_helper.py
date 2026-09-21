@@ -14,6 +14,7 @@ from app import models
 from app.routers.test_helpers import seed_cleanup
 from tests.fixtures.factories import (
     EventFactory,
+    ShiftSignupFactory,
     SignupFactory,
     SlotFactory,
     VolunteerFactory,
@@ -61,3 +62,22 @@ def test_seed_cleanup_leaves_active_signups_alone(db_session):
     seed_cleanup(emails=volunteer.email, db=db_session)
 
     assert db_session.get(models.Signup, active.id) is not None
+
+
+def test_seed_cleanup_clears_a_shift_only_volunteer(db_session):
+    """#170: a volunteer with a cancelled shift commitment and no slot
+    signups at all. The helper used to return as soon as it found no
+    cancelled slot signups, before the shift cleanup, so the commitment
+    stayed and every later re-signup 409'd."""
+    _bind(db_session)
+    volunteer = VolunteerFactory(email=f"cleanup-{uuid.uuid4().hex[:8]}@e2e.example.com")
+    commitment = ShiftSignupFactory(
+        volunteer=volunteer, status=models.SignupStatus.cancelled
+    )
+    db_session.flush()
+    commitment_id = commitment.id
+
+    seed_cleanup(emails=volunteer.email, db=db_session)
+
+    db_session.expire_all()
+    assert db_session.get(models.ShiftSignup, commitment_id) is None
