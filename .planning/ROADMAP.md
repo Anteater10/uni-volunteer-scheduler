@@ -81,18 +81,18 @@ SCRUM-156), **#94/#95/#96** (SCRUM-27/28/32, still open under Phase P3).
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 1 | No CDN/WAF anywhere; Caddy only | Deferred in Phase 09 to "Phase 15+", never picked up | Adopt Cloudflare | L1, L5, all DNS | **Decided 2026-09-07: Yes, Cloudflare Free plan** |
-| 2 | Both tokens in `localStorage` | PR #79 exists to *accept* this, not fix it | Reverse it — fix properly | L2, L3 | **Decided 2026-09-07: Fix properly — close PR #79** |
-| 3 | F2/F3 headers unapproved | F1's acceptance is void without the CSP | Approve | L2 | **Resolved 2026-09-07: Already implemented in code (CSP live in `frontend/nginx.conf` + `backend/app/main.py:158`, Dockerfile already runs non-root). No action needed — roadmap was stale.** |
-| 4 | No consequence for no-show | K21 needs a policy, not code | Pick a rule | L4 | **Decided 2026-09-07: Soft tracking only — record no-shows on the volunteer's record, visible to organizers, no automatic block/penalty** |
-| 5 | PR #50 closed unmerged | Its branch is the only impl of issue #25 | Abandon | L6 scope | **Decided 2026-09-07: Drop for good — delete the branch, close issue #25 as won't-do** |
-| 6 | Orientation = hard 422 | PR #48 had a revert cycle; docs disagree | Confirm final | L11 | **Decided 2026-09-07: Confirmed correct as implemented (verified in `backend/app/services/public_signup_service.py:264-291` + `orientation_service.py`) — hard block when orientation+module both present and no credit; skip if credited; soft warning when no orientation on event. ONE CHANGE: orientation credit currently never expires — must now expire after 1 year (currently permanent/no-expiry per `has_orientation_credit`). Needs a code change (add expiry check), not yet built. `PRODUCT-BRIEF.md` (K39) still stale and needs fixing to match — queued under L11.** |
-| 7 | `audit_logs` grows forever | Retention never decided | 12 months | L5 | **Decided 2026-09-07: 3 months — auto-delete audit_logs entries older than 3 months** |
-| 8 | 8 dormant `/admin/imports` endpoints | Pipeline deleted PR #51, endpoints remain | Delete | P5 | **Decided 2026-09-07: Confirmed — delete all 8 dead endpoints** |
-| 9 | OpenRouter unfunded, ~50 req/day | Can't load-test or demo the copilot | Fund it | L6 | **Decided/already done 2026-09-07: $10 credit already added, giving ~1,000 requests — no longer blocked** |
-| 10 | SendGrid CNAMEs not requested | UCSB IT may refuse | Single-sender fallback | L1 | **Resolved 2026-09-07: Moot — `sci-trek.org` is self-registered by SciTrek, not a UCSB domain. No UCSB IT approval needed; whoever holds the registrar login can add the CNAME records directly. AWS deployment already sending real confirmation emails from `no-reply@sci-trek.org` successfully.** |
-| 11 | Power BI seed unpromoted | Licenses/owner/warehouse unknown | Answer all three | D1 | **Decided 2026-09-07: Switched from Power BI to Tableau — no Power BI license exists yet, no stakeholder mandate for it specifically (only general post-launch analytics need), and dev team is Mac-only (Power BI Desktop is Windows-only; Tableau has a native Mac app). Build analytics on Tableau instead once Milestone D starts post-launch. Owner/warehouse-sizing questions deferred until D1 planning.** **Superseded in part 2026-09-10: after a full codebase scan, the BI tool is downgraded from an architecture decision to a client choice — the seam is a read-only Postgres role over `warehouse.*`, so Metabase, Tableau and Power BI are all ordinary clients. Metabase is the primary ($0, open source, native Mac, self-serve for non-technical staff); Tableau stays available and, if wanted, should come from UCSB Data Services' existing institutional deployment rather than a new purchase — note Tableau for Teaching licences explicitly exclude administrative use. Warehouse sizing is also now answered: the existing Postgres 16 instance, indefinitely.** |
-| 12 | Copilot corpus has no real questions | Only you know SciTrek policy | Write them | P6 | **Decided 2026-09-07: Moved into Phase P6 (item #133) — Andy will write these as part of the copilot hardening phase, not standalone** |
+| 1 | No CDN/WAF anywhere; Caddy only | Deferred in Phase 09 to "Phase 15+", never picked up | Adopt Cloudflare | L1, L5, all DNS | ✅ **Decided 2026-09-07: Yes, Cloudflare Free plan** [SCRUM-56] |
+| 2 | Both tokens in `localStorage` | PR #79 exists to *accept* this, not fix it | Reverse it — fix properly | L2, L3 | ✅ **Decided 2026-09-07: Fix properly — close PR #79** [SCRUM-57] |
+| 3 | F2/F3 headers unapproved | F1's acceptance is void without the CSP | Approve | L2 | ✅ **Resolved 2026-09-07: Already implemented in code (CSP live in `frontend/nginx.conf` + `backend/app/main.py:158`, Dockerfile already runs non-root). No action needed — roadmap was stale.** [SCRUM-58] |
+| 4 | No consequence for no-show | K21 needs a policy, not code | Pick a rule | L4 | ✅ **Decided 2026-09-07: Soft tracking only — record no-shows on the volunteer's record, visible to organizers, no automatic block/penalty** |
+| 5 | PR #50 closed unmerged | Its branch is the only impl of issue #25 | Abandon | L6 scope | ✅ **Decided 2026-09-07: Drop for good — delete the branch, close issue #25 as won't-do** |
+| 6 | Orientation = hard 422 | PR #48 had a revert cycle; docs disagree | Confirm final | L11 | ✅ **Decided 2026-09-07: Confirmed correct as implemented (verified in `backend/app/services/public_signup_service.py:264-291` + `orientation_service.py`) — hard block when orientation+module both present and no credit; skip if credited; soft warning when no orientation on event. ONE CHANGE: orientation credit currently never expires — must now expire after 1 year (currently permanent/no-expiry per `has_orientation_credit`). Needs a code change (add expiry check), not yet built. `PRODUCT-BRIEF.md` (K39) still stale and needs fixing to match — queued under L11.** [SCRUM-59] |
+| 7 | `audit_logs` grows forever | Retention never decided | 12 months | L5 | ✅ **Decided 2026-09-07: 3 months — auto-delete audit_logs entries older than 3 months** [SCRUM-60] |
+| 8 | 8 dormant `/admin/imports` endpoints | Pipeline deleted PR #51, endpoints remain | Delete | P5 | ✅ **Decided 2026-09-07: Confirmed — delete all 8 dead endpoints** |
+| 9 | OpenRouter unfunded, ~50 req/day | Can't load-test or demo the copilot | Fund it | L6 | ✅ **Decided/already done 2026-09-07: $10 credit already added, giving ~1,000 requests — no longer blocked** [SCRUM-61] |
+| 10 | SendGrid CNAMEs not requested | UCSB IT may refuse | Single-sender fallback | L1 | ✅ **Resolved 2026-09-07: Moot — `sci-trek.org` is self-registered by SciTrek, not a UCSB domain. No UCSB IT approval needed; whoever holds the registrar login can add the CNAME records directly. AWS deployment already sending real confirmation emails from `no-reply@sci-trek.org` successfully.** [SCRUM-62] |
+| 11 | Power BI seed unpromoted | Licenses/owner/warehouse unknown | Answer all three | D1 | ✅ **Decided 2026-09-07: Switched from Power BI to Tableau — no Power BI license exists yet, no stakeholder mandate for it specifically (only general post-launch analytics need), and dev team is Mac-only (Power BI Desktop is Windows-only; Tableau has a native Mac app). Build analytics on Tableau instead once Milestone D starts post-launch. Owner/warehouse-sizing questions deferred until D1 planning.** **Superseded in part 2026-09-10: after a full codebase scan, the BI tool is downgraded from an architecture decision to a client choice — the seam is a read-only Postgres role over `warehouse.*`, so Metabase, Tableau and Power BI are all ordinary clients. Metabase is the primary ($0, open source, native Mac, self-serve for non-technical staff); Tableau stays available and, if wanted, should come from UCSB Data Services' existing institutional deployment rather than a new purchase — note Tableau for Teaching licences explicitly exclude administrative use. Warehouse sizing is also now answered: the existing Postgres 16 instance, indefinitely.** [SCRUM-63] |
+| 12 | Copilot corpus has no real questions | Only you know SciTrek policy | Write them | P6 | ✅ **Decided 2026-09-07: Moved into Phase P6 (item #133) — Andy will write these as part of the copilot hardening phase, not standalone** |
 
 **Action status, audited 2026-09-08.** All 12 rows are decided; Jira is now
 level with that (SCRUM-51 umbrella plus 56/57/58/59/60/61/62/63 all Done). Four
@@ -137,11 +137,11 @@ deleted on merge. Jira: SCRUM-64/65/66/67/68 all Done.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Status |
 |---|---|---|---|---|---|
-| 13 | 2 eval branches, 82 commits, local only | No remote ref — one laptop holds the paper's evidence | Push both today | X1 | **✅ Done 2026-09-07** — both pushed to `origin`, refs verified identical: `…35-02-multimodel-eval` @ `8fb1a54` (37 commits), `…35-03-grounded-eval` @ `b0f2914` (45). Archival only — no PR, no merge. Pre-push secret scan clean (repo is public). Merging them is still open as X1 #120 / SCRUM-146. |
-| 14 | 6 planning files untracked | One is the only record of F6 | Commit | Nothing | **✅ Done — `3e2cab5`, merged in PR #89 (`3af0c15`)** — scope widened to the whole tree: 7 superseded docs moved into `.planning/archive/superseded-2026-09-04/` (recorded as **renames**, history preserved), the 2026-08-20/28 snapshots, ROADMAP + STATE updates, `PRODUCT-BRIEF.md`, `WORK-INVENTORY.md`. `PLAN-2026-08-20.md` — the only record of F6 / item #32 — is now in version control. |
-| 15 | `architecture-site` rework uncommitted on `main` | Done and builds clean, just sitting there | Commit on a branch | Nothing | **✅ Done — `2a22a64`, merged in PR #89 (`3af0c15`)** — 5 files, +399/−110. "Builds clean" verified, not assumed: `npm run build` → vite 7.3.3, 36 modules, no errors. **Two follow-ups from the register were NOT folded in** — the dead `onNodeHover`/`onLeave` props on `FlowDiagram`, and `wrapSvgText` rendering the literal `"undefined"` for a subtitle-less node. Still outstanding. |
-| 16 | `BioApp/` nested untracked git repo | Shows as untracked forever | Gitignore or move out | Nothing | **✅ Done 2026-09-07** — deleted outright rather than gitignored. It was a standalone repo (1 commit, `LICENSE` + empty readme, clean tree) already pushed to `github.com/Anteater10/BioApp`, so nothing was lost. |
-| 17 | 4 stashes from April, 2 dead worktrees | Bases deleted; won't apply | Drop and prune | Nothing | **✅ Done 2026-09-07** — `git stash clear` + `git worktree prune`; dropped without patch export after review. All four were 2026-04-15 snapshots of Phase 16, which shipped in v1.2-prod on 2026-04-17 (all seven `16-0N-SUMMARY.md` + `16-VERIFICATION.md` on `main`; `scripts/verify-overrides-retired.sh` still present). Unappliable anyway — 3 of 4 bases gone. |
+| 13 | 2 eval branches, 82 commits, local only | No remote ref — one laptop holds the paper's evidence | Push both today | X1 | **✅ Done 2026-09-07** — both pushed to `origin`, refs verified identical: `…35-02-multimodel-eval` @ `8fb1a54` (37 commits), `…35-03-grounded-eval` @ `b0f2914` (45). Archival only — no PR, no merge. Pre-push secret scan clean (repo is public). Merging them is still open as X1 #120 / SCRUM-146. [SCRUM-64] |
+| 14 | 6 planning files untracked | One is the only record of F6 | Commit | Nothing | **✅ Done — `3e2cab5`, merged in PR #89 (`3af0c15`)** — scope widened to the whole tree: 7 superseded docs moved into `.planning/archive/superseded-2026-09-04/` (recorded as **renames**, history preserved), the 2026-08-20/28 snapshots, ROADMAP + STATE updates, `PRODUCT-BRIEF.md`, `WORK-INVENTORY.md`. `PLAN-2026-08-20.md` — the only record of F6 / item #32 — is now in version control. [SCRUM-65] |
+| 15 | `architecture-site` rework uncommitted on `main` | Done and builds clean, just sitting there | Commit on a branch | Nothing | **✅ Done — `2a22a64`, merged in PR #89 (`3af0c15`)** — 5 files, +399/−110. "Builds clean" verified, not assumed: `npm run build` → vite 7.3.3, 36 modules, no errors. **Two follow-ups from the register were NOT folded in** — the dead `onNodeHover`/`onLeave` props on `FlowDiagram`, and `wrapSvgText` rendering the literal `"undefined"` for a subtitle-less node. Still outstanding. [SCRUM-66] |
+| 16 | `BioApp/` nested untracked git repo | Shows as untracked forever | Gitignore or move out | Nothing | **✅ Done 2026-09-07** — deleted outright rather than gitignored. It was a standalone repo (1 commit, `LICENSE` + empty readme, clean tree) already pushed to `github.com/Anteater10/BioApp`, so nothing was lost. [SCRUM-67] |
+| 17 | 4 stashes from April, 2 dead worktrees | Bases deleted; won't apply | Drop and prune | Nothing | **✅ Done 2026-09-07** — `git stash clear` + `git worktree prune`; dropped without patch export after review. All four were 2026-04-15 snapshots of Phase 16, which shipped in v1.2-prod on 2026-04-17 (all seven `16-0N-SUMMARY.md` + `16-VERIFICATION.md` on `main`; `scripts/verify-overrides-retired.sh` still present). Unappliable anyway — 3 of 4 bases gone. [SCRUM-68] |
 
 ## Phase L1 — File the DNS request (0.5 day) — ✅ COMPLETE 2026-09-08 (done by circumstance)
 
@@ -153,7 +153,7 @@ SendGrid → SES port, where it would be redone anyway. Jira: SCRUM-69 Done.
 | # | Current situation | What's wrong | Recommendation | Blocks | Status |
 |---|---|---|---|---|---|
 | 18 | No verified sender domain | Premise was wrong twice over | Nothing to do | L9, all email | **✅ Moot — verified from public DNS 2026-09-08.** DKIM is live: `s1._domainkey` and `s2._domainkey` → `s1`/`s2.domainkey.u113425370.wl121.sendgrid.net`, both resolving to a real RSA key. So SendGrid domain auth was configured at some point and never written down — which is why real mail from `no-reply@sci-trek.org` has been arriving. No UCSB IT step was ever needed (Gate 0 #10 — the domain is SciTrek's own, at IONOS). Rest of the zone: apex A `52.35.73.159`, MX `mx00`/`mx01.ionos.com` (inbound stays IONOS), SPF `v=spf1 include:_spf-us.ionos.com ~all` — which does **not** name SendGrid, and that is correct under CNAME-based domain auth because the return path is a SendGrid-hosted subdomain with its own SPF. **Deferred to the SES port:** confirming the third CNAME (the `emNNNN` return-path subdomain, not resolvable from outside without the number — it is in SendGrid → Sender Authentication), and adding a DMARC `rua=` (currently `p=none` with no reporting address, so nobody receives reports). No ticket ever existed for this row; recorded here instead. |
-| 19 | Cloudflare not decided | CNAMEs must be DNS-only, not proxied | Decide #1 before filing | L9 | **✅ Decided (Gate 0 #1: Cloudflare Free) — and the constraint outlives this phase.** When Cloudflare is adopted, the DKIM CNAMEs and MX must be **DNS-only, never proxied**: an orange-clouded `_domainkey` resolves to a Cloudflare IP instead of SendGrid's value and breaks DKIM silently, with the records still looking correct in the dashboard. Only the web A record should be proxied. Carried onto SCRUM-56, since adopting Cloudflare is a nameserver migration off IONOS and the whole zone has to be re-created there. Sequencing it **after** the SES port avoids doing the sender records twice. |
+| 19 | Cloudflare not decided | CNAMEs must be DNS-only, not proxied | Decide #1 before filing | L9 | **✅ Decided (Gate 0 #1: Cloudflare Free) — and the constraint outlives this phase.** When Cloudflare is adopted, the DKIM CNAMEs and MX must be **DNS-only, never proxied**: an orange-clouded `_domainkey` resolves to a Cloudflare IP instead of SendGrid's value and breaks DKIM silently, with the records still looking correct in the dashboard. Only the web A record should be proxied. Carried onto SCRUM-56, since adopting Cloudflare is a nameserver migration off IONOS and the whole zone has to be re-created there. Sequencing it **after** the SES port avoids doing the sender records twice. [SCRUM-69] |
 
 ## Phase L2 — Land what's already built (1–2 days) — ✅ COMPLETE 2026-09-08
 
@@ -165,11 +165,11 @@ all Done. Order mattered once: #91 had to precede #80, see #20.
 | # | Current situation | What's wrong | Recommendation | Blocks | Status |
 |---|---|---|---|---|---|
 | 20 | PR #80 open (CI net) | Built but never merged; roadmap said done | Merge | L8 | **✅ Merged `5cbbab7`.** Refreshed onto current `main` first — its green checks were 10 days old and it was 9 behind. That refresh made its own pip-audit gate fail on **its first real finding**: `CVE-2026-9856` against `transformers 4.57.6`, published after the baseline was written. Baselined with reasoning inline (the fix is a **major** jump on the library the copilot's embedding + reranker use); triage → SCRUM-45, now 35 advisories. **Also carried #21's `REFRESH_TOKEN_EXPIRES_DAYS: 14→2` in `ci.yml`** — merging it before #91 would have left CI testing 2 days against an app shipping 14. Now agree: `ci.yml:51`/`:236` and `config.py:54` all say 2. |
-| 21 | PR #79 open (accept localStorage) | Contradicts #2 if you're fixing tokens | Close it | L3 | **✅ Closed, salvaged into #91 `be0dbde`.** #79 bundled three things; only the acceptance document was reversed. Kept: the 14→2 refresh-window narrowing (a compensating control until L3, not a substitute) and `docs/security-review-frontend-infra.md` — which *recommends* the HttpOnly-cookie fix, so it never conflicted with Gate 0 #2. Landed with a status note so a 2026-08-20 snapshot isn't read as current state. Volunteer magic links untouched at 14 days, deliberately. |
+| 21 | PR #79 open (accept localStorage) | Contradicts #2 if you're fixing tokens | Close it | L3 | **✅ Closed, salvaged into #91 `be0dbde`.** #79 bundled three things; only the acceptance document was reversed. Kept: the 14→2 refresh-window narrowing (a compensating control until L3, not a substitute) and `docs/security-review-frontend-infra.md` — which *recommends* the HttpOnly-cookie fix, so it never conflicted with Gate 0 #2. Landed with a status note so a 2026-08-20 snapshot isn't read as current state. Volunteer magic links untouched at 14 days, deliberately. [SCRUM-70] |
 | 22 | PR #78 open (copilot mail transport) | `nudge_understaffed_module:50-59` targets the **whole volunteer table** | Fix recipients, then merge | P4 | **✅ Merged `5f54bce`. This description was already out of date** — the mass-mail policy was fixed on the branch: 120-day window either side of the module, in scope, minus those already signed up, opt-outs skipped, hard cap 200 above which it **refuses** rather than mailing a prefix. Sending still defaults **off**. What actually blocked it was coverage, in **two** gates: `app/celery_app.py` at 100% (ci.yml:110) and `app.copilot` at 95% line+branch (ci.yml:160-165). Nine tests added; both files now 100%. |
 | 23 | `Caddyfile:36` HSTS-only; Dockerfile has no `USER` | F2/F3/F4 never shipped | Ship all three | L8 | **✅ Done — but Gate 0 #3 was half wrong.** F2/F3 headers were already live (`frontend/nginx.conf:30-40`, `backend/app/main.py:157-169`); `Caddyfile:36` HSTS-only is correct, not a gap. **F4 was not done:** Gate 0 #3 recorded "Dockerfile already non-root", true of `backend/Dockerfile:54` but not the frontend, whose stock nginx runs PID 1 as root (verified by running both images). Fixed in **#92 `27bf2e3`** via `nginx-unprivileged` (uid 101), forcing `listen 8080` and a matching Caddy change. **F3 was also not done** and I first closed it wrongly: `react-router-dom` was pinned at 7.14.0 with **nine** high advisories — fixed in **#93 `89556b8`** (→7.18.3). |
-| 24 | K31 commit `569c3ff` on a branch | Roadmap marked it "✅ pushed" | Merge to `main` | Nothing | **✅ Not a separate task — landed inside #78.** `569c3ff` was the middle of that branch's three commits, never a loose commit needing a cherry-pick. Verified on `main`: the retry policy is in `backend/app/tasks/extract_profile.py` with its 212-line test. **Open question this raised:** `copilot_profile_extraction_enabled` is still `False`, and its recorded reason ("off until the request budget is large enough") has partly expired now Gate 0 #9 funded ~1,000 requests. One-line change, Andy's call. |
-| 25 | 9 branches with unmerged work | Includes 39-commit `origin/v1.3` | Merge or delete each | Nothing | **✅ Every branch dispositioned.** Method matters: `git diff` totals are useless here because they don't say which side is newer — the reliable test is *which files does this branch add that `main` lacks*. Deleted `fix/confirmation-email-silent-failure` (its only unique lines would have **reverted** PRs #83 and #84). **`feat/deploy-baseline` is fully landed** — all 12 files it adds are on `main`, four are byte-identical including migration `0009`, and `main` leads every other file; my earlier "1,837 lines missing" was the diff trap. **`organizer-audit` likewise superseded** — `main`'s form-schema endpoints already admit organizers via `require_staff` with no owner filter, which is what the 2026-09-08 ruling wants. **Keep `v1.3`** — sole copy of ~837 lines of SMS work (someone else owns SMS). **Keep `fix/imports-templates`** — sole copy of the bulk-add UI, input to P6 #135. ~52 further remote branches are fully-merged clutter, not yet cleared. |
+| 24 | K31 commit `569c3ff` on a branch | Roadmap marked it "✅ pushed" | Merge to `main` | Nothing | **✅ Not a separate task — landed inside #78.** `569c3ff` was the middle of that branch's three commits, never a loose commit needing a cherry-pick. Verified on `main`: the retry policy is in `backend/app/tasks/extract_profile.py` with its 212-line test. **Open question this raised:** `copilot_profile_extraction_enabled` is still `False`, and its recorded reason ("off until the request budget is large enough") has partly expired now Gate 0 #9 funded ~1,000 requests. One-line change, Andy's call. [SCRUM-71] |
+| 25 | 9 branches with unmerged work | Includes 39-commit `origin/v1.3` | Merge or delete each | Nothing | **✅ Every branch dispositioned.** Method matters: `git diff` totals are useless here because they don't say which side is newer — the reliable test is *which files does this branch add that `main` lacks*. Deleted `fix/confirmation-email-silent-failure` (its only unique lines would have **reverted** PRs #83 and #84). **`feat/deploy-baseline` is fully landed** — all 12 files it adds are on `main`, four are byte-identical including migration `0009`, and `main` leads every other file; my earlier "1,837 lines missing" was the diff trap. **`organizer-audit` likewise superseded** — `main`'s form-schema endpoints already admit organizers via `require_staff` with no owner filter, which is what the 2026-09-08 ruling wants. **Keep `v1.3`** — sole copy of ~837 lines of SMS work (someone else owns SMS). **Keep `fix/imports-templates`** — sole copy of the bulk-add UI, input to P6 #135. ~52 further remote branches are fully-merged clutter, not yet cleared. [SCRUM-72] |
 | 26.1 | Check-in QR unreachable on a phone | `CheckInQRModal` rendered only by `AdminEventPage`, and `AdminLayout` swaps every `/admin/*` page for `DesktopOnlyBanner` below the desktop breakpoint | Surface it on the organizer roster | Nothing | **✅ #94 — added 2026-09-08 on Andy's requirement that organizers use both phone and laptop.** The desktop half was already correct (no `isAdmin` gate on the button; the route admits both roles) — this was a missing surface, not a permission bug. Reuses the existing modal, reading `venue_code` off the roster query the page already runs. A slice of P1 #80/#81, pulled forward because check-in is a live daily flow. |
 
 ## Phase S — Stabilization (1–2 days) — *added 2026-09-21* — **✅ COMPLETE 2026-09-21 (10 of 10)**
@@ -206,12 +206,12 @@ reopened and finishes before L5; see Phase S for how the trackers drifted.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 26 | Access + refresh in `localStorage` | One XSS takes the account | Cookie + in-memory + CSRF; ~21 files | L6 | **✅ Done — PR #117** (2026-09-10). Refresh token in an `HttpOnly` cookie, access token in memory, CSRF on cookie-authenticated routes, throttles on `/auth/refresh` and `/auth/logout` |
-| 27 | 3 endpoint groups have zero throttle | `magic/{token}`, `slots/{id}/resolve`, 5 organizer routes | Add limits | L6 | **⬜ Open — never built.** Verified on `main` 2026-09-21: the 5 `@router.post` routes in `organizer.py`, `POST /slots/{id}/resolve` in `check_in.py` and `GET /auth/magic/{token}` have no `rate_limit`. (#117 throttled only `/auth/refresh` and `/auth/logout`) |
-| 28 | Every throttle fails **open** on Redis error | Fine for uptime, useless for cost control | Fail closed on the expensive ones | L5 | **⬜ Open — decision pending.** Recommended 2026-09-08, never confirmed: fail closed on email fan-out, admin exports, the copilot, and the *unauthenticated* venue-code check-in routes; signup, login and staff roster check-in stay open. Andy's question in that session was "shouldn't it be all of them?" — confirm before building |
-| 29 | 4 query paths unbounded | `CONFIG-24` = ~20,000 SELECTs in one request | Row-cap + paginate | L5 | **⬜ Open — never built.** The four unbounded query paths (`CONFIG-24`) are still uncapped |
-| 30 | No `aud`/`iss` claims minted or verified | `SEC-36` | Add both | L8 | **✅ Done — PR #117** (2026-09-10). `aud`/`iss` minted and verified on access tokens |
-| 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap — see #149, `magic_link_tokens` has the same problem and should share the job | L8 | **⬜ Open — never built.** Nothing reaps `refresh_tokens`. Build as one reaper with #149, which has the same problem on `magic_link_tokens` |
+| 26 | Access + refresh in `localStorage` | One XSS takes the account | Cookie + in-memory + CSRF; ~21 files | L6 | **✅ Done — PR #117** (2026-09-10). Refresh token in an `HttpOnly` cookie, access token in memory, CSRF on cookie-authenticated routes, throttles on `/auth/refresh` and `/auth/logout` [SCRUM-73] |
+| 27 | 3 endpoint groups have zero throttle | `magic/{token}`, `slots/{id}/resolve`, 5 organizer routes | Add limits | L6 | **⬜ Open — never built.** Verified on `main` 2026-09-21: the 5 `@router.post` routes in `organizer.py`, `POST /slots/{id}/resolve` in `check_in.py` and `GET /auth/magic/{token}` have no `rate_limit`. (#117 throttled only `/auth/refresh` and `/auth/logout`) [SCRUM-74] |
+| 28 | Every throttle fails **open** on Redis error | Fine for uptime, useless for cost control | Fail closed on the expensive ones | L5 | **⬜ Open — decided 2026-09-21: split** (Andy). Fail closed on email fan-out, admin exports, the copilot, and the unauthenticated venue-code check-in routes; fail open on signup, login and staff roster check-in, so a Redis outage never stops volunteers or staff. Not built yet. [SCRUM-75] |
+| 29 | 4 query paths unbounded | `CONFIG-24` = ~20,000 SELECTs in one request | Row-cap + paginate | L5 | **⬜ Open — never built.** The four unbounded query paths (`CONFIG-24`) are still uncapped [SCRUM-76] |
+| 30 | No `aud`/`iss` claims minted or verified | `SEC-36` | Add both | L8 | **✅ Done — PR #117** (2026-09-10). `aud`/`iss` minted and verified on access tokens [SCRUM-77] |
+| 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap — see #149, `magic_link_tokens` has the same problem and should share the job | L8 | **⬜ Open — never built.** Nothing reaps `refresh_tokens`. Build as one reaper with #149, which has the same problem on `magic_link_tokens` [SCRUM-78] |
 | 177 | Malformed ids in URL paths 500 | Found 2026-09-21 by the e2e seed: `POST /signups/None/cancel` → 500 (`InvalidTextRepresentation` from Postgres). 52 path params across 9 routers are typed `str`, not `UUID`, so garbage reaches the DB. `/public/events/None` already 422s | Type the id params as `UUID` so FastAPI 422s before the query | L6 | None [SCRUM-205] |
 
 ## Phase L4 — Known bugs (2–3 days) — **done 2026-09-21**
@@ -223,54 +223,55 @@ all fixed before merge — see #34.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 32 | Missing SendGrid var → task returns normally | Mail silently vanishes; looks like "nobody signed up" | Fail loudly. ~1h, highest value fix | L6 | **Done — already fixed by PR #82** (workers refuse to start without mail config; a send with no key raises). Found in the L4 readiness check, 2026-09-19 |
-| 33 | `magic.py:54,60,69` → `/signup/confirmed` | **Route doesn't exist; every confirmation 404s** | Add routes or fix redirect | L6 | **Done — PR #129.** Resend mail now links to the frontend confirm page; the legacy `/auth/magic/{token}` forwards the token there instead of burning it. Neither dead route was needed |
-| 34 | `/auth/magic/resend` has zero callers | A lost email is a dead end | Wire a button | L6 | **Done — PR #129.** Resend lives on the post-signup card, held for the backend's 60s idempotency window. Also fixed: resend minted tokens without `volunteer_id`, so the manage view 400'd after confirm |
-| 35 | Broadcast footer + unsubscribe links | Both broken in every email sent | Fix both | L6 | **Done — PR #130.** Manage tokens are minted at send time (only hashes are stored), per recipient for broadcasts. Left a growth follow-up: #149 |
-| 36 | `role_scope.py:39` scopes organizers by `owner_id` | Contradicts the 2026-08-12 ruling | Fix before any read tool ships | P4 | **Done — L4 PR 3.** Organizers are `see_all` in the copilot, matching `deps.ensure_event_staff_access`. Decided 2026-09-21: full alignment — 25 tests across 14 files inverted, and the organizer `cross_scope_leak` adversarial cases re-pointed at the PII boundary, since ownership is no longer one |
-| 37 | `/admin/notifications/recent` | 500s **permanently** once a shift notification exists | Fix query | L6 | **Done — L4 PR 3.** Schema bug, not a query bug: `signup_id` was required while shift rows carry `shift_signup_id` instead. Both are optional now |
-| 38 | A test pins orientation gate failing **open** | Contradicts the hard block | Invert the test | L6 | **Dropped 2026-09-20.** No backend test pins the gate open — the hard block holds (`public_signup_service.py`). The only fail-open test covers the client pre-check, and the server still returns 422. #6's 1-year credit expiry stays deferred with L11 |
-| 39 | School field dropped on event save | Accepted by form, lost server-side | Fix | L6 | **Done — already fixed by PR #76** (`EventUpdate.school`, 5 round-trip tests) |
-| 40 | Deactivation doesn't end sign-in | Deactivated staff can still log in | Revoke on deactivate | L8 | **Done — already fixed by PR #70** (`deps._account_usable` checked on every token path) |
-| 41 | 2 Exports range buttons unimplemented | Silently return all-time PII exports | Implement or remove | L6 | **Done — L4 PR 3.** Both presets implemented and labelled. Quarter presets that cannot resolve a range are now hidden rather than shown, since an empty range is read as "no filter" |
-| 42 | Legacy 24h reminder still sends | Volunteers get **two** day-before emails | Retire the legacy pair | L6 | **Done — already fixed by PR #63** (legacy beats removed from the schedule) |
-| 43 | 3 backend tests fail | Missing `/opt/hf-cache` mount, not broken code | Add mount to the documented command | L6 | **Done — L4 PR 3.** The three local-BGE tests skip, with instructions, when the weights are neither cached nor downloadable. They still run with a cache mounted. `CLAUDE.md` untouched |
+| 32 | Missing SendGrid var → task returns normally | Mail silently vanishes; looks like "nobody signed up" | Fail loudly. ~1h, highest value fix | L6 | **Done — already fixed by PR #82** (workers refuse to start without mail config; a send with no key raises). Found in the L4 readiness check, 2026-09-19 [SCRUM-79] |
+| 33 | `magic.py:54,60,69` → `/signup/confirmed` | **Route doesn't exist; every confirmation 404s** | Add routes or fix redirect | L6 | **Done — PR #129.** Resend mail now links to the frontend confirm page; the legacy `/auth/magic/{token}` forwards the token there instead of burning it. Neither dead route was needed [SCRUM-80] |
+| 34 | `/auth/magic/resend` has zero callers | A lost email is a dead end | Wire a button | L6 | **Done — PR #129.** Resend lives on the post-signup card, held for the backend's 60s idempotency window. Also fixed: resend minted tokens without `volunteer_id`, so the manage view 400'd after confirm [SCRUM-81] |
+| 35 | Broadcast footer + unsubscribe links | Both broken in every email sent | Fix both | L6 | **Done — PR #130.** Manage tokens are minted at send time (only hashes are stored), per recipient for broadcasts. Left a growth follow-up: #149 [SCRUM-82] |
+| 36 | `role_scope.py:39` scopes organizers by `owner_id` | Contradicts the 2026-08-12 ruling | Fix before any read tool ships | P4 | **Done — L4 PR 3.** Organizers are `see_all` in the copilot, matching `deps.ensure_event_staff_access`. Decided 2026-09-21: full alignment — 25 tests across 14 files inverted, and the organizer `cross_scope_leak` adversarial cases re-pointed at the PII boundary, since ownership is no longer one [SCRUM-83] |
+| 37 | `/admin/notifications/recent` | 500s **permanently** once a shift notification exists | Fix query | L6 | **Done — L4 PR 3.** Schema bug, not a query bug: `signup_id` was required while shift rows carry `shift_signup_id` instead. Both are optional now [SCRUM-84] |
+| 38 | A test pins orientation gate failing **open** | Contradicts the hard block | Invert the test | L6 | ✅ **Dropped 2026-09-20.** No backend test pins the gate open — the hard block holds (`public_signup_service.py`). The only fail-open test covers the client pre-check, and the server still returns 422. #6's 1-year credit expiry stays deferred with L11 [SCRUM-85] |
+| 39 | School field dropped on event save | Accepted by form, lost server-side | Fix | L6 | **Done — already fixed by PR #76** (`EventUpdate.school`, 5 round-trip tests) [SCRUM-86] |
+| 40 | Deactivation doesn't end sign-in | Deactivated staff can still log in | Revoke on deactivate | L8 | **Done — already fixed by PR #70** (`deps._account_usable` checked on every token path) [SCRUM-87] |
+| 41 | 2 Exports range buttons unimplemented | Silently return all-time PII exports | Implement or remove | L6 | **Done — L4 PR 3.** Both presets implemented and labelled. Quarter presets that cannot resolve a range are now hidden rather than shown, since an empty range is read as "no filter" [SCRUM-88] |
+| 42 | Legacy 24h reminder still sends | Volunteers get **two** day-before emails | Retire the legacy pair | L6 | **Done — already fixed by PR #63** (legacy beats removed from the schedule) [SCRUM-89] |
+| 43 | 3 backend tests fail | Missing `/opt/hf-cache` mount, not broken code | Add mount to the documented command | L6 | **Done — L4 PR 3.** The three local-BGE tests skip, with instructions, when the weights are neither cached nor downloadable. They still run with a cache mounted. `CLAUDE.md` untouched [SCRUM-90] |
 
 ## Phase L5 — Hardening and scale (2–3 days) — *the missing Phase 37*
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 44 | Phase 37 has no directory, no plan | Load test, PII encryption, pending store all deferred here | Write the phase | L6 | None |
-| 45 | No WAF, no bot protection | App throttles fail open; nothing above them | Cloudflare rules | L9 | Depends on #1 |
-| 46 | No AWS spend cap | **The actual credit protection.** Throttles can't stop what fails open | Hard budget alarm + cap | L9 | None |
-| 47 | `_PENDING` store is in-memory | **Blocks running more than one worker** | Move to DB | L9 | **✅ Done — PR #67** (`39d6b59`). Pending confirmations moved to Redis (`copilot/agent/confirmation.py`), not the DB, so more than one worker is no longer blocked. Recorded 2026-09-21; it had shipped weeks earlier |
-| 48 | Zero load testing ever | Instance sizing is a guess; 512MB already OOM'd | Establish P50/P95 | L9 | None |
-| 49 | No Celery time limits; no API request timeout | Tasks hold DB sessions; fetches hang forever | Add both | L8 | None |
-| 50 | 2 of ~10 indexes landed; 13 FKs unindexed | W0.5 half-done | Add the rest | L8 | None |
-| 51 | CrossEncoder ~200s cold start | First request after boot stalls | Warm on startup or sidecar | L9 | None |
+| 44 | Phase 37 has no directory, no plan | Load test, PII encryption, pending store all deferred here | Write the phase | L6 | None [SCRUM-91] |
+| 45 | No WAF, no bot protection | App throttles fail open; nothing above them | Cloudflare rules | L9 | Depends on #1 [SCRUM-92] |
+| 46 | No AWS spend cap | **The actual credit protection.** Throttles can't stop what fails open | Hard budget alarm + cap | L9 | None [SCRUM-93] |
+| 47 | `_PENDING` store is in-memory | **Blocks running more than one worker** | Move to DB | L9 | **✅ Done — PR #67** (`39d6b59`). Pending confirmations moved to Redis (`copilot/agent/confirmation.py`), not the DB, so more than one worker is no longer blocked. Recorded 2026-09-21; it had shipped weeks earlier [SCRUM-94] |
+| 48 | Zero load testing ever | Instance sizing is a guess; 512MB already OOM'd | Establish P50/P95 | L9 | None [SCRUM-95] |
+| 49 | No Celery time limits; no API request timeout | Tasks hold DB sessions; fetches hang forever | Add both | L8 | None [SCRUM-96] |
+| 50 | 2 of ~10 indexes landed; 13 FKs unindexed | W0.5 half-done | Add the rest | L8 | None [SCRUM-97] |
+| 51 | CrossEncoder ~200s cold start | First request after boot stalls | Warm on startup or sidecar | L9 | None [SCRUM-98] |
 | 149 | `magic_link_tokens` grows unbounded | Found in L4 (PR #130). Only a token's hash is stored, so a working manage link has to be *minted* per send — ~3 rows per signup from reminders, plus one per recipient per broadcast. No reaper, no cap. Same shape as #31, now on a second table and on a faster clock | One reaper covering both tables: consumed rows, and rows past a retention age (SCRUM-162) | L8 | None |
 | 150 | Broadcast send does one INSERT per recipient, inline | Found in L4 (PR #130). Minting a per-recipient manage token added an insert to a synchronous request that already did per-recipient dedup work. Fine at current roster sizes (16 recipients was instant); a 500-volunteer event is untested | Measure under #48's load test; move the send loop to a task if it bites (SCRUM-163) | L9 | None |
 | 151 | `broadcast_service.render_html` has no production caller | Found in L4 (PR #130). The send path uses `render_body_html` + `wrap_body_html` since the footer went per recipient; the old one-shot wrapper survives for a single test | Delete it and fold the test into the two it replaced (SCRUM-164) | L6 | None |
-| 152 | Copilot coverage gate enforces 94.5%, not 95% | Found in L4 (PR #132). pytest-cov decides the exit code after rounding to a whole percent (`precision` defaults to 0) but prints FAIL from the unrounded total — so 94.5% and up passes while the log says FAIL. `main` has sat at 94.60% under the stated 95% bar, 0.10 above the real one, and every green run prints FAIL | Test the existing gaps (`operations`, `quarters`, `create_event_with_schedule`, `events_edit`, `orientation_credits`) until it clears 95% for real, *then* add `--cov-precision=2` to the four gate steps and update `test_coverage_gates.py` (SCRUM-175) | L6 | None. Fixed by #168 in Phase S |
+| 152 | Copilot coverage gate enforces 94.5%, not 95% | Found in L4 (PR #132). pytest-cov decides the exit code after rounding to a whole percent (`precision` defaults to 0) but prints FAIL from the unrounded total — so 94.5% and up passes while the log says FAIL. `main` has sat at 94.60% under the stated 95% bar, 0.10 above the real one, and every green run prints FAIL | Test the existing gaps (`operations`, `quarters`, `create_event_with_schedule`, `events_edit`, `orientation_credits`) until it clears 95% for real, *then* add `--cov-precision=2` to the four gate steps and update `test_coverage_gates.py` (SCRUM-175) | L6 | **✅ Done — fixed by #168, PR #135** (`80787ea`): `--cov-precision=2` on all four gates; `app.copilot` at a real 95.23%. |
 | 153 | `audit_logs` retention decided, never built | Gate 0 #7 set 3 months on 2026-09-07; nothing on `main` deletes old rows and no row tracked building it | Celery beat purge of `audit_logs` older than 3 months | L9 | None. Added 2026-09-21 from the tracker audit [SCRUM-186] |
 | 156 | Venue codes are 4 digits and never expire | GitHub #46: follow-ups from the #31 hardening review. The throttle is the only ceiling on guessing (residual S-02); ties to #28 | Rotate or expire venue codes; revisit with #28's fail-closed rule for unauthenticated check-in | L6 | None. Added 2026-09-21 from the tracker audit (GH #46) [SCRUM-187] |
 | 157 | Celery `statement_timeout` override documented, never built | SCRUM-161: described in two files but absent; long tasks share the web 15s DB timeout | Add the Celery-side override | L9 | None. Added 2026-09-21 from the tracker audit (SCRUM-161) |
 | 158 | Large CSV exports are uncapped | SCRUM-173: event, privacy-request and attendance exports load everything in memory. Close to #29, which doesn't cover them | Cap or stream them | L6 | None. Added 2026-09-21 from the tracker audit (SCRUM-173) |
+| 179 | 35 known dependency advisories are baselined, not fixed | SCRUM-45: the first pip-audit run found 42 across 13 packages; `backend/.pip-audit-baseline.txt` still lists 35, so CI only fails on *new* ones. The file was meant to shrink to empty. Includes starlette's form-parsing limit (BASE-CONFIG-36), accepted on older information | Fix each or write a reachability assessment; empty the baseline. Watch the torch/transformers pins | L9 | None. Added 2026-09-21 from Jira [SCRUM-45] |
 | 163 | Coverage is not 100% and code is excluded | 88.75% measured strictly: ~1,000 lines + 600 branch paths untested; 4 files omitted and 15 `pragma: no cover` lines. `tasks/reminders.py` and `seed_admin.py` run in production with 0% coverage | Ratchet from #168 (every PR fully tests what it touches), then the final PR empties the omit/exclude lists and raises every gate to a hard 100% | L6 | **Decided 2026-09-21:** 100% of code tested, no exclusions; raised as we go, final gate after L5. **Frontend included** (widened same day): vitest had gated only `authToken.js`/`authStorage.js`; whole-`src/` baseline measured 2026-09-21: statements 73.66%, branches 69.48%, functions 65.36%, lines 75.23% (697 tests); same ratchet, hard 100% on all of `frontend/src/` after L5 [SCRUM-188] |
 
 ## Phase L6 — Verification (3–4 days) — *the long pole*
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 52 | Nothing started | Its own roadmap: "biggest single batch of code in the whole plan" | Budget 4 days, not 2 | L7 | None |
-| 53 | 53 smoke boxes unticked, sign-off blank | **Nobody has ever clicked through this app** | Run all three roles | L7 | None |
-| 54 | W6.1 every route × role × phone | Route-gating tests can't see over-disclosure *within* a page | Manual pass | L7 | None |
-| 55 | W6.2 side-effecting flows w/ Mailpit | Shifts changed everything and were never re-walked | Full pass | L7 | None |
-| 56 | W6.3 emails in real clients | Never opened in Gmail/Apple/Outlook | Test all four | L7 | None |
-| 57 | W6.4 adversarial input | Static audit only, no runtime testing | Manual pass | L7 | None |
-| 58 | INTEG-04 blocked on a human since Phase 20 | Status literally `human_needed` | Do the dry run | L7 | None |
-| 59 | 11 unrun UAT tests across phases 15/16/17 | All marked `[pending]` | Fold into this pass | L7 | None |
-| 60 | W6.5 regression tests | P0s found by hand won't stay fixed | One test per P0 | L8 | None |
+| 52 | Nothing started | Its own roadmap: "biggest single batch of code in the whole plan" | Budget 4 days, not 2 | L7 | None [SCRUM-14] |
+| 53 | 53 smoke boxes unticked, sign-off blank | **Nobody has ever clicked through this app** | Run all three roles | L7 | None [SCRUM-99] |
+| 54 | W6.1 every route × role × phone | Route-gating tests can't see over-disclosure *within* a page | Manual pass | L7 | None [SCRUM-18] |
+| 55 | W6.2 side-effecting flows w/ Mailpit | Shifts changed everything and were never re-walked | Full pass | L7 | None [SCRUM-19] |
+| 56 | W6.3 emails in real clients | Never opened in Gmail/Apple/Outlook | Test all four | L7 | None [SCRUM-20] |
+| 57 | W6.4 adversarial input | Static audit only, no runtime testing | Manual pass | L7 | None [SCRUM-21] |
+| 58 | INTEG-04 blocked on a human since Phase 20 | Status literally `human_needed` | Do the dry run | L7 | None [SCRUM-100] |
+| 59 | 11 unrun UAT tests across phases 15/16/17 | All marked `[pending]` | Fold into this pass | L7 | None [SCRUM-101] |
+| 60 | W6.5 regression tests | P0s found by hand won't stay fixed | One test per P0 | L8 | None [SCRUM-22] |
 | 155 | Nothing tests real event-day conditions | SCRUM-23 / SCRUM-33: school wifi, phones, several people checking in at once. No L6 row covers it | A rehearsal under event conditions before L9 | L7 | None. Added 2026-09-21 from the tracker audit (SCRUM-23, SCRUM-33) |
 | 176 | QR check-in never had a real test pass | GitHub #31: QR check-in exists (#45, #74) but was never tested end to end or promoted to preview | Test pass, then enable in preview | L7 | None. Added 2026-09-21 from the kanban board (GH #31) [SCRUM-204] |
 
@@ -278,45 +279,46 @@ all fixed before merge — see #34.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 61 | Unknown scope | All ~140 known product bugs came from *reading* code | Reserve real time; expect surprises | L8 | None |
+| 61 | Unknown scope | All ~140 known product bugs came from *reading* code | Reserve real time; expect surprises | L8 | None [SCRUM-102] |
 
 ## Phase L8 — Re-audit 3 (1 day)
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 62 | Not started | Verifying your own fixes isn't verification | Independent pass over L3/L4/L5 | L9 | None |
+| 62 | Not started | Verifying your own fixes isn't verification | Independent pass over L3/L4/L5 | L9 | None [SCRUM-15] |
 
 ## Phase L9 — Deploy (2–3 days)
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 63 | 2 personal API keys in `backend/.env` | OpenRouter + Jina; `.dockerignore` won't clear built images | Rotate everything | L10 | None |
-| 64 | Render `ENVIRONMENT` value unverified | If unset or `prod`, **OpenAPI has been public** | Check; treat as disclosed if so | L10 | None |
-| 65 | 13 `deployment.md` boxes unchecked | Never worked | Work them | L10 | None |
-| 66 | 8 AWS boxes unchecked; no domain | Let's Encrypt won't issue for a bare IP | Buy a domain | L10 | None |
-| 67 | RDS KMS not enabled | **Load-bearing condition of the PII acceptance** | Rafael enables it | L10 | None |
-| 68 | Backend port publishable | starlette CVE ceiling lives only in Caddy | Never publish it | L10 | None |
-| 69 | Frontend copilot flag is build-time | `COPILOT_ENABLED=true` does **not** cover it | Set `VITE_COPILOT_ENABLED` at build | P4 | None |
-| 70 | Corpus not ingested | Every RAG answer returns empty | Ingest once post-deploy | P4 | None |
-| 71 | Backups documented, never tested | Untested backup isn't a backup | One restore drill | L10 | None |
+| 63 | 2 personal API keys in `backend/.env` | OpenRouter + Jina; `.dockerignore` won't clear built images | Rotate everything | L10 | None [SCRUM-103] |
+| 64 | Render `ENVIRONMENT` value unverified | If unset or `prod`, **OpenAPI has been public** | Check; treat as disclosed if so | L10 | None [SCRUM-104] |
+| 65 | 13 `deployment.md` boxes unchecked | Never worked | Work them | L10 | None [SCRUM-105] |
+| 66 | 8 AWS boxes unchecked; no domain | Let's Encrypt won't issue for a bare IP | Buy a domain | L10 | None [SCRUM-106] |
+| 67 | RDS KMS not enabled | **Load-bearing condition of the PII acceptance** | Rafael enables it | L10 | None [SCRUM-107] |
+| 68 | Backend port publishable | starlette CVE ceiling lives only in Caddy | Never publish it | L10 | None [SCRUM-108] |
+| 69 | Frontend copilot flag is build-time | `COPILOT_ENABLED=true` does **not** cover it | Set `VITE_COPILOT_ENABLED` at build | P4 | None [SCRUM-109] |
+| 70 | Corpus not ingested | Every RAG answer returns empty | Ingest once post-deploy | P4 | None [SCRUM-110] |
+| 71 | Backups documented, never tested | Untested backup isn't a backup | One restore drill | L10 | None [SCRUM-111] |
+| 180 | Two deploy-topology checks from the old W4 plan | SCRUM-11: `celery_worker` and `celery_beat` must run as **separate** AWS tasks (five beat schedules die silently otherwise), and the proxy-header fix lives only in `start_render.sh`, which the AWS path never runs, so rate limiting would put every caller in one bucket per path | Confirm both on the AWS task definitions at deploy | — | None. Added 2026-09-21 from Jira [SCRUM-11] |
 
 ## Phase L10 — Re-audit 4 + ZAP (1 day)
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 72 | Never run | No dynamic security testing has happened at all | Exhaustive pass + ZAP on the live URL | L11 | None |
+| 72 | Never run | No dynamic security testing has happened at all | Exhaustive pass + ZAP on the live URL | L11 | None [SCRUM-17] [SCRUM-24] |
 
 ## Phase L11 — Handoff (1–2 days) — 🏁
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 73 | `PRODUCT-BRIEF.md` teaches soft warning ×3 | K39; `DEPLOY-ROADMAP-v2.md:29` repeats it | Fix both | — | Depends on #6 |
-| 74 | `30-not-built.md` says SSO exists | Deleted 2026-08-13 | Correct it | — | None |
-| 75 | README/CLAUDE.md describe deleted CSV pipeline | Stale by 2–3 milestones | Rewrite both | — | None |
-| 76 | 5 `appArchitecture.js` nodes claim email blocked | Resolved 2026-08-06; the site lies about the app | Correct all five | — | None |
-| 77 | `ccpa-policy.md` has 7 `TODO(copy)` | **The copilot cites this document** | Fill them in | — | Hung owns |
-| 78 | No runbook | Rafael can't operate it | Write it | 79 | None |
-| 79 | No walkthrough done | This is the exit criterion | Live walkthrough with Rafael | — | None |
+| 73 | `PRODUCT-BRIEF.md` teaches soft warning ×3 | K39; `DEPLOY-ROADMAP-v2.md:29` repeats it | Fix both | — | Depends on #6 [SCRUM-112] |
+| 74 | `30-not-built.md` says SSO exists | Deleted 2026-08-13 | Correct it | — | None [SCRUM-113] |
+| 75 | README/CLAUDE.md describe deleted CSV pipeline | Stale by 2–3 milestones | Rewrite both | — | **◐ Half done.** CLAUDE.md rewritten in PR #137 (#172). README.md still describes the deleted CSV pipeline. [SCRUM-114] |
+| 76 | 5 `appArchitecture.js` nodes claim email blocked | Resolved 2026-08-06; the site lies about the app | Correct all five | — | None [SCRUM-115] |
+| 77 | `ccpa-policy.md` has 7 `TODO(copy)` | **The copilot cites this document** | Fill them in | — | Hung owns [SCRUM-116] |
+| 78 | No runbook | Rafael can't operate it | Write it | 79 | None [SCRUM-117] |
+| 79 | No walkthrough done | This is the exit criterion | Live walkthrough with Rafael | — | None [SCRUM-118] |
 | 154 | Orientation credit never expires | Gate 0 #6 (2026-09-07) decided credit expires after 1 year; `has_orientation_credit` is still permanent | Add the expiry check and fix `PRODUCT-BRIEF.md` (K39) | — | None. Added 2026-09-21 from the tracker audit (SCRUM-151) |
 | 162 | Help document is out of date | GitHub #15: rewrite to cover full functionality and policy; matters for the handoff | Rewrite it | — | None. Added 2026-09-21 from the tracker audit (GH #15) [SCRUM-189] |
 
@@ -332,35 +334,35 @@ Nothing here blocks launch. Ordered by value per day.
 |---|---|---|---|---|---|
 | 80 | Organizers: 67 endpoints, 2 screens | Admin shell is desktop-only; their device is a phone | Mobile-capable roster | — | None [SCRUM-191] |
 | 81 | Bottom-nav "Events" → `DesktopOnlyBanner` | Dead end on the device they actually use | Fix the nav target | — | None [SCRUM-192] |
-| 82 | 2 `/organizer/promote` endpoints exist | No button anywhere | Add to roster | — | None |
-| 83 | Cancel/move/swap/resend staff-allowed | No organizer control for any of them | Add to roster | — | None |
-| 84 | Grant-credit button is desktop-only | Endpoint is organizer-namespaced | Add to roster | — | None |
-| 85 | Fill rate is admin-only | Organizers can't see staffing on a phone | Add to roster | — | None |
+| 82 | 2 `/organizer/promote` endpoints exist | No button anywhere | Add to roster | — | None [SCRUM-119] |
+| 83 | Cancel/move/swap/resend staff-allowed | No organizer control for any of them | Add to roster | — | None [SCRUM-120] |
+| 84 | Grant-credit button is desktop-only | Endpoint is organizer-namespaced | Add to roster | — | None [SCRUM-121] |
+| 85 | Fill rate is admin-only | Organizers can't see staffing on a phone | Add to roster | — | None [SCRUM-122] |
 | 160 | Rosters don't show who is oriented | GitHub #12 / #34 (the same request filed twice). Orientation blocks signup, so organizers need it on event day | Show oriented status on module and period rosters | — | None. Added 2026-09-21 from the tracker audit (GH #12, #34) [SCRUM-190] |
 
 ## Phase P2 — Role gaps (4–5 days)
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 86 | No signup-on-behalf path | No endpoint, no UI, no tool. **Phone-in volunteers can't be added** | Build it | — | None |
-| 87 | Phone read only by a copilot tool | Day-of "call the missing volunteer" impossible | Show on roster | — | None |
-| 88 | Reminder opt-out invisible to staff | Suppressed volunteer looks like one ignoring mail | "Reminders: off" badge | — | None |
-| 89 | No volunteer self-cancel/swap | Removed 2026-08-02; seats stay falsely filled | Rebuild token-scoped | — | Revisit removal |
-| 90 | CCPA acts on staff rows only | Statutory gap for CA volunteers; export omits answers + credits | Volunteer request path | — | None |
-| 91 | Organizers grant credit, can't list/revoke | Inconsistent with the endpoint they already have | Give them the list | — | None |
-| 92 | `Forbidden` is a bare `<h2>` | No way back | Style it | — | None |
+| 86 | No signup-on-behalf path | No endpoint, no UI, no tool. **Phone-in volunteers can't be added** | Build it | — | None [SCRUM-123] |
+| 87 | Phone read only by a copilot tool | Day-of "call the missing volunteer" impossible | Show on roster | — | None [SCRUM-124] |
+| 88 | Reminder opt-out invisible to staff | Suppressed volunteer looks like one ignoring mail | "Reminders: off" badge | — | None [SCRUM-125] |
+| 89 | No volunteer self-cancel/swap | Removed 2026-08-02; seats stay falsely filled | Rebuild token-scoped | — | Revisit removal [SCRUM-126] |
+| 90 | CCPA acts on staff rows only | Statutory gap for CA volunteers; export omits answers + credits | Volunteer request path | — | None [SCRUM-127] |
+| 91 | Organizers grant credit, can't list/revoke | Inconsistent with the endpoint they already have | Give them the list | — | None [SCRUM-128] |
+| 92 | `Forbidden` is a bare `<h2>` | No way back | Style it | — | None [SCRUM-129] |
 | 161 | "Staff" spelled six ways; role maps never cross-checked | SCRUM-12 remainder: S-03 six spellings of staff, T3 frontend/backend role-map cross-check. SCRUM-12's JWT half shipped in L3 | One spelling; one test pinning frontend and backend role maps together | — | None. Added 2026-09-21 from the tracker audit (SCRUM-12) |
 
 ## Phase P3 — UX epics (2 weeks)
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 93 | `EventDetailPage` is 1,407 lines | Unmaintainable | Decompose | — | None |
+| 93 | `EventDetailPage` is 1,407 lines | Unmaintainable | Decompose | — | None [SCRUM-29] |
 | 94 | No search/filter/sort on browse | SCRUM-27 | Build it | — | None |
 | 95 | No loading/empty/error states | SCRUM-28, K38 | Add throughout | — | None |
 | 96 | Admin event page IA | SCRUM-32 | Restructure | — | None |
-| 97 | Events list + ops dashboard | Operations shows **no** signup or fill numbers | Add them | — | None |
-| 98 | 4 overlay impls, 3 toast systems, 3 headers | K37 | Consolidate | — | None |
+| 97 | Events list + ops dashboard | Operations shows **no** signup or fill numbers | Add them | — | None [SCRUM-34] |
+| 98 | 4 overlay impls, 3 toast systems, 3 headers | K37 | Consolidate | — | None [SCRUM-36] |
 | 159 | Volunteer pages are hard to use on a phone | SCRUM-30 (high): L6 tests on phones, nothing builds for them | Mobile pass on the volunteer pages | — | None. Added 2026-09-21 from the tracker audit (SCRUM-30) |
 | 174 | No contextual help on actions | GitHub #10 (duplicate #35 closed): a '?' tooltip on every action | Add tooltips | — | None. Added 2026-09-21 from the kanban board (GH #10) [SCRUM-202] |
 | 175 | Login page looks empty on a laptop | GitHub #14: mobile-first layout, centered in a void on wide screens. Check first whether closed card #27 (login redesign) already covered it | Laptop layout without regressing mobile | — | None. Added 2026-09-21 from the kanban board (GH #14) [SCRUM-203] |
@@ -369,25 +371,26 @@ Nothing here blocks launch. Ordered by value per day.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 99 | Read tools written, switched off | Docs: "not finished enough to turn on" | Finish, then enable | — | **⏳ Enabled on `main`** (#67, #69: tools registered, `copilot_agent_loop_enabled=True`). Left to close it: `docs/knowledge-base/31-about-the-copilot.md` still says the tools are off, and the copilot cites that doc to users |
-| 100 | Organizer scoping wrong | Must fix #36 first or copilot is stricter than the API | Fix then ship | — | **✅ Done — PR #132** (2026-09-21). Organizers are `see_all` in the copilot, matching `deps.ensure_event_staff_access`; see L4 #36 |
+| 99 | Read tools written, switched off | Docs: "not finished enough to turn on" | Finish, then enable | — | **⏳ Enabled on `main`** (#67, #69: tools registered, `copilot_agent_loop_enabled=True`). Left to close it: `docs/knowledge-base/31-about-the-copilot.md` still says the tools are off, and the copilot cites that doc to users [SCRUM-206] |
+| 100 | Organizer scoping wrong | Must fix #36 first or copilot is stricter than the API | Fix then ship | — | **✅ Done — PR #132** (2026-09-21). Organizers are `see_all` in the copilot, matching `deps.ensure_event_staff_access`; see L4 #36 [SCRUM-130] |
 | 101 | `_dispatch` seams are stubs | Return the planned action; call no real task | Wire to Celery | — | **✅ Done — PR #78** (`5f54bce`). `_dispatch` calls `_outbound.dispatch`. Sending is off by default in config |
-| 102 | Both mail tools raise `OutboundNotWired` | No transport bound | Depends on #22 | — | **✅ Done — PR #78** (`5f54bce`), the same change as L2 #22 |
-| 103 | Corpus has no real test questions | Highest-value KB docs missing | You write them | — | Depends on #12 |
-| 104 | `copilot_tool_calls` write-only | Never read back by anything | "What did the copilot do" view | D3 | None |
+| 102 | Both mail tools raise `OutboundNotWired` | No transport bound | Depends on #22 | — | **✅ Done — PR #78** (`5f54bce`), the same change as L2 #22 [SCRUM-131] |
+| 103 | Corpus has no real test questions | Highest-value KB docs missing | You write them | — | Depends on #12 [SCRUM-38] |
+| 104 | `copilot_tool_calls` write-only | Never read back by anything | "What did the copilot do" view | D3 | None [SCRUM-132] |
 
 ## Phase P5 — Accessibility + cleanup (1 week)
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 105 | **Zero `:focus-visible` rules** | K40; keyboard users have no focus indication | Add throughout | — | None |
-| 106 | One Escape closes modal + drawer | K15; discards unsaved work | Focus trap + restore | — | **Partly done 2026-09-07 (SCRUM-156, PR #88): the *Cancel* route now prompts before discarding, and `EventSettingsModal` / `DuplicateEventModal` finally pass `dirty` so their prompt can fire at all. The Escape-closes-two-layers half and focus trap/restore remain open.** |
-| 107 | ~10 dead endpoints/tables/aliases | `custom_answers` has no INSERT anywhere | Delete them | — | Depends on #8 |
-| 108 | ~25 dead `api.js` exports | K35; `api.register()` doesn't exist | Delete | — | None |
-| 109 | 3 settings stored, never read | `default_privacy_mode`, `allowed_email_domain`, `visibility` | Wire or drop | — | Per setting |
-| 110 | Coverage floor 55, target 70 | "Plan 07 follow-up", never done | Raise it | — | None |
-| 111 | No `app.eval` CI gate | Absent entirely, not just lowered | Add it | — | None |
-| 112 | v1.3 suite skipped **and** body is `expect(true)` | Un-skipping tests nothing | Write it or delete it | — | Write or delete |
+| 105 | **Zero `:focus-visible` rules** | K40; keyboard users have no focus indication | Add throughout | — | None [SCRUM-133] |
+| 106 | One Escape closes modal + drawer | K15; discards unsaved work | Focus trap + restore | — | **Partly done 2026-09-07 (SCRUM-156, PR #88): the *Cancel* route now prompts before discarding, and `EventSettingsModal` / `DuplicateEventModal` finally pass `dirty` so their prompt can fire at all. The Escape-closes-two-layers half and focus trap/restore remain open.** [SCRUM-134] |
+| 107 | ~10 dead endpoints/tables/aliases | `custom_answers` has no INSERT anywhere | Delete them | — | Depends on #8 [SCRUM-135] |
+| 108 | ~25 dead `api.js` exports | K35; `api.register()` doesn't exist | Delete | — | None [SCRUM-136] |
+| 109 | 3 settings stored, never read | `default_privacy_mode`, `allowed_email_domain`, `visibility` | Wire or drop | — | Per setting [SCRUM-137] |
+| 110 | Coverage floor 55, target 70 | "Plan 07 follow-up", never done | Raise it | — | **✅ Done 2026-09-21 — PRs #135 and #143.** The floor is 90.5 at two decimals (measured 90.61%), past the old target of 70; #163 carries it on to 100. [SCRUM-138] |
+| 111 | No `app.eval` CI gate | Absent entirely, not just lowered | Add it | — | None [SCRUM-139] |
+| 112 | v1.3 suite skipped **and** body is `expect(true)` | Un-skipping tests nothing | Write it or delete it | — | Write or delete [SCRUM-140] |
+| 178 | No bundle splitting | SCRUM-44 (W4.10): zero `React.lazy` routes and no `manualChunks`, so every visitor downloads the admin and copilot code | Lazy-load the admin and copilot routes | — | None. Added 2026-09-21 from Jira [SCRUM-44] |
 | 113 | ~113 baseline findings open | 9 High, 68 Medium, 36 Low | Work by severity | — | None [SCRUM-193] |
 
 ## Phase P6 — Copilot production hardening (added 2026-09-07)
@@ -422,16 +425,16 @@ saving than adding D0 and D6 costs.
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
 | 114 | Seed drafted 2026-04-17, never promoted | Its phases 30–35 **collide** with copilot 30–38 | Renumber to D0–D7 | D0 | Done |
-| 144 | **D0** Public path emits nothing | `backend/app/routers/public/` has **zero** `log_action` calls. Every volunteer who browses and leaves is invisible, and that data is unrecoverable — every week without this is a week of funnel gone | `backend/app/telemetry.py` + `product_events` outbox table. Server-side only, off by default, transaction-scoped, per-event property allowlist | D3 | **New 2026-09-10 — was in no plan and no Jira ticket. Ship FIRST, ahead of the rest of D;** everything else reads tables that already exist and can be built retroactively at any time |
-| 115 | **D1** No warehouse schema | Nothing exists — no `analytics/`, no exports | `warehouse` schema of **materialized views** in the existing Postgres 16, model registry, refresh runner, `etl_run` table, one nightly Celery beat entry at 04:15 PT | D2 | **Changed 2026-09-10: no parquet.** The seed exported Postgres → parquet on disk → back into the same Postgres. No reader, needs a Docker volume (`docker-compose.yml` is PR-only), adds ~90MB `pyarrow`, and — decisive — dated parquet files are a third place PII lives with no deletion story |
-| 116 | **D2** No dims or facts | No star schema, no conformed grain | `dim_date/quarter/volunteer/user/event/module/school/signup_status`; `fct_commitment`, `fct_session_attendance`, `fct_bookable_unit`, `fct_orientation_credit` | D3 | **Changed 2026-09-10: plain versioned `.sql`, not dbt.** ~12 models is ~60% overhead for dbt. Adopt at ~25 models or a second SQL author; structure one model per file with explicit `warehouse.` prefixes so conversion is later a `sed`. **Full-refresh nightly, no incremental** — see #146 |
-| 145 | **D2a** Dual signup grain | `signups` (orientation, own `checked_in_at`) vs `shift_signups` (N rows in `session_attendance`) are genuinely different grains — the hardest modelling call here | **Port `backend/app/services/attendance_facts.py::facts()`**, do not reimplement. One `fct_commitment` with a `commitment_type` discriminator | D2 | **Resolved 2026-09-10 — already solved in code.** `0037_add_shifts.py` moved every PERIOD signup into `shift_signups` and deleted the sources, so the two tables are subtypes, not parallels. Divergence between the matview and `facts()` would make a chart and the admin UI disagree about the same event — pin it with a parity test |
-| 117 | **D3** No SCD-2 history | Full refresh cannot reconstruct last Tuesday's `signups.status` | `snap_signup_status` — the only persistent warehouse table. Derive from D0's event log where available; nightly poll only for pre-instrumentation backfill and reconciliation | D4 | Depends on D0 landing first |
-| 118 | **D4** No BI connection | Switched from Power BI 2026-09-07 (Mac-only dev team, no license) | `bi_reader` role: read-only, `warehouse.*` only, `REVOKE ALL ON SCHEMA public FROM PUBLIC`, per-tool login roles, `statement_timeout`. Idempotent checked-in SQL, **not** Alembic — roles are cluster objects | D5 | **Changed 2026-09-10: Metabase, not Tableau.** Gate 0 #11's Tableau choice is downgraded from an architecture decision to a client choice — the seam is a Postgres role, so Metabase/Tableau/Power BI are all ordinary clients. Metabase is $0, open source, Mac-fine, self-serve for non-technical staff. **Tableau for Teaching explicitly forbids administrative use**, so a student licence cannot legally cover the scorecard; if Tableau is wanted later, get a seat from UCSB Data Services (who already run it institutionally) rather than buying one |
-| 146 | **D4a** ETL readiness | `updated_at` missing on `users`/`events`/`signups`/`shift_signups`/`audit_logs`; `slots` has no timestamps at all; six tables spell `created_at` differently | **Add no columns. Full-refresh every model nightly** | D2 | **Decided 2026-09-10.** Three reasons: (a) largest fact is a few thousand rows — nothing to optimise; (b) SQLAlchemy `onupdate` is client-side and every bulk `.update()` bypasses it, including `ccpa_delete`'s four — an `updated_at` that lies during a deletion is worse than none; (c) full refresh makes CCPA anonymisation propagate to the warehouse in ≤24h with **zero** deletion-propagation code. The naming inconsistency is aliased in each staging model's SELECT |
-| 119 | **D5** No new questions answered | Existing ~20 endpoints answer "how did X do", never "where do people drop out" or "do they come back" | Funnel, cohort retention, time-to-confirm, cancellation lead time, volunteer lifecycle, partner scorecard, pipeline health — all reading `warehouse.*` | D6 | None |
-| 147 | **D6** Nothing notices a dead pipeline | No monitoring of any kind; a stale warehouse would serve three-week-old numbers silently | `etl_run` table, freshness assertions that refuse to swap an empty rebuild, `/api/v1/health/warehouse` 503 past 26h, and an amber staleness banner in `OverviewSection.jsx` | — | **New 2026-09-10.** The banner is the layer that actually works — it appears in front of the person reading the number, not in a tool nobody has open |
-| 148 | **D7** No-show guessing is manual | — | **Rules-based risk flag**: prior no-show ≥1, OR still `pending` within 48h of start, OR no orientation credit for the family. Roster dot | — | **Changed 2026-09-10: no ML model.** A few thousand labelled rows, heavily imbalanced, ~six weak features. A rule is more explainable to an organiser, gives a baseline any later model must beat, and accumulates labelled data while it runs. Revisit after two quarters. Gate 0 #4 already limits this to soft tracking — it informs, never acts |
+| 144 | **D0** Public path emits nothing | `backend/app/routers/public/` has **zero** `log_action` calls. Every volunteer who browses and leaves is invisible, and that data is unrecoverable — every week without this is a week of funnel gone | `backend/app/telemetry.py` + `product_events` outbox table. Server-side only, off by default, transaction-scoped, per-event property allowlist | D3 | **New 2026-09-10 — was in no plan and no Jira ticket. Ship FIRST, ahead of the rest of D;** everything else reads tables that already exist and can be built retroactively at any time [SCRUM-158] |
+| 115 | **D1** No warehouse schema | Nothing exists — no `analytics/`, no exports | `warehouse` schema of **materialized views** in the existing Postgres 16, model registry, refresh runner, `etl_run` table, one nightly Celery beat entry at 04:15 PT | D2 | **Changed 2026-09-10: no parquet.** The seed exported Postgres → parquet on disk → back into the same Postgres. No reader, needs a Docker volume (`docker-compose.yml` is PR-only), adds ~90MB `pyarrow`, and — decisive — dated parquet files are a third place PII lives with no deletion story [SCRUM-141] |
+| 116 | **D2** No dims or facts | No star schema, no conformed grain | `dim_date/quarter/volunteer/user/event/module/school/signup_status`; `fct_commitment`, `fct_session_attendance`, `fct_bookable_unit`, `fct_orientation_credit` | D3 | **Changed 2026-09-10: plain versioned `.sql`, not dbt.** ~12 models is ~60% overhead for dbt. Adopt at ~25 models or a second SQL author; structure one model per file with explicit `warehouse.` prefixes so conversion is later a `sed`. **Full-refresh nightly, no incremental** — see #146 [SCRUM-142] [SCRUM-165] |
+| 145 | **D2a** Dual signup grain | `signups` (orientation, own `checked_in_at`) vs `shift_signups` (N rows in `session_attendance`) are genuinely different grains — the hardest modelling call here | **Port `backend/app/services/attendance_facts.py::facts()`**, do not reimplement. One `fct_commitment` with a `commitment_type` discriminator | D2 | ✅ **Resolved 2026-09-10 — already solved in code.** `0037_add_shifts.py` moved every PERIOD signup into `shift_signups` and deleted the sources, so the two tables are subtypes, not parallels. Divergence between the matview and `facts()` would make a chart and the admin UI disagree about the same event — pin it with a parity test |
+| 117 | **D3** No SCD-2 history | Full refresh cannot reconstruct last Tuesday's `signups.status` | `snap_signup_status` — the only persistent warehouse table. Derive from D0's event log where available; nightly poll only for pre-instrumentation backfill and reconciliation | D4 | Depends on D0 landing first [SCRUM-166] |
+| 118 | **D4** No BI connection | Switched from Power BI 2026-09-07 (Mac-only dev team, no license) | `bi_reader` role: read-only, `warehouse.*` only, `REVOKE ALL ON SCHEMA public FROM PUBLIC`, per-tool login roles, `statement_timeout`. Idempotent checked-in SQL, **not** Alembic — roles are cluster objects | D5 | **Changed 2026-09-10: Metabase, not Tableau.** Gate 0 #11's Tableau choice is downgraded from an architecture decision to a client choice — the seam is a Postgres role, so Metabase/Tableau/Power BI are all ordinary clients. Metabase is $0, open source, Mac-fine, self-serve for non-technical staff. **Tableau for Teaching explicitly forbids administrative use**, so a student licence cannot legally cover the scorecard; if Tableau is wanted later, get a seat from UCSB Data Services (who already run it institutionally) rather than buying one [SCRUM-143] |
+| 146 | **D4a** ETL readiness | `updated_at` missing on `users`/`events`/`signups`/`shift_signups`/`audit_logs`; `slots` has no timestamps at all; six tables spell `created_at` differently | **Add no columns. Full-refresh every model nightly** | D2 | ✅ **Decided 2026-09-10.** Three reasons: (a) largest fact is a few thousand rows — nothing to optimise; (b) SQLAlchemy `onupdate` is client-side and every bulk `.update()` bypasses it, including `ccpa_delete`'s four — an `updated_at` that lies during a deletion is worse than none; (c) full refresh makes CCPA anonymisation propagate to the warehouse in ≤24h with **zero** deletion-propagation code. The naming inconsistency is aliased in each staging model's SELECT |
+| 119 | **D5** No new questions answered | Existing ~20 endpoints answer "how did X do", never "where do people drop out" or "do they come back" | Funnel, cohort retention, time-to-confirm, cancellation lead time, volunteer lifecycle, partner scorecard, pipeline health — all reading `warehouse.*` | D6 | None [SCRUM-144] [SCRUM-169] [SCRUM-170] [SCRUM-171] |
+| 147 | **D6** Nothing notices a dead pipeline | No monitoring of any kind; a stale warehouse would serve three-week-old numbers silently | `etl_run` table, freshness assertions that refuse to swap an empty rebuild, `/api/v1/health/warehouse` 503 past 26h, and an amber staleness banner in `OverviewSection.jsx` | — | **New 2026-09-10.** The banner is the layer that actually works — it appears in front of the person reading the number, not in a tool nobody has open [SCRUM-159] |
+| 148 | **D7** No-show guessing is manual | — | **Rules-based risk flag**: prior no-show ≥1, OR still `pending` within 48h of start, OR no orientation credit for the family. Roster dot | — | **Changed 2026-09-10: no ML model.** A few thousand labelled rows, heavily imbalanced, ~six weak features. A rule is more explainable to an organiser, gives a baseline any later model must beat, and accumulates labelled data while it runs. Revisit after two quarters. Gate 0 #4 already limits this to soft tracking — it informs, never acts [SCRUM-145] |
 
 **Cost: $0/year.** The warehouse is a schema in the existing Postgres; Metabase
 is open source. Self-hosted PostHog was considered and rejected — its cost is a
@@ -523,12 +526,12 @@ recruitment or retention. Neither can be answered today.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 120 | **X1** 2 branches, 82 commits, local | ~60 PRs of drift; testset gold answers now wrong | Merge, re-validate against current KB | X2 | None |
-| 121 | **X2** Control run done, treatment never finished | ~23% complete. **The paper's central evidence doesn't exist** | Run it, produce the delta table | X4 | None |
-| 122 | **X3** Contribution #1 never measured live | Agent loop raised `NotImplementedError` at eval time | Re-run with tools on the built loop | X4 | None |
-| 123 | **X4** No venue, deadline, authorship, IRB, draft | Ratings + profile text already collected from named staff | **IRB before the usage study, not after** | — | All yours |
-| 124 | 4 of 5 journal folders empty | 0 decisions, 0 concepts, 0 experiments, 0 failures | Backfill from PLAN/SUMMARY + git log | X4 | None |
-| 143 | **X5** DSPy / prompt-program experiment — un-parked 2026-09-07 | Was optional/deferred (old Phase 36); Andy now wants it done | Programmatic prompt optimization (DSPy) vs. hand-tuned prompts, compared on the same eval set as X2 | X4 | **Decided 2026-09-07: build it — un-parked, active** |
+| 120 | **X1** 2 branches, 82 commits, local | ~60 PRs of drift; testset gold answers now wrong | Merge, re-validate against current KB | X2 | None [SCRUM-146] |
+| 121 | **X2** Control run done, treatment never finished | ~23% complete. **The paper's central evidence doesn't exist** | Run it, produce the delta table | X4 | None [SCRUM-147] |
+| 122 | **X3** Contribution #1 never measured live | Agent loop raised `NotImplementedError` at eval time | Re-run with tools on the built loop | X4 | None [SCRUM-148] |
+| 123 | **X4** No venue, deadline, authorship, IRB, draft | Ratings + profile text already collected from named staff | **IRB before the usage study, not after** | — | All yours [SCRUM-149] |
+| 124 | 4 of 5 journal folders empty | 0 decisions, 0 concepts, 0 experiments, 0 failures | Backfill from PLAN/SUMMARY + git log | X4 | None [SCRUM-150] |
+| 143 | **X5** DSPy / prompt-program experiment — un-parked 2026-09-07 | Was optional/deferred (old Phase 36); Andy now wants it done | Programmatic prompt optimization (DSPy) vs. hand-tuned prompts, compared on the same eval set as X2 | X4 | **Decided 2026-09-07: build it — un-parked, active** [SCRUM-153] |
 
 ---
 
@@ -536,14 +539,14 @@ recruitment or retention. Neither can be answered today.
 
 | # | Item | Why parked |
 |---|---|---|
-| 125 | SMS / Phase 27 | **Update 2026-09-07: A coworker owns this, not Andy — genuinely out of scope for this backlog, not just deferred** |
-| 126 | CSV import | Deleted PR #51. **Update 2026-09-07: the old removed pipeline code is being refactored/reused as the basis for the new Phase P6 item #135 (copilot CSV-upload tool), not built clean-room** |
-| 127 | Portals | Removed. **Confirmed 2026-09-07: ignore — dead code (`PortalsAdminPage.jsx`, `PortalPage.jsx`), zero references anywhere, safe to delete whenever P5 cleanup happens** |
-| 128 | SSO / OIDC | Deleted 2026-08-13 |
-| 129 | ~~Phase 36 DSPy~~ | **Un-parked 2026-09-07 — moved to Track X as item #143 (X5), Andy wants this built, no longer optional/skipped** |
-| 130 | BIOIN (40 open) + DOC (51 open) | **Different products, different repos** — confirmed 2026-09-07: Andy's own other projects, correctly out of scope here |
-| 131 | 34 missing SUMMARYs, phases 02–07 | Paperwork; code shipped |
-| 132 | ~430 unchecked `.planning/` boxes | Only ~26 are real work |
+| 125 | SMS / Phase 27 | ⏸ Parked. **Update 2026-09-07: A coworker owns this, not Andy — genuinely out of scope for this backlog, not just deferred** [SCRUM-43] |
+| 126 | CSV import | ⏸ Parked. Deleted PR #51. **Update 2026-09-07: the old removed pipeline code is being refactored/reused as the basis for the new Phase P6 item #135 (copilot CSV-upload tool), not built clean-room** |
+| 127 | Portals | ⏸ Parked. Removed. **Confirmed 2026-09-07: ignore — dead code (`PortalsAdminPage.jsx`, `PortalPage.jsx`), zero references anywhere, safe to delete whenever P5 cleanup happens** |
+| 128 | SSO / OIDC | ⏸ Parked. Deleted 2026-08-13 |
+| 129 | ~~Phase 36 DSPy~~ | ⏸ Parked. **Un-parked 2026-09-07 — moved to Track X as item #143 (X5), Andy wants this built, no longer optional/skipped** |
+| 130 | BIOIN (40 open) + DOC (51 open) | ⏸ Parked. **Different products, different repos** — confirmed 2026-09-07: Andy's own other projects, correctly out of scope here |
+| 131 | 34 missing SUMMARYs, phases 02–07 | ⏸ Parked. Paperwork; code shipped |
+| 132 | ~430 unchecked `.planning/` boxes | ⏸ Parked. Only ~26 are real work |
 
 ---
 
