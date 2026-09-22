@@ -27,6 +27,9 @@ is kept for history. Only its PR-only list still applies.
    `feature/L4-quick-fixes`, `docs/L4-followups-...`.
 2. **One PR per small piece of work.** It merges to `main` once CI is green and
    Andy says so. Delete the branch after the merge.
+   The dev containers **do not mount the code**: after backend changes merge,
+   run `docker compose up -d --build backend celery_worker celery_beat`, or the
+   local stack keeps running the old image (found 2026-09-21: it was a day behind).
 3. **Every PR fully tests the files it touches.** Coverage floors only go up
    (roadmap #163/#168). The hard 100% gate, for backend *and* frontend, lands
    after L5.
