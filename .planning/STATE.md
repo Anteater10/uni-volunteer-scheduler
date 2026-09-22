@@ -2,7 +2,7 @@
 
 **Updated:** 2026-09-21
 **Branch:** `main` — L4 done (#129, #130, #132). L3 is **2 of 7** (#117) and
-reopened. Current phase: **S — Stabilization**
+reopened. Current phase: **L3 completion** (Phase S done 2026-09-21)
 **Roadmap:** `.planning/ROADMAP.md` — the single source of truth
 
 > The previous STATE.md was dated 2026-05-23 and said "next action: merge Phase
@@ -35,9 +35,8 @@ which is why L4 could go ahead.
 **Phase L4 — known bugs: done 2026-09-21** (11 of 12, #38 dropped). See the L4
 outcome block below.
 
-**Current phase: S — Stabilization** (roadmap #164–#173): make Jira, the roadmap
-and the kanban board agree with `main`, and take the known false signals out of
-CI and dev tooling. **Then L3 completion, then L5.** From here on a phase is done
+**Phase S — Stabilization: ✅ complete 2026-09-21** (roadmap #164–#173, 10 of
+10). **Current phase: L3 completion, then L5.** From here on a phase is done
 only when every row is (roadmap structural rule 4).
 
 Decided: #1 Cloudflare Free — yes. #2 Fix tokens properly, close PR #79. #3
@@ -57,12 +56,11 @@ Phase L9 "deploy" assumptions — needs reconciling when L9 is planned.
 
 ## Next actions
 
-1. **Finish Phase S** (roadmap #164–#173), **6 of 10 rows done** as of
-   2026-09-21: #164 (PR #134), #166 (Jira), #169 (PR #135), #170 and #171
-   (PR #136), #172 (PR #137). Left: #165 (Andy reviews #118), #167 (kanban,
-   needs `gh auth refresh -s project`), #168 (gate fixed in PR #135; dead-code
-   deletion waits on Andy's OK of the list), #173 (branch cleanup).
-2. **Then finish L3:** #27, #28 (confirm the fail-closed rules first), #29, and
+1. **Phase S is complete** (10 of 10, 2026-09-21): trackers agree with
+   `main`, the coverage gates are honest (whole-app floor 90.5), the e2e seed
+   and logout flake are fixed, CLAUDE.md is current, branches are cleaned up,
+   and the Milestone D rescope (#118) is merged with its DE / DA / DS breakdown.
+2. **Next: finish L3:** #27, #28 (confirm the fail-closed rules first), #29, and
    #31 built together with #149 as one reaper for both token tables. Every PR
    fully tests the files it touches (#163 ratchet). Then L5.
 3. **At the next AWS deploy** (L9 notes, cumulative) — **nothing shows L3 or

@@ -172,7 +172,7 @@ all Done. Order mattered once: #91 had to precede #80, see #20.
 | 25 | 9 branches with unmerged work | Includes 39-commit `origin/v1.3` | Merge or delete each | Nothing | **✅ Every branch dispositioned.** Method matters: `git diff` totals are useless here because they don't say which side is newer — the reliable test is *which files does this branch add that `main` lacks*. Deleted `fix/confirmation-email-silent-failure` (its only unique lines would have **reverted** PRs #83 and #84). **`feat/deploy-baseline` is fully landed** — all 12 files it adds are on `main`, four are byte-identical including migration `0009`, and `main` leads every other file; my earlier "1,837 lines missing" was the diff trap. **`organizer-audit` likewise superseded** — `main`'s form-schema endpoints already admit organizers via `require_staff` with no owner filter, which is what the 2026-09-08 ruling wants. **Keep `v1.3`** — sole copy of ~837 lines of SMS work (someone else owns SMS). **Keep `fix/imports-templates`** — sole copy of the bulk-add UI, input to P6 #135. ~52 further remote branches are fully-merged clutter, not yet cleared. |
 | 26.1 | Check-in QR unreachable on a phone | `CheckInQRModal` rendered only by `AdminEventPage`, and `AdminLayout` swaps every `/admin/*` page for `DesktopOnlyBanner` below the desktop breakpoint | Surface it on the organizer roster | Nothing | **✅ #94 — added 2026-09-08 on Andy's requirement that organizers use both phone and laptop.** The desktop half was already correct (no `isAdmin` gate on the button; the route admits both roles) — this was a missing surface, not a permission bug. Reuses the existing modal, reading `venue_code` off the roster query the page already runs. A slice of P1 #80/#81, pulled forward because check-in is a live daily flow. |
 
-## Phase S — Stabilization (1–2 days) — *added 2026-09-21*
+## Phase S — Stabilization (1–2 days) — *added 2026-09-21* — **✅ COMPLETE 2026-09-21 (10 of 10)**
 
 Before more feature or hardening work: make every tracker agree with `main`, and
 remove the known false signals from CI and dev tooling. Why it exists: L3 was
@@ -187,15 +187,15 @@ done row. Then L3 completion, then L5.
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
 | 164 | Roadmap and STATE.md lag `main` | Done work unrecorded (L3 #26/#30, L5 #47, P4 #99–#102, P6 #141); open work on no plan | Record it; add rows #153–#163; add structural rule 4 | L3 | **✅ Done — PR #134** (2026-09-21). [SCRUM-176] |
-| 165 | Milestone D rescope sits in draft PR #118 | `main` says D1–D5 and Tableau; Jira and #118 say D0–D7 and Metabase | Review, rebase, merge #118 | D | **Decided 2026-09-21:** merge after Andy reviews [SCRUM-177] |
+| 165 | Milestone D rescope sits in draft PR #118 | `main` says D1–D5 and Tableau; Jira and #118 say D0–D7 and Metabase | Review, rebase, merge #118 | D | **✅ Done — this PR (#118)**, reviewed and approved by Andy 2026-09-21, rebased on `main`. Also adds the DE / DA / DS work breakdown to Milestone D. [SCRUM-177] |
 | 166 | Jira lags `main` | 16 done items still open; #38 not closed; unlinked and missing tickets | Close with PR comments; label drops `wont-do` (no Won't Do status exists); ticket every open row | L3 | **✅ Done 2026-09-21** (no PR; Jira only). 18 tickets moved to Done with PR comments, #38 labelled `wont-do`, about 17 renamed to carry row numbers, 29 created (SCRUM-176–204), so every open row has a ticket. [SCRUM-178] |
-| 167 | Two kanban boards disagree | Project #1 duplicates #2; closed issues #24/#27 show "In review"; duplicate issues #12/#34, #10/#35 | Keep "KanBan Board" (#2), close #1, fix cards | — | **Decided 2026-09-21:** keep #2 [SCRUM-179] |
-| 168 | Coverage gate is rounded and floors are stale | #152: 94.5% passes a 95% gate while printing FAIL | `--cov-precision=2`, floors = current measured values, only ever raised; delete confirmed-dead code | L3 | **✅ Gate fix done — PR #135** (`80787ea`). `--cov-precision=2` on all four gates. Copilot really at 95.23% after `quarters.py` tests. Whole-app floor 55 → 89.5 (measured 89.94%). Tripwire test covers both. **Still open:** dead-code deletion waits for Andy to confirm the list. [SCRUM-180] |
+| 167 | Two kanban boards disagree | Project #1 duplicates #2; closed issues #24/#27 show "In review"; duplicate issues #12/#34, #10/#35 | Keep "KanBan Board" (#2), close #1, fix cards | — | **✅ Done 2026-09-21** (no PR; GitHub only). #24 and #27 moved to Done on board #2; all 22 cards match their issues; board #1, which held the same 22, is closed (not deleted). [SCRUM-179] |
+| 168 | Coverage gate is rounded and floors are stale | #152: 94.5% passes a 95% gate while printing FAIL | `--cov-precision=2`, floors = current measured values, only ever raised; delete confirmed-dead code | L3 | **✅ Done — PRs #135 (`80787ea`) and #143 (`4792a27`).** `--cov-precision=2` on all four gates. Copilot really at 95.23% after `quarters.py` tests. Whole-app floor 55 → 89.5 (measured 89.94%). Tripwire test covers both. Dead code deleted in #143 after Andy approved the re-checked list; the ICS download race it hid was fixed with one joined query; every touched file at 100%; whole-app floor 90.5 (measured 90.61%). Three more unused pieces (`seats_left`, the `bypass` option, the admin-count "no exclusion" mode) are tested and wait on Andy. [SCRUM-180] |
 | 169 | Dependabot's pip update crashes | Rewrites the `torch 2.13.0+cpu` pin into one pip rejects; no backend update PRs open | Ignore torch in `dependabot.yml`; bump by hand | — | **✅ Done — PR #135** (`80787ea`). torch ignored at every level. [SCRUM-181] |
 | 170 | E2E seed fails on an existing dev DB | `seed_e2e.py::_ensure_quarters` 409s on overlapping quarters | Reuse a covering quarter | — | **✅ Done — PR #136** (`cff7119`). There were three bugs, not one: quarter overlap (incl. archived rows), roster `shift_signup_id` read as `signup_id` (cancelled "None" → null confirm token → confirm e2e silently skipped), and `/test/seed-cleanup` returning before deleting cancelled shift commitments. Three reruns clean. [SCRUM-182] |
 | 171 | Three e2e specs flake in parallel | Named: admin-a11y Exports, cross-role 1B and 6. **Wrong diagnosis:** they passed 6 of 6 full runs at normal load. Their failures were `loginAs` timeouts at load average 40+. The real flake was the logout test reading the csrf cookie while the boot refresh rotated it (403, 1 run in 3) | Wait for the boot refresh before logout | L6 | **✅ Done — PR #136** (`cff7119`). 120/120 across six browsers; full chromium suite 3 runs green in a row [SCRUM-183] |
 | 172 | CLAUDE.md describes a dead workflow | v1.2 two-developer branch table; tells sessions on `main` to switch to `feature/v1.2-*` | Current one-developer workflow + rule 4 | — | **✅ Done — PR #137.** Rewritten for the current workflow: short-lived branches off `main`, one PR per piece, three trackers in step, rule 4. [SCRUM-184] |
-| 173 | ~60 stale branches | Merged branches never deleted | Delete merged ones; list unmerged for Andy | — | None [SCRUM-185] |
+| 173 | ~60 stale branches | Merged branches never deleted | Delete merged ones; list unmerged for Andy | — | **✅ Done 2026-09-21** (no PR). Deleted 61 GitHub and 50 local branches, each with a merged PR or fully in `main`, plus three Andy approved (PR #79, PR #50, `integration/w2-verify`). Six unmerged branches saved first as `archive/*` tags: both v1.4 eval branches, `fix/copilot-outbound-mail-coverage`, Hung's `v1.3` and `organizer-audit`, Jasmine's `jt-simulate-quarter`. Restore with `git switch -c <name> archive/<name>`. [SCRUM-185] |
 
 ## Phase L3 — Auth and abuse hardening (3–4 days) — **2 of 7 done · reopened 2026-09-21**
 
@@ -444,8 +444,8 @@ campus.
 
 **Two defects found during the 2026-09-10 scan, both fixable ahead of D:**
 
-- `analytics_event_fill_rates` (`backend/app/routers/admin.py:2130`) is
-  **numerically wrong today** — it sums `slot.capacity` (a placeholder `1` for
+- **✅ Fixed in PR #126 (SCRUM-160, DA-2).** `analytics_event_fill_rates` (`backend/app/routers/admin.py:2130`) was
+  **numerically wrong** — it sums `slot.capacity` (a placeholder `1` for
   shift sessions, see `models.py:427-429`) and counts only `models.Signup`, so a
   15-shift × 6-seat event reports capacity 15 and fill 0. Both numbers wrong.
   `tests/test_admin_analytics_counts_shifts.py` covers this bug class but not
@@ -465,6 +465,57 @@ undergrad** — self-contained, no schema change, clones an existing pattern.
 schema, the star schema, SCD-2 on signup status, `bi_reader`.
 **Dropped:** parquet, dbt, Tableau-as-architecture, the scikit-learn no-show
 model.
+
+## Work breakdown — DE / DA / DS
+
+Added 2026-09-21 at Andy's request when #118 was approved. The same work as the
+D0–D7 rows above, cut by discipline, with one Jira ticket per item. **Size:**
+S ≈ 1 day, M ≈ 2–4 days, L ≈ a week. **Hand-off?** says whether the item is safe to
+give a new contributor (e.g. the DS undergrad) without deep app context.
+
+### DE — Data Engineering (build the pipeline)
+
+| # | Item | Row | Jira | Size | Hand-off? |
+|---|---|---|---|---|---|
+| DE-1 | **Warehouse harness.** A `warehouse` schema of materialized views in the same Postgres, a model registry, a refresh runner, and an `etl_run` table. One nightly Celery task (04:15 PT) | D1 #115 | SCRUM-141 | M | Yes |
+| DE-2 | **Dimensions.** `dim_date`, `dim_quarter`, `dim_volunteer`, `dim_user`, `dim_event`, `dim_module`, `dim_school`, `dim_signup_status` | D2 #116 | SCRUM-142 | M | Yes |
+| DE-3 | **Facts.** `fct_commitment` (the keystone: one row per booking, ported from `attendance_facts.facts()`, not reimplemented), `fct_session_attendance`, `fct_bookable_unit`, `fct_orientation_credit` | D2 #116, D2a #145 | SCRUM-165 | L | Yes, and the best big project |
+| DE-4 | **SCD-2 snapshot** `snap_signup_status`, so the funnel can be rebuilt for any past date. The only persistent warehouse table | D3 #117 | SCRUM-166 | M | Yes, after DE-3 |
+| DE-5 | **`bi_reader` role.** Read-only, scoped to `warehouse.*`. Metabase, Tableau and Power BI are then all just Postgres clients | D4 #118 | SCRUM-143 | S | Yes; Rafael does the network side |
+| DE-6 | **Pipeline monitoring.** `etl_run`, freshness assertions, `/api/v1/health/warehouse` returning 503 past 26h, and a staleness banner in `OverviewSection.jsx` | D6 #147 | SCRUM-159 | S | Yes |
+| DE-7 | **D0: event instrumentation.** `product_events` outbox for the public pages, which log nothing today. Needs the identity decision first (HMAC of email vs `volunteers.id`) | D0 #144 | SCRUM-158 | M–L | Partly |
+
+**Skipped: parquet and dbt.** Parquet was a round trip to disk and back into the
+same Postgres with no reader, needed a Docker volume and ~90MB of `pyarrow`, and
+left dated files holding real names after a CCPA delete. dbt is ~60% overhead at
+12 models. Adopt it at ~25 models or when a second person writes analytics SQL.
+The `.sql` files are one model per file with explicit `warehouse.` prefixes, so
+converting later is mechanical.
+
+### DA — Data Analysis (find out what's happening)
+
+| # | Item | Row | Jira | Size | Hand-off? |
+|---|---|---|---|---|---|
+| DA-1 | **Copilot tool success / failure / retry rate** per tool. `copilot_tool_calls` is written by `copilot/agent/audit_log.py` and read by nothing | D (seed addition) | SCRUM-167 | S | Yes, the best first task |
+| DA-2 | **Fix `analytics_event_fill_rates`**, which reported shift events wrongly | D defect | SCRUM-160 | S | **✅ Done — PR #126** |
+| DA-3 | **Staff feature usage.** `audit_logs` already records read actions (`admin_summary`, `admin_list_users`, `admin_analytics_*`). Which admin features does anyone use? Zero new code | D | SCRUM-168 | S | Yes |
+| DA-4 | **Signup funnel:** the drop-off at each stage | D5 #119 | SCRUM-169 | M | Yes, after DE-7 (D0) |
+| DA-5 | **Cohort retention:** cohort by quarter of first attendance. Do they come back in Q+1, Q+2? | D5 #119 | SCRUM-170 | M | Yes |
+| DA-6 | **Time-to-confirm and cancellation lead time:** how many hours before start do people drop out? Tells an organizer how long they have to backfill | D5 #119 | SCRUM-171 | M | Yes |
+| DA-7 | **Partner scorecard:** per school × quarter: sessions, unique volunteers, hours, fill rate, no-show %, orientation compliance | D5 #119 | SCRUM-144 | M | Yes |
+| DA-8 | **Repoint the 8 aggregate analytics endpoints at the materialized views.** Same API contract; removes the attendance-rates N+1 and their load on the live tables | BASE-CONFIG-10 | SCRUM-172 | M | Yes |
+| DA-9 | **Cap and stream the row-level exports** (`/events/{id}/export_csv`, CCPA export, attendance). They stay on the live tables but need a `LIMIT` cap and `StreamingResponse` over a cursor instead of `io.StringIO` | L5 #158 | SCRUM-173 | M | Yes |
+
+The two numbers most likely to change behaviour are **cancellation lead time**
+and the **one-and-done rate**. The second tells SciTrek whether its problem is
+recruitment or retention. Neither can be answered today.
+
+### DS — Data Science (predict)
+
+| # | Item | Row | Jira | Size | Hand-off? |
+|---|---|---|---|---|---|
+| DS-1 | **Rules-based no-show risk flag:** prior no-show ≥ 1, OR still `pending` within 48h of start, OR no orientation credit for the module family. Shown as a roster dot | D7 #148 | SCRUM-145 | S | Yes |
+| DS-2 | **No-show ML model**, only after two quarters of DS-1 running, so there is labelled data and a baseline to beat | D7 | SCRUM-174 | M | Not yet |
 
 ---
 
