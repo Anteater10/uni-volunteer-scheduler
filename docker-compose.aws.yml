@@ -23,15 +23,22 @@
 #   #   DATABASE_URL=postgresql://uvs_app:PASSWORD@<rds-endpoint>:5432/uni_volunteer?sslmode=require
 #   #
 #   # Unlike docker-compose.prod.yml, there is no local db container, so you
-#   # do NOT need to export POSTGRES_PASSWORD — the RDS password only lives
+#   # do NOT need to set POSTGRES_PASSWORD — the RDS password only lives
 #   # inside DATABASE_URL in backend/.env.production.
-#   export DOMAIN='scitrek.example.org'
-#   export VITE_API_URL="https://${DOMAIN}"
-#   export VITE_COPILOT_ENABLED=true    # build-time; unset = frontend with no copilot
+#   #
+#   # DOMAIN / VITE_API_URL / VITE_COPILOT_ENABLED go in .env at the repo root
+#   # (Compose auto-loads it — no `export` needed, and it survives a new SSH
+#   # session, unlike a shell export). Do NOT type them as `export ...`
+#   # commands by hand: a copy-pasted placeholder left unsubstituted (e.g.
+#   # literally "<your domain>") passes straight through to Caddy, which then
+#   # crash-loops trying to issue a cert for that literal string — this has
+#   # actually happened. cp'ing the tracked example and editing it is the
+#   # only version of this step to follow:
+#   cp .env.aws.example .env   # then edit DOMAIN to the real hostname
 #   docker compose -f docker-compose.aws.yml up -d --build
 #
 #   # Verify:
-#   curl https://${DOMAIN}/api/v1/health
+#   curl https://$(grep -m1 ^DOMAIN= .env | cut -d= -f2)/api/v1/health
 #   docker compose -f docker-compose.aws.yml ps
 
 services:

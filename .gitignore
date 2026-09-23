@@ -7,6 +7,7 @@
 !backend/.env.production.example
 !backend/.env.example
 !frontend/.env.example
+!.env.aws.example
 *.log
 
 # --- legacy (do not push) ---

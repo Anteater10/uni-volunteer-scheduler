@@ -197,43 +197,59 @@ docker run --rm -e PGPASSWORD='<RDS_PASSWORD>' postgres:16-alpine \
 ## 6. Launch
 
 ```bash
-export DOMAIN='app.scitrek-ucsb.org'
-export VITE_API_URL="https://${DOMAIN}"
-export VITE_COPILOT_ENABLED=true
-
+cp .env.aws.example .env   # repo root, not backend/ — then edit DOMAIN
 docker compose -f docker-compose.aws.yml up -d --build
 ```
+
+Edit `.env` before the `up`:
+
+```
+DOMAIN=app.scitrek-ucsb.org
+VITE_API_URL=https://app.scitrek-ucsb.org
+VITE_COPILOT_ENABLED=true
+```
+
+Use a real file, not `export DOMAIN=...` typed by hand. Compose auto-loads
+`.env` from the working directory, so this survives a new SSH session and
+every future `up`/`build` without anyone having to remember to re-export
+anything. A shell `export` that gets typo'd, left as a literal placeholder,
+or just forgotten on the next login reaches Caddy as whatever string it
+was — including a literal `<your domain>` — and Caddy then crash-loops
+trying to issue a TLS certificate for it. This has happened on this exact
+deploy; don't reintroduce it.
 
 `migrate` runs `alembic upgrade head` against RDS — this is what actually
 executes `CREATE EXTENSION IF NOT EXISTS vector` (migration `0019`), so you
 don't need to enable pgvector by hand. Then it seeds the admin user, then
 `backend`/`celery_worker`/`celery_beat` start.
 
-The three `export`s are **build-time**, not runtime: Vite inlines every `VITE_*`
-value into the JS bundle when the `frontend` image is built, so they are not in
-`backend/.env.production` and a `docker compose restart` will never pick up a
-change to them. Compose aborts the build if any of the three is unset.
+`VITE_API_URL` and `VITE_COPILOT_ENABLED` are **build-time**, not runtime:
+Vite inlines every `VITE_*` value into the JS bundle when the `frontend`
+image is built, so they are not in `backend/.env.production` and a
+`docker compose restart` will never pick up a change to them — only a
+rebuild of that one image does. Compose aborts the build if any of the
+three `.env` keys is unset.
 
 `VITE_COPILOT_ENABLED` is the frontend half of the copilot feature flag;
 `COPILOT_ENABLED=true` in `backend/.env.production` is the backend half. **Both
 are required.** With only the backend one, the API endpoints are live but the
 copilot FAB, the admin *Copilot* nav item, and the feedback page are all absent
 from the bundle — a deploy that looks completely healthy and has no copilot in
-it. To fix it after the fact, export the variable and rebuild just that image:
+it. To fix it after the fact, set it in `.env` and rebuild just that image:
 
 ```bash
-export VITE_COPILOT_ENABLED=true
+sed -i 's/^VITE_COPILOT_ENABLED=.*/VITE_COPILOT_ENABLED=true/' .env
 docker compose -f docker-compose.aws.yml up -d --build frontend
 ```
 
 ## 7. DNS and HTTPS
 
-Add a DNS **A record** for `$DOMAIN` pointing at the Elastic IP from §3.2
-(in Route 53, or whatever registrar/DNS host you already use — this repo has
-no dependency on Route 53 specifically). Once it resolves:
+Add a DNS **A record** for `DOMAIN` (the value in `.env`) pointing at the
+Elastic IP from §3.2 (in Route 53, or whatever registrar/DNS host you already
+use — this repo has no dependency on Route 53 specifically). Once it resolves:
 
 ```bash
-curl https://app.scitrek-ucsb.org/api/v1/health   # -> {"status":"ok"}
+curl https://$(grep -m1 ^DOMAIN= .env | cut -d= -f2)/api/v1/health   # -> {"status":"ok"}
 docker compose -f docker-compose.aws.yml logs caddy   # watch it obtain the cert
 ```
 
@@ -294,10 +310,13 @@ bucket — don't put long-lived AWS access keys in the env file or the repo.
   allow-listed extensions including `vector`; a permissions error usually
   means you connected as a different, more restricted user. Reconnect with
   the master username.
-- **Caddy never gets a cert** — port 80 blocked, DNS not pointing at the
-  Elastic IP yet, or `$DOMAIN` mismatched between the env var and the actual
-  DNS record. `docker compose -f docker-compose.aws.yml logs caddy` shows
-  the ACME exchange.
+- **Caddy never gets a cert, or restarts in a loop** — check
+  `docker compose -f docker-compose.aws.yml logs caddy` first. An error like
+  `subject does not qualify for certificate: '<your...'` means `DOMAIN` in
+  `.env` is still a literal placeholder or otherwise not a real hostname —
+  fix `.env` and `docker compose -f docker-compose.aws.yml up -d caddy` (no
+  rebuild needed, `caddy` has no `build:`). Otherwise it's port 80 blocked or
+  DNS not pointing at the Elastic IP yet.
 - **Backend OOM-killed under `docker stats` / `docker compose ps` shows
   restarts** — see the sizing note in §3: move to `t3.large` or reduce
   `--workers` in `docker-compose.aws.yml`.
