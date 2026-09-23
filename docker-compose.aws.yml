@@ -52,16 +52,25 @@ services:
   # here (RDS isn't a compose service) — make sure the RDS instance's status
   # is "Available" before you `docker compose up`, or this will just retry
   # connection failures until it errors out.
+  #
+  # No `build:` here (or on celery_worker/celery_beat below): they, backend,
+  # and migrate are the exact same Dockerfile/context/args, so a separate
+  # `build:` per service made BuildKit export four full copies of the same
+  # several-GB image (torch + scipy + sklearn + baked model weights) at the
+  # end of every build — that alone filled the AWS host's disk. `image:`
+  # instead makes them reuse the one image `backend` builds. `docker compose
+  # up --build` still builds `backend` first (compose completes the build
+  # phase for every service that HAS a `build:` before starting any
+  # container), so this image exists by the time migrate/celery start.
   migrate:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: uni-volunteer-scheduler-backend:latest
     env_file:
       - ./backend/.env.production
     command: sh -c "alembic upgrade head && python -m app.seed_admin"
     restart: "no"
 
   backend:
+    image: uni-volunteer-scheduler-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -98,9 +107,7 @@ services:
     restart: unless-stopped
 
   celery_worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: uni-volunteer-scheduler-backend:latest
     env_file:
       - ./backend/.env.production
     environment:
@@ -120,9 +127,7 @@ services:
     restart: unless-stopped
 
   celery_beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: uni-volunteer-scheduler-backend:latest
     env_file:
       - ./backend/.env.production
     environment:
