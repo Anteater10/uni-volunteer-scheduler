@@ -2,23 +2,18 @@
  * weekUtils.test.js — issue #24 rewrite, reworked for SCRUM-48.
  *
  * Navigation walks the admin-entered quarter rows from GET /public/quarters
- * (summer Sessions A/B as separate rows). SCRUM-48: it steps (quarter ×
- * school level) pairs rather than weeks, so each row yields two positions and
- * a three-quarter schedule gives six. Navigation returns null past the ends so
- * callers can disable arrows.
+ * (summer Sessions A/B as separate rows). Each row is one combined public
+ * schedule position. Navigation returns null past the ends so callers can
+ * disable arrows.
  */
 
 import { describe, it, expect } from "vitest";
 import {
-  DEFAULT_SCHOOL_BRANCH,
-  SCHOOL_BRANCHES,
   activeQuarters,
   archivedQuarters,
   findQuarterById,
-  getNextQuarterLevel,
-  getPrevQuarterLevel,
-  formatQuarterLevelLabel,
-  isSchoolBranch,
+  getNextQuarter,
+  getPrevQuarter,
   resolveLegacyParams,
   quarterContaining,
   activeOrRecentQuarter,
@@ -59,102 +54,50 @@ const SESSION_B = {
 };
 const QUARTERS = [SPRING, SESSION_A, SESSION_B];
 
-describe("school level vocabulary", () => {
-  it("offers exactly the two levels a volunteer browses by", () => {
-    // `both` is a module property, not a tab — its events surface under each
-    // of these instead of getting a position of their own.
-    expect(SCHOOL_BRANCHES).toEqual(["middle_school", "high_school"]);
-    expect(DEFAULT_SCHOOL_BRANCH).toBe("middle_school");
-  });
-
-  it("isSchoolBranch rejects anything not a browsable level", () => {
-    expect(isSchoolBranch("middle_school")).toBe(true);
-    expect(isSchoolBranch("high_school")).toBe(true);
-    expect(isSchoolBranch("both")).toBe(false);
-    expect(isSchoolBranch(null)).toBe(false);
-    expect(isSchoolBranch("elementary")).toBe(false);
-  });
-});
-
-describe("getNextQuarterLevel", () => {
-  it("steps to the next level within a quarter", () => {
-    expect(getNextQuarterLevel(QUARTERS, "spring-26", "middle_school")).toEqual({
-      quarter_id: "spring-26",
-      school_branch: "high_school",
-    });
-  });
-
-  it("rolls from a quarter's last level into the next entered row", () => {
-    expect(getNextQuarterLevel(QUARTERS, "spring-26", "high_school")).toEqual({
-      quarter_id: "summer-26-a",
-      school_branch: "middle_school",
-    });
-  });
-
+describe("getNextQuarter", () => {
   it("rolls Session A into Session B", () => {
-    expect(getNextQuarterLevel(QUARTERS, "summer-26-a", "high_school")).toEqual({
+    expect(getNextQuarter(QUARTERS, "summer-26-a")).toEqual({
       quarter_id: "summer-26-b",
-      school_branch: "middle_school",
     });
   });
 
   it("returns null past the last position", () => {
-    expect(getNextQuarterLevel(QUARTERS, "summer-26-b", "high_school")).toBeNull();
+    expect(getNextQuarter(QUARTERS, "summer-26-b")).toBeNull();
   });
 
   it("returns null for an unknown quarter id", () => {
-    expect(getNextQuarterLevel(QUARTERS, "nope", "middle_school")).toBeNull();
-  });
-
-  it("returns null for a level that is not browsable", () => {
-    expect(getNextQuarterLevel(QUARTERS, "spring-26", "both")).toBeNull();
+    expect(getNextQuarter(QUARTERS, "nope")).toBeNull();
   });
 });
 
-describe("getPrevQuarterLevel", () => {
-  it("steps back a level within a quarter", () => {
-    expect(getPrevQuarterLevel(QUARTERS, "summer-26-a", "high_school")).toEqual({
-      quarter_id: "summer-26-a",
-      school_branch: "middle_school",
-    });
-  });
-
-  it("rolls the first level back to the previous row's last level", () => {
-    expect(getPrevQuarterLevel(QUARTERS, "summer-26-a", "middle_school")).toEqual({
+describe("getPrevQuarter", () => {
+  it("returns the previous entered quarter", () => {
+    expect(getPrevQuarter(QUARTERS, "summer-26-a")).toEqual({
       quarter_id: "spring-26",
-      school_branch: "high_school",
     });
   });
 
   it("returns null before the first position", () => {
-    expect(getPrevQuarterLevel(QUARTERS, "spring-26", "middle_school")).toBeNull();
+    expect(getPrevQuarter(QUARTERS, "spring-26")).toBeNull();
   });
 });
 
-describe("a full walk covers every quarter × level pair", () => {
-  it("visits 2 positions per quarter, in order, then stops", () => {
-    // The arithmetic the feature was specified by: 3 quarters → 6 positions.
-    let position = { quarter_id: "spring-26", school_branch: "middle_school" };
+describe("a full walk covers every quarter", () => {
+  it("visits each quarter once, in order, then stops", () => {
+    let position = { quarter_id: "spring-26" };
     const visited = [position];
     for (let guard = 0; guard < 20; guard += 1) {
-      const next = getNextQuarterLevel(
-        QUARTERS,
-        position.quarter_id,
-        position.school_branch,
-      );
+      const next = getNextQuarter(QUARTERS, position.quarter_id);
       if (!next) break;
       visited.push(next);
       position = next;
     }
     expect(visited).toEqual([
-      { quarter_id: "spring-26", school_branch: "middle_school" },
-      { quarter_id: "spring-26", school_branch: "high_school" },
-      { quarter_id: "summer-26-a", school_branch: "middle_school" },
-      { quarter_id: "summer-26-a", school_branch: "high_school" },
-      { quarter_id: "summer-26-b", school_branch: "middle_school" },
-      { quarter_id: "summer-26-b", school_branch: "high_school" },
+      { quarter_id: "spring-26" },
+      { quarter_id: "summer-26-a" },
+      { quarter_id: "summer-26-b" },
     ]);
-    expect(visited).toHaveLength(QUARTERS.length * SCHOOL_BRANCHES.length);
+    expect(visited).toHaveLength(QUARTERS.length);
   });
 });
 
@@ -172,10 +115,8 @@ describe("archived rows are skipped in navigation", () => {
     ]);
   });
 
-  it("prev from Session A's first level has nowhere to go once spring is archived", () => {
-    expect(
-      getPrevQuarterLevel(withArchived, "summer-26-a", "middle_school"),
-    ).toBeNull();
+  it("prev from Session A has nowhere to go once spring is archived", () => {
+    expect(getPrevQuarter(withArchived, "summer-26-a")).toBeNull();
   });
 
   it("archivedQuarters lists only archived rows, ordered by start", () => {
@@ -191,46 +132,18 @@ describe("navigation inside an archived quarter is clamped to it (issue #33)", (
     SESSION_B,
   ];
 
-  it("moves level-by-level within the archived row", () => {
-    expect(getNextQuarterLevel(withArchived, "spring-26", "middle_school")).toEqual({
-      quarter_id: "spring-26",
-      school_branch: "high_school",
-    });
-    expect(getPrevQuarterLevel(withArchived, "spring-26", "high_school")).toEqual({
-      quarter_id: "spring-26",
-      school_branch: "middle_school",
-    });
-  });
-
   it("never rolls out of the archived row at either end", () => {
-    expect(getNextQuarterLevel(withArchived, "spring-26", "high_school")).toBeNull();
-    expect(getPrevQuarterLevel(withArchived, "spring-26", "middle_school")).toBeNull();
-  });
-});
-
-describe("formatQuarterLevelLabel", () => {
-  it("uses the row's display name (session-aware)", () => {
-    expect(formatQuarterLevelLabel(SESSION_B, "middle_school")).toBe(
-      "Summer 2026 · Session B — Middle School",
-    );
-    expect(formatQuarterLevelLabel(SPRING, "high_school")).toBe(
-      "Spring 2026 — High School",
-    );
-  });
-
-  it("degrades without a row rather than rendering undefined", () => {
-    expect(formatQuarterLevelLabel(null, "high_school")).toBe("High School");
-    expect(formatQuarterLevelLabel(SPRING, "nonsense")).toBe("Spring 2026");
+    expect(getNextQuarter(withArchived, "spring-26")).toBeNull();
+    expect(getPrevQuarter(withArchived, "spring-26")).toBeNull();
   });
 });
 
 describe("resolveLegacyParams", () => {
-  it("resolves a legacy quarter/year link to the matching row's default level", () => {
+  it("resolves a legacy quarter/year link to the matching row", () => {
     expect(
       resolveLegacyParams(QUARTERS, { quarter: "spring", year: 2026 }),
     ).toEqual({
       quarter_id: "spring-26",
-      school_branch: "middle_school",
     });
   });
 
@@ -241,7 +154,6 @@ describe("resolveLegacyParams", () => {
       resolveLegacyParams(QUARTERS, { quarter: "spring", year: 2026, week: 5 }),
     ).toEqual({
       quarter_id: "spring-26",
-      school_branch: "middle_school",
     });
   });
 
@@ -250,7 +162,6 @@ describe("resolveLegacyParams", () => {
       resolveLegacyParams(QUARTERS, { quarter: "summer", year: 2026, week: 2 }),
     ).toEqual({
       quarter_id: "summer-26-a",
-      school_branch: "middle_school",
     });
   });
 

@@ -1,11 +1,10 @@
 // src/pages/public/EventsBrowsePage.jsx
 //
-// Public events browse page with quarter + school-level navigation.
+// Public events browse page with quarter navigation.
 // No auth required — renders for logged-out users (REQ-10-07).
-// URL shape (SCRUM-48): /events?quarter_id=<uuid>&school_branch=middle_school
-// — the arrows walk (quarter × level) pairs over the admin-entered quarter
-// rows (summer Sessions A/B are separate rows), so a volunteer sees a whole
-// quarter for the level they teach rather than one week at a time.
+// URL shape: /events?quarter_id=<uuid>. The arrows walk the admin-entered
+// quarter rows (summer Sessions A/B are separate rows), and each view combines
+// Middle School and High School events for one flyer-friendly URL.
 // Legacy ?quarter=spring&year=2026&week=3 and ?quarter_id=<uuid>&week=3 links
 // canonicalize on load — the week is dropped, not rejected.
 
@@ -17,13 +16,10 @@ import { ChevronLeft, ChevronRight, Calendar, Users, MapPin } from "lucide-react
 import api from "../../lib/api";
 import { useQuarters } from "../../lib/useQuarters";
 import {
-  DEFAULT_SCHOOL_BRANCH,
   archivedQuarters,
   findQuarterById,
-  formatQuarterLevelLabel,
-  getNextQuarterLevel,
-  getPrevQuarterLevel,
-  isSchoolBranch,
+  getNextQuarter,
+  getPrevQuarter,
   resolveLegacyParams,
 } from "../../lib/weekUtils";
 import { Button, Skeleton, EmptyState, ErrorState } from "../../components/ui";
@@ -76,6 +72,13 @@ function capacityStatus(filled, capacity) {
   return { label: "Open", bg: "bg-[var(--color-brand-soft)]", fg: "text-[var(--color-brand)]", bar: "bg-[var(--color-brand)]" };
 }
 
+function schoolBranchLabel(branch) {
+  if (branch === "middle_school") return "Middle School";
+  if (branch === "high_school") return "High School";
+  if (branch === "both") return "Middle School + High School";
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -89,6 +92,7 @@ function EventCard({ event }) {
       ? `${formatShortDate(event.start_date)} – ${formatShortDate(event.end_date)}`
       : "";
   const dayOfWeek = formatDayOfWeek(event.start_date);
+  const branchLabel = schoolBranchLabel(event.school_branch);
 
   return (
     <Link
@@ -120,12 +124,21 @@ function EventCard({ event }) {
             {event.title}
           </h3>
 
-          {/* School */}
-          {event.school && (
-            <p className="inline-flex items-center gap-1.5 text-sm text-[var(--color-fg-muted)]">
-              <MapPin size={14} className="text-[var(--color-accent)]" />
-              {event.school}
-            </p>
+          {/* School and level */}
+          {(event.school || branchLabel) && (
+            <div className="flex flex-wrap items-center gap-2">
+              {event.school && (
+                <p className="inline-flex items-center gap-1.5 text-sm text-[var(--color-fg-muted)]">
+                  <MapPin size={14} className="text-[var(--color-accent)]" />
+                  {event.school}
+                </p>
+              )}
+              {branchLabel && (
+                <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                  {branchLabel}
+                </span>
+              )}
+            </div>
           )}
 
           {/* Capacity progress */}
@@ -210,15 +223,15 @@ export default function EventsBrowsePage() {
   const unconfigured = !!defaultWeek && defaultWeek.configured === false;
 
   const urlQuarterId = searchParams.get("quarter_id");
-  const urlBranch = searchParams.get("school_branch");
   const legacyQuarter = searchParams.get("quarter");
   const legacyYear = searchParams.get("year");
   const pendingLegacy = !urlQuarterId && !!legacyQuarter && !!legacyYear;
-  // SCRUM-48: a ?week= link, or a quarter_id with no level, is an old URL. It
-  // gets rewritten to the level form rather than refused, so bookmarks and
-  // links already sitting in volunteers' inboxes keep working.
-  const needsBranchCanonicalize =
-    !pendingLegacy && !!urlQuarterId && !isSchoolBranch(urlBranch);
+  // Old links may carry a week or school branch. Both now resolve to the whole
+  // quarter, so remove them while preserving filters such as ?only=orientation.
+  const needsCanonicalize =
+    !pendingLegacy &&
+    !!urlQuarterId &&
+    (searchParams.has("week") || searchParams.has("school_branch"));
 
   // Legacy links (?quarter=&year=) rewrite to quarter_id form once the
   // quarters list is available — summer resolves to its first session.
@@ -229,51 +242,53 @@ export default function EventsBrowsePage() {
       year: legacyYear,
     });
     if (resolved) {
-      setSearchParams(
-        {
-          quarter_id: resolved.quarter_id,
-          school_branch: resolved.school_branch,
-        },
-        { replace: true },
-      );
+      const next = new URLSearchParams(searchParams);
+      next.delete("quarter");
+      next.delete("year");
+      next.delete("week");
+      next.delete("school_branch");
+      next.set("quarter_id", resolved.quarter_id);
+      setSearchParams(next, { replace: true });
     } else {
       setSearchParams({}, { replace: true });
     }
-  }, [pendingLegacy, quarters, legacyQuarter, legacyYear, setSearchParams]);
+  }, [
+    pendingLegacy,
+    quarters,
+    legacyQuarter,
+    legacyYear,
+    searchParams,
+    setSearchParams,
+  ]);
 
-  // Drop a stale ?week= / supply a missing level, preserving any other params
-  // (notably ?only=orientation, which K22's modal button relies on).
+  // Drop stale week/level params while preserving any other params (notably
+  // ?only=orientation, which K22's modal button relies on).
   useEffect(() => {
-    if (!needsBranchCanonicalize) return;
+    if (!needsCanonicalize) return;
     const next = new URLSearchParams(searchParams);
     next.delete("week");
-    next.set("school_branch", DEFAULT_SCHOOL_BRANCH);
+    next.delete("school_branch");
     setSearchParams(next, { replace: true });
-  }, [needsBranchCanonicalize, searchParams, setSearchParams]);
+  }, [needsCanonicalize, searchParams, setSearchParams]);
 
   const quarterId =
     urlQuarterId || (!pendingLegacy && defaultWeek ? defaultWeek.quarter_id : null);
-  const schoolBranch = isSchoolBranch(urlBranch)
-    ? urlBranch
-    : DEFAULT_SCHOOL_BRANCH;
 
   const allParamsReady =
     !unconfigured &&
     !pendingLegacy &&
-    !needsBranchCanonicalize &&
-    !!quarterId &&
-    !!schoolBranch;
+    !needsCanonicalize &&
+    !!quarterId;
   const quarterRow = findQuarterById(quarters || [], quarterId);
   const isCurrentQuarter =
     allParamsReady && defaultWeek && quarterId === defaultWeek.quarter_id;
 
   const eventsQ = useQuery({
-    queryKey: ["publicEvents", quarterId, schoolBranch],
+    queryKey: ["publicEvents", quarterId],
     queryFn: async () => {
       try {
         return await api.public.listEvents({
           quarter_id: quarterId,
-          school_branch: schoolBranch,
         });
       } catch (err) {
         if (err.status === 429) {
@@ -289,18 +304,18 @@ export default function EventsBrowsePage() {
     if (!target) return;
     const next = new URLSearchParams(searchParams);
     next.set("quarter_id", target.quarter_id);
-    next.set("school_branch", target.school_branch);
     next.delete("week");
+    next.delete("school_branch");
     setSearchParams(next);
   }
 
   const nextTarget =
     allParamsReady && quarters
-      ? getNextQuarterLevel(quarters, quarterId, schoolBranch)
+      ? getNextQuarter(quarters, quarterId)
       : null;
   const prevTarget =
     allParamsReady && quarters
-      ? getPrevQuarterLevel(quarters, quarterId, schoolBranch)
+      ? getPrevQuarter(quarters, quarterId)
       : null;
 
   function handlePrev() {
@@ -315,7 +330,6 @@ export default function EventsBrowsePage() {
     if (!defaultWeek || !defaultWeek.quarter_id) return;
     applyPosition({
       quarter_id: defaultWeek.quarter_id,
-      school_branch: schoolBranch,
     });
   }
 
@@ -359,9 +373,7 @@ export default function EventsBrowsePage() {
   ];
 
   const positionLabel =
-    allParamsReady && quarterRow
-      ? formatQuarterLevelLabel(quarterRow, schoolBranch)
-      : "Loading…";
+    allParamsReady && quarterRow ? quarterRow.display_name : "Loading…";
 
   // Issue #33: archived quarters stay reachable through the collapsed list
   // below; inside one, a banner marks it and nav clamps to the row.
@@ -439,13 +451,13 @@ export default function EventsBrowsePage() {
             </p>
           </div>
 
-          {/* Quarter + school-level nav */}
+          {/* Quarter navigation */}
           <div className="flex flex-col gap-3 md:items-end">
             <div className="flex items-center gap-2 rounded-2xl bg-white/10 backdrop-blur ring-1 ring-white/20 p-1.5">
               <button
                 onClick={handlePrev}
                 disabled={!prevTarget}
-                aria-label="Previous quarter or school level"
+                aria-label="Previous quarter"
                 className="h-10 w-10 flex items-center justify-center rounded-xl hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft size={20} />
@@ -456,7 +468,7 @@ export default function EventsBrowsePage() {
               <button
                 onClick={handleNext}
                 disabled={!nextTarget}
-                aria-label="Next quarter or school level"
+                aria-label="Next quarter"
                 className="h-10 w-10 flex items-center justify-center rounded-xl hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight size={20} />
@@ -564,8 +576,8 @@ export default function EventsBrowsePage() {
               </h3>
               <p className="mt-3 text-[var(--color-fg-muted)]">
                 {orientationOnly
-                  ? "There may be other events for this quarter and school level — clear the filter above to see them, or use the arrows to look elsewhere."
-                  : "Nothing is scheduled for this quarter and school level yet. Use the arrows to check another school level or quarter."}
+                  ? "There may be other events for this quarter — clear the filter above to see them, or use the arrows to look elsewhere."
+                  : "Nothing is scheduled for this quarter yet. Use the arrows to check another quarter."}
               </p>
               {nextTarget && (
                 <div className="mt-6">
@@ -614,7 +626,6 @@ export default function EventsBrowsePage() {
                   onClick={() =>
                     applyPosition({
                       quarter_id: row.id,
-                      school_branch: schoolBranch,
                     })
                   }
                   className="rounded-full border border-[var(--color-border)] px-3 py-1.5 text-sm text-[var(--color-fg-muted)] hover:border-[var(--color-brand)] hover:text-[var(--color-brand)] transition-colors"
