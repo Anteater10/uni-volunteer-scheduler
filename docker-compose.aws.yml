@@ -79,7 +79,16 @@ services:
     # from docker-compose.prod.yml — Caddy still overwrites XFF itself
     # (see Caddyfile), and the compose bridge CIDR is what's pinned here,
     # not Caddy's (unstable) address on it.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers --forwarded-allow-ips=172.16.0.0/12
+    #
+    # --workers: matches this host's 2 vCPUs, not a general default. Each
+    # worker is a separate process, so each independently loads the copilot
+    # reranker (~278MB) and embedding model (~130MB) plus torch's own runtime
+    # the first time it serves a copilot request — confirmed on the AWS box
+    # at --workers 4: backend alone held 2.5GiB of the host's 3.7GiB (67.7%),
+    # leaving 144MB free and pushing the host into swap. Raise this only
+    # alongside more memory, and expect ~roughly linear growth per worker
+    # once copilot has been exercised.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips=172.16.0.0/12
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)\""]
       interval: 15s
