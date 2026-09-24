@@ -1,6 +1,6 @@
 # MEGA-ROADMAP: now to X5 (proposal, 2026-09-24)
 
-One plan for everything left, in the seven steps Andy asked for. **Andy approved the decisions below on 2026-09-24.** It is still a proposal for the roadmap files: `ROADMAP.md` stays the source of truth until Andy approves folding this into it (it is a PR-only file). Nothing here has been created in Jira yet.
+One plan for everything left, in the seven steps Andy asked for. **Andy approved the decisions below on 2026-09-24.** It is still a proposal for the roadmap files: `ROADMAP.md` stays the source of truth until Andy approves folding this into it (it is a PR-only file). The 17 new tickets were created in Jira on 2026-09-24 as SCRUM-217 to 233.
 
 ## How to read the dates
 
@@ -47,12 +47,12 @@ Find the bugs that only show up after years of use, and get the sim safely on Gi
 
 | Ticket | Work | Days | Target |
 |---|---|---|---|
-| SIM-1 | Push branch `sim/universe-harness`, open the PR, confirm `docker-compose.sim.yml` holds no real SendGrid key | 1 | Fri 2026-09-25 |
-| SIM-2 | Run the Fall 2026 quarter (waves 1-2) | 2 | Tue 2026-09-29 |
-| SIM-3 | Triage and fix the two bugs found so far (admin routes bounce when no quarter exists; `/admin/summary` 500) | 2 | Thu 2026-10-01 |
-| SIM-4 | Run the remaining five quarters | 5 | Thu 2026-10-08 |
-| SIM-5 | Findings report; decide CI or nightly; hand new bugs to L7 | 1 | Fri 2026-10-09 |
-| SIM-6 | Ten-year scripted run (30 quarters, rung 5): agents decide, a Playwright script replays the bulk as browser clicks, so it costs wall-clock time (about 12 hours, 2-3 in parallel), not weekly Claude usage. Uses the Oct 12 buffer; if it overruns, Step 2 does not move because compliance waits on outside offices | 1 | Mon 2026-10-12 |
+| SCRUM-217 (SIM-1) | Push branch `sim/universe-harness`, open the PR, confirm `docker-compose.sim.yml` holds no real SendGrid key | 1 | Fri 2026-09-25 |
+| SCRUM-218 (SIM-2) | Run the Fall 2026 quarter (waves 1-2) | 2 | Tue 2026-09-29 |
+| SCRUM-219 (SIM-3) | Triage and fix the two bugs found so far (admin routes bounce when no quarter exists; `/admin/summary` 500) | 2 | Thu 2026-10-01 |
+| SCRUM-220 (SIM-4) | Run the remaining five quarters | 5 | Thu 2026-10-08 |
+| SCRUM-221 (SIM-5) | Findings report; decide CI or nightly; hand new bugs to L7 | 1 | Fri 2026-10-09 |
+| SCRUM-222 (SIM-6) | Ten-year scripted run (30 quarters, rung 5): agents decide, a Playwright script replays the bulk as browser clicks, so it costs wall-clock time (about 12 hours, 2-3 in parallel), not weekly Claude usage. Uses the Oct 12 buffer; if it overruns, Step 2 does not move because compliance waits on outside offices | 1 | Mon 2026-10-12 |
 
 ---
 
@@ -62,17 +62,17 @@ Privacy, terms, accessibility and UCSB review, so the app is legal to show stude
 
 | Ticket | Work | Days | Target |
 |---|---|---|---|
-| C-1 | Send the questions to the UCSB Privacy Office, counsel, Risk Management (minors) and the accessibility office. Answers arrive while other work runs *(parallel, external wait)* | 0.5 | Fri 2026-09-25 |
-| C-2 | Privacy notice page, footer link on every public page, 'how we use your info' line at signup, one sentence on the two sign-in cookies | 1.5 | Wed 2026-10-14 |
-| C-3 | Terms of use page (only if counsel says yes) | 1 | Thu 2026-10-15 |
+| SCRUM-223 (C-1) | Send the questions to the UCSB Privacy Office, counsel, Risk Management (minors) and the accessibility office. Answers arrive while other work runs *(parallel, external wait)* | 0.5 | Fri 2026-09-25 |
+| SCRUM-224 (C-2) | Privacy notice page, footer link on every public page, 'how we use your info' line at signup, one sentence on the two sign-in cookies | 1.5 | Wed 2026-10-14 |
+| SCRUM-225 (C-3) | Terms of use page (only if counsel says yes) | 1 | Thu 2026-10-15 |
 | SCRUM-116 | Fill the 7 `TODO(copy)` in `ccpa-policy.md` (pulled forward from L11 #77) | 1 | Fri 2026-10-16 |
 | SCRUM-127 | Volunteer-facing CCPA request path (pulled forward from P2 #90) | 3 | Wed 2026-10-21 |
 | SCRUM-133, C-4 | Accessibility statement, skip link, global `:focus-visible` (pulled forward from P5 #105) | 2 | Fri 2026-10-23 |
 | SCRUM-134 | Escape closes one layer only; focus trap and restore (pulled forward from P5 #106) | 2 | Tue 2026-10-27 |
-| C-5 | WCAG 2.2 AA audit: keyboard, screen reader, contrast; fix what it finds | 4 | Mon 2026-11-02 |
-| C-6 | Minors and child safety: act on Risk Management's answer (background check, training gate, or nothing) | 3 | Thu 2026-11-05 |
-| C-7 | UC IS-3 data classification and vendor-risk paperwork (SendGrid, AWS, OpenRouter, Jina, Cloudflare), with Rafael | 4 | Thu 2026-11-12 |
-| C-8 | Compliance sign-off record. **Gate: L9 deploy does not start without it** | 0.5 | Thu 2026-11-12 |
+| SCRUM-226 (C-5) | WCAG 2.2 AA audit: keyboard, screen reader, contrast; fix what it finds | 4 | Mon 2026-11-02 |
+| SCRUM-227 (C-6) | Minors and child safety: act on Risk Management's answer (background check, training gate, or nothing) | 3 | Thu 2026-11-05 |
+| SCRUM-228 (C-7) | UC IS-3 data classification and vendor-risk paperwork (SendGrid, AWS, OpenRouter, Jina, Cloudflare), with Rafael | 4 | Thu 2026-11-12 |
+| SCRUM-229 (C-8) | Compliance sign-off record. **Gate: L9 deploy does not start without it** | 0.5 | Thu 2026-11-12 |
 | - | Buffer for counsel replies | 2 | Mon 2026-11-16 |
 
 ---
@@ -91,7 +91,7 @@ Live, verified, handed to Rafael. **Tue 2026-11-17 to Wed 2027-02-24** (61 worki
 | SCRUM-78, SCRUM-162 | #31 + #149 One reaper for `refresh_tokens` and `magic_link_tokens` (#149 moved up from L8: same job) | 1.5 | Mon 2026-11-23 |
 | SCRUM-205 | #177 Type URL id params as UUID so garbage 422s instead of 500 | 1 | Tue 2026-11-24 |
 | SCRUM-157 | Close the L3 tracker (all 7 rows done) | 0.25 | Wed 2026-11-25 |
-| X4a | Submit the IRB application. The wait runs in the background; needed before any usage study *(parallel, external wait)* | 0.25 | Tue 2026-11-17 |
+| SCRUM-230 (X4a) | Submit the IRB application. The wait runs in the background; needed before any usage study *(parallel, external wait)* | 0.25 | Tue 2026-11-17 |
 
 ### L5 - Hardening and scale
 
@@ -267,8 +267,8 @@ Every ticket is Done or closed with a reason, and the three trackers agree. **Th
 | Ticket | Work | Days | Target |
 |---|---|---|---|
 | J-1, SCRUM-43 | Close or resolve: SCRUM-43 (SMS, coworker owns it), the three Done epics 25/31/37 with open children, label fixes on SCRUM-201 to 206 | 1 | Thu 2027-06-10 |
-| J-2 | Row-by-row proof for every ticket in steps 3-4: merged PR, Jira Done, roadmap row done (rule 4) | 2 | Mon 2027-06-14 |
-| J-3 | Refresh `ROADMAP.md` and `STATE.md`; report 'N of M rows done' | 1 | Tue 2027-06-15 |
+| SCRUM-232 (J-2) | Row-by-row proof for every ticket in steps 3-4: merged PR, Jira Done, roadmap row done (rule 4) | 2 | Mon 2027-06-14 |
+| SCRUM-233 (J-3) | Refresh `ROADMAP.md` and `STATE.md`; report 'N of M rows done' | 1 | Tue 2027-06-15 |
 
 ---
 
@@ -315,9 +315,9 @@ Evidence, experiments, draft, submission. **Mon 2027-08-16 to Tue 2027-09-28** (
 
 ---
 
-## New tickets to create (none exist yet)
+## New tickets (created 2026-09-24)
 
-`C-1`, `C-2`, `C-3`, `C-4`, `C-5`, `C-6`, `C-7`, `C-8`, `J-1`, `J-2`, `J-3`, `SIM-1`, `SIM-2`, `SIM-3`, `SIM-4`, `SIM-5`, `SIM-6`, `X4a` and the `J-` rows. Each gets a roadmap row and a Jira ticket in the same PR.
+SIM-1 to SIM-6 = SCRUM-217 to 222. C-1 = 223, C-2 = 224, C-3 = 225, C-5 = 226, C-6 = 227, C-7 = 228, C-8 = 229. C-4 is the same work as SCRUM-133, so it has no ticket of its own. X4a = SCRUM-230. J-1 = 231, J-2 = 232, J-3 = 233. Each still needs a `ROADMAP.md` row (rule 4) when Andy folds this file into it.
 
 ## Decisions (Andy, 2026-09-24)
 
@@ -338,27 +338,27 @@ One row per step, phase, epic, ticket, new task and buffer: 256 rows. Rows with 
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | 1 |  | Step | STEP 1 |  |  | Sim universe - Find the bugs that only show up after years of use, and get the sim safely on GitHub. |  | 12 | 2026-09-25 | 2026-10-12 |  |
 | 2 | 1 | Sim | Phase | Sim |  |  | Sim |  | 12 | 2026-09-25 | 2026-10-12 |  |
-| 3 | 1 | Sim | New task | SIM-1 |  |  | Push branch `sim/universe-harness`, open the PR, confirm `docker-compose.sim.yml` holds no real SendGrid key | no ticket yet | 1 | 2026-09-25 | 2026-09-25 |  |
-| 4 | 1 | Sim | New task | SIM-2 |  |  | Run the Fall 2026 quarter (waves 1-2) | no ticket yet | 2 | 2026-09-28 | 2026-09-29 |  |
-| 5 | 1 | Sim | New task | SIM-3 |  |  | Triage and fix the two bugs found so far (admin routes bounce when no quarter exists; `/admin/summary` 500) | no ticket yet | 2 | 2026-09-30 | 2026-10-01 |  |
-| 6 | 1 | Sim | New task | SIM-4 |  |  | Run the remaining five quarters | no ticket yet | 5 | 2026-10-02 | 2026-10-08 |  |
-| 7 | 1 | Sim | New task | SIM-5 |  |  | Findings report; decide CI or nightly; hand new bugs to L7 | no ticket yet | 1 | 2026-10-09 | 2026-10-09 |  |
-| 7a | 1 | Sim | New task | SIM-6 |  |  | Ten-year scripted run (30 quarters) | no ticket yet | 1 | 2026-10-12 | 2026-10-12 | Replaces the step 1 buffer |
+| 3 | 1 | Sim | New task | SIM-1 |  |  | Push branch `sim/universe-harness`, open the PR, confirm `docker-compose.sim.yml` holds no real SendGrid key | SCRUM-217 (Idea) | 1 | 2026-09-25 | 2026-09-25 |  |
+| 4 | 1 | Sim | New task | SIM-2 |  |  | Run the Fall 2026 quarter (waves 1-2) | SCRUM-218 (Idea) | 2 | 2026-09-28 | 2026-09-29 |  |
+| 5 | 1 | Sim | New task | SIM-3 |  |  | Triage and fix the two bugs found so far (admin routes bounce when no quarter exists; `/admin/summary` 500) | SCRUM-219 (Idea) | 2 | 2026-09-30 | 2026-10-01 |  |
+| 6 | 1 | Sim | New task | SIM-4 |  |  | Run the remaining five quarters | SCRUM-220 (Idea) | 5 | 2026-10-02 | 2026-10-08 |  |
+| 7 | 1 | Sim | New task | SIM-5 |  |  | Findings report; decide CI or nightly; hand new bugs to L7 | SCRUM-221 (Idea) | 1 | 2026-10-09 | 2026-10-09 |  |
+| 7a | 1 | Sim | New task | SIM-6 |  |  | Ten-year scripted run (30 quarters) | SCRUM-222 (Idea) | 1 | 2026-10-12 | 2026-10-12 | Replaces the step 1 buffer |
 | 8 | 1 | Sim | Buffer | - |  |  | Buffer |  | 1 | 2026-10-12 | 2026-10-12 |  |
 | 9 | 2 |  | Step | STEP 2 |  |  | Compliance - Privacy, terms, accessibility and UCSB review, so the app is legal to show students. |  | 24 | 2026-10-13 | 2026-11-16 |  |
 | 10 | 2 | Compliance | Phase | Compliance |  |  | Compliance |  | 24.5 | 2026-09-25 | 2026-11-16 |  |
-| 11 | 2 | Compliance | New task | C-1 |  |  | Send the questions to the UCSB Privacy Office, counsel, Risk Management (minors) and the accessibility office. Answers arrive while other work runs | no ticket yet | 0.5 | 2026-09-25 | 2026-09-25 | Waits on UCSB offices |
-| 12 | 2 | Compliance | New task | C-2 |  |  | Privacy notice page, footer link on every public page, 'how we use your info' line at signup, one sentence on the two sign-in cookies | no ticket yet | 1.5 | 2026-10-13 | 2026-10-14 |  |
-| 13 | 2 | Compliance | New task | C-3 |  |  | Terms of use page (only if counsel says yes) | no ticket yet | 1 | 2026-10-14 | 2026-10-15 | Only if counsel says yes |
+| 11 | 2 | Compliance | New task | C-1 |  |  | Send the questions to the UCSB Privacy Office, counsel, Risk Management (minors) and the accessibility office. Answers arrive while other work runs | SCRUM-223 (Idea) | 0.5 | 2026-09-25 | 2026-09-25 | Waits on UCSB offices |
+| 12 | 2 | Compliance | New task | C-2 |  |  | Privacy notice page, footer link on every public page, 'how we use your info' line at signup, one sentence on the two sign-in cookies | SCRUM-224 (Idea) | 1.5 | 2026-10-13 | 2026-10-14 |  |
+| 13 | 2 | Compliance | New task | C-3 |  |  | Terms of use page (only if counsel says yes) | SCRUM-225 (Idea) | 1 | 2026-10-14 | 2026-10-15 | Only if counsel says yes |
 | 14 | 2 | Compliance | Ticket | SCRUM-116 |  | L11 #77 | L11 #77 — Fill the 7 TODO(copy) markers in ccpa-policy.md (the copilot cites this) | Idea | 1 | 2026-10-15 | 2026-10-16 |  |
 | 15 | 2 | Compliance | Ticket | SCRUM-127 |  | P2 #90 | P2 #90 — Volunteer-facing CCPA request path (statutory gap) | Idea | 3 | 2026-10-16 | 2026-10-21 |  |
 | 16 | 2 | Compliance | Ticket | SCRUM-133 |  | P5 #105 | P5 #105 — Add :focus-visible styles (there are currently zero in the codebase) | Idea | 2 | 2026-10-21 | 2026-10-23 | same work item as C-4 |
 | 17 | 2 | Compliance | New task | C-4 |  |  | Accessibility statement, skip link, global `:focus-visible` (pulled forward from P5 #105) | no ticket yet | (shared) | 2026-10-21 | 2026-10-23 |  |
 | 18 | 2 | Compliance | Ticket | SCRUM-134 |  | P5 #106 | P5 #106 — One Escape closes modal + drawer behind it, discarding unsaved work | Idea | 2 | 2026-10-23 | 2026-10-27 | Partly done via PR #88 (Cancel prompt); Escape/focus-trap half remains. |
-| 19 | 2 | Compliance | New task | C-5 |  |  | WCAG 2.2 AA audit: keyboard, screen reader, contrast; fix what it finds | no ticket yet | 4 | 2026-10-27 | 2026-11-02 |  |
-| 20 | 2 | Compliance | New task | C-6 |  |  | Minors and child safety: act on Risk Management's answer (background check, training gate, or nothing) | no ticket yet | 3 | 2026-11-02 | 2026-11-05 | Depends on Risk Management's answer |
-| 21 | 2 | Compliance | New task | C-7 |  |  | UC IS-3 data classification and vendor-risk paperwork (SendGrid, AWS, OpenRouter, Jina, Cloudflare), with Rafael | no ticket yet | 4 | 2026-11-05 | 2026-11-12 | Needs Rafael |
-| 22 | 2 | Compliance | New task | C-8 |  |  | Compliance sign-off record. **Gate: L9 deploy does not start without it** | no ticket yet | 0.5 | 2026-11-12 | 2026-11-12 | Gate for L9 |
+| 19 | 2 | Compliance | New task | C-5 |  |  | WCAG 2.2 AA audit: keyboard, screen reader, contrast; fix what it finds | SCRUM-226 (Idea) | 4 | 2026-10-27 | 2026-11-02 |  |
+| 20 | 2 | Compliance | New task | C-6 |  |  | Minors and child safety: act on Risk Management's answer (background check, training gate, or nothing) | SCRUM-227 (Idea) | 3 | 2026-11-02 | 2026-11-05 | Depends on Risk Management's answer |
+| 21 | 2 | Compliance | New task | C-7 |  |  | UC IS-3 data classification and vendor-risk paperwork (SendGrid, AWS, OpenRouter, Jina, Cloudflare), with Rafael | SCRUM-228 (Idea) | 4 | 2026-11-05 | 2026-11-12 | Needs Rafael |
+| 22 | 2 | Compliance | New task | C-8 |  |  | Compliance sign-off record. **Gate: L9 deploy does not start without it** | SCRUM-229 (Idea) | 0.5 | 2026-11-12 | 2026-11-12 | Gate for L9 |
 | 23 | 2 | Compliance | Buffer | - |  |  | Buffer for counsel replies |  | 2 | 2026-11-13 | 2026-11-16 |  |
 | 24 | 3 |  | Step | STEP 3 |  |  | Finish milestone L (Launch) - Live, verified, handed to Rafael. |  | 61 | 2026-11-17 | 2027-02-24 |  |
 | 25 | 3 | L3 - Auth and abuse hardening (rest) | Phase | L3 |  |  | L3 - Auth and abuse hardening (rest) |  | 6.5 | 2026-11-17 | 2026-11-25 |  |
@@ -369,7 +369,7 @@ One row per step, phase, epic, ticket, new task and buffer: 256 rows. Rows with 
 | 30 | 3 | L3 - Auth and abuse hardening (rest) | Ticket | SCRUM-162 | SCRUM-157 | L8 #149 | L8 #149 — magic_link_tokens grows unbounded; one reaper for both token tables | Idea | (shared) | 2026-11-20 | 2026-11-23 | same work item as SCRUM-78 |
 | 31 | 3 | L3 - Auth and abuse hardening (rest) | Ticket | SCRUM-205 | SCRUM-157 | L3 #177 | L3 #177 — Malformed ids in URL paths return 500 | Idea | 1 | 2026-11-24 | 2026-11-24 | Roadmap row #177; ticket has no labels, add phase-L3. |
 | 32 | 3 | L3 - Auth and abuse hardening (rest) | Epic | SCRUM-157 | SCRUM-52 | #2 | Phase L3 — auth and abuse hardening (Gate 0 #2) | In Progress | 0.25 | 2026-11-25 | 2026-11-25 | Parent tracker for L3 (2 of 7 rows done). Only In Progress ticket. |
-| 33 | 3 | L3 - Auth and abuse hardening (rest) | New task | X4a |  |  | Submit the IRB application. The wait runs in the background; needed before any usage study | no ticket yet | 0.25 | 2026-11-17 | 2026-11-17 | IRB wait runs in background |
+| 33 | 3 | L3 - Auth and abuse hardening (rest) | New task | X4a |  |  | Submit the IRB application. The wait runs in the background; needed before any usage study | SCRUM-230 (Idea) | 0.25 | 2026-11-17 | 2026-11-17 | IRB wait runs in background |
 | 34 | 3 | L5 - Hardening and scale | Phase | L5 |  |  | L5 - Hardening and scale |  | 19 | 2026-11-25 | 2027-01-04 |  |
 | 35 | 3 | L5 - Hardening and scale | Ticket | SCRUM-91 | SCRUM-52 | L5 #44 | L5 #44 — Write the Phase 37 hardening plan (it has never existed) | Idea | 0.5 | 2026-11-25 | 2026-11-25 |  |
 | 36 | 3 | L5 - Hardening and scale | Ticket | SCRUM-96 | SCRUM-52 | L5 #49 | L5 #49 — Add Celery time limits and an API-client request timeout | Idea | 0.5 | 2026-11-25 | 2026-11-30 |  |
@@ -482,10 +482,10 @@ One row per step, phase, epic, ticket, new task and buffer: 256 rows. Rows with 
 | 143 | 4 | P6 - Copilot production hardening | Buffer | - |  |  | Buffer |  | 3 | 2027-06-04 | 2027-06-09 |  |
 | 144 | 5 |  | Step | STEP 5 |  |  | Jira sweep and proof - Every ticket is Done or closed with a reason, and the three trackers agree. |  | 4 | 2027-06-10 | 2027-06-15 |  |
 | 145 | 5 | Sweep | Phase | Sweep |  |  | Sweep |  | 4 | 2027-06-10 | 2027-06-15 |  |
-| 146 | 5 | Sweep | New task | J-1 |  |  | Close or resolve: SCRUM-43 (SMS, coworker owns it), the three Done epics 25/31/37 with open children, label fixes on SCRUM-201 to 206 | no ticket yet | 1 | 2027-06-10 | 2027-06-10 |  |
+| 146 | 5 | Sweep | New task | J-1 |  |  | Close or resolve: SCRUM-43 (SMS, coworker owns it), the three Done epics 25/31/37 with open children, label fixes on SCRUM-201 to 206 | SCRUM-231 (Idea) | 1 | 2027-06-10 | 2027-06-10 |  |
 | 147 | 5 | Sweep | Ticket | SCRUM-43 |  | Parked #125 | Parked #125 — SMS notifications (deferred Phase 27; a coworker owns this) | Idea | (shared) | 2027-06-10 | 2027-06-10 | Close: coworker owns SMS; same work item as J-1 |
-| 148 | 5 | Sweep | New task | J-2 |  |  | Row-by-row proof for every ticket in steps 3-4: merged PR, Jira Done, roadmap row done (rule 4) | no ticket yet | 2 | 2027-06-11 | 2027-06-14 |  |
-| 149 | 5 | Sweep | New task | J-3 |  |  | Refresh `ROADMAP.md` and `STATE.md`; report 'N of M rows done' | no ticket yet | 1 | 2027-06-15 | 2027-06-15 |  |
+| 148 | 5 | Sweep | New task | J-2 |  |  | Row-by-row proof for every ticket in steps 3-4: merged PR, Jira Done, roadmap row done (rule 4) | SCRUM-232 (Idea) | 2 | 2027-06-11 | 2027-06-14 |  |
+| 149 | 5 | Sweep | New task | J-3 |  |  | Refresh `ROADMAP.md` and `STATE.md`; report 'N of M rows done' | SCRUM-233 (Idea) | 1 | 2027-06-15 | 2027-06-15 |  |
 | 150 | 6 |  | Step | STEP 6 |  |  | Finish milestone D (Data and BI) - Warehouse, Metabase, funnel and retention answers. |  | 43 | 2027-06-16 | 2027-08-13 |  |
 | 151 | 6 | D | Phase | D |  |  | D |  | 42.75 | 2027-06-16 | 2027-08-13 |  |
 | 152 | 6 | D | Ticket | SCRUM-158 | SCRUM-54 | DE-7 / D0 #144 | DE-7 · D0 #144 — Participant funnel instrumentation (product_events outbox) | Idea | 4 | 2027-06-16 | 2027-06-21 | Needs the identity decision first |
