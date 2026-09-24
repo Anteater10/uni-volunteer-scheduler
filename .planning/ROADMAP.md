@@ -197,6 +197,15 @@ done row. Then L3 completion, then L5.
 | 172 | CLAUDE.md describes a dead workflow | v1.2 two-developer branch table; tells sessions on `main` to switch to `feature/v1.2-*` | Current one-developer workflow + rule 4 | — | **✅ Done — PR #137.** Rewritten for the current workflow: short-lived branches off `main`, one PR per piece, three trackers in step, rule 4. [SCRUM-184] |
 | 173 | ~60 stale branches | Merged branches never deleted | Delete merged ones; list unmerged for Andy | — | **✅ Done 2026-09-21** (no PR). Deleted 61 GitHub and 50 local branches, each with a merged PR or fully in `main`, plus three Andy approved (PR #79, PR #50, `integration/w2-verify`). Six unmerged branches saved first as `archive/*` tags: both v1.4 eval branches, `fix/copilot-outbound-mail-coverage`, Hung's `v1.3` and `organizer-audit`, Jasmine's `jt-simulate-quarter`. Restore with `git switch -c <name> archive/<name>`. [SCRUM-185] |
 
+**Jira audit, 2026-09-24.** Jira was read directly and compared with `main`.
+SCRUM-16 was reopened (it was Done, but the runbook, K39 and the walkthrough are
+open as #73, #78 and #79). SCRUM-33 was closed as a duplicate of SCRUM-23.
+Twelve partly built tickets got a comment saying what remains, and ten went to In
+Progress. Five tickets were filed after the fact for work that shipped without
+one: SCRUM-207 (PR #125), 208 (#127), 209 (#143), 210 (#144) and 211 (three
+deploy commits pushed to `main` with no PR: `ba33587a`, `7a0f39ea`, `491edd72`).
+Every open ticket now has a parent epic.
+
 ## Phase L3 — Auth and abuse hardening (3–4 days) — **2 of 7 done · reopened 2026-09-21**
 
 PR #117 (2026-09-10) shipped the auth half, #26 and #30, and the session that
@@ -212,7 +221,7 @@ reopened and finishes before L5; see Phase S for how the trackers drifted.
 | 29 | 4 query paths unbounded | `CONFIG-24` = ~20,000 SELECTs in one request | Row-cap + paginate | L5 | **⬜ Open — never built.** The four unbounded query paths (`CONFIG-24`) are still uncapped [SCRUM-76] |
 | 30 | No `aud`/`iss` claims minted or verified | `SEC-36` | Add both | L8 | **✅ Done — PR #117** (2026-09-10). `aud`/`iss` minted and verified on access tokens [SCRUM-77] |
 | 31 | `refresh_tokens` grows unbounded | No reaper, no cap, can't list sessions | Reaper + cap — see #149, `magic_link_tokens` has the same problem and should share the job | L8 | **⬜ Open — never built.** Nothing reaps `refresh_tokens`. Build as one reaper with #149, which has the same problem on `magic_link_tokens` [SCRUM-78] |
-| 177 | Malformed ids in URL paths 500 | Found 2026-09-21 by the e2e seed: `POST /signups/None/cancel` → 500 (`InvalidTextRepresentation` from Postgres). 52 path params across 9 routers are typed `str`, not `UUID`, so garbage reaches the DB. `/public/events/None` already 422s | Type the id params as `UUID` so FastAPI 422s before the query | L6 | None [SCRUM-205] |
+| 177 | Malformed ids in URL paths 500 | Found 2026-09-21 by the e2e seed: `POST /signups/None/cancel` → 500 (`InvalidTextRepresentation` from Postgres). 52 path params across 9 routers are typed `str`, not `UUID`, so garbage reaches the DB. `/public/events/None` already 422s | Type the id params as `UUID` so FastAPI 422s before the query | L6 | **◐ Partly done** (audit 2026-09-24): some routes are typed `UUID` (e.g. `slot_id` in `check_in.py`), but about 65 `*_id: str` and `token: str` params remain across 9 routers [SCRUM-205] |
 
 ## Phase L4 — Known bugs (2–3 days) — **done 2026-09-21**
 
@@ -257,7 +266,7 @@ all fixed before merge — see #34.
 | 157 | Celery `statement_timeout` override documented, never built | SCRUM-161: described in two files but absent; long tasks share the web 15s DB timeout | Add the Celery-side override | L9 | None. Added 2026-09-21 from the tracker audit (SCRUM-161) |
 | 158 | Large CSV exports are uncapped | SCRUM-173: event, privacy-request and attendance exports load everything in memory. Close to #29, which doesn't cover them | Cap or stream them | L6 | None. Added 2026-09-21 from the tracker audit (SCRUM-173) |
 | 179 | 35 known dependency advisories are baselined, not fixed | SCRUM-45: the first pip-audit run found 42 across 13 packages; `backend/.pip-audit-baseline.txt` still lists 35, so CI only fails on *new* ones. The file was meant to shrink to empty. Includes starlette's form-parsing limit (BASE-CONFIG-36), accepted on older information | Fix each or write a reachability assessment; empty the baseline. Watch the torch/transformers pins | L9 | None. Added 2026-09-21 from Jira [SCRUM-45] |
-| 163 | Coverage is not 100% and code is excluded | 88.75% measured strictly: ~1,000 lines + 600 branch paths untested; 4 files omitted and 15 `pragma: no cover` lines. `tasks/reminders.py` and `seed_admin.py` run in production with 0% coverage | Ratchet from #168 (every PR fully tests what it touches), then the final PR empties the omit/exclude lists and raises every gate to a hard 100% | L6 | **Decided 2026-09-21:** 100% of code tested, no exclusions; raised as we go, final gate after L5. **Frontend included** (widened same day): vitest had gated only `authToken.js`/`authStorage.js`; whole-`src/` baseline measured 2026-09-21: statements 73.66%, branches 69.48%, functions 65.36%, lines 75.23% (697 tests); same ratchet, hard 100% on all of `frontend/src/` after L5 [SCRUM-188] |
+| 163 | Coverage is not 100% and code is excluded | 88.75% measured strictly: ~1,000 lines + 600 branch paths untested; 4 files omitted and 15 `pragma: no cover` lines. `tasks/reminders.py` and `seed_admin.py` run in production with 0% coverage | Ratchet from #168 (every PR fully tests what it touches), then the final PR empties the omit/exclude lists and raises every gate to a hard 100% | L6 | **Decided 2026-09-21:** 100% of code tested, no exclusions; raised as we go, final gate after L5. **Frontend included** (widened same day): vitest had gated only `authToken.js`/`authStorage.js`; whole-`src/` baseline measured 2026-09-21: statements 73.66%, branches 69.48%, functions 65.36%, lines 75.23% (697 tests); same ratchet, hard 100% on all of `frontend/src/` after L5. **◐ In progress (audit 2026-09-24):** PRs #135 and #143 raised the backend floor to 90.5 and cut `pragma: no cover` from 15 lines to 4; the omit list is 3 files. The frontend gate and the hard 100% remain [SCRUM-188] |
 
 ## Phase L6 — Verification (3–4 days) — *the long pole*
 
@@ -345,7 +354,7 @@ Nothing here blocks launch. Ordered by value per day.
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
 | 86 | No signup-on-behalf path | No endpoint, no UI, no tool. **Phone-in volunteers can't be added** | Build it | — | None [SCRUM-123] |
-| 87 | Phone read only by a copilot tool | Day-of "call the missing volunteer" impossible | Show on roster | — | None [SCRUM-124] |
+| 87 | Phone read only by a copilot tool | Day-of "call the missing volunteer" impossible | Show on roster | — | **◐ Partly shipped — PR #115** (`ac657647`): the phone shows on the admin roster with a `tel:` link. Not on the organizer phone roster. Close, or narrow to the phone roster (P1). Noted 2026-09-24 [SCRUM-124] |
 | 88 | Reminder opt-out invisible to staff | Suppressed volunteer looks like one ignoring mail | "Reminders: off" badge | — | None [SCRUM-125] |
 | 89 | No volunteer self-cancel/swap | Removed 2026-08-02; seats stay falsely filled | Rebuild token-scoped | — | Revisit removal [SCRUM-126] |
 | 90 | CCPA acts on staff rows only | Statutory gap for CA volunteers; export omits answers + credits | Volunteer request path | — | None [SCRUM-127] |
@@ -361,7 +370,7 @@ Nothing here blocks launch. Ordered by value per day.
 | 94 | No search/filter/sort on browse | SCRUM-27 | Build it | — | None |
 | 95 | No loading/empty/error states | SCRUM-28, K38 | Add throughout | — | None |
 | 96 | Admin event page IA | SCRUM-32 | Restructure | — | None |
-| 97 | Events list + ops dashboard | Operations shows **no** signup or fill numbers | Add them | — | None [SCRUM-34] |
+| 97 | Events list + ops dashboard | Operations shows **no** signup or fill numbers | Add them | — | **◐ Partly shipped — PRs #114** (`4a475edb`, unique-volunteer count on the events list) **and #127** (`03d2a30a`, HS/MS). Fill numbers not confirmed. Noted 2026-09-24 [SCRUM-34] |
 | 98 | 4 overlay impls, 3 toast systems, 3 headers | K37 | Consolidate | — | None [SCRUM-36] |
 | 159 | Volunteer pages are hard to use on a phone | SCRUM-30 (high): L6 tests on phones, nothing builds for them | Mobile pass on the volunteer pages | — | None. Added 2026-09-21 from the tracker audit (SCRUM-30) |
 | 174 | No contextual help on actions | GitHub #10 (duplicate #35 closed): a '?' tooltip on every action | Add tooltips | — | None. Added 2026-09-21 from the kanban board (GH #10) [SCRUM-202] |
@@ -382,7 +391,7 @@ Nothing here blocks launch. Ordered by value per day.
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
 |---|---|---|---|---|---|
-| 105 | **Zero `:focus-visible` rules** | K40; keyboard users have no focus indication | Add throughout | — | None [SCRUM-133] |
+| 105 | **Few `:focus-visible` rules** | K40. Was "zero"; a count on 2026-09-24 found 10 rules in 5 files (`ui/Button`, `Input`, `Chip`, the browse and detail pages). No global rule, no skip link | Add throughout | — | **◐ Partly done.** Global rule, skip link and the components without one remain [SCRUM-133] |
 | 106 | One Escape closes modal + drawer | K15; discards unsaved work | Focus trap + restore | — | **Partly done 2026-09-07 (SCRUM-156, PR #88): the *Cancel* route now prompts before discarding, and `EventSettingsModal` / `DuplicateEventModal` finally pass `dirty` so their prompt can fire at all. The Escape-closes-two-layers half and focus trap/restore remain open.** [SCRUM-134] |
 | 107 | ~10 dead endpoints/tables/aliases | `custom_answers` has no INSERT anywhere | Delete them | — | Depends on #8 [SCRUM-135] |
 | 108 | ~25 dead `api.js` exports | K35; `api.register()` doesn't exist | Delete | — | None [SCRUM-136] |
