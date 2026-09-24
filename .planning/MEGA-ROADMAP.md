@@ -8,7 +8,7 @@ One plan for everything left, in the seven steps Andy asked for. **Andy approved
 - Holidays skipped: Nov 11, Nov 26-27, Dec 24 to Jan 1, Jan 1, Jan 18, Feb 15, May 31.
 - A ticket's **target** is the day it should be finished. Every step ends with a buffer row. **L7 is unbounded** (nobody has clicked through the app yet), so every date after it moves if L6 finds a lot.
 - External waits (counsel, UCSB, IRB, Rafael) are marked. The dates assume they answer in time.
-- Rows marked `SIM-`, `C-`, `X4a`, `J-` are **new work with no Jira ticket yet**. They need tickets before they start (rule 4).
+- Rows marked `SIM-`, `C-`, `X4a`, `J-` are **new work**. Each now has a Jira ticket (SCRUM-217 to 233); C-4 is SCRUM-133.
 
 ## Overview
 
@@ -353,7 +353,7 @@ One row per step, phase, epic, ticket, new task and buffer: 256 rows. Rows with 
 | 14 | 2 | Compliance | Ticket | SCRUM-116 |  | L11 #77 | L11 #77 — Fill the 7 TODO(copy) markers in ccpa-policy.md (the copilot cites this) | Idea | 1 | 2026-10-15 | 2026-10-16 |  |
 | 15 | 2 | Compliance | Ticket | SCRUM-127 |  | P2 #90 | P2 #90 — Volunteer-facing CCPA request path (statutory gap) | Idea | 3 | 2026-10-16 | 2026-10-21 |  |
 | 16 | 2 | Compliance | Ticket | SCRUM-133 |  | P5 #105 | P5 #105 — Add :focus-visible styles (there are currently zero in the codebase) | Idea | 2 | 2026-10-21 | 2026-10-23 | same work item as C-4 |
-| 17 | 2 | Compliance | New task | C-4 |  |  | Accessibility statement, skip link, global `:focus-visible` (pulled forward from P5 #105) | no ticket yet | (shared) | 2026-10-21 | 2026-10-23 |  |
+| 17 | 2 | Compliance | New task | C-4 |  |  | Accessibility statement, skip link, global `:focus-visible` (pulled forward from P5 #105) | SCRUM-133 (shared) | (shared) | 2026-10-21 | 2026-10-23 |  |
 | 18 | 2 | Compliance | Ticket | SCRUM-134 |  | P5 #106 | P5 #106 — One Escape closes modal + drawer behind it, discarding unsaved work | Idea | 2 | 2026-10-23 | 2026-10-27 | Partly done via PR #88 (Cancel prompt); Escape/focus-trap half remains. |
 | 19 | 2 | Compliance | New task | C-5 |  |  | WCAG 2.2 AA audit: keyboard, screen reader, contrast; fix what it finds | SCRUM-226 (Idea) | 4 | 2026-10-27 | 2026-11-02 |  |
 | 20 | 2 | Compliance | New task | C-6 |  |  | Minors and child safety: act on Risk Management's answer (background check, training gate, or nothing) | SCRUM-227 (Idea) | 3 | 2026-11-02 | 2026-11-05 | Depends on Risk Management's answer |
