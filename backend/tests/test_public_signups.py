@@ -936,6 +936,113 @@ class TestOrientationRequirement:
         )
         assert resp2.status_code == 201, resp2.text
 
+    # --- Orientation first, module later -------------------------------------
+    # A volunteer who booked orientation alone used to be stuck: the module
+    # alone was 422 ORIENTATION_REQUIRED, and re-picking their orientation
+    # was a 409. A live orientation booking now satisfies the gate.
+
+    def test_orientation_first_then_module_passes(self, client, db_session, monkeypatch):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        first = client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        assert first.status_code == 201, first.text
+        # Different letter case: the booking is matched case-insensitively.
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload(shift_ids=[shift.id], email=self.EMAIL.upper()),
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_orientation_on_sibling_event_in_family_passes(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        self._template(db_session, "bio-advanced", family_key="bio")
+        week_a = _make_event(db_session, module_slug="bio-intro")
+        orient_a = _make_slot(db_session, week_a.id)
+        week_b = _make_event(db_session, module_slug="bio-advanced")
+        shift_b = _make_shift(db_session, week_b.id)
+        _make_slot(db_session, week_b.id)
+        db_session.commit()
+
+        assert client.post(
+            "/api/v1/public/signups", json=self._payload([orient_a.id])
+        ).status_code == 201
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift_b.id])
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_orientation_in_other_family_does_not_count(
+        self, client, db_session, monkeypatch
+    ):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        self._template(db_session, "chem-intro", family_key="chem")
+        bio = _make_event(db_session, module_slug="bio-intro")
+        orient_bio = _make_slot(db_session, bio.id)
+        chem = _make_event(db_session, module_slug="chem-intro")
+        shift_chem = _make_shift(db_session, chem.id)
+        _make_slot(db_session, chem.id)
+        db_session.commit()
+
+        client.post("/api/v1/public/signups", json=self._payload([orient_bio.id]))
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift_chem.id])
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "ORIENTATION_REQUIRED"
+
+    def test_cancelled_orientation_does_not_count(self, client, db_session, monkeypatch):
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        db_session.expire_all()
+        db_session.query(Signup).update({Signup.status: SignupStatus.cancelled})
+        db_session.commit()
+
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "ORIENTATION_REQUIRED"
+
+    def test_moduleless_event_counts_same_event_booking_only(
+        self, client, db_session, monkeypatch
+    ):
+        """No family to match on, so only an orientation on this very event
+        counts — one on another module-less event does not."""
+        self._mute_email(monkeypatch)
+        other = _make_event(db_session)
+        orient_other = _make_slot(db_session, other.id)
+        event = _make_event(db_session)
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        client.post("/api/v1/public/signups", json=self._payload([orient_other.id]))
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        assert resp.status_code == 422, resp.text
+
+        client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        resp2 = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        assert resp2.status_code == 201, resp2.text
+
 
 class TestShiftBooking:
     """2026-08-05 shifts: booking the bundle, not the session.

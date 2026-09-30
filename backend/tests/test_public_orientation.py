@@ -123,3 +123,46 @@ class TestOrientationStatus:
         assert r2.status_code == 200
         # Both must have same keys
         assert set(r1.json().keys()) == set(r2.json().keys())
+
+
+class TestOrientationCheckBooked:
+    """/orientation-check reports a live orientation booking, so the event
+    page's pre-check agrees with the signup endpoint and does not show the
+    orientation modal to someone who already booked one."""
+
+    def _setup(self, db_session, status):
+        from tests.fixtures.helpers import make_user
+        owner = make_user(db_session)
+        vol = _make_volunteer(db_session, email="booked@example.com")
+        event = _make_event(db_session, owner.id)
+        slot = _make_orientation_slot(db_session, event.id)
+        db_session.add(
+            Signup(id=uuid.uuid4(), volunteer_id=vol.id, slot_id=slot.id, status=status)
+        )
+        db_session.commit()
+        return event
+
+    def test_pending_booking_reported(self, client, db_session):
+        event = self._setup(db_session, SignupStatus.pending)
+        data = client.get(
+            "/api/v1/public/orientation-check",
+            params={"email": "booked@example.com", "event_id": str(event.id)},
+        ).json()
+        assert data["has_booked_orientation"] is True
+        assert data["has_credit"] is False  # a booking is not credit
+
+    def test_cancelled_booking_not_reported(self, client, db_session):
+        event = self._setup(db_session, SignupStatus.cancelled)
+        data = client.get(
+            "/api/v1/public/orientation-check",
+            params={"email": "booked@example.com", "event_id": str(event.id)},
+        ).json()
+        assert data["has_booked_orientation"] is False
+
+    def test_without_event_id_stays_false(self, client, db_session):
+        self._setup(db_session, SignupStatus.pending)
+        data = client.get(
+            "/api/v1/public/orientation-check",
+            params={"email": "booked@example.com"},
+        ).json()
+        assert data["has_booked_orientation"] is False

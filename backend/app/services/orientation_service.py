@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -51,6 +52,11 @@ from ..models import (
     Module,
     OrientationCredit,
     OrientationCreditSource,
+    Signup,
+    SignupStatus,
+    Slot,
+    SlotType,
+    Volunteer,
 )
 from ..schemas import OrientationStatusRead
 
@@ -75,6 +81,45 @@ def family_for_event(db: Session, event_id) -> Optional[str]:
         # consistently with themselves.
         return event.module_slug
     return tmpl.family_key or tmpl.slug
+
+
+def has_booked_orientation(db: Session, email: str, event_id) -> bool:
+    """True when ``email`` holds a live orientation booking that covers
+    ``event_id``: one on this event, or on another event in its module family.
+
+    Not credit — credit still only comes from attendance or a grant. This is
+    what lets a volunteer who booked orientation alone come back and add the
+    module before the orientation has happened. Without it they were told to
+    add an orientation, and re-picking the one they already held was a 409.
+
+    "Live" means pending, confirmed or waitlisted — the same bar as choosing
+    the orientation in the same batch, where a waitlisted one already counts.
+    A cancelled one does not, and a finished one has either earned credit
+    (attended) or should not count (no-show).
+    """
+    rows = (
+        db.query(Slot.event_id)
+        .join(Signup, Signup.slot_id == Slot.id)
+        .join(Volunteer, Volunteer.id == Signup.volunteer_id)
+        .filter(
+            func.lower(Volunteer.email) == email.lower().strip(),
+            Slot.slot_type == SlotType.ORIENTATION,
+            Signup.status.in_(
+                (SignupStatus.pending, SignupStatus.confirmed, SignupStatus.waitlisted)
+            ),
+        )
+        .distinct()
+        .all()
+    )
+    booked_events = {r.event_id for r in rows}
+    if not booked_events:
+        return False
+    if event_id in booked_events:
+        return True
+    family = family_for_event(db, event_id)
+    if family is None:
+        return False  # fail closed, same as credit: no family, no match
+    return any(family_for_event(db, eid) == family for eid in booked_events)
 
 
 def _latest_active_credit(

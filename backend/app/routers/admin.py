@@ -26,6 +26,8 @@ from ..celery_app import (
 from ..signup_service import mark_promoted_pending
 from ..services.check_in_service import ensure_signup_cancellable
 from ..services.waitlist_service import SlotEndedError
+from ..services.phone_service import InvalidPhoneError, normalize_us_phone
+from ..services.volunteer_service import upsert_volunteer
 from ..services import (
     attendance_facts,
     module_service,
@@ -1006,6 +1008,152 @@ def admin_uncancel_shift_signup(
     )
 
     return shift_signup
+
+
+@router.post(
+    "/events/{event_id}/add-volunteer",
+    response_model=schemas.AdminAddVolunteerResult,
+    status_code=201,
+)
+def admin_add_volunteer(
+    event_id: str,
+    payload: schemas.AdminAddVolunteer,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_staff),
+):
+    """Staff put a volunteer on shifts and/or orientation sessions by hand.
+
+    Before this, the only way onto an event was the public form, so a volunteer
+    it refused (or who emailed instead) could not be added at all. Staff are the
+    authority here, so the public-only gates are skipped: the orientation
+    requirement, the signup window and the "already ended" check. Bookings land
+    confirmed — staff are vouching, there is no magic link to click. A full
+    unit waitlists unless ``allow_overfill``, same choice as promote.
+    """
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    ensure_event_staff_access(event, actor)
+
+    phone_e164 = None
+    if payload.phone and payload.phone.strip():
+        try:
+            phone_e164 = normalize_us_phone(payload.phone)
+        except InvalidPhoneError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    volunteer = upsert_volunteer(
+        db,
+        email=str(payload.email),
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        phone_e164=phone_e164,
+    )
+
+    def _status(unit) -> models.SignupStatus:
+        if unit.current_count < unit.capacity or payload.allow_overfill:
+            unit.current_count += 1
+            return models.SignupStatus.confirmed
+        return models.SignupStatus.waitlisted
+
+    def _already(existing, what: str) -> None:
+        if existing is None:
+            return
+        hint = (
+            " It was cancelled — use Reinstate on the roster instead."
+            if existing.status == models.SignupStatus.cancelled
+            else ""
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=f"{volunteer.email} is already on this {what}.{hint}",
+        )
+
+    items: list[schemas.AdminAddVolunteerItem] = []
+    shift_signups: list[models.ShiftSignup] = []
+    signups: list[models.Signup] = []
+
+    for shift_id in dict.fromkeys(payload.shift_ids):
+        shift = shift_service.lock_shift(db, shift_id)
+        if shift is None or str(shift.event_id) != str(event.id):
+            raise HTTPException(status_code=404, detail="Shift not found on this event")
+        _already(
+            db.query(models.ShiftSignup)
+            .filter_by(volunteer_id=volunteer.id, shift_id=shift.id)
+            .first(),
+            "shift",
+        )
+        ss = models.ShiftSignup(
+            volunteer_id=volunteer.id, shift_id=shift.id, status=_status(shift)
+        )
+        db.add(ss)
+        shift_signups.append(ss)
+
+    for slot_id in dict.fromkeys(payload.slot_ids):
+        slot = (
+            db.query(models.Slot)
+            .filter(models.Slot.id == slot_id)
+            .with_for_update()
+            .first()
+        )
+        if (
+            slot is None
+            or str(slot.event_id) != str(event.id)
+            or slot.slot_type != models.SlotType.ORIENTATION
+        ):
+            raise HTTPException(
+                status_code=404, detail="Orientation session not found on this event"
+            )
+        _already(
+            db.query(models.Signup)
+            .filter_by(volunteer_id=volunteer.id, slot_id=slot.id)
+            .first(),
+            "orientation session",
+        )
+        s = models.Signup(volunteer_id=volunteer.id, slot_id=slot.id, status=_status(slot))
+        db.add(s)
+        signups.append(s)
+
+    db.flush()
+    for ss in shift_signups:
+        items.append(
+            schemas.AdminAddVolunteerItem(
+                shift_signup_id=ss.id, shift_id=ss.shift_id, status=ss.status
+            )
+        )
+    for s in signups:
+        items.append(
+            schemas.AdminAddVolunteerItem(signup_id=s.id, slot_id=s.slot_id, status=s.status)
+        )
+
+    log_action(
+        db,
+        actor,
+        "admin_add_volunteer",
+        "Event",
+        str(event.id),
+        extra={
+            "volunteer_email": volunteer.email,
+            "shift_ids": [str(ss.shift_id) for ss in shift_signups],
+            "slot_ids": [str(s.slot_id) for s in signups],
+            "allow_overfill": payload.allow_overfill,
+        },
+    )
+    db.commit()
+
+    # After commit, so the worker can see the rows. Waitlisted bookings get no
+    # mail: the confirmation copy says "you are confirmed".
+    if payload.send_email:
+        for ss in shift_signups:
+            if ss.status == models.SignupStatus.confirmed:
+                send_email_notification.delay(
+                    shift_signup_id=str(ss.id), kind="confirmation"
+                )
+        for s in signups:
+            if s.status == models.SignupStatus.confirmed:
+                send_email_notification.delay(signup_id=str(s.id), kind="confirmation")
+
+    return schemas.AdminAddVolunteerResult(volunteer_id=volunteer.id, bookings=items)
 
 
 @router.post("/signups/{signup_id}/promote", response_model=schemas.SignupRead)

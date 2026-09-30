@@ -875,6 +875,44 @@ class PublicSignupCreate(VolunteerCreate):
         return self
 
 
+class AdminAddVolunteer(BaseModel):
+    """Staff adding someone to an event by hand (roster "Add volunteer").
+
+    Phone is optional: staff are often working from an email thread that has
+    no number in it. ``slot_ids`` are orientation sessions, ``shift_ids`` are
+    shifts, both on the event in the URL.
+    """
+
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    phone: Optional[str] = Field(default=None, max_length=20)
+    slot_ids: List[UUID] = Field(default_factory=list, max_length=20)
+    shift_ids: List[UUID] = Field(default_factory=list, max_length=20)
+    # Full shift or session: seat them anyway instead of waitlisting.
+    allow_overfill: bool = False
+    send_email: bool = True
+
+    @model_validator(mode="after")
+    def require_something_to_book(self):
+        if not self.slot_ids and not self.shift_ids:
+            raise ValueError("Select at least one shift or orientation session")
+        return self
+
+
+class AdminAddVolunteerItem(BaseModel):
+    signup_id: Optional[UUID] = None
+    slot_id: Optional[UUID] = None
+    shift_signup_id: Optional[UUID] = None
+    shift_id: Optional[UUID] = None
+    status: SignupStatus
+
+
+class AdminAddVolunteerResult(BaseModel):
+    volunteer_id: UUID
+    bookings: List[AdminAddVolunteerItem]
+
+
 class PublicSignupResultItem(BaseModel):
     """Phase 25 — per-signup result so the UI can branch confirmed vs waitlisted.
 
@@ -1126,6 +1164,9 @@ class OrientationStatusRead(BaseModel):
     has_credit: bool = False
     source: Optional[Literal["attendance", "grant"]] = None
     family_key: Optional[str] = None
+    # True when the volunteer has a live (pending/confirmed/waitlisted) orientation booking for
+    # this event's family — not credit, but enough to book the module now.
+    has_booked_orientation: bool = False
 
 
 # =========================

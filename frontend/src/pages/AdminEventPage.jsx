@@ -20,6 +20,7 @@ import {
   Mail,
   QrCode,
   Settings,
+  UserPlus,
 } from "lucide-react";
 import NoShowFlag from "../components/NoShowFlag";
 import FormFieldsDrawer from "../components/admin/FormFieldsDrawer";
@@ -28,6 +29,7 @@ import DuplicateEventModal from "../components/admin/DuplicateEventModal";
 import BroadcastModal from "../components/BroadcastModal";
 import CheckInQRModal from "../components/admin/CheckInQRModal";
 import SignupQRModal from "../components/admin/SignupQRModal";
+import AddVolunteerModal from "../components/admin/AddVolunteerModal";
 import { toast } from "../state/toast";
 import { reopenEvent } from "../api/roster";
 import { useQuarters } from "../lib/useQuarters";
@@ -175,6 +177,8 @@ export default function AdminEventPage() {
   const [signupQrOpen, setSignupQrOpen] = useState(false);
   // Reconfigure title / where / when / slots without going back to the list
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Staff add a volunteer by hand, bypassing the public-only gates
+  const [addVolunteerOpen, setAddVolunteerOpen] = useState(false);
 
   const analyticsQ = useQuery({
     queryKey: ["adminEventAnalytics", eventId],
@@ -681,9 +685,21 @@ export default function AdminEventPage() {
       </section>
 
       <section>
-        <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide mb-3">
-          Signed-up volunteers
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-[var(--color-fg-muted)] uppercase tracking-wide">
+            Signed-up volunteers
+          </h2>
+          {quarterReadOnly ? null : (
+            <Button
+              variant="secondary"
+              onClick={() => setAddVolunteerOpen(true)}
+              className="whitespace-nowrap"
+            >
+              <UserPlus className="h-4 w-4" />
+              Add volunteer
+            </Button>
+          )}
+        </div>
         {rosterQ.isPending ? (
           <div className="space-y-2">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -1163,6 +1179,12 @@ export default function AdminEventPage() {
         eventId={eventId}
         eventTitle={eventTitle}
         visibility={eventQ.data?.visibility}
+      />
+      <AddVolunteerModal
+        open={addVolunteerOpen}
+        onClose={() => setAddVolunteerOpen(false)}
+        eventId={eventId}
+        event={eventQ.data}
       />
     </div>
   );

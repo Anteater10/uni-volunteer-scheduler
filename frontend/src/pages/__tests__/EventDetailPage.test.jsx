@@ -623,6 +623,30 @@ describe("EventDetailPage — orientation requirement gate", () => {
     await waitFor(() => expect(api.public.createSignup).toHaveBeenCalled());
   });
 
+  it("submits without the modal when an orientation is already booked", async () => {
+    // Booked orientation earlier, back for the module: no credit yet, but the
+    // server accepts the booking, so the page must not block them.
+    api.public.orientationCheck.mockResolvedValue({
+      has_credit: false,
+      has_booked_orientation: true,
+    });
+    api.public.createSignup.mockResolvedValue({
+      volunteer_id: "vol-1",
+      signup_ids: [],
+      shift_signup_ids: ["ss-1"],
+      magic_link_sent: true,
+    });
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    await selectPeriodAndSubmit(container);
+
+    await waitFor(() => expect(api.public.createSignup).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("button", { name: /pick an orientation session/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("proceeds to submit when the credit check errors (server decides)", async () => {
     api.public.orientationCheck.mockRejectedValue(new Error("boom"));
     api.public.createSignup.mockResolvedValue({
