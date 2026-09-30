@@ -128,17 +128,20 @@ export async function downloadBlob(path, filename, { auth = true, params, header
     const json = await safeReadJson(res);
     const fallback = `GET ${path} failed (${res.status})`;
     throw new Error(extractErrorMessage(json, fallback));
+  } else {
+    // An explicit else: v8 coverage cannot track the implicit fall-through
+    // of an if-that-throws when an await follows it, so the success path
+    // would read as an untested branch.
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    const objectUrl = URL.createObjectURL(blob);
+    a.href = objectUrl;
+    a.download = filename || "download";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
   }
-
-  const blob = await res.blob();
-  const a = document.createElement("a");
-  const objectUrl = URL.createObjectURL(blob);
-  a.href = objectUrl;
-  a.download = filename || "download";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(objectUrl);
 }
 
 // --------------------
