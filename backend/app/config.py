@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = False
     sendgrid_api_key: str | None = None
     email_from_address: str | None = None
+    # Where volunteers reach a person: shown in every volunteer email and sent
+    # as the Reply-To header. The admin Site Settings contact_email overrides
+    # it; this is what applies while that is blank, so no email ever tells a
+    # volunteer to "reply" to a sending address nobody reads.
+    scitrek_contact_email: str = "chem-scitrekmanager@ucsb.edu"
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_from_number: str | None = None

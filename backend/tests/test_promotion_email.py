@@ -71,5 +71,5 @@ class TestBuildWaitlistPromotionEmail:
         )
         # 2026-08-02 read-only signups: no self-service cancel — the email
         # points any change at the organizer contact (falls back to
-        # "reply to this email" when no site contact_email is configured).
-        assert "reply to this email" in html
+        # the configured SciTrek inbox when no site contact_email is set).
+        assert "chem-scitrekmanager@ucsb.edu" in html

@@ -17,13 +17,13 @@ from celery.signals import beat_init, celeryd_init
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import ClickTracking, Mail, TrackingSettings
+from sendgrid.helpers.mail import ClickTracking, Mail, ReplyTo, TrackingSettings
 
 from .config import assert_email_config_valid, settings
 from .database import SessionLocal
 from . import models
 from .services import notification_dedup
-from .emails import BUILDERS, SessionBooking
+from .emails import BUILDERS, SessionBooking, contact_address
 
 # L4 #35: the builders whose copy carries a "View your signups" link. Each one
 # needs a freshly minted manage token; the rest take no manage_token argument.
@@ -122,6 +122,7 @@ def _send_via_smtp(
     body: str,
     html_body: str | None = None,
     attachments: list[tuple[str, str]] | None = None,
+    reply_to: str | None = None,
 ) -> None:
     """Send an email via SMTP (stdlib smtplib).
 
@@ -147,6 +148,8 @@ def _send_via_smtp(
     msg["From"] = settings.email_from_address
     msg["To"] = to_email
     msg["Subject"] = subject
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg.set_content(body or "")
     if html_body:
         msg.add_alternative(html_body, subtype="html")
@@ -173,6 +176,7 @@ def _send_via_sendgrid(
     body: str,
     html_body: str | None = None,
     attachments: list[tuple[str, str]] | None = None,
+    reply_to: str | None = None,
 ) -> None:
     """Send an email via SendGrid HTTPS API. Prod fallback; dev uses SMTP."""
     if not settings.sendgrid_api_key or not settings.email_from_address:
@@ -193,6 +197,8 @@ def _send_via_sendgrid(
     if html_body:
         mail_kwargs["html_content"] = html_body
     message = Mail(**mail_kwargs)
+    if reply_to:
+        message.reply_to = ReplyTo(reply_to)
     # SCRUM-50: SendGrid rewrites every href into a tracking redirect on a
     # numbered subdomain of the sending domain (url1845.sci-trek.org). That
     # extra hop is what an SSL-inspecting antivirus/appliance on a volunteer's
@@ -243,6 +249,25 @@ def _send_via_sendgrid(
         raise
 
 
+def _reply_to_address() -> str:
+    """Reply-To for every outgoing email: the same address the email body
+    names (see emails.contact_address). Without it, pressing Reply reached
+    the sending address, which nobody reads.
+
+    A failed settings read must not cost the volunteer their email, so any
+    error falls back to the configured SciTrek address.
+    """
+    try:
+        db = SessionLocal()
+        try:
+            return contact_address(db)
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("reply_to_lookup_failed")
+        return settings.scitrek_contact_email
+
+
 # Backward-compat alias — external callers (admin broadcast router) still
 # import `_send_email_via_sendgrid`. Resolved here at import time so renaming
 # the function didn't require cross-pillar edits.
@@ -259,14 +284,17 @@ def _send_email(
     autoretry_for=(Exception,), so re-raising lets the framework retry
     transient failures; persistent failures surface in docker logs.
     """
+    reply_to = _reply_to_address()
     try:
         if settings.email_mode == "sendgrid":
             _send_via_sendgrid(
-                to_email, subject, body, html_body=html_body, attachments=attachments
+                to_email, subject, body, html_body=html_body,
+                attachments=attachments, reply_to=reply_to,
             )
         else:  # "smtp" (default)
             _send_via_smtp(
-                to_email, subject, body, html_body=html_body, attachments=attachments
+                to_email, subject, body, html_body=html_body,
+                attachments=attachments, reply_to=reply_to,
             )
     except Exception:
         # Surface the failure in logs — previous silent-swallow behaviour

@@ -20,8 +20,11 @@ from app.emails import (
     _contact_instruction,
     build_signup_confirmation_email,
     build_waitlist_promotion_email,
+    contact_address,
+    send_confirmation,
     send_reminder_pre_24h,
     send_reschedule,
+    send_resignup,
 )
 from app.services.settings_service import get_app_settings
 from tests.fixtures.factories import SignupFactory, VolunteerFactory
@@ -77,7 +80,47 @@ def test_contact_instruction_uses_site_setting(db_session, seeded_signup):
 
 
 def test_contact_instruction_fallback_when_unset(db_session, seeded_signup):
-    assert _contact_instruction(seeded_signup) == "reply to this email"
+    # Replying reached the unread sending address, so the fallback is now the
+    # configured SciTrek inbox, never "reply to this email".
+    assert _contact_instruction(seeded_signup) == (
+        "email the SciTrek organizers at chem-scitrekmanager@ucsb.edu"
+    )
+
+
+def test_contact_instruction_blank_setting_falls_back(db_session, seeded_signup):
+    get_app_settings(db_session).contact_email = "   "
+    db_session.flush()
+    assert _contact_instruction(seeded_signup).endswith("chem-scitrekmanager@ucsb.edu")
+
+
+def test_contact_address_without_session():
+    assert contact_address(None) == "chem-scitrekmanager@ucsb.edu"
+
+
+def test_contact_address_without_settings_row(db_session):
+    db_session.query(models.SiteSettings).delete()
+    db_session.flush()
+    assert contact_address(db_session) == "chem-scitrekmanager@ucsb.edu"
+
+
+def test_confirmation_email_names_contact(db_session, seeded_signup):
+    body = send_confirmation(seeded_signup)
+    for part in (body["text_body"], body["html_body"]):
+        assert "chem-scitrekmanager@ucsb.edu" in part
+
+
+def test_resignup_email_names_contact_not_reply(db_session, seeded_signup):
+    body = send_resignup(seeded_signup)
+    for part in (body["text_body"], body["html_body"]):
+        assert "chem-scitrekmanager@ucsb.edu" in part
+        assert "reply to this email" not in part
+
+
+def test_signup_confirm_email_names_contact(db_session, seeded_signup, seeded_event):
+    _, html = build_signup_confirmation_email(
+        seeded_signup.volunteer, [seeded_signup], "tok" * 8, seeded_event
+    )
+    assert "chem-scitrekmanager@ucsb.edu" in html
 
 
 def test_no_template_advertises_self_cancel(db_session, seeded_signup, seeded_event):

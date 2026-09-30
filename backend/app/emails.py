@@ -204,6 +204,7 @@ def _booking_lines(booking, event) -> list[str]:
 def send_confirmation(signup: models.Signup) -> dict:
     v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
+    contact_instruction = _contact_instruction(signup)
     subject = f"Your signup for '{event.title}'"
     text_body = (
         f"Hi {vol_name},\n\n"
@@ -211,6 +212,7 @@ def send_confirmation(signup: models.Signup) -> dict:
         f"- Event: {event.title}\n"
         f"- When: {when}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
+        f"Questions or need to change something? Please {contact_instruction}.\n\n"
         "Thank you for volunteering!"
     )
     html_body = _render_html(
@@ -219,6 +221,7 @@ def send_confirmation(signup: models.Signup) -> dict:
         event_title=event.title,
         slot_when=when,
         event_location=event.location or "TBD",
+        contact_instruction=contact_instruction,
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
@@ -232,6 +235,7 @@ def send_resignup(signup: models.Signup) -> dict:
     """
     v, event, when = _booking_parts(signup)
     vol_name = f"{v.first_name} {v.last_name}"
+    contact_instruction = _contact_instruction(signup)
     subject = f"You're back on for '{event.title}'"
     text_body = (
         f"Hi {vol_name},\n\n"
@@ -240,8 +244,8 @@ def send_resignup(signup: models.Signup) -> dict:
         f"- Event: {event.title}\n"
         f"- When: {when}\n"
         f"- Where: {event.location or 'TBD'}\n\n"
-        "If you did not ask for this, reply to this email and we will take "
-        "you back off."
+        f"If you did not ask for this, please {contact_instruction} and we "
+        "will take you back off."
     )
     html_body = _render_html(
         "resignup.html",
@@ -249,6 +253,7 @@ def send_resignup(signup: models.Signup) -> dict:
         event_title=event.title,
         slot_when=when,
         event_location=event.location or "TBD",
+        contact_instruction=contact_instruction,
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
@@ -377,27 +382,37 @@ def send_reschedule(signup: models.Signup) -> dict:
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
 
+def contact_address(db) -> str:
+    """The address volunteers should write to.
+
+    The admin Site Settings value wins; while it is blank (or there is no
+    session to read it from) the configured SciTrek address applies. There is
+    deliberately no "reply to this email" fallback any more: volunteers who
+    replied reached the sending address, which nobody reads.
+    """
+    from .config import settings
+
+    contact = None
+    if db is not None:
+        row = db.query(models.SiteSettings).filter(models.SiteSettings.id == 1).first()
+        contact = ((row.contact_email if row else None) or "").strip() or None
+    return contact or settings.scitrek_contact_email
+
+
 def _contact_instruction(db_obj) -> str:
-    """How a volunteer reaches the organizers, from site settings.
+    """How a volunteer reaches the organizers.
 
     2026-08-02 read-only signups: volunteers cannot change their own
     schedule, so every email points changes at the organizers. ``db_obj``
     is any session-attached ORM row (signup/volunteer); a detached row
-    falls back to the reply-to instruction.
+    still gets the configured SciTrek address.
     """
     from sqlalchemy.orm import object_session
 
     # SessionBooking is a plain adapter, not an ORM row — reach through to the
     # commitment it wraps so a per-session email still finds the session.
     db = object_session(getattr(db_obj, "_orm_row", db_obj))
-    contact = None
-    if db is not None:
-        from .services.settings_service import get_app_settings
-
-        contact = (get_app_settings(db).contact_email or "").strip() or None
-    return (
-        f"email the SciTrek organizers at {contact}" if contact else "reply to this email"
-    )
+    return f"email the SciTrek organizers at {contact_address(db)}"
 
 
 def _manage_url_for_signup(
