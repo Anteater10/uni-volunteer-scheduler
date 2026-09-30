@@ -50,6 +50,18 @@ def _csv_safe(value) -> str:
     return s
 
 
+def _require_found(row, detail: str) -> None:
+    """404 with ``detail`` when a lookup came back empty.
+
+    One place for the check every route repeats. Several of those lookups can
+    only miss on corrupt data (a booking whose slot is gone, when the FK
+    forbids it), so keeping the raise here keeps the guard without a branch
+    per route that no request can reach.
+    """
+    if not row:
+        raise HTTPException(status_code=404, detail=detail)
+
+
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
     """Count signups holding a slot: both confirmed AND pending (phase 2)."""
     return (
@@ -65,22 +77,8 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
     )
 
 
-def _participant_payload(user: models.User, privacy: PrivacyMode) -> dict:
-    if privacy == PrivacyMode.full:
-        return {
-            "name": user.name,
-            "email": user.email,
-            "university_id": user.university_id,
-        }
-    if privacy == PrivacyMode.initials:
-        parts = user.name.split()
-        display_name = "".join(p[0].upper() for p in parts if p)
-        return {"name": display_name, "email": None, "university_id": None}
-    return {"name": "Volunteer", "email": None, "university_id": None}
-
-
 def _volunteer_participant_payload(v: models.Volunteer, privacy: PrivacyMode) -> dict:
-    """Phase 09 variant of _participant_payload for Volunteer rows (no university_id)."""
+    """Roster participant fields for a Volunteer, reduced by privacy mode."""
     # Phase 12: reconcile user/volunteer participant payload shape
     vol_name = f"{v.first_name} {v.last_name}"
     if privacy == PrivacyMode.full:
@@ -498,8 +496,7 @@ def event_analytics(
     actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     # ✅ ownership enforcement for organizers
     ensure_event_staff_access(event, actor)
@@ -591,8 +588,7 @@ def event_roster(
     actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     # ✅ ownership enforcement for organizers
     ensure_event_staff_access(event, actor)
@@ -627,9 +623,8 @@ def event_roster(
 
         for signup in signups_sorted:
             # Phase 09: signup.user removed; use signup.volunteer
-            v = signup.volunteer
-            if v:
-                volunteer_ids.add(v.id)
+            v = signup.volunteer  # volunteer_id is NOT NULL on both booking tables
+            volunteer_ids.add(v.id)
             answers = {ans.question.prompt: ans.value for ans in signup.answers}
 
             # Phase 22: join form responses (SignupResponse rows).
@@ -695,8 +690,7 @@ def export_event_csv(
     actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     # ✅ ownership enforcement for organizers
     ensure_event_staff_access(event, actor)
@@ -807,8 +801,7 @@ def admin_cancel_signup(
         .with_for_update()
         .first()
     )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     slot = (
         db.query(models.Slot)
@@ -816,12 +809,10 @@ def admin_cancel_signup(
         .with_for_update()
         .first()
     )
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    _require_found(slot, "Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -900,8 +891,7 @@ def admin_uncancel_signup(
         .with_for_update()
         .first()
     )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     slot = (
         db.query(models.Slot)
@@ -909,12 +899,10 @@ def admin_uncancel_signup(
         .with_for_update()
         .first()
     )
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    _require_found(slot, "Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -968,16 +956,13 @@ def admin_uncancel_shift_signup(
         .with_for_update(of=models.ShiftSignup)
         .first()
     )
-    if not shift_signup:
-        raise HTTPException(status_code=404, detail="Shift signup not found")
+    _require_found(shift_signup, "Shift signup not found")
 
     shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    if not shift:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    _require_found(shift, "Shift not found")
 
     event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
 
     if shift_signup.status != models.SignupStatus.cancelled:
@@ -1031,8 +1016,7 @@ def admin_add_volunteer(
     unit waitlists unless ``allow_overfill``, same choice as promote.
     """
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
     # An ended quarter is read-only history, same as event edits and reopen.
     quarter_service.ensure_event_quarter_writable(event)
@@ -1181,8 +1165,7 @@ def admin_promote_signup(
         .with_for_update()
         .first()
     )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     slot = (
         db.query(models.Slot)
@@ -1190,12 +1173,10 @@ def admin_promote_signup(
         .with_for_update()
         .first()
     )
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    _require_found(slot, "Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -1254,16 +1235,13 @@ def admin_promote_shift_signup(
         .with_for_update(of=models.ShiftSignup)
         .first()
     )
-    if not shift_signup:
-        raise HTTPException(status_code=404, detail="Shift signup not found")
+    _require_found(shift_signup, "Shift signup not found")
 
     shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    if not shift:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    _require_found(shift, "Shift not found")
 
     event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
 
     if shift_signup.status != models.SignupStatus.waitlisted:
@@ -1324,16 +1302,13 @@ def admin_cancel_shift_signup(
         .with_for_update(of=models.ShiftSignup)
         .first()
     )
-    if not shift_signup:
-        raise HTTPException(status_code=404, detail="Shift signup not found")
+    _require_found(shift_signup, "Shift signup not found")
 
     shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    if not shift:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    _require_found(shift, "Shift not found")
 
     event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
 
     # Idempotent, and checked before the attendance guard so re-clicking Cancel
@@ -1418,8 +1393,7 @@ def admin_reorder_waitlist(
     from ..services.waitlist_service import reorder_waitlist
 
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     slot = (
         db.query(models.Slot)
@@ -1481,8 +1455,7 @@ def admin_reorder_shift_waitlist(
     drop someone out of the queue by omitting them.
     """
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     shift = shift_service.lock_shift(db, shift_id)
     if not shift or str(shift.event_id) != str(event.id):
@@ -1531,8 +1504,7 @@ def admin_move_signup(
         .with_for_update()
         .first()
     )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     source_slot_id = signup.slot_id
     target_slot_id = payload.target_slot_id
@@ -1557,8 +1529,7 @@ def admin_move_signup(
         raise HTTPException(status_code=400, detail="Target slot must be in the same event")
 
     event = db.query(models.Event).filter(models.Event.id == source_slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -1657,16 +1628,13 @@ def admin_resend_signup_email(
     actor: models.User = Depends(require_staff),
 ):
     signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     slot = db.query(models.Slot).filter(models.Slot.id == signup.slot_id).first()
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    _require_found(slot, "Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -1704,8 +1672,7 @@ def notify_event_participants(
     actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     # ✅ ownership enforcement for organizers
     ensure_event_staff_access(event, actor)
@@ -2133,8 +2100,7 @@ def export_event_attendance_csv(
 ):
     """Event-level attendance CSV (admin or event owner)."""
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
 
     output = io.StringIO()
@@ -2688,8 +2654,7 @@ def admin_delete_user(
     admin_user: models.User = Depends(require_admin),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    _require_found(user, "User not found")
 
     if str(user.id) == str(admin_user.id):
         raise HTTPException(status_code=400, detail="Admin cannot delete their own account")
@@ -2748,8 +2713,7 @@ def ccpa_export(
 ):
     """CCPA data access request: export all user data as JSON."""
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    _require_found(user, "User not found")
 
     # Link User to Volunteer by matching email address, then collect their signups.
     vol = db.query(models.Volunteer).filter(models.Volunteer.email == user.email).first()
@@ -2815,8 +2779,7 @@ def ccpa_delete(
 ):
     """CCPA deletion request: soft-delete + anonymize PII. Preserves signups for analytics."""
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    _require_found(user, "User not found")
 
     if user.deleted_at is not None:
         raise HTTPException(status_code=409, detail="User already deleted")
