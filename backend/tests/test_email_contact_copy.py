@@ -177,3 +177,86 @@ def test_link_uses_site_setting_and_escapes_it(db_session, seeded_signup):
     db_session.flush()
     html = send_confirmation(seeded_signup)["html_body"]
     assert 'href="mailto:a&quot;b@ucsb.edu"' in html
+
+
+# --- Edge cases ------------------------------------------------------------
+
+
+@pytest.fixture
+def shift_booking(db_session, seeded_event):
+    """A shift commitment with one period session, for the shift email paths."""
+    from tests.fixtures.helpers import book_shift, make_shift
+
+    shift = make_shift(db_session, seeded_event.id, name="Tue P1")
+    session = models.Slot(
+        id=uuid.uuid4(), event_id=seeded_event.id, shift_id=shift.id, sort_order=0,
+        start_time=datetime.now(timezone.utc) + timedelta(days=1),
+        end_time=datetime.now(timezone.utc) + timedelta(days=1, hours=1),
+        capacity=5, current_count=0, slot_type=models.SlotType.PERIOD,
+        date=date_type.today(),
+    )
+    db_session.add(session)
+    db_session.flush()
+    _bind_factories(db_session)
+    volunteer = VolunteerFactory(first_name="Sam")
+    return book_shift(db_session, shift, volunteer), session
+
+
+def test_shift_commitment_email_names_contact(db_session, shift_booking):
+    ss, _ = shift_booking
+    body = send_confirmation(ss)
+    assert "chem-scitrekmanager@ucsb.edu" in body["text_body"]
+    assert NOWRAP_LINK in body["html_body"]
+
+
+def test_per_session_email_finds_site_setting_through_adapter(db_session, shift_booking):
+    """SessionBooking is not an ORM row; the contact lookup must reach the
+    wrapped ShiftSignup's session, or it would silently ignore Site Settings."""
+    from app.emails import SessionBooking
+
+    get_app_settings(db_session).contact_email = "team@ucsb.edu"
+    db_session.flush()
+    ss, session = shift_booking
+    body = send_reschedule(SessionBooking(ss, session))
+    assert "team@ucsb.edu" in body["text_body"]
+    assert "chem-scitrekmanager" not in body["text_body"]
+
+
+def test_detached_row_falls_back(db_session, seeded_signup):
+    db_session.expunge(seeded_signup)
+    assert _contact_instruction(seeded_signup).endswith("chem-scitrekmanager@ucsb.edu")
+
+
+def test_site_setting_whitespace_trimmed_in_body(db_session, seeded_signup):
+    get_app_settings(db_session).contact_email = "  team@ucsb.edu  "
+    db_session.flush()
+    body = send_confirmation(seeded_signup)
+    assert "at team@ucsb.edu." in body["text_body"]
+    assert 'href="mailto:team@ucsb.edu"' in body["html_body"]
+
+
+def test_configured_fallback_is_overridable(db_session, seeded_signup, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "scitrek_contact_email", "other@ucsb.edu")
+    assert _contact_instruction(seeded_signup).endswith("other@ucsb.edu")
+
+
+def test_no_email_says_reply_to_this_email(db_session, seeded_signup, seeded_event):
+    """Replies reach an unread inbox, so no email may still tell people to reply."""
+    _, signup_confirm = build_signup_confirmation_email(
+        seeded_signup.volunteer, [seeded_signup], "tok" * 8, seeded_event
+    )
+    _, promotion = build_waitlist_promotion_email(
+        seeded_signup.volunteer, seeded_signup, "tok" * 8, seeded_event
+    )
+    parts = [signup_confirm, promotion]
+    for body in (
+        send_confirmation(seeded_signup),
+        send_resignup(seeded_signup),
+        send_reschedule(seeded_signup),
+        send_reminder_pre_24h(seeded_signup),
+    ):
+        parts += [body["text_body"], body["html_body"]]
+    for part in parts:
+        assert "reply to this email" not in part.lower()

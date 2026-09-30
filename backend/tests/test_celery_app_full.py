@@ -1049,3 +1049,41 @@ def test_copilot_email_blocked_by_daily_limit(
     assert any(
         "copilot_email_skipped_daily_cap" in r.message for r in caplog.records
     )
+
+
+def test_send_email_still_sends_when_reply_to_lookup_fails(monkeypatch):
+    """A broken settings read must not cost the volunteer their email."""
+    monkeypatch.setattr(celery_mod.settings, "email_mode", "smtp")
+
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(celery_mod, "SessionLocal", boom)
+    called = []
+    monkeypatch.setattr(celery_mod, "_send_via_smtp", lambda *a, **k: called.append(k))
+    _send_email("to@x.com", "s", "b")
+    assert called[0]["reply_to"] == "chem-scitrekmanager@ucsb.edu"
+
+
+def test_send_via_sendgrid_omits_reply_to_when_none(monkeypatch):
+    monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", "SG.test")
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    sg_instance = MagicMock()
+    with patch.object(celery_mod, "SendGridAPIClient", return_value=sg_instance):
+        _send_via_sendgrid("to@x.com", "subj", "plain")
+    assert "reply_to" not in sg_instance.send.call_args.args[0].get()
+
+
+def test_reply_to_closes_its_session(monkeypatch):
+    closed = []
+
+    class _S:
+        def query(self, *a, **k):
+            raise RuntimeError("no db")
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(celery_mod, "SessionLocal", _S)
+    assert celery_mod._reply_to_address() == "chem-scitrekmanager@ucsb.edu"
+    assert closed == [True]
