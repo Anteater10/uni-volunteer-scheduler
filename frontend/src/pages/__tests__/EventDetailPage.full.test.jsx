@@ -550,7 +550,8 @@ describe("submitting", () => {
     renderPage();
     await pickAndSubmit();
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/Too many submissions/)));
-    expect(screen.getByText("Your information")).toBeInTheDocument();
+    // The toast fires a render before the form comes back — wait for it.
+    expect(await screen.findByText("Your information")).toBeInTheDocument();
   });
 
   it("maps 422 field errors onto the form", async () => {
@@ -594,6 +595,8 @@ describe("submitting", () => {
     renderPage();
     await pickAndSubmit();
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/now full/)));
+    // Back to browsing: the Sign up button is live again and the form is gone.
+    await waitFor(() => expect(tableSignUp()).toHaveTextContent("Selected"));
     expect(screen.queryByText("Your information")).not.toBeInTheDocument();
   });
 

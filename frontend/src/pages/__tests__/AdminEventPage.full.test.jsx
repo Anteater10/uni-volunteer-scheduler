@@ -232,7 +232,7 @@ describe("form fields", () => {
     await userEvent.click(screen.getByRole("button", { name: /save form-fields/i }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Form fields saved"));
     expect(api.admin.setEventFormSchema).toHaveBeenCalledWith("evt-1", [{ id: "f" }]);
-    expect(screen.queryByTestId("form-fields")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("form-fields")).not.toBeInTheDocument());
   });
 
   it("says 1 question in the singular and reports a failed save", async () => {
@@ -518,7 +518,7 @@ describe("waitlist reorder", () => {
     await userEvent.click(within(modal).getByRole("button", { name: /save order/i }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Waitlist order saved."));
     expect(api.admin.reorderWaitlist).toHaveBeenCalledWith("evt-1", "slot-o", ["w1", "w2", "w3"]);
-    expect(screen.queryByTestId("reorder-modal")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("reorder-modal")).not.toBeInTheDocument());
   });
 
   it("reorders a shift waitlist through the shift route and reports failures", async () => {
