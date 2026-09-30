@@ -141,3 +141,39 @@ def test_no_template_advertises_self_cancel(db_session, seeded_signup, seeded_ev
 
     body = send_reschedule(seeded_signup)
     assert "please cancel your signup" not in body["text_body"]
+
+
+NOWRAP_LINK = (
+    '<a href="mailto:chem-scitrekmanager@ucsb.edu" '
+    'style="white-space:nowrap;color:#0b5ed7;">chem-scitrekmanager@ucsb.edu</a>'
+)
+
+
+def test_every_html_email_renders_address_as_unbroken_link(
+    db_session, seeded_signup, seeded_event
+):
+    """The address used to wrap at its hyphen ("chem-" / "scitrekmanager@..."),
+    which read as two words. Each HTML email carries it as one nowrap link."""
+    _, signup_confirm = build_signup_confirmation_email(
+        seeded_signup.volunteer, [seeded_signup], "tok" * 8, seeded_event
+    )
+    _, promotion = build_waitlist_promotion_email(
+        seeded_signup.volunteer, seeded_signup, "tok" * 8, seeded_event
+    )
+    htmls = [
+        signup_confirm,
+        promotion,
+        send_confirmation(seeded_signup)["html_body"],
+        send_resignup(seeded_signup)["html_body"],
+        send_reschedule(seeded_signup)["html_body"],
+    ]
+    for html in htmls:
+        assert NOWRAP_LINK in html
+        assert "$contact" not in html  # no unfilled template variable
+
+
+def test_link_uses_site_setting_and_escapes_it(db_session, seeded_signup):
+    get_app_settings(db_session).contact_email = 'a"b@ucsb.edu'
+    db_session.flush()
+    html = send_confirmation(seeded_signup)["html_body"]
+    assert 'href="mailto:a&quot;b@ucsb.edu"' in html

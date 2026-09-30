@@ -221,7 +221,7 @@ def send_confirmation(signup: models.Signup) -> dict:
         event_title=event.title,
         slot_when=when,
         event_location=event.location or "TBD",
-        contact_instruction=contact_instruction,
+        contact_email=_contact_email(signup),
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
@@ -253,7 +253,7 @@ def send_resignup(signup: models.Signup) -> dict:
         event_title=event.title,
         slot_when=when,
         event_location=event.location or "TBD",
-        contact_instruction=contact_instruction,
+        contact_email=_contact_email(signup),
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
@@ -377,7 +377,7 @@ def send_reschedule(signup: models.Signup) -> dict:
         event_title=event.title,
         slot_when=when,
         event_location=event.location or "TBD",
-        contact_instruction=contact_instruction,
+        contact_email=_contact_email(signup),
     )
     return {"to": v.email, "subject": subject, "text_body": text_body, "html_body": html_body}
 
@@ -399,20 +399,28 @@ def contact_address(db) -> str:
     return contact or settings.scitrek_contact_email
 
 
-def _contact_instruction(db_obj) -> str:
-    """How a volunteer reaches the organizers.
+def _contact_email(db_obj) -> str:
+    """``contact_address`` for any session-attached ORM row (signup/volunteer);
+    a detached row still gets the configured SciTrek address.
 
-    2026-08-02 read-only signups: volunteers cannot change their own
-    schedule, so every email points changes at the organizers. ``db_obj``
-    is any session-attached ORM row (signup/volunteer); a detached row
-    still gets the configured SciTrek address.
+    HTML templates take this bare address rather than ``_contact_instruction``
+    so they can render it as a mailto link that never wraps: the address
+    breaks at its hyphen ("chem-" / "scitrekmanager@...") otherwise.
     """
     from sqlalchemy.orm import object_session
 
     # SessionBooking is a plain adapter, not an ORM row — reach through to the
     # commitment it wraps so a per-session email still finds the session.
-    db = object_session(getattr(db_obj, "_orm_row", db_obj))
-    return f"email the SciTrek organizers at {contact_address(db)}"
+    return contact_address(object_session(getattr(db_obj, "_orm_row", db_obj)))
+
+
+def _contact_instruction(db_obj) -> str:
+    """How a volunteer reaches the organizers, for plain-text bodies.
+
+    2026-08-02 read-only signups: volunteers cannot change their own
+    schedule, so every email points changes at the organizers.
+    """
+    return f"email the SciTrek organizers at {_contact_email(db_obj)}"
 
 
 def _manage_url_for_signup(
@@ -714,7 +722,7 @@ def build_signup_confirmation_email(
         confirm_url=confirm_url,
         slot_list="\n".join(slot_lines),
         calendar_note=calendar_note,
-        contact_instruction=_contact_instruction(volunteer),
+        contact_email=_contact_email(volunteer),
     )
     subject = f"Confirm your SciTrek volunteer signup — {event.title}"
     return subject, html
@@ -803,7 +811,7 @@ def build_waitlist_promotion_email(
         event_title=event.title,
         confirm_url=confirm_url,
         slot_line=slot_line,
-        contact_instruction=_contact_instruction(signup),
+        contact_email=_contact_email(signup),
     )
     subject = f"A spot opened up — confirm your SciTrek signup for {event.title}"
     return subject, html
