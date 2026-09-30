@@ -398,6 +398,77 @@ def test_send_email_reraises_on_exception(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
+# Reply-To — pressing Reply must reach a person, not the sending address
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode,target", [("smtp", "_send_via_smtp"), ("sendgrid", "_send_via_sendgrid")])
+def test_send_email_passes_reply_to(monkeypatch, patch_session_local, mode, target):
+    monkeypatch.setattr(celery_mod.settings, "email_mode", mode)
+    called = []
+    monkeypatch.setattr(celery_mod, target, lambda *a, **k: called.append(k))
+    _send_email("to@x.com", "s", "b")
+    assert called[0]["reply_to"] == "chem-scitrekmanager@ucsb.edu"
+
+
+def test_reply_to_uses_site_setting(db_session, patch_session_local):
+    from app.services.settings_service import get_app_settings
+
+    get_app_settings(db_session).contact_email = "  team@ucsb.edu "
+    db_session.flush()
+    assert celery_mod._reply_to_address() == "team@ucsb.edu"
+
+
+def test_reply_to_falls_back_when_settings_read_fails(monkeypatch, caplog):
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(celery_mod, "SessionLocal", boom)
+    import logging
+    with caplog.at_level(logging.ERROR, logger="app.celery_app"):
+        assert celery_mod._reply_to_address() == "chem-scitrekmanager@ucsb.edu"
+    assert any("reply_to_lookup_failed" in r.message for r in caplog.records)
+
+
+def test_send_via_smtp_sets_reply_to_header(monkeypatch):
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    monkeypatch.setattr(celery_mod.settings, "smtp_use_tls", False)
+    monkeypatch.setattr(celery_mod.settings, "smtp_username", None)
+    smtp_instance = MagicMock()
+    smtp_cm = MagicMock()
+    smtp_cm.__enter__.return_value = smtp_instance
+    smtp_cm.__exit__.return_value = False
+    with patch.object(celery_mod.smtplib, "SMTP", return_value=smtp_cm):
+        _send_via_smtp("to@x.com", "s", "b", reply_to="help@ucsb.edu")
+    msg = smtp_instance.send_message.call_args.args[0]
+    assert msg["Reply-To"] == "help@ucsb.edu"
+
+
+def test_send_via_smtp_omits_reply_to_when_none(monkeypatch):
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    monkeypatch.setattr(celery_mod.settings, "smtp_use_tls", False)
+    monkeypatch.setattr(celery_mod.settings, "smtp_username", None)
+    smtp_instance = MagicMock()
+    smtp_cm = MagicMock()
+    smtp_cm.__enter__.return_value = smtp_instance
+    smtp_cm.__exit__.return_value = False
+    with patch.object(celery_mod.smtplib, "SMTP", return_value=smtp_cm):
+        _send_via_smtp("to@x.com", "s", "b")
+    msg = smtp_instance.send_message.call_args.args[0]
+    assert msg["Reply-To"] is None
+
+
+def test_send_via_sendgrid_sets_reply_to(monkeypatch):
+    monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", "SG.test")
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    sg_instance = MagicMock()
+    with patch.object(celery_mod, "SendGridAPIClient", return_value=sg_instance):
+        _send_via_sendgrid("to@x.com", "subj", "plain", reply_to="help@ucsb.edu")
+    sent_message = sg_instance.send.call_args.args[0]
+    assert sent_message.get()["reply_to"]["email"] == "help@ucsb.edu"
+
+
+# ---------------------------------------------------------------------------
 # send_email_notification — kind branch + user_id branch
 # ---------------------------------------------------------------------------
 
@@ -978,3 +1049,41 @@ def test_copilot_email_blocked_by_daily_limit(
     assert any(
         "copilot_email_skipped_daily_cap" in r.message for r in caplog.records
     )
+
+
+def test_send_email_still_sends_when_reply_to_lookup_fails(monkeypatch):
+    """A broken settings read must not cost the volunteer their email."""
+    monkeypatch.setattr(celery_mod.settings, "email_mode", "smtp")
+
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(celery_mod, "SessionLocal", boom)
+    called = []
+    monkeypatch.setattr(celery_mod, "_send_via_smtp", lambda *a, **k: called.append(k))
+    _send_email("to@x.com", "s", "b")
+    assert called[0]["reply_to"] == "chem-scitrekmanager@ucsb.edu"
+
+
+def test_send_via_sendgrid_omits_reply_to_when_none(monkeypatch):
+    monkeypatch.setattr(celery_mod.settings, "sendgrid_api_key", "SG.test")
+    monkeypatch.setattr(celery_mod.settings, "email_from_address", "from@x.com")
+    sg_instance = MagicMock()
+    with patch.object(celery_mod, "SendGridAPIClient", return_value=sg_instance):
+        _send_via_sendgrid("to@x.com", "subj", "plain")
+    assert "reply_to" not in sg_instance.send.call_args.args[0].get()
+
+
+def test_reply_to_closes_its_session(monkeypatch):
+    closed = []
+
+    class _S:
+        def query(self, *a, **k):
+            raise RuntimeError("no db")
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(celery_mod, "SessionLocal", _S)
+    assert celery_mod._reply_to_address() == "chem-scitrekmanager@ucsb.edu"
+    assert closed == [True]
