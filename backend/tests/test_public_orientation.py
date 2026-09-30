@@ -166,3 +166,118 @@ class TestOrientationCheckBooked:
             params={"email": "booked@example.com"},
         ).json()
         assert data["has_booked_orientation"] is False
+
+    def test_mixed_case_email_matches_booking(self, client, db_session):
+        event = self._setup(db_session, SignupStatus.confirmed)
+        data = client.get(
+            "/api/v1/public/orientation-check",
+            params={"email": "Booked@Example.COM", "event_id": str(event.id)},
+        ).json()
+        assert data["has_booked_orientation"] is True
+
+    def test_unknown_event_id_is_false_not_error(self, client, db_session):
+        self._setup(db_session, SignupStatus.pending)
+        resp = client.get(
+            "/api/v1/public/orientation-check",
+            params={"email": "booked@example.com", "event_id": str(uuid.uuid4())},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["has_booked_orientation"] is False
+
+    def test_unknown_email_same_shape(self, client, db_session):
+        event = self._setup(db_session, SignupStatus.pending)
+        known = client.get(
+            "/api/v1/public/orientation-check",
+            params={"email": "booked@example.com", "event_id": str(event.id)},
+        ).json()
+        unknown = client.get(
+            "/api/v1/public/orientation-check",
+            params={"email": "nobody@example.com", "event_id": str(event.id)},
+        ).json()
+        assert set(known) == set(unknown)
+        assert unknown["has_booked_orientation"] is False
+
+
+class TestHasBookedOrientationStatuses:
+    """Which orientation statuses count as "booked" — the service rule the
+    signup gate and the pre-check both use."""
+
+    @pytest.mark.parametrize(
+        "status,expected",
+        [
+            (SignupStatus.pending, True),
+            (SignupStatus.confirmed, True),
+            (SignupStatus.waitlisted, True),
+            # In orientation right now, before staff close it and write credit.
+            (SignupStatus.checked_in, True),
+            # Finished: attendance earns credit instead, and a revoked credit
+            # must not be re-derived from the old booking.
+            (SignupStatus.attended, False),
+            (SignupStatus.no_show, False),
+            (SignupStatus.cancelled, False),
+        ],
+    )
+    def test_status(self, db_session, status, expected):
+        from app.services.orientation_service import has_booked_orientation
+        from tests.fixtures.helpers import make_user
+
+        owner = make_user(db_session)
+        vol = _make_volunteer(db_session, email=f"st-{status.value}@example.com")
+        event = _make_event(db_session, owner.id)
+        slot = _make_orientation_slot(db_session, event.id)
+        db_session.add(
+            Signup(id=uuid.uuid4(), volunteer_id=vol.id, slot_id=slot.id, status=status)
+        )
+        db_session.flush()
+        assert has_booked_orientation(db_session, vol.email, event.id) is expected
+
+    def test_no_bookings_at_all(self, db_session):
+        from app.services.orientation_service import has_booked_orientation
+        from tests.fixtures.helpers import make_user
+
+        event = _make_event(db_session, make_user(db_session).id)
+        assert has_booked_orientation(db_session, "ghost@example.com", event.id) is False
+
+    def test_legacy_module_slug_without_template_groups_by_slug(self, db_session):
+        """An event whose module_slug has no Module row uses the raw slug as
+        its family, so two such events with the same slug still match."""
+        from app.services.orientation_service import has_booked_orientation
+        from tests.fixtures.helpers import make_user
+
+        owner = make_user(db_session)
+        vol = _make_volunteer(db_session, email="legacy@example.com")
+        booked = _make_event(db_session, owner.id)
+        booked.module_slug = "legacy-mod"
+        slot = _make_orientation_slot(db_session, booked.id)
+        target = _make_event(db_session, owner.id)
+        target.module_slug = "legacy-mod"
+        other = _make_event(db_session, owner.id)
+        other.module_slug = "different-mod"
+        db_session.add(
+            Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
+        )
+        db_session.flush()
+        assert has_booked_orientation(db_session, vol.email, target.id) is True
+        assert has_booked_orientation(db_session, vol.email, other.id) is False
+
+    def test_period_signup_is_not_an_orientation_booking(self, db_session):
+        """Only ORIENTATION slots count — a session inside a shift does not."""
+        from app.services.orientation_service import has_booked_orientation
+        from tests.fixtures.helpers import make_shift, make_user
+
+        owner = make_user(db_session)
+        vol = _make_volunteer(db_session, email="period@example.com")
+        event = _make_event(db_session, owner.id)
+        shift = make_shift(db_session, event.id)
+        period = Slot(
+            id=uuid.uuid4(), event_id=event.id, shift_id=shift.id,
+            start_time=datetime.now(timezone.utc), end_time=datetime.now(timezone.utc) + timedelta(hours=1),
+            capacity=5, current_count=0, slot_type=SlotType.PERIOD, date=date_type.today(),
+        )
+        db_session.add(period)
+        db_session.flush()
+        db_session.add(
+            Signup(volunteer_id=vol.id, slot_id=period.id, status=SignupStatus.confirmed)
+        )
+        db_session.flush()
+        assert has_booked_orientation(db_session, vol.email, event.id) is False

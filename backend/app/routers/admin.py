@@ -1034,6 +1034,8 @@ def admin_add_volunteer(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     ensure_event_staff_access(event, actor)
+    # An ended quarter is read-only history, same as event edits and reopen.
+    quarter_service.ensure_event_quarter_writable(event)
 
     phone_e164 = None
     if payload.phone and payload.phone.strip():
@@ -1042,53 +1044,15 @@ def admin_add_volunteer(
         except InvalidPhoneError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    volunteer = upsert_volunteer(
-        db,
-        email=str(payload.email),
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        phone_e164=phone_e164,
-    )
-
-    def _status(unit) -> models.SignupStatus:
-        if unit.current_count < unit.capacity or payload.allow_overfill:
-            unit.current_count += 1
-            return models.SignupStatus.confirmed
-        return models.SignupStatus.waitlisted
-
-    def _already(existing, what: str) -> None:
-        if existing is None:
-            return
-        hint = (
-            " It was cancelled — use Reinstate on the roster instead."
-            if existing.status == models.SignupStatus.cancelled
-            else ""
-        )
-        raise HTTPException(
-            status_code=409,
-            detail=f"{volunteer.email} is already on this {what}.{hint}",
-        )
-
-    items: list[schemas.AdminAddVolunteerItem] = []
-    shift_signups: list[models.ShiftSignup] = []
-    signups: list[models.Signup] = []
-
+    # 1. Lock and check every unit before writing anything, so one bad id
+    # can never leave another unit's seat taken.
+    shifts: list[models.Shift] = []
     for shift_id in dict.fromkeys(payload.shift_ids):
         shift = shift_service.lock_shift(db, shift_id)
         if shift is None or str(shift.event_id) != str(event.id):
             raise HTTPException(status_code=404, detail="Shift not found on this event")
-        _already(
-            db.query(models.ShiftSignup)
-            .filter_by(volunteer_id=volunteer.id, shift_id=shift.id)
-            .first(),
-            "shift",
-        )
-        ss = models.ShiftSignup(
-            volunteer_id=volunteer.id, shift_id=shift.id, status=_status(shift)
-        )
-        db.add(ss)
-        shift_signups.append(ss)
-
+        shifts.append(shift)
+    slots: list[models.Slot] = []
     for slot_id in dict.fromkeys(payload.slot_ids):
         slot = (
             db.query(models.Slot)
@@ -1104,15 +1068,64 @@ def admin_add_volunteer(
             raise HTTPException(
                 status_code=404, detail="Orientation session not found on this event"
             )
-        _already(
+        slots.append(slot)
+
+    # 2. The volunteer, then refuse duplicates — still before any booking.
+    volunteer = upsert_volunteer(
+        db,
+        email=str(payload.email),
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        phone_e164=phone_e164,
+    )
+
+    def _refuse_if_booked(existing, what: str) -> None:
+        if existing is None:
+            return
+        hint = (
+            " It was cancelled — use Reinstate on the roster instead."
+            if existing.status == models.SignupStatus.cancelled
+            else ""
+        )
+        email = volunteer.email
+        db.rollback()  # drop the volunteer insert along with the request
+        raise HTTPException(
+            status_code=409,
+            detail=f"{email} is already on this {what}.{hint}",
+        )
+
+    for shift in shifts:
+        _refuse_if_booked(
+            db.query(models.ShiftSignup)
+            .filter_by(volunteer_id=volunteer.id, shift_id=shift.id)
+            .first(),
+            "shift",
+        )
+    for slot in slots:
+        _refuse_if_booked(
             db.query(models.Signup)
             .filter_by(volunteer_id=volunteer.id, slot_id=slot.id)
             .first(),
             "orientation session",
         )
-        s = models.Signup(volunteer_id=volunteer.id, slot_id=slot.id, status=_status(slot))
-        db.add(s)
-        signups.append(s)
+
+    # 3. Book. A full unit waitlists unless staff chose to overfill.
+    def _status(unit) -> models.SignupStatus:
+        if unit.current_count < unit.capacity or payload.allow_overfill:
+            unit.current_count += 1
+            return models.SignupStatus.confirmed
+        return models.SignupStatus.waitlisted
+
+    items: list[schemas.AdminAddVolunteerItem] = []
+    shift_signups = [
+        models.ShiftSignup(volunteer_id=volunteer.id, shift_id=sh.id, status=_status(sh))
+        for sh in shifts
+    ]
+    signups = [
+        models.Signup(volunteer_id=volunteer.id, slot_id=sl.id, status=_status(sl))
+        for sl in slots
+    ]
+    db.add_all([*shift_signups, *signups])
 
     db.flush()
     for ss in shift_signups:

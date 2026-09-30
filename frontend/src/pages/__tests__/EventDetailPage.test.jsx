@@ -647,6 +647,22 @@ describe("EventDetailPage — orientation requirement gate", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("still shows the modal when neither credit nor a booking exists", async () => {
+    api.public.orientationCheck.mockResolvedValue({
+      has_credit: false,
+      has_booked_orientation: false,
+    });
+
+    const { container } = renderDetailPage();
+    await screen.findByText("CRISPR at Carpinteria HS");
+    await selectPeriodAndSubmit(container);
+
+    expect(
+      await screen.findByRole("button", { name: /pick an orientation session/i }),
+    ).toBeInTheDocument();
+    expect(api.public.createSignup).not.toHaveBeenCalled();
+  });
+
   it("proceeds to submit when the credit check errors (server decides)", async () => {
     api.public.orientationCheck.mockRejectedValue(new Error("boom"));
     api.public.createSignup.mockResolvedValue({

@@ -286,3 +286,219 @@ def test_blank_phone_is_allowed(client, db_session, sent):
     db_session.commit()
     resp = _post(client, admin, event, _body(shift_ids=[shift.id], phone="  "))
     assert resp.status_code == 201, resp.text
+
+
+# --- Edge cases ------------------------------------------------------------
+
+
+def test_unauthenticated_is_401(client, db_session, sent):
+    event = _event(db_session, _admin(db_session))
+    db_session.commit()
+    resp = client.post(
+        f"/api/v1/admin/events/{event.id}/add-volunteer",
+        json=_body(shift_ids=[uuid.uuid4()]),
+    )
+    assert resp.status_code == 401
+
+
+def test_ended_quarter_is_read_only(client, db_session, sent):
+    from tests.fixtures.factories import AcademicQuarterFactory
+
+    AcademicQuarterFactory._meta.sqlalchemy_session = db_session
+    q = AcademicQuarterFactory(
+        season=models.Quarter.WINTER, year=2024,
+        start_date=date_type(2024, 1, 8), end_date=date_type(2024, 3, 15),
+    )
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    event.quarter_id = q.id
+    shift = _shift(db_session, event.id)
+    db_session.commit()
+
+    resp = _post(client, admin, event, _body(shift_ids=[shift.id]))
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "QUARTER_READONLY"
+    db_session.expire_all()
+    assert db_session.query(models.ShiftSignup).count() == 0
+
+
+@pytest.mark.parametrize("field", ["first_name", "last_name"])
+def test_blank_name_is_422(client, db_session, sent, field):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    shift = _shift(db_session, event.id)
+    db_session.commit()
+    resp = _post(client, admin, event, _body(shift_ids=[shift.id], **{field: "   "}))
+    assert resp.status_code == 422
+
+
+def test_names_are_trimmed(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    shift = _shift(db_session, event.id)
+    db_session.commit()
+    _post(client, admin, event, _body(shift_ids=[shift.id], first_name="  Maya "))
+    db_session.expire_all()
+    vol = db_session.query(models.Volunteer).filter_by(email="maya@example.com").one()
+    assert vol.first_name == "Maya"
+
+
+def test_same_id_twice_books_once(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    shift = _shift(db_session, event.id)
+    orient = _orientation(db_session, event.id)
+    db_session.commit()
+
+    resp = _post(
+        client, admin, event,
+        _body(shift_ids=[shift.id, shift.id], slot_ids=[orient.id, orient.id]),
+    )
+    assert resp.status_code == 201, resp.text
+    assert len(resp.json()["bookings"]) == 2
+    db_session.expire_all()
+    assert db_session.get(models.Shift, shift.id).current_count == 1
+    assert db_session.get(models.Slot, orient.id).current_count == 1
+
+
+def test_one_bad_unit_books_nothing(client, db_session, sent):
+    """All or nothing: a valid shift followed by a unit from another event must
+    not leave the first seat taken."""
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    other = _event(db_session, admin)
+    good = _shift(db_session, event.id)
+    bad = _shift(db_session, other.id)
+    db_session.commit()
+
+    resp = _post(client, admin, event, _body(shift_ids=[good.id, bad.id]))
+    assert resp.status_code == 404
+    db_session.expire_all()
+    assert db_session.query(models.ShiftSignup).count() == 0
+    assert db_session.get(models.Shift, good.id).current_count == 0
+    assert db_session.query(models.AuditLog).filter_by(action="admin_add_volunteer").count() == 0
+    assert sent == []
+
+
+def test_unknown_ids_are_404(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    db_session.commit()
+    assert _post(client, admin, event, _body(shift_ids=[uuid.uuid4()])).status_code == 404
+    assert _post(client, admin, event, _body(slot_ids=[uuid.uuid4()])).status_code == 404
+
+
+def test_too_many_ids_is_422(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    db_session.commit()
+    ids = [uuid.uuid4() for _ in range(21)]
+    assert _post(client, admin, event, _body(shift_ids=ids)).status_code == 422
+
+
+def test_invalid_email_is_422(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    shift = _shift(db_session, event.id)
+    db_session.commit()
+    resp = _post(client, admin, event, _body(shift_ids=[shift.id], email="not-an-email"))
+    assert resp.status_code == 422
+
+
+def test_mixed_case_email_matches_existing_volunteer(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    shift = _shift(db_session, event.id)
+    db_session.add(models.Volunteer(email="maya@example.com", first_name="Maya", last_name="L"))
+    db_session.commit()
+
+    resp = _post(client, admin, event, _body(shift_ids=[shift.id], email="Maya@Example.COM"))
+    assert resp.status_code == 201, resp.text
+    db_session.expire_all()
+    assert db_session.query(models.Volunteer).filter(
+        models.Volunteer.email.ilike("maya@example.com")
+    ).count() == 1
+
+
+def test_duplicate_waitlisted_is_409_without_reinstate_hint(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    shift = _shift(db_session, event.id, capacity=1, current_count=1)
+    db_session.commit()
+
+    _post(client, admin, event, _body(shift_ids=[shift.id]))  # waitlisted
+    resp = _post(client, admin, event, _body(shift_ids=[shift.id]))
+    assert resp.status_code == 409
+    assert "Reinstate" not in resp.text
+
+
+def test_mixed_confirmed_and_waitlisted_emails_only_confirmed(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    open_shift = _shift(db_session, event.id)
+    full_orient = _orientation(db_session, event.id, capacity=1, current_count=1)
+    db_session.commit()
+
+    resp = _post(
+        client, admin, event, _body(shift_ids=[open_shift.id], slot_ids=[full_orient.id])
+    )
+    statuses = {b.get("shift_id") or b.get("slot_id"): b["status"] for b in resp.json()["bookings"]}
+    assert statuses[str(open_shift.id)] == "confirmed"
+    assert statuses[str(full_orient.id)] == "waitlisted"
+    assert [k.get("shift_signup_id") is not None for k in sent] == [True]
+
+
+def test_full_orientation_overfill_confirms(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    orient = _orientation(db_session, event.id, capacity=1, current_count=1)
+    db_session.commit()
+
+    resp = _post(client, admin, event, _body(slot_ids=[orient.id], allow_overfill=True))
+    assert resp.json()["bookings"][0]["status"] == "confirmed"
+    db_session.expire_all()
+    assert db_session.get(models.Slot, orient.id).current_count == 2
+    assert [k.get("signup_id") is not None for k in sent] == [True]
+
+
+def test_staff_added_orientation_lets_volunteer_book_module_publicly(
+    client, db_session, sent, monkeypatch
+):
+    """The two halves together: staff add her orientation by hand, then she
+    books the module herself on the public form."""
+    monkeypatch.setattr(
+        "app.celery_app.send_signup_confirmation_email.delay", lambda *a, **k: None
+    )
+    from app.models import Module
+
+    db_session.add(Module(
+        slug="bio-intro", name="Bio", default_capacity=20, duration_minutes=60,
+        session_count=1, family_key="bio",
+    ))
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    shift = _shift(db_session, event.id)
+    orient = _orientation(db_session, event.id)
+    db_session.commit()
+
+    assert _post(client, admin, event, _body(slot_ids=[orient.id])).status_code == 201
+    resp = client.post("/api/v1/public/signups", json={
+        "first_name": "Maya", "last_name": "Lopez", "email": "maya@example.com",
+        "phone": "805-555-1234", "slot_ids": [], "shift_ids": [str(shift.id)],
+    })
+    assert resp.status_code == 201, resp.text
+
+
+def test_duplicate_second_unit_books_nothing(client, db_session, sent):
+    admin = _admin(db_session)
+    event = _event(db_session, admin)
+    first = _shift(db_session, event.id)
+    already = _shift(db_session, event.id)
+    db_session.commit()
+
+    _post(client, admin, event, _body(shift_ids=[already.id]))
+    resp = _post(client, admin, event, _body(shift_ids=[first.id, already.id]))
+    assert resp.status_code == 409
+    db_session.expire_all()
+    assert db_session.get(models.Shift, first.id).current_count == 0
+    assert db_session.query(models.ShiftSignup).filter_by(shift_id=first.id).count() == 0

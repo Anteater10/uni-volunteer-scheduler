@@ -173,6 +173,66 @@ describe("AddVolunteerModal", () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Volunteer added."));
   });
 
+  it("treats whitespace-only names as missing", async () => {
+    renderModal();
+    await userEvent.type(screen.getByLabelText(/first name/i), "   ");
+    await userEvent.type(screen.getByLabelText(/last name/i), "Lopez");
+    await userEvent.type(screen.getByLabelText(/^email$/i), "maya@example.com");
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /^add volunteer$/i }));
+    expect(screen.getByText(/first name, last name and email are required/i)).toBeInTheDocument();
+    expect(api.admin.addVolunteer).not.toHaveBeenCalled();
+  });
+
+  it("trims names and email before sending", async () => {
+    api.admin.addVolunteer.mockResolvedValue({ volunteer_id: "v-1", bookings: [] });
+    renderModal();
+    await userEvent.type(screen.getByLabelText(/first name/i), "  Maya ");
+    await userEvent.type(screen.getByLabelText(/last name/i), " Lopez");
+    await userEvent.type(screen.getByLabelText(/^email$/i), " maya@example.com ");
+    await userEvent.type(screen.getByLabelText(/phone/i), "   ");
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /^add volunteer$/i }));
+    await waitFor(() => expect(api.admin.addVolunteer).toHaveBeenCalled());
+    const body = api.admin.addVolunteer.mock.calls[0][1];
+    expect(body).toMatchObject({
+      first_name: "Maya", last_name: "Lopez", email: "maya@example.com", phone: null,
+    });
+  });
+
+  it("blocks a double submit while the request is in flight", async () => {
+    let resolve;
+    api.admin.addVolunteer.mockReturnValue(new Promise((r) => { resolve = r; }));
+    renderModal();
+    await fillIdentity();
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /^add volunteer$/i }));
+    const busy = await screen.findByRole("button", { name: /adding/i });
+    expect(busy).toBeDisabled();
+    await userEvent.click(busy);
+    expect(api.admin.addVolunteer).toHaveBeenCalledTimes(1);
+    resolve({ volunteer_id: "v-1", bookings: [] });
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  });
+
+  it("clears the previous error when submitted again", async () => {
+    api.admin.addVolunteer.mockRejectedValueOnce(new Error("already on this shift"));
+    api.admin.addVolunteer.mockResolvedValueOnce({ volunteer_id: "v-1", bookings: [] });
+    renderModal();
+    await fillIdentity();
+    await userEvent.click(screen.getAllByRole("checkbox")[0]);
+    await userEvent.click(screen.getByRole("button", { name: /^add volunteer$/i }));
+    expect(await screen.findByText(/already on this shift/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^add volunteer$/i }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(screen.queryByText(/already on this shift/i)).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when closed", () => {
+    renderModal({ open: false });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("Cancel resets and closes", async () => {
     const { onClose } = renderModal();
     await userEvent.type(screen.getByLabelText(/first name/i), "Maya");

@@ -83,6 +83,14 @@ def family_for_event(db: Session, event_id) -> Optional[str]:
     return tmpl.family_key or tmpl.slug
 
 
+_LIVE_ORIENTATION_STATUSES = (
+    SignupStatus.pending,
+    SignupStatus.confirmed,
+    SignupStatus.waitlisted,
+    SignupStatus.checked_in,
+)
+
+
 def has_booked_orientation(db: Session, email: str, event_id) -> bool:
     """True when ``email`` holds a live orientation booking that covers
     ``event_id``: one on this event, or on another event in its module family.
@@ -92,10 +100,12 @@ def has_booked_orientation(db: Session, email: str, event_id) -> bool:
     module before the orientation has happened. Without it they were told to
     add an orientation, and re-picking the one they already held was a 409.
 
-    "Live" means pending, confirmed or waitlisted — the same bar as choosing
-    the orientation in the same batch, where a waitlisted one already counts.
-    A cancelled one does not, and a finished one has either earned credit
-    (attended) or should not count (no-show).
+    "Live" means pending, confirmed, waitlisted or checked in — the same bar
+    as choosing the orientation in the same batch, where a waitlisted one
+    already counts. Checked in is someone sitting in orientation right now,
+    before staff close the session and credit is written. A cancelled one
+    does not count, and a finished one has either earned credit (attended)
+    or should not count (no-show, or credit since revoked).
     """
     rows = (
         db.query(Slot.event_id)
@@ -104,9 +114,7 @@ def has_booked_orientation(db: Session, email: str, event_id) -> bool:
         .filter(
             func.lower(Volunteer.email) == email.lower().strip(),
             Slot.slot_type == SlotType.ORIENTATION,
-            Signup.status.in_(
-                (SignupStatus.pending, SignupStatus.confirmed, SignupStatus.waitlisted)
-            ),
+            Signup.status.in_(_LIVE_ORIENTATION_STATUSES),
         )
         .distinct()
         .all()

@@ -893,6 +893,15 @@ class AdminAddVolunteer(BaseModel):
     allow_overfill: bool = False
     send_email: bool = True
 
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def name_not_blank(cls, v: str) -> str:
+        # min_length counts spaces; upsert_volunteer strips, so "  " would
+        # be saved as an empty name.
+        if not v.strip():
+            raise ValueError("must not be blank")
+        return v.strip()
+
     @model_validator(mode="after")
     def require_something_to_book(self):
         if not self.slot_ids and not self.shift_ids:

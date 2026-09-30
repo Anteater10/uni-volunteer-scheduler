@@ -1018,6 +1018,96 @@ class TestOrientationRequirement:
         assert resp.status_code == 422, resp.text
         assert resp.json()["code"] == "ORIENTATION_REQUIRED"
 
+    def _book_then_set_status(self, client, db_session, orient_id, status):
+        client.post("/api/v1/public/signups", json=self._payload([orient_id]))
+        db_session.expire_all()
+        db_session.query(Signup).update({Signup.status: status})
+        db_session.commit()
+
+    @pytest.mark.parametrize(
+        "status", [SignupStatus.waitlisted, SignupStatus.confirmed, SignupStatus.checked_in]
+    )
+    def test_live_orientation_statuses_let_module_through(
+        self, client, db_session, monkeypatch, status
+    ):
+        """Waitlisted for orientation (same bar as picking it in one batch),
+        confirmed, or checked in at orientation right now."""
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        self._book_then_set_status(client, db_session, orient.id, status)
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        assert resp.status_code == 201, resp.text
+
+    @pytest.mark.parametrize("status", [SignupStatus.no_show, SignupStatus.attended])
+    def test_finished_orientation_without_credit_blocks(
+        self, client, db_session, monkeypatch, status
+    ):
+        """No-show, or attended but credit revoked: the old booking must not
+        stand in for credit."""
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        self._book_then_set_status(client, db_session, orient.id, status)
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[shift.id])
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "ORIENTATION_REQUIRED"
+
+    def test_booked_orientation_still_respects_shift_cap(
+        self, client, db_session, monkeypatch
+    ):
+        """The booked-orientation pass only answers the orientation question —
+        the per-volunteer shift cap still applies after it."""
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        event.max_signups_per_user = 1
+        s1 = _make_shift(db_session, event.id, name="A")
+        s2 = _make_shift(db_session, event.id, name="B")
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        resp = client.post(
+            "/api/v1/public/signups", json=self._payload(shift_ids=[s1.id, s2.id])
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] != "ORIENTATION_REQUIRED"
+
+    def test_repicking_same_orientation_with_module_is_still_409(
+        self, client, db_session, monkeypatch
+    ):
+        """The one path that used to strand her still 409s — but she no longer
+        needs it, because the module alone now goes through."""
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id)
+        db_session.commit()
+
+        client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload([orient.id], shift_ids=[shift.id]),
+        )
+        assert resp.status_code == 409
+        # Nothing half-booked: the shift seat was not kept.
+        db_session.expire_all()
+        assert db_session.query(ShiftSignup).count() == 0
+
     def test_moduleless_event_counts_same_event_booking_only(
         self, client, db_session, monkeypatch
     ):
