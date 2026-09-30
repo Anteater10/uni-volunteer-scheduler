@@ -128,4 +128,40 @@ test.describe('orientation modal', () => {
       page.getByText('Have you done a Sci Trek orientation?')
     ).not.toBeVisible();
   });
+
+  test('Test C: orientation booked alone, module added later without the modal', async ({ page }) => {
+    // Staff request 2026-09-30: a student booked orientation only, then came
+    // back for the module and was stuck (422, then 409 on re-picking her
+    // orientation). A live orientation booking now satisfies the gate.
+    const seed = getSeed();
+    expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
+    const email = ephemeralEmail('orient-first');
+
+    // Visit 1: orientation only.
+    await page.goto(`/events/${seed.event_id}`);
+    await clickSlotByLabel(page, /^orientation/i);
+    await expect(page.getByText('Your information')).toBeVisible();
+    await fillIdentityForm(page, email);
+    await submitForm(page);
+    await expect(page.getByText(/check your email|success|sign.?up.*received/i)).toBeVisible({
+      timeout: 10000,
+    });
+
+    // Visit 2: the module alone, same email.
+    await page.goto(`/events/${seed.event_id}`);
+    await clickShiftById(page, seed.shift_id);
+    await expect(page.getByText('Your information')).toBeVisible();
+    await fillIdentityForm(page, email);
+    const [check] = await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes('/orientation-check') && r.request().method() === 'GET'
+      ),
+      submitForm(page),
+    ]);
+    expect((await check.json()).has_booked_orientation).toBe(true);
+    await expect(page.getByText('Orientation is part of your first signup')).not.toBeVisible();
+    await expect(page.getByText(/check your email|success|sign.?up.*received/i)).toBeVisible({
+      timeout: 10000,
+    });
+  });
 });
