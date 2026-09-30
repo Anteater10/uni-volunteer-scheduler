@@ -1951,28 +1951,23 @@ def analytics_volunteer_hours(
     return result
 
 
-@router.get("/analytics/attendance-rates", response_model=List[schemas.AttendanceRateRow])
-def analytics_attendance_rates(
-    from_date: datetime | None = Query(None),
-    to_date: datetime | None = Query(None),
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_admin),
-):
-    """Attendance rate per event: attended / (confirmed + attended + no_show)."""
-    query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
-    if from_date:
-        query = query.filter(models.Event.start_date >= from_date)
-    if to_date:
-        query = query.filter(models.Event.start_date <= to_date)
+def _attendance_rate_rows(db: Session, from_date, to_date) -> list[dict]:
+    """Attendance rate per event: attended / (confirmed + attended + no_show).
 
-    events = query.distinct().all()
-
-    # Turning up is per session, so this counts sessions, exactly like the
-    # no-show report sitting next to it on the Exports page. Reading it off
-    # ``Signup`` alone saw only orientations, so a shift-run module showed a
-    # 0% attendance rate while its own no-show rate read correctly — the two
-    # cards contradicted each other on the same screen.
+    Shared by the JSON card and its CSV. Turning up is per session, so this
+    counts sessions, exactly like the no-show report sitting next to it on the
+    Exports page. Reading it off ``Signup`` alone saw only orientations, so a
+    shift-run module showed a 0% attendance rate while its own no-show rate
+    read correctly — and the CSV kept doing that after the card was fixed.
+    """
     from collections import defaultdict
+
+    query = _apply_date_filter(
+        db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id),
+        from_date,
+        to_date,
+    )
+    events = query.distinct().all()
 
     af = attendance_facts.facts()
     per_event: dict = defaultdict(lambda: defaultdict(int))
@@ -1984,20 +1979,39 @@ def analytics_attendance_rates(
     ):
         per_event[event_id][status] += count
 
-    result = []
+    rows = []
     for event in events:
         status_counts = per_event.get(event.id, {})
         confirmed = status_counts.get(models.SignupStatus.confirmed, 0)
         attended = status_counts.get(models.SignupStatus.attended, 0)
         no_show = status_counts.get(models.SignupStatus.no_show, 0)
         denom = confirmed + attended + no_show
-        rate = (attended / denom) if denom > 0 else 0.0
+        rows.append({
+            "event": event,
+            "confirmed": confirmed,
+            "attended": attended,
+            "no_show": no_show,
+            "rate": round(attended / denom, 4) if denom else 0.0,
+        })
+    return rows
 
-        result.append(schemas.AttendanceRateRow(
-            event_id=event.id, name=event.title,
-            confirmed=confirmed, attended=attended, no_show=no_show,
-            rate=round(rate, 4),
-        ))
+
+@router.get("/analytics/attendance-rates", response_model=List[schemas.AttendanceRateRow])
+def analytics_attendance_rates(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_admin),
+):
+    """Attendance rate per event: attended / (confirmed + attended + no_show)."""
+    result = [
+        schemas.AttendanceRateRow(
+            event_id=r["event"].id, name=r["event"].title,
+            confirmed=r["confirmed"], attended=r["attended"], no_show=r["no_show"],
+            rate=r["rate"],
+        )
+        for r in _attendance_rate_rows(db, from_date, to_date)
+    ]
 
     log_action(db, admin_user, "admin_analytics_attendance_rates", "Analytics", None)
     # Committed explicitly. ``log_action`` only stages the row and this
@@ -2054,11 +2068,11 @@ def _no_show_rate_rows(db: Session, from_date, to_date) -> list[dict]:
 
     result = []
     for volunteer_id, data in counts.items():
+        # Every key came from a grouped row with count >= 1, so denom > 0; and
+        # the volunteer FK means the row is always there.
         attended, no_show = data["attended"], data["no_show"]
         denom = attended + no_show
-        v = volunteers.get(volunteer_id)
-        if denom == 0 or v is None:
-            continue
+        v = volunteers[volunteer_id]
         result.append({
             "volunteer_id": v.id,
             "volunteer_name": f"{v.first_name} {v.last_name}",
@@ -2168,38 +2182,18 @@ def export_attendance_rates_csv(
     admin_user: models.User = Depends(require_admin),
 ):
     """Attendance-rate-per-event CSV (mirrors /analytics/attendance-rates JSON)."""
-    query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
-    if from_date:
-        query = query.filter(models.Event.start_date >= from_date)
-    if to_date:
-        query = query.filter(models.Event.start_date <= to_date)
-    events = query.distinct().all()
-
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Event", "Start Date", "Confirmed", "Attended", "No Show", "Attendance Rate"])
-    for event in events:
-        slot_ids = [s.id for s in event.slots]
-        if not slot_ids:
-            continue
-        signups = (
-            db.query(models.Signup)
-            .filter(models.Signup.slot_id.in_(slot_ids))
-            .all()
-        )
-        confirmed = sum(1 for s in signups if s.status == models.SignupStatus.confirmed)
-        attended = sum(1 for s in signups if s.status == models.SignupStatus.attended)
-        no_show = sum(1 for s in signups if s.status == models.SignupStatus.no_show)
-        denom = confirmed + attended + no_show
-        rate = (attended / denom) if denom > 0 else 0.0
+    for r in _attendance_rate_rows(db, from_date, to_date):
         writer.writerow(
             [
-                _csv_safe(event.title),
-                event.start_date.date().isoformat() if event.start_date else "",
-                confirmed,
-                attended,
-                no_show,
-                f"{rate:.2%}",
+                _csv_safe(r["event"].title),
+                r["event"].start_date.date().isoformat(),
+                r["confirmed"],
+                r["attended"],
+                r["no_show"],
+                f"{r['rate']:.2%}",
             ]
         )
 
@@ -2799,12 +2793,11 @@ def ccpa_delete(
     # notification preferences (including their phone again) and their
     # orientation-credit history keyed to their address. A CCPA deletion
     # that deletes nothing the request was actually about.
+    # users.email is NOT NULL, so there is always an address to match on.
     volunteer = (
         db.query(models.Volunteer)
         .filter(models.Volunteer.email == original_email)
         .first()
-        if original_email
-        else None
     )
 
     # Anonymize PII
@@ -2823,25 +2816,22 @@ def ccpa_delete(
         volunteer_anonymized = True
 
     # Preferences are pure contact data — no analytic value in keeping them.
-    prefs_deleted = 0
-    credits_anonymized = 0
-    if original_email:
-        prefs_deleted = (
-            db.query(models.VolunteerPreference)
-            .filter(models.VolunteerPreference.volunteer_email == original_email)
-            .delete(synchronize_session=False)
+    prefs_deleted = (
+        db.query(models.VolunteerPreference)
+        .filter(models.VolunteerPreference.volunteer_email == original_email)
+        .delete(synchronize_session=False)
+    )
+    # Credits are an audit trail and stay, but must stop naming the
+    # person: re-key them to the anonymized address.
+    credits_anonymized = (
+        db.query(models.OrientationCredit)
+        .filter(models.OrientationCredit.volunteer_email == original_email)
+        .update(
+            {"volunteer_email": volunteer.email if volunteer else
+             f"deleted-{uuid_mod.uuid4()}@example.invalid"},
+            synchronize_session=False,
         )
-        # Credits are an audit trail and stay, but must stop naming the
-        # person: re-key them to the anonymized address.
-        credits_anonymized = (
-            db.query(models.OrientationCredit)
-            .filter(models.OrientationCredit.volunteer_email == original_email)
-            .update(
-                {"volunteer_email": volunteer.email if volunteer else
-                 f"deleted-{uuid_mod.uuid4()}@example.invalid"},
-                synchronize_session=False,
-            )
-        )
+    )
 
     # BASE-CONFIG-37: the same omission as the Volunteer block above, one
     # feature later. The copilot writes two columns of staff-authored free
@@ -3083,10 +3073,8 @@ def set_event_form_schema(
     """
     from ..services import form_schema_service
 
-    if isinstance(body, dict):
-        schema = body.get("schema")
-    else:
-        schema = body
+    # ``body: dict`` — FastAPI 422s anything that is not a JSON object.
+    schema = body.get("schema")
     result = form_schema_service.set_event_schema(
         db, event_id, schema, actor=admin_user
     )
