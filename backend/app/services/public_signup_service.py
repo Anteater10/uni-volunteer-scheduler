@@ -496,7 +496,12 @@ def create_public_signup(
     shift_signups: list[ShiftSignup] = []
     checked_events: set = set()
 
-    for shift_id in payload.shift_ids:
+    # Locks are taken in id order, not click order. Two volunteers booking the
+    # same two shifts in opposite orders would otherwise each hold one lock
+    # and wait on the other; Postgres breaks that by killing one request,
+    # which reaches the volunteer as an error. Shifts before slots, in both
+    # this path and admin add-volunteer, for the same reason.
+    for shift_id in sorted(payload.shift_ids, key=str):
         # The capacity gate is the shift row lock, exactly the pattern slots
         # used — one level up, because the shift owns the counter now.
         shift = shift_service.lock_shift(db, shift_id)
@@ -527,7 +532,7 @@ def create_public_signup(
             )
         shift_signups.append(shift_signup)
 
-    for slot_id in payload.slot_ids:
+    for slot_id in sorted(payload.slot_ids, key=str):
         slot = (
             db.query(Slot)
             .filter(Slot.id == slot_id)

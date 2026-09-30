@@ -1047,13 +1047,15 @@ def admin_add_volunteer(
     # 1. Lock and check every unit before writing anything, so one bad id
     # can never leave another unit's seat taken.
     shifts: list[models.Shift] = []
-    for shift_id in dict.fromkeys(payload.shift_ids):
+    # Id order, not payload order — see public_signup_service: two requests
+    # locking the same rows in opposite orders deadlock.
+    for shift_id in sorted(dict.fromkeys(payload.shift_ids), key=str):
         shift = shift_service.lock_shift(db, shift_id)
         if shift is None or str(shift.event_id) != str(event.id):
             raise HTTPException(status_code=404, detail="Shift not found on this event")
         shifts.append(shift)
     slots: list[models.Slot] = []
-    for slot_id in dict.fromkeys(payload.slot_ids):
+    for slot_id in sorted(dict.fromkeys(payload.slot_ids), key=str):
         slot = (
             db.query(models.Slot)
             .filter(models.Slot.id == slot_id)
