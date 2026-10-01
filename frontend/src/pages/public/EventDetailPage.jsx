@@ -170,14 +170,10 @@ function slotStatus(slot) {
   return "open";
 }
 
-// 2026-08-02 shifts: orientation slots still number themselves (there is
-// nothing else to call them), but the work is booked as shifts, which carry an
-// organizer-given name. The old `Period N` label was derived in this file and
-// had no database backing, so two views could disagree about which period was
-// which — nothing derives a label any more.
+// 2026-08-02 shifts: `event.slots` is orientation-only (the public endpoint
+// filters it), so every slot on this page is an orientation. They number
+// themselves when there is more than one; shifts carry their own names.
 function slotDisplayLabel(slot) {
-  if (!slot) return "";
-  if (slot._shiftName) return slot._shiftName;
   return `Orientation ${slot._periodLabel || ""}`.trim();
 }
 
@@ -248,7 +244,7 @@ function AvailabilityBadge({ status, selected }) {
 // (e2e slotLabel + clickSlotByLabel contract).
 // ---------------------------------------------------------------------------
 
-function SlotCard({ slot, selected, onToggle, highlight, showDate }) {
+function SlotCard({ slot, selected, onToggle, highlight }) {
   const isFull = slot.filled >= slot.capacity;
   const status = slotStatus(slot);
   const hasEnded = status === "ended";
@@ -270,20 +266,16 @@ function SlotCard({ slot, selected, onToggle, highlight, showDate }) {
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-base font-medium text-[var(--color-fg)]">
-              {slot.slot_type === "orientation"
-                ? <>Orientation {slot._periodLabel}</>
-                : <>Period {slot._periodLabel}</>}
+              {slotDisplayLabel(slot)}
             </p>
             <AvailabilityBadge status={status} selected={selected} />
           </div>
 
           <div className="mt-1.5 flex flex-col gap-0.5 text-sm text-[var(--color-fg-muted)]">
-            {showDate && (
-              <span className="inline-flex items-center gap-1.5">
-                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
-                {formatShortDate(slot.date)} · {formatWeekday(slot.date)}
-              </span>
-            )}
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+              {formatShortDate(slot.date)} · {formatWeekday(slot.date)}
+            </span>
             <span className="inline-flex items-center gap-1.5">
               <Clock className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
               {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
@@ -555,24 +547,20 @@ function CapacityCell({ slot }) {
 
 function SlotTable({
   slots,
-  kind,
-  showDate,
   selectedSlotIds,
   onToggle,
   expandedIds,
   onToggleExpand,
   highlight,
 }) {
-  const colCount = 2 + (showDate ? 1 : 0) + 3; // label, [date], time, loc, spots, signup
+  const colCount = 6; // label, date, time, location, availability, sign up
   return (
     <div className="hidden overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm md:block">
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-[var(--color-border)] bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-[var(--color-fg-muted)]">
-            <th scope="col" className="px-4 py-3">
-              {kind === "orientation" ? "Session" : "Period"}
-            </th>
-            {showDate && <th scope="col" className="px-4 py-3">Date</th>}
+            <th scope="col" className="px-4 py-3">Session</th>
+            <th scope="col" className="px-4 py-3">Date</th>
             <th scope="col" className="px-4 py-3">Time</th>
             <th scope="col" className="px-4 py-3">Location</th>
             <th scope="col" className="px-4 py-3">Availability</th>
@@ -599,9 +587,7 @@ function SlotTable({
                 >
                   <td className="px-4 py-3 align-top">
                     <div className="font-medium text-[var(--color-fg)]">
-                      {kind === "orientation"
-                        ? `Orientation ${slot._periodLabel || ""}`.trim()
-                        : `Period ${slot._periodLabel || ""}`.trim()}
+                      {slotDisplayLabel(slot)}
                     </div>
                     {signupCount > 0 && (
                       <button
@@ -619,12 +605,10 @@ function SlotTable({
                       </button>
                     )}
                   </td>
-                  {showDate && (
-                    <td className="px-4 py-3 align-top text-[var(--color-fg-muted)]">
-                      {formatShortDate(slot.date)}
-                      <span className="block text-xs">{formatWeekday(slot.date)}</span>
-                    </td>
-                  )}
+                  <td className="px-4 py-3 align-top text-[var(--color-fg-muted)]">
+                    {formatShortDate(slot.date)}
+                    <span className="block text-xs">{formatWeekday(slot.date)}</span>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3 align-top text-[var(--color-fg-muted)]">
                     {formatTime(slot.start_time)} – {formatTime(slot.end_time)}
                   </td>
@@ -907,7 +891,6 @@ export default function EventDetailPage() {
   // authoritative; this only improves UX before the round-trip. PART-05.
   function validateIdentity() {
     const errors = {};
-    const fullName = `${identity.first_name} ${identity.last_name}`.trim();
     if (!identity.first_name.trim() || !identity.last_name.trim()) {
       const msg = "Enter your full name";
       if (!identity.first_name.trim()) errors.first_name = msg;
@@ -939,8 +922,6 @@ export default function EventDetailPage() {
         errors[`custom_${f.id}`] = `Please answer: ${f.label}`;
       }
     }
-    // Touch fullName so the helper isn't dead code if a future linter trims it.
-    void fullName;
     return errors;
   }
 
@@ -1124,9 +1105,7 @@ export default function EventDetailPage() {
           null,
         );
         const positionText = minPosition != null ? ` — position ${minPosition}` : "";
-        toast.info
-          ? toast.info(`You're on the waitlist${positionText}.`)
-          : toast.success(`You're on the waitlist${positionText}.`);
+        toast.info(`You're on the waitlist${positionText}.`);
       }
       setSuccessData({ ...response, slots: selectedSlots });
       setStep("success");
@@ -1472,8 +1451,6 @@ export default function EventDetailPage() {
               {/* Desktop: one Orientation table */}
               <SlotTable
                 slots={orientationSlots}
-                kind="orientation"
-                showDate
                 selectedSlotIds={selectedSlotIds}
                 onToggle={toggleSlot}
                 expandedIds={expandedIds}
@@ -1490,7 +1467,6 @@ export default function EventDetailPage() {
                     selected={selectedSlotIds.has(slot.id)}
                     onToggle={toggleSlot}
                     highlight={highlightOrientation}
-                    showDate
                   />
                 ))}
               </div>

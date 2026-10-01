@@ -209,8 +209,7 @@ describe("AdminEventPage — uncancel a cancelled signup", () => {
       slot_end: "2020-02-01T10:00:00Z",
       slot_location: "Chem 1204",
       status: "cancelled",
-      user_name: "Kim Ciancio",
-      user_email: "kciancio@ucsb.edu",
+      participant: { name: "Kim Ciancio", email: "kciancio@ucsb.edu" },
       ...overrides,
     };
   }

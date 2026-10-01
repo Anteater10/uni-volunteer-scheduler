@@ -225,7 +225,7 @@ describe("AddVolunteerModal", () => {
     expect(await screen.findByText(/already on this shift/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /^add volunteer$/i }));
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
-    expect(screen.queryByText(/already on this shift/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/already on this shift/i)).not.toBeInTheDocument());
   });
 
   it("renders nothing when closed", () => {

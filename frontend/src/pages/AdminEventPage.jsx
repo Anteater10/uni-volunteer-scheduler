@@ -41,17 +41,14 @@ import { VENUE_TZ, fmtVenueDateTime } from "../lib/venueTime";
 // Issue #31 — slot headers lead with the weekday ("Tuesday, Sep 29, 2026").
 function fmtSlotDay(iso) {
   if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleDateString("en-US", {
-      timeZone: VENUE_TZ,
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
+  // toLocaleDateString never throws on a bad date — it returns "Invalid Date".
+  return new Date(iso).toLocaleDateString("en-US", {
+    timeZone: VENUE_TZ,
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function fmtTimeRange(startIso, endIso) {
@@ -106,6 +103,13 @@ function fmtPhone(raw) {
   if (!raw) return null;
   const m = String(raw).match(/^\+1(\d{3})(\d{3})(\d{4})$/);
   return m ? `(${m[1]}) ${m[2]}-${m[3]}` : String(raw);
+}
+
+// The roster endpoint always sends `participant` (volunteer_id is NOT NULL on
+// both booking tables). The old user_name/user_email fields are long gone,
+// and the reorder modal still reading them showed "#1", "#2" with no names.
+function rowName(r) {
+  return r.participant?.name || r.participant?.email || "Volunteer";
 }
 
 function commitmentStatus(sessions) {
@@ -410,7 +414,8 @@ export default function AdminEventPage() {
     // exception hanging off the end.
     shiftList.sort(
       (a, b) =>
-        new Date(a.sessions[0]?.start || 0) - new Date(b.sessions[0]?.start || 0),
+        // Every shift group was created from a row, so it has a session.
+        new Date(a.sessions[0].start) - new Date(b.sessions[0].start),
     );
     return [...shiftList, ...Array.from(slotGroups.values())];
   }, [roster]);
@@ -819,8 +824,8 @@ export default function AdminEventPage() {
                                 (b.waitlist_position ?? 0),
                             )
                             .map((r) => ({
-                              signup_id: r.signup_id || r.id,
-                              name: r.user_name || r.user_email || r.user_id,
+                              signup_id: r.signup_id,
+                              name: rowName(r),
                             })),
                         })
                       }
@@ -850,19 +855,12 @@ export default function AdminEventPage() {
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
                   {rows.map((r) => {
-                    const name =
-                      r.participant?.name ||
-                      r.participant?.email ||
-                      r.user_name ||
-                      r.user_email ||
-                      r.volunteer_id ||
-                      r.user_id ||
-                      "Volunteer";
+                    const name = rowName(r);
                     const email = r.participant?.email;
                     const phone = fmtPhone(r.participant?.phone);
                     return (
                       <tr
-                        key={r.signup_id || r.id}
+                        key={r.signup_id}
                         className="align-top transition-colors hover:bg-[var(--color-brand-soft)]/50"
                       >
                         <td className="px-4 py-2.5">
@@ -915,7 +913,7 @@ export default function AdminEventPage() {
                                 variant="primary"
                                 data-testid="promote-btn"
                                 onClick={async () => {
-                                  const signupId = r.signup_id || r.id;
+                                  const signupId = r.signup_id;
                                   const isShift = Boolean(r.is_shift);
                                   try {
                                     await promoteMut.mutateAsync({ signupId, isShift });
@@ -953,7 +951,7 @@ export default function AdminEventPage() {
                                 variant="secondary"
                                 onClick={() =>
                                   grantOrientationMut.mutate({
-                                    signupId: r.signup_id || r.id,
+                                    signupId: r.signup_id,
                                     isShift: Boolean(r.is_shift),
                                   })
                                 }
@@ -973,7 +971,7 @@ export default function AdminEventPage() {
                                     )
                                   ) {
                                     cancelMut.mutate({
-                                      signupId: r.signup_id || r.id,
+                                      signupId: r.signup_id,
                                       isShift: Boolean(r.is_shift),
                                     });
                                   }
@@ -997,7 +995,7 @@ export default function AdminEventPage() {
                                     )
                                   ) {
                                     uncancelMut.mutate({
-                                      signupId: r.signup_id || r.id,
+                                      signupId: r.signup_id,
                                       isShift: Boolean(r.is_shift),
                                     });
                                   }
@@ -1097,7 +1095,6 @@ export default function AdminEventPage() {
                       disabled={idx === 0 || reorderMut.isPending}
                       onClick={() =>
                         setReorderState((prev) => {
-                          if (!prev) return prev;
                           const next = prev.ids.slice();
                           [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
                           return { ...prev, ids: next };
@@ -1117,7 +1114,6 @@ export default function AdminEventPage() {
                       }
                       onClick={() =>
                         setReorderState((prev) => {
-                          if (!prev) return prev;
                           const next = prev.ids.slice();
                           [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
                           return { ...prev, ids: next };

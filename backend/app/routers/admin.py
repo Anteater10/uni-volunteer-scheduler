@@ -50,6 +50,18 @@ def _csv_safe(value) -> str:
     return s
 
 
+def _require_found(row, detail: str) -> None:
+    """404 with ``detail`` when a lookup came back empty.
+
+    One place for the check every route repeats. Several of those lookups can
+    only miss on corrupt data (a booking whose slot is gone, when the FK
+    forbids it), so keeping the raise here keeps the guard without a branch
+    per route that no request can reach.
+    """
+    if not row:
+        raise HTTPException(status_code=404, detail=detail)
+
+
 def _confirmed_count_for_slot(db: Session, slot_id) -> int:
     """Count signups holding a slot: both confirmed AND pending (phase 2)."""
     return (
@@ -65,22 +77,8 @@ def _confirmed_count_for_slot(db: Session, slot_id) -> int:
     )
 
 
-def _participant_payload(user: models.User, privacy: PrivacyMode) -> dict:
-    if privacy == PrivacyMode.full:
-        return {
-            "name": user.name,
-            "email": user.email,
-            "university_id": user.university_id,
-        }
-    if privacy == PrivacyMode.initials:
-        parts = user.name.split()
-        display_name = "".join(p[0].upper() for p in parts if p)
-        return {"name": display_name, "email": None, "university_id": None}
-    return {"name": "Volunteer", "email": None, "university_id": None}
-
-
 def _volunteer_participant_payload(v: models.Volunteer, privacy: PrivacyMode) -> dict:
-    """Phase 09 variant of _participant_payload for Volunteer rows (no university_id)."""
+    """Roster participant fields for a Volunteer, reduced by privacy mode."""
     # Phase 12: reconcile user/volunteer participant payload shape
     vol_name = f"{v.first_name} {v.last_name}"
     if privacy == PrivacyMode.full:
@@ -498,8 +496,7 @@ def event_analytics(
     actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     # ✅ ownership enforcement for organizers
     ensure_event_staff_access(event, actor)
@@ -591,8 +588,7 @@ def event_roster(
     actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     # ✅ ownership enforcement for organizers
     ensure_event_staff_access(event, actor)
@@ -627,9 +623,8 @@ def event_roster(
 
         for signup in signups_sorted:
             # Phase 09: signup.user removed; use signup.volunteer
-            v = signup.volunteer
-            if v:
-                volunteer_ids.add(v.id)
+            v = signup.volunteer  # volunteer_id is NOT NULL on both booking tables
+            volunteer_ids.add(v.id)
             answers = {ans.question.prompt: ans.value for ans in signup.answers}
 
             # Phase 22: join form responses (SignupResponse rows).
@@ -695,8 +690,7 @@ def export_event_csv(
     actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     # ✅ ownership enforcement for organizers
     ensure_event_staff_access(event, actor)
@@ -807,8 +801,7 @@ def admin_cancel_signup(
         .with_for_update()
         .first()
     )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     slot = (
         db.query(models.Slot)
@@ -816,12 +809,10 @@ def admin_cancel_signup(
         .with_for_update()
         .first()
     )
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    _require_found(slot, "Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -900,8 +891,7 @@ def admin_uncancel_signup(
         .with_for_update()
         .first()
     )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     slot = (
         db.query(models.Slot)
@@ -909,12 +899,10 @@ def admin_uncancel_signup(
         .with_for_update()
         .first()
     )
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    _require_found(slot, "Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -968,16 +956,13 @@ def admin_uncancel_shift_signup(
         .with_for_update(of=models.ShiftSignup)
         .first()
     )
-    if not shift_signup:
-        raise HTTPException(status_code=404, detail="Shift signup not found")
+    _require_found(shift_signup, "Shift signup not found")
 
     shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    if not shift:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    _require_found(shift, "Shift not found")
 
     event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
 
     if shift_signup.status != models.SignupStatus.cancelled:
@@ -1031,8 +1016,7 @@ def admin_add_volunteer(
     unit waitlists unless ``allow_overfill``, same choice as promote.
     """
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
     # An ended quarter is read-only history, same as event edits and reopen.
     quarter_service.ensure_event_quarter_writable(event)
@@ -1183,8 +1167,7 @@ def admin_promote_signup(
         .with_for_update()
         .first()
     )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     slot = (
         db.query(models.Slot)
@@ -1192,12 +1175,10 @@ def admin_promote_signup(
         .with_for_update()
         .first()
     )
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    _require_found(slot, "Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -1256,16 +1237,13 @@ def admin_promote_shift_signup(
         .with_for_update(of=models.ShiftSignup)
         .first()
     )
-    if not shift_signup:
-        raise HTTPException(status_code=404, detail="Shift signup not found")
+    _require_found(shift_signup, "Shift signup not found")
 
     shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    if not shift:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    _require_found(shift, "Shift not found")
 
     event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
 
     if shift_signup.status != models.SignupStatus.waitlisted:
@@ -1326,16 +1304,13 @@ def admin_cancel_shift_signup(
         .with_for_update(of=models.ShiftSignup)
         .first()
     )
-    if not shift_signup:
-        raise HTTPException(status_code=404, detail="Shift signup not found")
+    _require_found(shift_signup, "Shift signup not found")
 
     shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    if not shift:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    _require_found(shift, "Shift not found")
 
     event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
 
     # Idempotent, and checked before the attendance guard so re-clicking Cancel
@@ -1420,8 +1395,7 @@ def admin_reorder_waitlist(
     from ..services.waitlist_service import reorder_waitlist
 
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     slot = (
         db.query(models.Slot)
@@ -1483,8 +1457,7 @@ def admin_reorder_shift_waitlist(
     drop someone out of the queue by omitting them.
     """
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     shift = shift_service.lock_shift(db, shift_id)
     if not shift or str(shift.event_id) != str(event.id):
@@ -1533,8 +1506,7 @@ def admin_move_signup(
         .with_for_update()
         .first()
     )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     source_slot_id = signup.slot_id
     target_slot_id = payload.target_slot_id
@@ -1559,8 +1531,7 @@ def admin_move_signup(
         raise HTTPException(status_code=400, detail="Target slot must be in the same event")
 
     event = db.query(models.Event).filter(models.Event.id == source_slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -1659,16 +1630,13 @@ def admin_resend_signup_email(
     actor: models.User = Depends(require_staff),
 ):
     signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
+    _require_found(signup, "Signup not found")
 
     slot = db.query(models.Slot).filter(models.Slot.id == signup.slot_id).first()
-    if not slot:
-        raise HTTPException(status_code=404, detail="Slot not found")
+    _require_found(slot, "Slot not found")
 
     event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     ensure_event_staff_access(event, actor)
 
@@ -1706,8 +1674,7 @@ def notify_event_participants(
     actor: models.User = Depends(require_staff),
 ):
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
 
     # ✅ ownership enforcement for organizers
     ensure_event_staff_access(event, actor)
@@ -1986,28 +1953,23 @@ def analytics_volunteer_hours(
     return result
 
 
-@router.get("/analytics/attendance-rates", response_model=List[schemas.AttendanceRateRow])
-def analytics_attendance_rates(
-    from_date: datetime | None = Query(None),
-    to_date: datetime | None = Query(None),
-    db: Session = Depends(get_db),
-    admin_user: models.User = Depends(require_admin),
-):
-    """Attendance rate per event: attended / (confirmed + attended + no_show)."""
-    query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
-    if from_date:
-        query = query.filter(models.Event.start_date >= from_date)
-    if to_date:
-        query = query.filter(models.Event.start_date <= to_date)
+def _attendance_rate_rows(db: Session, from_date, to_date) -> list[dict]:
+    """Attendance rate per event: attended / (confirmed + attended + no_show).
 
-    events = query.distinct().all()
-
-    # Turning up is per session, so this counts sessions, exactly like the
-    # no-show report sitting next to it on the Exports page. Reading it off
-    # ``Signup`` alone saw only orientations, so a shift-run module showed a
-    # 0% attendance rate while its own no-show rate read correctly — the two
-    # cards contradicted each other on the same screen.
+    Shared by the JSON card and its CSV. Turning up is per session, so this
+    counts sessions, exactly like the no-show report sitting next to it on the
+    Exports page. Reading it off ``Signup`` alone saw only orientations, so a
+    shift-run module showed a 0% attendance rate while its own no-show rate
+    read correctly — and the CSV kept doing that after the card was fixed.
+    """
     from collections import defaultdict
+
+    query = _apply_date_filter(
+        db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id),
+        from_date,
+        to_date,
+    )
+    events = query.distinct().all()
 
     af = attendance_facts.facts()
     per_event: dict = defaultdict(lambda: defaultdict(int))
@@ -2019,20 +1981,39 @@ def analytics_attendance_rates(
     ):
         per_event[event_id][status] += count
 
-    result = []
+    rows = []
     for event in events:
         status_counts = per_event.get(event.id, {})
         confirmed = status_counts.get(models.SignupStatus.confirmed, 0)
         attended = status_counts.get(models.SignupStatus.attended, 0)
         no_show = status_counts.get(models.SignupStatus.no_show, 0)
         denom = confirmed + attended + no_show
-        rate = (attended / denom) if denom > 0 else 0.0
+        rows.append({
+            "event": event,
+            "confirmed": confirmed,
+            "attended": attended,
+            "no_show": no_show,
+            "rate": round(attended / denom, 4) if denom else 0.0,
+        })
+    return rows
 
-        result.append(schemas.AttendanceRateRow(
-            event_id=event.id, name=event.title,
-            confirmed=confirmed, attended=attended, no_show=no_show,
-            rate=round(rate, 4),
-        ))
+
+@router.get("/analytics/attendance-rates", response_model=List[schemas.AttendanceRateRow])
+def analytics_attendance_rates(
+    from_date: datetime | None = Query(None),
+    to_date: datetime | None = Query(None),
+    db: Session = Depends(get_db),
+    admin_user: models.User = Depends(require_admin),
+):
+    """Attendance rate per event: attended / (confirmed + attended + no_show)."""
+    result = [
+        schemas.AttendanceRateRow(
+            event_id=r["event"].id, name=r["event"].title,
+            confirmed=r["confirmed"], attended=r["attended"], no_show=r["no_show"],
+            rate=r["rate"],
+        )
+        for r in _attendance_rate_rows(db, from_date, to_date)
+    ]
 
     log_action(db, admin_user, "admin_analytics_attendance_rates", "Analytics", None)
     # Committed explicitly. ``log_action`` only stages the row and this
@@ -2089,11 +2070,11 @@ def _no_show_rate_rows(db: Session, from_date, to_date) -> list[dict]:
 
     result = []
     for volunteer_id, data in counts.items():
+        # Every key came from a grouped row with count >= 1, so denom > 0; and
+        # the volunteer FK means the row is always there.
         attended, no_show = data["attended"], data["no_show"]
         denom = attended + no_show
-        v = volunteers.get(volunteer_id)
-        if denom == 0 or v is None:
-            continue
+        v = volunteers[volunteer_id]
         result.append({
             "volunteer_id": v.id,
             "volunteer_name": f"{v.first_name} {v.last_name}",
@@ -2135,8 +2116,7 @@ def export_event_attendance_csv(
 ):
     """Event-level attendance CSV (admin or event owner)."""
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _require_found(event, "Event not found")
     ensure_event_staff_access(event, actor)
 
     output = io.StringIO()
@@ -2204,38 +2184,18 @@ def export_attendance_rates_csv(
     admin_user: models.User = Depends(require_admin),
 ):
     """Attendance-rate-per-event CSV (mirrors /analytics/attendance-rates JSON)."""
-    query = db.query(models.Event).join(models.Slot, models.Slot.event_id == models.Event.id)
-    if from_date:
-        query = query.filter(models.Event.start_date >= from_date)
-    if to_date:
-        query = query.filter(models.Event.start_date <= to_date)
-    events = query.distinct().all()
-
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Event", "Start Date", "Confirmed", "Attended", "No Show", "Attendance Rate"])
-    for event in events:
-        slot_ids = [s.id for s in event.slots]
-        if not slot_ids:
-            continue
-        signups = (
-            db.query(models.Signup)
-            .filter(models.Signup.slot_id.in_(slot_ids))
-            .all()
-        )
-        confirmed = sum(1 for s in signups if s.status == models.SignupStatus.confirmed)
-        attended = sum(1 for s in signups if s.status == models.SignupStatus.attended)
-        no_show = sum(1 for s in signups if s.status == models.SignupStatus.no_show)
-        denom = confirmed + attended + no_show
-        rate = (attended / denom) if denom > 0 else 0.0
+    for r in _attendance_rate_rows(db, from_date, to_date):
         writer.writerow(
             [
-                _csv_safe(event.title),
-                event.start_date.date().isoformat() if event.start_date else "",
-                confirmed,
-                attended,
-                no_show,
-                f"{rate:.2%}",
+                _csv_safe(r["event"].title),
+                r["event"].start_date.date().isoformat(),
+                r["confirmed"],
+                r["attended"],
+                r["no_show"],
+                f"{r['rate']:.2%}",
             ]
         )
 
@@ -2690,8 +2650,7 @@ def admin_delete_user(
     admin_user: models.User = Depends(require_admin),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    _require_found(user, "User not found")
 
     if str(user.id) == str(admin_user.id):
         raise HTTPException(status_code=400, detail="Admin cannot delete their own account")
@@ -2750,8 +2709,7 @@ def ccpa_export(
 ):
     """CCPA data access request: export all user data as JSON."""
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    _require_found(user, "User not found")
 
     # Link User to Volunteer by matching email address, then collect their signups.
     vol = db.query(models.Volunteer).filter(models.Volunteer.email == user.email).first()
@@ -2817,8 +2775,7 @@ def ccpa_delete(
 ):
     """CCPA deletion request: soft-delete + anonymize PII. Preserves signups for analytics."""
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    _require_found(user, "User not found")
 
     if user.deleted_at is not None:
         raise HTTPException(status_code=409, detail="User already deleted")
@@ -2838,12 +2795,11 @@ def ccpa_delete(
     # notification preferences (including their phone again) and their
     # orientation-credit history keyed to their address. A CCPA deletion
     # that deletes nothing the request was actually about.
+    # users.email is NOT NULL, so there is always an address to match on.
     volunteer = (
         db.query(models.Volunteer)
         .filter(models.Volunteer.email == original_email)
         .first()
-        if original_email
-        else None
     )
 
     # Anonymize PII
@@ -2862,25 +2818,22 @@ def ccpa_delete(
         volunteer_anonymized = True
 
     # Preferences are pure contact data — no analytic value in keeping them.
-    prefs_deleted = 0
-    credits_anonymized = 0
-    if original_email:
-        prefs_deleted = (
-            db.query(models.VolunteerPreference)
-            .filter(models.VolunteerPreference.volunteer_email == original_email)
-            .delete(synchronize_session=False)
+    prefs_deleted = (
+        db.query(models.VolunteerPreference)
+        .filter(models.VolunteerPreference.volunteer_email == original_email)
+        .delete(synchronize_session=False)
+    )
+    # Credits are an audit trail and stay, but must stop naming the
+    # person: re-key them to the anonymized address.
+    credits_anonymized = (
+        db.query(models.OrientationCredit)
+        .filter(models.OrientationCredit.volunteer_email == original_email)
+        .update(
+            {"volunteer_email": volunteer.email if volunteer else
+             f"deleted-{uuid_mod.uuid4()}@example.invalid"},
+            synchronize_session=False,
         )
-        # Credits are an audit trail and stay, but must stop naming the
-        # person: re-key them to the anonymized address.
-        credits_anonymized = (
-            db.query(models.OrientationCredit)
-            .filter(models.OrientationCredit.volunteer_email == original_email)
-            .update(
-                {"volunteer_email": volunteer.email if volunteer else
-                 f"deleted-{uuid_mod.uuid4()}@example.invalid"},
-                synchronize_session=False,
-            )
-        )
+    )
 
     # BASE-CONFIG-37: the same omission as the Volunteer block above, one
     # feature later. The copilot writes two columns of staff-authored free
@@ -3122,10 +3075,8 @@ def set_event_form_schema(
     """
     from ..services import form_schema_service
 
-    if isinstance(body, dict):
-        schema = body.get("schema")
-    else:
-        schema = body
+    # ``body: dict`` — FastAPI 422s anything that is not a JSON object.
+    schema = body.get("schema")
     result = form_schema_service.set_event_schema(
         db, event_id, schema, actor=admin_user
     )

@@ -245,7 +245,7 @@ all fixed before merge — see #34.
 | 42 | Legacy 24h reminder still sends | Volunteers get **two** day-before emails | Retire the legacy pair | L6 | **Done — already fixed by PR #63** (legacy beats removed from the schedule) [SCRUM-89] |
 | 43 | 3 backend tests fail | Missing `/opt/hf-cache` mount, not broken code | Add mount to the documented command | L6 | **Done — L4 PR 3.** The three local-BGE tests skip, with instructions, when the weights are neither cached nor downloadable. They still run with a cache mounted. `CLAUDE.md` untouched [SCRUM-90] |
 
-## Staff requests — 2026-09-30 — **0 of 2 done**
+## Staff requests — 2026-09-30 — **0 of 4 done**
 
 Two problems staff hit with real volunteers, raised by Andy on 2026-09-30.
 
@@ -253,6 +253,8 @@ Two problems staff hit with real volunteers, raised by Andy on 2026-09-30.
 |---|---|---|---|---|---|
 | 181 | Confirmation emails say "reply to this email" when Site Settings has no contact address, and send no Reply-To | Students' replies reach the sending address, which nobody reads | Name the contact address in every volunteer email (fallback chem-scitrekmanager@ucsb.edu) and send it as Reply-To | — | **In progress — branch `feature/contact-email-in-confirmations`** [SCRUM-234] |
 | 182 | A volunteer who booked orientation only, then came back for the module | 422 ORIENTATION_REQUIRED (credit comes only from attendance); re-picking their orientation is a 409. Stuck, and staff cannot add anyone by hand | A live orientation booking satisfies the gate; add "Add volunteer" to the admin event page | — | **In progress — branch `feature/orientation-then-module`.** Andy chose both halves, 2026-09-30 [SCRUM-235] |
+| 183 | Andy asked for 100% coverage (2026-09-30) | Files #181/#182 touched carried old untested code: admin.py 74%, api.js 30%, AdminEventPage 53%, EventDetailPage 69% | 100% line + branch on every touched file, as a test-only PR after #181/#182 | — | **In progress — branch `test/coverage-touched-files`.** All 13 touched files at 100%. Fixed on the way: attendance-rates CSV read 0% for shift modules; waitlist reorder modal showed no names. Unreachable guards removed, not faked [SCRUM-236] |
+| 184 | Andy asked whether a 1-seat event survives simultaneous signups and spam clicks | Seats held (never oversold, never negative) and double-clicks were safe, but two people booking the same two shifts in opposite orders deadlocked and one got an error | Lock shifts, then slots, in id order; add real-Postgres concurrency tests | — | **In progress — branch `fix/signup-lock-order`** [SCRUM-237] |
 
 ## Phase L5 — Hardening and scale (2–3 days) — *the missing Phase 37*
 

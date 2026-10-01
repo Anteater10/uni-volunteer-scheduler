@@ -116,8 +116,10 @@ def _resolve_entity(
         e = db.query(models.Event).filter(models.Event.id == entity_id).first()
         if not e:
             return f"(deleted) #{_short(entity_id)}"
-        date_str = e.start_date.date().isoformat() if e.start_date else ""
-        return f"{e.title} on {date_str}".rstrip(" on ").rstrip()
+        # start_date is NOT NULL. This used to .rstrip(" on ") a possibly
+        # empty date, which strips the *characters* o/n/space — "Conservation"
+        # would have lost its tail.
+        return f"{e.title} on {e.start_date.date().isoformat()}"
 
     if et == "signup":
         s = (
