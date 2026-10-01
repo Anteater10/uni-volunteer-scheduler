@@ -77,6 +77,7 @@ ACTION_LABELS: dict[str, str] = {
     "shift_session_reorder": "Reordered a shift's sessions",
     "admin_shift_signup_cancel": "Admin cancelled a shift signup",
     "admin_shift_signup_promote": "Promoted a shift signup from the waitlist",
+    "admin_add_volunteer": "Added a volunteer to an event by hand",
 }
 
 

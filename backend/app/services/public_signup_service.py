@@ -232,7 +232,11 @@ def _ensure_orientation_requirement(db: Session, email: str, slot_ids, shift_ids
     {code, detail} — the event page steers from its own slot data, so no
     per-event payload is needed.
     """
-    from .orientation_service import family_for_event, has_orientation_credit
+    from .orientation_service import (
+        family_for_event,
+        has_booked_orientation,
+        has_orientation_credit,
+    )
 
     slots = (
         db.execute(select(Slot).where(Slot.id.in_(set(slot_ids))))
@@ -266,6 +270,8 @@ def _ensure_orientation_requirement(db: Session, email: str, slot_ids, shift_ids
     family = family_for_event(db, event_id)
     if has_orientation_credit(db, email, family).has_credit:
         return
+    if has_booked_orientation(db, email, event_id):
+        return  # booked orientation earlier, now adding the module
 
     offered = db.execute(
         select(Slot.id)

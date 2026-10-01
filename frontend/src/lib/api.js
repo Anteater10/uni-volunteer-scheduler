@@ -907,6 +907,13 @@ export const api = {
         method: "PUT",
         body: { schema },
       }),
+    // Staff put a volunteer on shifts / orientation sessions by hand. Skips
+    // the public-only gates (orientation requirement, signup window).
+    addVolunteer: (eventId, body) =>
+      request(`/admin/events/${eventId}/add-volunteer`, {
+        method: "POST",
+        body,
+      }),
     reorderShiftWaitlist: (eventId, shiftId, orderedIds) =>
       request(`/admin/events/${eventId}/shifts/${shiftId}/waitlist-order`, {
         method: "PATCH",

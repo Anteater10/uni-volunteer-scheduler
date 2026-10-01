@@ -28,6 +28,7 @@ from ...deps import rate_limit
 from ...services.orientation_service import (
     family_for_event,
     has_attended_orientation,
+    has_booked_orientation,
     has_orientation_credit,
 )
 
@@ -72,4 +73,11 @@ def orientation_check(
     D-08: same shape for unknown / known emails.
     """
     family = family_for_event(db, event_id) if event_id is not None else None
-    return has_orientation_credit(db, str(email), family_key=family)
+    status = has_orientation_credit(db, str(email), family_key=family)
+    if event_id is not None:
+        # Same rule the signup endpoint applies, so the page's pre-check never
+        # shows the orientation modal to someone the server would accept.
+        status.has_booked_orientation = has_booked_orientation(
+            db, str(email), event_id
+        )
+    return status

@@ -10,7 +10,7 @@
 // keep this test focused on the header actions and completed-strip.
 
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -36,6 +36,7 @@ vi.mock("../../lib/api", () => {
         promote: vi.fn(async () => ({})),
       },
       grantOrientation: vi.fn(async () => ({})),
+      addVolunteer: vi.fn(async () => ({ volunteer_id: "v-1", bookings: [] })),
     },
     events: {
       get: vi.fn(),
@@ -338,5 +339,85 @@ describe("AdminEventPage — uncancel a cancelled signup", () => {
       expect(await screen.findByText("Kim Ciancio")).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: /\d/ })).not.toBeInTheDocument();
     });
+  });
+});
+
+// Staff add someone by hand — e.g. booked orientation alone, then emailed to
+// be put on the module.
+describe("AdminEventPage — Add volunteer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("opens the Add volunteer form from the roster section", async () => {
+    api.public.getQuarters.mockResolvedValue([ACTIVE_QUARTER]);
+    api.events.get.mockResolvedValue(
+      baseEvent({
+        quarter_id: "q-active",
+        shifts: [
+          { id: "sh-1", name: "Tue P1", capacity: 5, current_count: 1, sessions: [] },
+        ],
+        slots: [],
+      }),
+    );
+
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Add volunteer$/i }),
+    );
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Tue P1")).toBeInTheDocument();
+  });
+
+  it("refreshes the roster after a volunteer is added", async () => {
+    api.public.getQuarters.mockResolvedValue([ACTIVE_QUARTER]);
+    api.events.get.mockResolvedValue(
+      baseEvent({
+        quarter_id: "q-active",
+        shifts: [
+          { id: "sh-1", name: "Tue P1", capacity: 5, current_count: 1, sessions: [] },
+        ],
+        slots: [],
+      }),
+    );
+    api.admin.addVolunteer.mockResolvedValue({ volunteer_id: "v-1", bookings: [] });
+
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /^Add volunteer$/i }),
+    );
+    await userEvent.type(screen.getByLabelText(/first name/i), "Maya");
+    await userEvent.type(screen.getByLabelText(/last name/i), "Lopez");
+    await userEvent.type(screen.getByLabelText(/^email$/i), "maya@example.com");
+    await userEvent.click(screen.getByRole("checkbox", { name: /Tue P1/ }));
+    const rosterCalls = api.admin.eventRoster.mock.calls.length;
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: /^Add volunteer$/i }),
+    );
+
+    await waitFor(() =>
+      expect(api.admin.eventRoster.mock.calls.length).toBeGreaterThan(rosterCalls),
+    );
+    expect(api.admin.addVolunteer).toHaveBeenCalledWith(
+      "evt-1",
+      expect.objectContaining({ shift_ids: ["sh-1"] }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("hides Add volunteer when the event's quarter has ended", async () => {
+    api.public.getQuarters.mockResolvedValue([ENDED_QUARTER]);
+    api.events.get.mockResolvedValue(baseEvent());
+
+    renderPage();
+
+    expect(await screen.findByText(/Read-only \(quarter ended\)/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Add volunteer$/i }),
+    ).not.toBeInTheDocument();
   });
 });

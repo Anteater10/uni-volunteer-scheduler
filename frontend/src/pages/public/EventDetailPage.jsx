@@ -1209,7 +1209,9 @@ export default function EventDetailPage() {
         // `has_credit` is the new field; fall back to `has_attended_orientation`
         // so the check still works if we ever point at the legacy endpoint.
         const hasCredit = result?.has_credit ?? result?.has_attended_orientation;
-        if (!hasCredit) {
+        // A pending/confirmed orientation booking also satisfies the server —
+        // someone who booked orientation alone can come back for the module.
+        if (!hasCredit && !result?.has_booked_orientation) {
           // The modal's required/advisory variant derives from event.slots —
           // refetch so it can't disagree with what the server will enforce
           // (organizer may have added/removed orientation slots mid-visit).
