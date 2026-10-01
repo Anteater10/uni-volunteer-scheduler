@@ -245,6 +245,15 @@ all fixed before merge — see #34.
 | 42 | Legacy 24h reminder still sends | Volunteers get **two** day-before emails | Retire the legacy pair | L6 | **Done — already fixed by PR #63** (legacy beats removed from the schedule) [SCRUM-89] |
 | 43 | 3 backend tests fail | Missing `/opt/hf-cache` mount, not broken code | Add mount to the documented command | L6 | **Done — L4 PR 3.** The three local-BGE tests skip, with instructions, when the weights are neither cached nor downloadable. They still run with a cache mounted. `CLAUDE.md` untouched [SCRUM-90] |
 
+## Staff requests — 2026-09-30 — **0 of 2 done**
+
+Two problems staff hit with real volunteers, raised by Andy on 2026-09-30.
+
+| # | Current situation | What's wrong | Recommendation | Blocks | Decision |
+|---|---|---|---|---|---|
+| 181 | Confirmation emails say "reply to this email" when Site Settings has no contact address, and send no Reply-To | Students' replies reach the sending address, which nobody reads | Name the contact address in every volunteer email (fallback chem-scitrekmanager@ucsb.edu) and send it as Reply-To | — | **In progress — branch `feature/contact-email-in-confirmations`** [SCRUM-234] |
+| 182 | A volunteer who booked orientation only, then came back for the module | 422 ORIENTATION_REQUIRED (credit comes only from attendance); re-picking their orientation is a 409. Stuck, and staff cannot add anyone by hand | A live orientation booking satisfies the gate; add "Add volunteer" to the admin event page | — | **In progress — branch `feature/orientation-then-module`.** Andy chose both halves, 2026-09-30 [SCRUM-235] |
+
 ## Phase L5 — Hardening and scale (2–3 days) — *the missing Phase 37*
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |
