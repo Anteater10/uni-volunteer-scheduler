@@ -13,7 +13,8 @@
 #   pip-audit -r /tmp/req.txt --no-deps --format json
 #
 # One advisory ID per line. Lines starting with # are ignored.
-# 34 advisories across 13 packages (35 after the 2026-09-08 addition below)
+# 34 advisories across 13 packages (35 after the 2026-09-08 addition below,
+# 36 after the 2026-10-05 python-jose addition)
 
 
 # cryptography 46.0.3  (fix available: 48.0.1)
@@ -45,6 +46,16 @@ PYSEC-2026-2263
 PYSEC-2026-3455
 PYSEC-2026-3456
 PYSEC-2026-3457
+
+# python-jose 3.5.0  (fix available: none)
+# Added 2026-10-05, published that day; it failed every open PR. HMAC
+# algorithm confusion: a DER-encoded public key accepted as an HS256 secret.
+# ASSESSED, NOT REACHABLE: the attack needs the service to verify with an
+# asymmetric public key and leave algorithms open. We only sign and verify
+# with the shared jwt_secret (HS256), and every jwt.decode pins
+# algorithms=[settings.jwt_algorithm] (deps.py, password_reset.py, invite.py).
+# Real fix: replace python-jose with PyJWT, ROADMAP #187 [SCRUM-240].
+CVE-2026-85394
 
 # pydantic-settings 2.12.0  (fix available: 2.14.2)
 GHSA-4xgf-cpjx-pc3j
