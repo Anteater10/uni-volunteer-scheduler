@@ -199,7 +199,8 @@ test.describe('orientation modal', () => {
     ]);
     expect(signup.status()).toBe(201);
     expect((await signup.json()).shift_signup_ids).toHaveLength(1);
-    await expect(page.getByText(/already signed up/i)).not.toBeVisible();
+    // The duplicate-signup toast, not the page's standing "Already signed up?" help line.
+    await expect(page.getByText(/already signed up for this session/i)).not.toBeVisible();
     await expect(page.getByText(/check your email|success|sign.?up.*received/i)).toBeVisible({
       timeout: 10000,
     });
