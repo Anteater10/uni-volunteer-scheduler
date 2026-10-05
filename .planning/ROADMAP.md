@@ -256,6 +256,14 @@ Two problems staff hit with real volunteers, raised by Andy on 2026-09-30.
 | 183 | Andy asked for 100% coverage (2026-09-30) | Files #181/#182 touched carried old untested code: admin.py 74%, api.js 30%, AdminEventPage 53%, EventDetailPage 69% | 100% line + branch on every touched file, as a test-only PR after #181/#182 | — | **In progress — branch `test/coverage-touched-files`.** All 13 touched files at 100%. Fixed on the way: attendance-rates CSV read 0% for shift modules; waitlist reorder modal showed no names. Unreachable guards removed, not faked [SCRUM-236] |
 | 184 | Andy asked whether a 1-seat event survives simultaneous signups and spam clicks | Seats held (never oversold, never negative) and double-clicks were safe, but two people booking the same two shifts in opposite orders deadlocked and one got an error | Lock shifts, then slots, in id order; add real-Postgres concurrency tests | — | **In progress — branch `fix/signup-lock-order`** [SCRUM-237] |
 
+## Staff requests — 2026-10-04 — **0 of 1 done**
+
+A student's screenshot, raised by Andy on 2026-10-04. Production did not yet have #182 (PR #150) that day: the live `/public/orientation-check` had no `has_booked_orientation` field.
+
+| # | Current situation | What's wrong | Recommendation | Blocks | Decision |
+|---|---|---|---|---|---|
+| 186 | A volunteer who booked orientation alone puts that same orientation back in her cart with the module | 409 "already signed up", and since a signup is all-or-nothing the module seats are thrown away too. #182 stops the page asking for orientation again, but not a student re-adding it herself | Skip a slot she already holds a live booking on and book the rest; still 409 when everything picked is already held, or the earlier booking was cancelled | — | **In progress — branch `fix/186-rebooked-orientation`.** Andy chose it, 2026-10-05 [SCRUM-239] |
+
 ## Phase L5 — Hardening and scale (2–3 days) — *the missing Phase 37*
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |

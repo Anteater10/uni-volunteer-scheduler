@@ -532,7 +532,26 @@ def create_public_signup(
             )
         shift_signups.append(shift_signup)
 
+    # Slots this volunteer already holds a live booking on. Someone who booked
+    # orientation alone and comes back for the module often picks that same
+    # orientation again; the unique constraint made that a 409 that threw away
+    # the module seats too. Skip what they already hold and book the rest. A
+    # cancelled row is not live, so re-picking it still hits the 409 below.
+    from .orientation_service import _LIVE_ORIENTATION_STATUSES
+
+    already_held = set(
+        db.execute(
+            select(Signup.slot_id).where(
+                Signup.volunteer_id == volunteer.id,
+                Signup.slot_id.in_(payload.slot_ids),
+                Signup.status.in_(_LIVE_ORIENTATION_STATUSES),
+            )
+        ).scalars()
+    ) if payload.slot_ids else set()
+
     for slot_id in sorted(payload.slot_ids, key=str):
+        if slot_id in already_held:
+            continue
         slot = (
             db.query(Slot)
             .filter(Slot.id == slot_id)
@@ -575,6 +594,12 @@ def create_public_signup(
             db.rollback()
             raise HTTPException(status_code=409, detail=f"already signed up for slot {slot_id}")
         signups.append(signup)
+
+    if not signups and not shift_signups:
+        # Everything picked was already held — nothing new to book or confirm.
+        db.rollback()
+        held_id = sorted(already_held, key=str)[0]
+        raise HTTPException(status_code=409, detail=f"already signed up for slot {held_id}")
 
     # 4. Issue magic-link token, 14-day TTL. It anchors to the orientation
     # signup when there is one, else to the first shift signup — a shift-only

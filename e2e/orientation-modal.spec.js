@@ -5,6 +5,8 @@
 //           orientation session (required modal — no bypass), adds one, and
 //           the signup succeeds with both slots.
 //   Test B: Modal skipped when volunteer has prior attended orientation
+//   Test C: Orientation booked alone, module added later without the modal
+//   Test D: Re-picking the held orientation with the module books the module
 //
 // From OrientationWarningModal.jsx (required variant — the seed event
 // offers an orientation slot, so the advisory click-through never applies):
@@ -160,6 +162,44 @@ test.describe('orientation modal', () => {
     ]);
     expect((await check.json()).has_booked_orientation).toBe(true);
     await expect(page.getByText('Orientation is part of your first signup')).not.toBeVisible();
+    await expect(page.getByText(/check your email|success|sign.?up.*received/i)).toBeVisible({
+      timeout: 10000,
+    });
+  });
+
+  test('Test D: re-picking the held orientation with the module still books the module', async ({ page }) => {
+    // Staff request 2026-10-04 (roadmap #186): a student put the orientation
+    // she already held back in her cart with the module. The whole batch
+    // used to 409 "already signed up", so the module was not booked either.
+    const seed = getSeed();
+    expect(seed.shift_id, 'shift_id required in seed JSON').toBeTruthy();
+    const email = ephemeralEmail('orient-repick');
+
+    // Visit 1: orientation only.
+    await page.goto(`/events/${seed.event_id}`);
+    await clickSlotByLabel(page, /^orientation/i);
+    await expect(page.getByText('Your information')).toBeVisible();
+    await fillIdentityForm(page, email);
+    await submitForm(page);
+    await expect(page.getByText(/check your email|success|sign.?up.*received/i)).toBeVisible({
+      timeout: 10000,
+    });
+
+    // Visit 2: the same orientation again, plus the module.
+    await page.goto(`/events/${seed.event_id}`);
+    await clickSlotByLabel(page, /^orientation/i);
+    await clickShiftById(page, seed.shift_id);
+    await expect(page.getByText('Your information')).toBeVisible();
+    await fillIdentityForm(page, email);
+    const [signup] = await Promise.all([
+      page.waitForResponse(
+        (r) => r.url().includes('/public/signups') && r.request().method() === 'POST'
+      ),
+      submitForm(page),
+    ]);
+    expect(signup.status()).toBe(201);
+    expect((await signup.json()).shift_signup_ids).toHaveLength(1);
+    await expect(page.getByText(/already signed up/i)).not.toBeVisible();
     await expect(page.getByText(/check your email|success|sign.?up.*received/i)).toBeVisible({
       timeout: 10000,
     });

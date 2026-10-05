@@ -37,6 +37,7 @@ from app.models import (
     SlotType,
     Volunteer,
 )
+from app.services.orientation_service import _LIVE_ORIENTATION_STATUSES
 from app.signup_service import mark_promoted_pending
 from tests.fixtures.helpers import make_user
 
@@ -1086,11 +1087,60 @@ class TestOrientationRequirement:
         assert resp.status_code == 422, resp.text
         assert resp.json()["code"] != "ORIENTATION_REQUIRED"
 
-    def test_repicking_same_orientation_with_module_is_still_409(
+    @pytest.mark.parametrize("status", list(_LIVE_ORIENTATION_STATUSES))
+    def test_repicking_held_orientation_with_module_books_the_module(
+        self, client, db_session, monkeypatch, status
+    ):
+        """She picks the orientation she already holds alongside the module.
+        That used to 409 and throw away the module seats; now the held
+        orientation is left as it is and the module is booked."""
+        self._mute_email(monkeypatch)
+        self._template(db_session, "bio-intro", family_key="bio")
+        event = _make_event(db_session, module_slug="bio-intro")
+        shift = _make_shift(db_session, event.id)
+        orient = _make_slot(db_session, event.id, capacity=5)
+        db_session.commit()
+
+        self._book_then_set_status(client, db_session, orient.id, status)
+        resp = client.post(
+            "/api/v1/public/signups",
+            json=self._payload([orient.id], shift_ids=[shift.id]),
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["signup_ids"] == []
+        assert [i["shift_id"] for i in body["signups"]] == [str(shift.id)]
+
+        db_session.expire_all()
+        assert db_session.query(ShiftSignup).count() == 1
+        held = db_session.query(Signup).one()
+        assert held.status == status  # untouched
+        # The seat was counted once, when she first booked it.
+        assert db_session.query(Slot).filter(Slot.id == orient.id).one().current_count == 1
+
+    def test_repicking_only_held_orientation_is_409_and_writes_nothing(
         self, client, db_session, monkeypatch
     ):
-        """The one path that used to strand her still 409s — but she no longer
-        needs it, because the module alone now goes through."""
+        """Everything picked is already held — nothing new to book."""
+        self._mute_email(monkeypatch)
+        event = _make_event(db_session)
+        orient = _make_slot(db_session, event.id, capacity=5)
+        db_session.commit()
+
+        client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        resp = client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["detail"] == f"already signed up for slot {orient.id}"
+
+        db_session.expire_all()
+        assert db_session.query(Signup).count() == 1
+        assert db_session.query(Slot).filter(Slot.id == orient.id).one().current_count == 1
+
+    def test_repicking_cancelled_orientation_with_module_is_still_409(
+        self, client, db_session, monkeypatch
+    ):
+        """A cancelled booking is not held, so it is not skipped; the unique
+        constraint still refuses a second row, and nothing is half-booked."""
         self._mute_email(monkeypatch)
         self._template(db_session, "bio-intro", family_key="bio")
         event = _make_event(db_session, module_slug="bio-intro")
@@ -1098,13 +1148,14 @@ class TestOrientationRequirement:
         orient = _make_slot(db_session, event.id)
         db_session.commit()
 
-        client.post("/api/v1/public/signups", json=self._payload([orient.id]))
+        self._book_then_set_status(
+            client, db_session, orient.id, SignupStatus.cancelled
+        )
         resp = client.post(
             "/api/v1/public/signups",
             json=self._payload([orient.id], shift_ids=[shift.id]),
         )
         assert resp.status_code == 409
-        # Nothing half-booked: the shift seat was not kept.
         db_session.expire_all()
         assert db_session.query(ShiftSignup).count() == 0
 
