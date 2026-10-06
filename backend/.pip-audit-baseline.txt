@@ -14,7 +14,8 @@
 #
 # One advisory ID per line. Lines starting with # are ignored.
 # 34 advisories across 13 packages (35 after the 2026-09-08 addition below,
-# 36 after the 2026-10-05 python-jose addition)
+# 36 after the 2026-10-05 python-jose addition, 34 after werkzeug 3.1.9
+# fixed its two on 2026-10-05)
 
 
 # cryptography 46.0.3  (fix available: 48.0.1)
@@ -88,7 +89,3 @@ PYSEC-2026-2290
 # the image, ROADMAP #43), not with landing this scanner. Triage under
 # SCRUM-45.
 CVE-2026-9856
-
-# werkzeug 3.1.4  (fix available: 3.1.5)
-PYSEC-2026-2044
-PYSEC-2026-2320
