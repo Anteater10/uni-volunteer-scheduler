@@ -75,7 +75,7 @@ vine==5.1.0
 watchfiles==1.1.1
 wcwidth==0.2.14
 websockets==15.0.1
-Werkzeug==3.1.4
+Werkzeug==3.1.9
 wrapt==2.0.1
 openai>=1.30.0
 pgvector>=0.3,<1.0
