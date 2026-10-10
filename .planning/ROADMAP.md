@@ -62,6 +62,11 @@ lands. **Merged to `main` only** — per structural rule 3.
 | SCRUM-154 | #86 | Browse page groups/orders by `week_number`; `Week N - Module - School` title format enforced on the manual form **and** in the copilot (agent prompt + tool-layer rejection). Legacy titles deliberately not backfilled | 2026-09-07 |
 | SCRUM-155 | #87 | Admin can reverse a cancellation — `POST /admin/signups/{id}/uncancel` + shift twin, capacity re-checked, volunteer emailed via a new `resignup` kind | 2026-09-07 |
 | SCRUM-156 | #88 | Cancel on the event form prompts before discarding unsaved work; `dirty` finally wired into the Settings and Duplicate modals | 2026-09-07 |
+| SCRUM-212 | #112 | Asserted organizer == admin on every module and template endpoint | 2026-09 |
+| SCRUM-213 | #113 | Reminders empty state no longer claims only confirmed signups count | 2026-09 |
+| SCRUM-214 | #116 | States plainly that emailing is the only way to cancel | 2026-09 |
+| SCRUM-215 | #124 | Volunteer-facing events grouped by the week their title states (follow-up to SCRUM-154) | 2026-09 |
+| SCRUM-216 | #128 | anyio bumped to 4.14.2 for two new CVEs | 2026-09 |
 
 Two things this table is meant to make visible:
 
@@ -127,6 +132,33 @@ before verification, or you pay for L6 twice.
 ---
 
 # Milestone L — Launch (4–6 weeks)
+
+## Mega-roadmap additions — *added 2026-09-24*
+
+The dated schedule for everything left is `MEGA-ROADMAP.md` (PR #146). It adds
+17 rows that were in no earlier phase. All are ⬜ open, all have a Jira ticket
+(tagged on the row), and every target date is in `MEGA-ROADMAP.md`. C-4 is the
+same work as SCRUM-133 (P5 #105), pulled forward.
+
+| Row | What | Jira | Step |
+|---|---|---|---|
+| SIM-1 | Push `sim/universe-harness`, open the PR, confirm no real SendGrid key | SCRUM-217 | 1 Sim |
+| SIM-2 | Run the Fall 2026 quarter | SCRUM-218 | 1 Sim |
+| SIM-3 | Fix the two bugs the sim found so far | SCRUM-219 | 1 Sim |
+| SIM-4 | Run the remaining five quarters | SCRUM-220 | 1 Sim |
+| SIM-5 | Findings report; CI or nightly; hand bugs to L7 | SCRUM-221 | 1 Sim |
+| SIM-6 | Ten-year scripted run (30 quarters) | SCRUM-222 | 1 Sim |
+| C-1 | Send questions to UCSB Privacy Office, counsel, Risk Management, accessibility office | SCRUM-223 | 2 Compliance |
+| C-2 | Privacy notice, footer link, signup line, cookie sentence | SCRUM-224 | 2 Compliance |
+| C-3 | Terms of use (only if counsel says yes) | SCRUM-225 | 2 Compliance |
+| C-5 | WCAG 2.2 AA audit and fixes | SCRUM-226 | 2 Compliance |
+| C-6 | Minors and child safety, per Risk Management's answer | SCRUM-227 | 2 Compliance |
+| C-7 | UC IS-3 classification and vendor-risk paperwork | SCRUM-228 | 2 Compliance |
+| C-8 | Compliance sign-off. **Gate: L9 does not start without it** | SCRUM-229 | 2 Compliance |
+| X4a | Submit the IRB application | SCRUM-230 | 3 (in L3) |
+| J-1 | Jira cleanup (SCRUM-43, Done epics with open children, labels) | SCRUM-231 | 5 Jira sweep |
+| J-2 | Row-by-row proof for steps 3-4 | SCRUM-232 | 5 Jira sweep |
+| J-3 | Refresh this file and STATE.md; report "N of M rows done" | SCRUM-233 | 5 Jira sweep |
 
 ## Phase L0 — Protect what's fragile (0.5 day) — ✅ COMPLETE 2026-09-07
 
