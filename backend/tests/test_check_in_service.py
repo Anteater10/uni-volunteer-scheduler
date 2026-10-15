@@ -379,7 +379,7 @@ class TestEventCheckInByEmail:
         vol, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
-        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        volunteer, result, _ = event_check_in_by_email(db_session, event.id, vol.email, "1234")
 
         assert volunteer.id == vol.id
         # (option, transitioned) pairs — True means this call moved the unit.
@@ -400,7 +400,7 @@ class TestEventCheckInByEmail:
         vol, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start
         )
-        volunteer, result = event_check_in_by_email(
+        volunteer, result, _ = event_check_in_by_email(
             db_session, event.id, vol.email.upper(), "1234"
         )
         assert volunteer.id == vol.id
@@ -420,7 +420,7 @@ class TestEventCheckInByEmail:
         vol, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start, status=SignupStatus.checked_in
         )
-        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        volunteer, result, _ = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         # Reported, but flagged as not moved — the idempotent path.
         assert [moved for _o, moved in result] == [False]
         signups = _signups_of(result)
@@ -470,7 +470,7 @@ class TestEventCheckInByEmail:
             signups.append(s)
         db_session.flush()
 
-        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        volunteer, result, _ = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         assert len(result) == 2
         assert all(moved for _o, moved in result)
         for s in _signups_of(result):
@@ -482,7 +482,7 @@ class TestEventCheckInByEmail:
         vol, owner, event, slot, signup = _make_event_slot_signup(
             db_session, venue_code="1234", slot_start=slot_start, status=SignupStatus.pending
         )
-        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        volunteer, result, _ = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         signups = _signups_of(result)
         assert len(signups) == 1
         assert signups[0].status == SignupStatus.checked_in
@@ -549,7 +549,7 @@ class TestEventCheckInByEmail:
         db_session.add_all([s_in, s_out])
         db_session.flush()
 
-        volunteer, result = event_check_in_by_email(db_session, event.id, vol.email, "1234")
+        volunteer, result, _ = event_check_in_by_email(db_session, event.id, vol.email, "1234")
         signups = _signups_of(result)
         assert len(signups) == 1
         assert signups[0].id == s_in.id

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from tests.fixtures.helpers import auth_headers, make_event_with_slot, make_user
 
+from app.routers.check_in import SELF_CHECK_IN_RATE_LIMIT
 from app.models import (
     AuditLog,
     Event,
@@ -853,10 +854,66 @@ class TestSelectedForShiftSessions:
             },
         )
         # They never held a seat, so there is nothing to attend — and recording
-        # attendance would silently hand them one.
+        # attendance would silently hand them one. They are told why, rather
+        # than sent to staff for something staff can't fix at the door.
         assert resp.status_code == 409
+        assert resp.json()["detail"] == (
+            "You're on the waitlist for this shift, so there's nothing to "
+            "check in to yet."
+        )
         db_session.expire_all()
         assert self._attendance(db_session, commitment, sessions[0]) is None
+
+    def _stray_no_show(self, db_session, email):
+        """An open session that already holds a no_show row for this person:
+        what the old "End event" left on a later day (issue #189). After 0044
+        and 0045 it should not exist, but if it does the QR must refuse it
+        cleanly instead of failing with a 500."""
+        event, shift, sessions, vol, commitment = self._two_day_shift(db_session, email)
+        db_session.add(
+            SessionAttendance(
+                shift_signup_id=commitment.id,
+                slot_id=sessions[0].id,
+                status=SignupStatus.no_show,
+            )
+        )
+        db_session.flush()
+        return event, sessions, commitment
+
+    def _assert_ask_staff_409(self, resp):
+        # The router rolls the request back (which, in this test harness, also
+        # discards the seeded row), so the response is what is asserted.
+        assert resp.status_code == 409, resp.text
+        body = resp.json()
+        assert body["code"] == "INVALID_TRANSITION"
+        assert body["detail"] == (
+            "We couldn't check you in for this shift. "
+            "Ask a staff member to check you in."
+        )
+
+    def test_selected_stray_no_show_is_409_ask_staff(self, client, db_session):
+        event, sessions, _ = self._stray_no_show(
+            db_session, "stray-sel@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={
+                "email": "stray-sel@example.com",
+                "venue_code": "4321",
+                "unit_ids": [str(sessions[0].id)],
+            },
+        )
+        self._assert_ask_staff_409(resp)
+
+    def test_by_email_stray_no_show_is_409_ask_staff(self, client, db_session):
+        event, _, _ = self._stray_no_show(
+            db_session, "stray-all@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "stray-all@example.com", "venue_code": "4321"},
+        )
+        self._assert_ask_staff_409(resp)
 
     def test_pending_commitment_is_autoconfirmed_on_arrival(self, client, db_session):
         event, shift, sessions, vol, commitment = self._two_day_shift(
@@ -981,17 +1038,30 @@ class TestVenueCodeGate:
 
 class TestCheckInRateLimits:
     """Issue #31 hardening: unauthenticated check-in endpoints are rate
-    limited (30/60s per IP+path) to blunt email enumeration and code
-    brute-force."""
+    limited per IP+path to blunt email enumeration. Issue #189 raised the
+    limit from 30 to 120 a minute: a classroom of students on one school IP
+    scanning within minutes, with two overlapping shifts in the same room,
+    came close to 30. Venue-code guessing stays capped separately (10 wrong
+    codes per 15 minutes per IP)."""
+
+    LIMIT = SELF_CHECK_IN_RATE_LIMIT[0]
+
+    def test_limit_is_120_a_minute(self):
+        assert SELF_CHECK_IN_RATE_LIMIT == (120, 60)
+
+    def _statuses(self, client, url, body):
+        return [client.post(url, json=body).status_code for _ in range(self.LIMIT + 1)]
+
+    def _assert_limit(self, statuses):
+        assert 429 not in statuses[: self.LIMIT]
+        assert statuses[self.LIMIT] == 429
 
     def test_lookup_rate_limited_429(self, client, db_session, monkeypatch):
         monkeypatch.delenv("EXPOSE_TOKENS_FOR_TESTING", raising=False)
         event, *_ = _event_with_two_slots(db_session, orient_offset_min=5, period_offset_min=180)
         url = f"/api/v1/events/{event.id}/check-in-lookup"
         body = {"email": "limit-l@example.com", "venue_code": "4321"}
-        statuses = [client.post(url, json=body).status_code for _ in range(31)]
-        assert 429 not in statuses[:30]
-        assert statuses[30] == 429
+        self._assert_limit(self._statuses(client, url, body))
 
     def test_selected_rate_limited_429(self, client, db_session, monkeypatch):
         monkeypatch.delenv("EXPOSE_TOKENS_FOR_TESTING", raising=False)
@@ -1002,9 +1072,21 @@ class TestCheckInRateLimits:
             "venue_code": "4321",
             "unit_ids": [str(uuid.uuid4())],
         }
-        statuses = [client.post(url, json=body).status_code for _ in range(31)]
-        assert 429 not in statuses[:30]
-        assert statuses[30] == 429
+        self._assert_limit(self._statuses(client, url, body))
+
+    def test_by_email_rate_limited_429(self, client, db_session, monkeypatch):
+        monkeypatch.delenv("EXPOSE_TOKENS_FOR_TESTING", raising=False)
+        event, *_ = _event_with_two_slots(db_session, orient_offset_min=5, period_offset_min=180)
+        url = f"/api/v1/events/{event.id}/check-in-by-email"
+        body = {"email": "limit-e@example.com", "venue_code": "4321"}
+        self._assert_limit(self._statuses(client, url, body))
+
+    def test_self_check_in_rate_limited_429(self, client, db_session, monkeypatch):
+        monkeypatch.delenv("EXPOSE_TOKENS_FOR_TESTING", raising=False)
+        event, *_ = _event_with_two_slots(db_session, orient_offset_min=5, period_offset_min=180)
+        url = f"/api/v1/events/{event.id}/self-check-in"
+        body = {"signup_id": str(uuid.uuid4()), "venue_code": "4321"}
+        self._assert_limit(self._statuses(client, url, body))
 
 
 class TestEventStaffAccessEnforcement:
@@ -1165,3 +1247,201 @@ class TestSelectedResponseAccuracy:
             .count()
             == 0
         )
+
+
+class TestQrStrayAndClosedStates:
+    """Issue #189 follow-ups: what the QR does with a unit it cannot check in,
+    and that "ask a staff member" is advice staff can actually act on."""
+
+    ASK_STAFF = (
+        "We couldn't check you in for this shift. "
+        "Ask a staff member to check you in."
+    )
+    STAFF_CLOSED = (
+        "Staff have closed check-in for this shift. "
+        "Ask a staff member if you need to be checked in."
+    )
+
+    def _two_open_shifts(self, db_session, email):
+        """Shift 1 and Shift 2 overlap in the same room and are both inside
+        their check-in window; the volunteer holds both."""
+        from tests.fixtures.helpers import make_shift
+
+        owner = make_user(db_session, role=UserRole.organizer)
+        now = datetime.now(timezone.utc)
+        event = Event(
+            id=uuid.uuid4(), owner_id=owner.id, title="Overlap",
+            start_date=now, end_date=now + timedelta(days=1), venue_code="4321",
+        )
+        db_session.add(event)
+        db_session.flush()
+        vol = _make_volunteer(db_session, email=email)
+        out = []
+        for i, offset in enumerate((-5, 20)):
+            shift = make_shift(db_session, event.id, name=f"Shift {i + 1}", sort_order=i)
+            session = Slot(
+                id=uuid.uuid4(), event_id=event.id, shift_id=shift.id,
+                sort_order=0, name="Thu",
+                start_time=now + timedelta(minutes=offset),
+                end_time=now + timedelta(minutes=offset + 60),
+                capacity=10, slot_type=SlotType.PERIOD, location="Room 4",
+            )
+            db_session.add(session)
+            commitment = ShiftSignup(
+                id=uuid.uuid4(), volunteer_id=vol.id, shift_id=shift.id,
+                status=SignupStatus.confirmed,
+            )
+            db_session.add(commitment)
+            db_session.flush()
+            out.append((shift, session, commitment))
+        return event, out
+
+    def _row(self, db_session, commitment, session):
+        return (
+            db_session.query(SessionAttendance)
+            .filter_by(shift_signup_id=commitment.id, slot_id=session.id)
+            .one_or_none()
+        )
+
+    # K2 -----------------------------------------------------------------
+    def test_by_email_skips_a_stray_unit_and_checks_in_the_rest(self, client, db_session):
+        event, [(s1, sess1, c1), (s2, sess2, c2)] = self._two_open_shifts(
+            db_session, "overlap@example.com"
+        )
+        db_session.add(SessionAttendance(
+            shift_signup_id=c2.id, slot_id=sess2.id, status=SignupStatus.no_show,
+        ))
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "overlap@example.com", "venue_code": "4321"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["count_checked_in"] == 1
+        assert [r["unit_id"] for r in body["signups"]] == [str(sess1.id)]
+        # The one it could not do is reported, so the page can send them to staff.
+        assert [(r["unit_id"], r["status"]) for r in body["needs_staff"]] == [
+            (str(sess2.id), "no_show")
+        ]
+        db_session.expire_all()
+        assert self._row(db_session, c1, sess1).status == SignupStatus.checked_in
+        assert self._row(db_session, c2, sess2).status == SignupStatus.no_show
+
+    def test_by_email_counts_already_checked_in_units_as_success(self, client, db_session):
+        event, [(s1, sess1, c1), (s2, sess2, c2)] = self._two_open_shifts(
+            db_session, "already-plus-stray@example.com"
+        )
+        db_session.add_all([
+            SessionAttendance(shift_signup_id=c1.id, slot_id=sess1.id,
+                              status=SignupStatus.checked_in,
+                              checked_in_at=datetime.now(timezone.utc)),
+            SessionAttendance(shift_signup_id=c2.id, slot_id=sess2.id,
+                              status=SignupStatus.no_show),
+        ])
+        db_session.flush()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "already-plus-stray@example.com", "venue_code": "4321"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["count_already_checked_in"] == 1
+        assert len(resp.json()["needs_staff"]) == 1
+
+    # K5 -----------------------------------------------------------------
+    def test_selected_orientation_stray_no_show_is_409(self, client, db_session):
+        event, slot, vol, signup = _make_in_window_event_with_signup(
+            db_session, status=SignupStatus.no_show, email="orient-stray@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={
+                "email": "orient-stray@example.com", "venue_code": "4321",
+                "unit_ids": [str(signup.id)],
+            },
+        )
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["code"] == "INVALID_TRANSITION"
+        assert resp.json()["detail"] == self.ASK_STAFF
+
+    def test_by_email_orientation_stray_no_show_is_409(self, client, db_session):
+        event, slot, vol, signup = _make_in_window_event_with_signup(
+            db_session, status=SignupStatus.no_show, email="orient-stray2@example.com"
+        )
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-by-email",
+            json={"email": "orient-stray2@example.com", "venue_code": "4321"},
+        )
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["detail"] == self.ASK_STAFF
+
+    # K6 -----------------------------------------------------------------
+    def test_staff_tap_checks_in_a_stray_session_no_show(self, client, db_session):
+        event, [(s1, sess1, c1), _] = self._two_open_shifts(
+            db_session, "staff-fix@example.com"
+        )
+        db_session.add(SessionAttendance(
+            shift_signup_id=c1.id, slot_id=sess1.id, status=SignupStatus.no_show,
+        ))
+        db_session.flush()
+        organizer = make_user(db_session, role=UserRole.organizer)
+
+        resp = client.post(
+            f"/api/v1/shift-signups/{c1.id}/sessions/{sess1.id}/check-in",
+            headers=auth_headers(client, organizer),
+        )
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        row = self._row(db_session, c1, sess1)
+        assert row.status == SignupStatus.checked_in
+        assert row.checked_in_at is not None
+
+    def test_staff_tap_checks_in_a_stray_orientation_no_show(self, client, db_session):
+        event, slot, vol, signup = _make_in_window_event_with_signup(
+            db_session, status=SignupStatus.no_show
+        )
+        organizer = make_user(db_session, role=UserRole.organizer)
+        resp = client.post(
+            f"/api/v1/signups/{signup.id}/check-in",
+            headers=auth_headers(client, organizer),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "checked_in"
+        db_session.expire_all()
+        assert db_session.get(Signup, signup.id).checked_in_at is not None
+
+    # K7 -----------------------------------------------------------------
+    def test_selected_on_a_staff_closed_slot_is_409_slot_closed(self, client, db_session):
+        event, [(s1, sess1, c1), (s2, sess2, c2)] = self._two_open_shifts(
+            db_session, "closed-tap@example.com"
+        )
+        lookup = client.post(
+            f"/api/v1/events/{event.id}/check-in-lookup",
+            json={"email": "closed-tap@example.com", "venue_code": "4321"},
+        )
+        assert [r["staff_closed"] for r in lookup.json()["shifts"]] == [False, False]
+
+        sess1.closed_at = datetime.now(timezone.utc)
+        db_session.flush()
+
+        lookup = client.post(
+            f"/api/v1/events/{event.id}/check-in-lookup",
+            json={"email": "closed-tap@example.com", "venue_code": "4321"},
+        )
+        rows = {r["unit_id"]: r for r in lookup.json()["shifts"]}
+        assert rows[str(sess1.id)]["staff_closed"] is True
+        assert rows[str(sess1.id)]["window_state"] == "closed"
+        assert rows[str(sess2.id)]["staff_closed"] is False
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/check-in-selected",
+            json={
+                "email": "closed-tap@example.com", "venue_code": "4321",
+                "unit_ids": [str(sess1.id)],
+            },
+        )
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["code"] == "SLOT_CLOSED"
+        assert resp.json()["detail"] == self.STAFF_CLOSED

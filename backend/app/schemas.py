@@ -717,6 +717,9 @@ class CheckInShift(BaseModel):
     status: str
     window_state: Literal["open", "upcoming", "closed"]
     window_opens_at: Optional[datetime] = None
+    # Issue #189: "closed" because staff closed the slot, as opposed to the
+    # self check-in window having passed. The page words the two differently.
+    staff_closed: bool = False
 
 
 class CheckInLookupResponse(BaseModel):
@@ -760,6 +763,9 @@ class EventCheckInByEmailResponse(BaseModel):
     count_checked_in: int
     count_already_checked_in: int
     signups: List[EventCheckInByEmailSignup]
+    # Issue #189: units in the window the QR may not check in (a stray no-show
+    # on an open slot). Reported so the volunteer is sent to staff for them.
+    needs_staff: List[EventCheckInByEmailSignup] = []
 
 
 

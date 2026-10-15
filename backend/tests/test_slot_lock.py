@@ -479,18 +479,39 @@ class TestTapsOnOpenSlots:
         with pytest.raises(LookupError):
             check_in_signup(db_session, uuid.uuid4(), owner.id)
 
-    def test_session_tap_on_a_stray_final_row_refuses(self, db_session, owner):
+    def test_session_tap_on_a_stray_attended_row_refuses(self, db_session, owner):
         event = _event(db_session, owner)
         shift, (tue,) = _shift(db_session, event, [-3])
         c = _commit(db_session, shift)
         db_session.add(
-            SessionAttendance(shift_signup_id=c.id, slot_id=tue.id, status=SignupStatus.no_show)
+            SessionAttendance(shift_signup_id=c.id, slot_id=tue.id, status=SignupStatus.attended)
         )
         db_session.flush()
 
         with pytest.raises(InvalidTransitionError) as exc:
             check_in_session(db_session, c.id, tue.id, owner.id)
-        assert exc.value.from_status == SignupStatus.no_show
+        assert exc.value.from_status == SignupStatus.attended
+
+    def test_session_tap_on_a_stray_no_show_checks_in(self, db_session, owner):
+        """Issue #189: the QR tells a volunteer with a stray no-show to ask
+        staff, so the staff tap has to fix it."""
+        event = _event(db_session, owner)
+        shift, (tue,) = _shift(db_session, event, [-3])
+        c = _commit(db_session, shift)
+        row = SessionAttendance(
+            shift_signup_id=c.id, slot_id=tue.id, status=SignupStatus.no_show
+        )
+        db_session.add(row)
+        db_session.flush()
+
+        check_in_session(db_session, c.id, tue.id, owner.id)
+
+        assert row.status == SignupStatus.checked_in
+        assert row.checked_in_at is not None
+        assert [
+            (a.extra["from"], a.extra["to"])
+            for a in _audits(db_session, entity_id=c.id, action="transition")
+        ] == [("no_show", "checked_in")]
 
     def test_session_check_in_is_idempotent_and_undo_deletes(self, db_session, owner):
         event = _event(db_session, owner)
@@ -892,7 +913,7 @@ class TestQrSelfCheckInOnClosedSlot:
         _, options = lookup_check_in_options(db_session, event.id, vol.email, "2468")
         assert [o.window_state for o in options] == ["closed"]
 
-        with pytest.raises(CheckInWindowError):
+        with pytest.raises(SlotClosedError):
             check_in_selected(db_session, event.id, vol.email, "2468", [s.id])
         with pytest.raises(CheckInWindowError):
             event_check_in_by_email(db_session, event.id, vol.email, "2468")
@@ -1281,7 +1302,10 @@ class TestServiceEdges:
         shift, (now_session,) = _shift(db_session, event, [0])
         wl = _commit(db_session, shift, SignupStatus.waitlisted, volunteer=vol)
 
-        _, eligible = event_check_in_by_email(db_session, event.id, vol.email, "2468")
+        _, eligible, needs_staff = event_check_in_by_email(
+            db_session, event.id, vol.email, "2468"
+        )
+        assert needs_staff == []
 
         assert [(o.unit_id, changed) for o, changed in eligible] == [(ok.id, True)]
         assert gone.status == SignupStatus.cancelled
