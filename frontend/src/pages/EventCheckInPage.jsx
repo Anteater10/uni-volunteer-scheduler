@@ -34,6 +34,11 @@ const fmtTime = (iso) => fmtVenueTime(iso);
 const venueDay = (t) =>
   new Date(t).toLocaleDateString("en-CA", { timeZone: VENUE_TZ });
 
+// Issue #189: "closed" has two causes and two different next steps. Shared by
+// the schedule and the cards so both say the same thing.
+const closedLabel = (staffClosed) =>
+  staffClosed ? "Closed by staff" : "Self check-in has ended — ask a staff member";
+
 // "Shift 2 · Thursday" for a unit this visit checked in.
 function visitLabel(row) {
   const name =
@@ -63,19 +68,21 @@ function TypeBadge({ slotType }) {
 // Issue #31 UX rework — one tappable card per shift the volunteer holds.
 function ShiftCard({ shift, onCheckIn, busy }) {
   const done = shift.status === "checked_in" || shift.status === "attended";
-  const open = shift.window_state === "open";
+  const waitlisted = shift.status === "waitlisted";
+  const open = shift.window_state === "open" && !waitlisted;
   const tappable = open && !done && !busy;
 
-  // Issue #189: "closed" has two causes and two different next steps.
+  // A waitlisted booking holds no seat: say so up front rather than let the
+  // tap be refused.
   const stateLine = done
     ? "Checked in ✓"
-    : open
-      ? "Tap to check in"
-      : shift.window_state === "upcoming"
-        ? `Check-in opens at ${fmtTime(shift.window_opens_at)}`
-        : shift.staff_closed
-          ? "Closed by staff"
-          : "Self check-in has ended — ask a staff member";
+    : waitlisted
+      ? "Waitlisted — nothing to check in to yet"
+      : open
+        ? "Tap to check in"
+        : shift.window_state === "upcoming"
+          ? `Check-in opens at ${fmtTime(shift.window_opens_at)}`
+          : closedLabel(shift.staff_closed);
 
   return (
     <li>
@@ -356,7 +363,7 @@ export default function EventCheckInPage() {
                       ? "Open now"
                       : state === "upcoming"
                         ? `Opens at ${fmtTime(new Date(opensAt).toISOString())}`
-                        : "Check-in closed"}
+                        : closedLabel(Boolean(slot.closed_at))}
                   </span>
                 </li>
               ))}

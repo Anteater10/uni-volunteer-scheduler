@@ -159,7 +159,7 @@ describe("EventCheckInPage", () => {
     const box = await screen.findByTestId("checkin-window-status");
     expect(box.textContent).toMatch(/checking in now/i);
     expect(box.textContent).toMatch(/orientation/i);
-    expect(box.textContent).toMatch(/check-in closed/i);
+    expect(box.textContent).toMatch(/self check-in has ended/i);
     expect(box.textContent).toMatch(/open now/i);
     expect(box.textContent).toMatch(/opens at/i);
   });
@@ -196,6 +196,21 @@ describe("EventCheckInPage", () => {
     expect(box.textContent).toMatch(/Period 3/);
   });
 
+  it("labels the schedule like the cards: closed by staff vs self check-in ended", async () => {
+    api.listSlots.mockResolvedValue([
+      slotAt(-180 * MIN, { id: "s-past", type: "orientation" }),
+      { ...slotAt(5 * MIN, { id: "s-staff", type: "period" }), closed_at: new Date().toISOString() },
+    ]);
+
+    renderPage();
+
+    const box = await screen.findByTestId("checkin-window-status");
+    const items = within(box).getAllByRole("listitem");
+    expect(items[0].textContent).toMatch(/self check-in has ended — ask a staff member/i);
+    expect(items[1].textContent).toMatch(/closed by staff/i);
+    expect(box.textContent).not.toMatch(/check-in closed/i);
+  });
+
   it("says a staff-closed slot is closed even inside its window", async () => {
     // 2026-10-13: staff closed the session, so its attendance is locked; the
     // clock alone would still have said "Open now".
@@ -210,7 +225,7 @@ describe("EventCheckInPage", () => {
 
     const box = await screen.findByTestId("checkin-window-status");
     expect(box.textContent).toMatch(/no shifts are open for check-in right now/i);
-    expect(box.textContent).toMatch(/check-in closed/i);
+    expect(box.textContent).toMatch(/closed by staff/i);
     expect(box.textContent).not.toMatch(/open now/i);
   });
 
@@ -264,6 +279,22 @@ describe("EventCheckInPage", () => {
     expect(screen.getByTestId("shift-su-2").textContent).toMatch(
       /self check-in has ended — ask a staff member/i,
     );
+  });
+
+  it("says a waitlisted booking has nothing to check in to, and won't take a tap", async () => {
+    api.public.checkInLookup.mockResolvedValue(
+      lookupOf(
+        shiftFixture({ unitId: "wl", type: "period", state: "open", status: "waitlisted" }),
+      ),
+    );
+
+    renderPage();
+    await submitEmail(setupUser());
+
+    const wl = await screen.findByTestId("shift-wl");
+    expect(wl.textContent).toMatch(/waitlisted — nothing to check in to yet/i);
+    expect(wl.textContent).not.toMatch(/tap to check in/i);
+    expect(wl).toBeDisabled();
   });
 
   it("shows only today's units after lookup", async () => {

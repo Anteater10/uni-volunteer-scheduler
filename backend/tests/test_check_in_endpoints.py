@@ -481,12 +481,14 @@ class TestUndoCheckIn:
         assert resp.status_code == 200
         assert resp.json()["status"] == "confirmed"
 
-    def test_undo_rejected_for_attended(self, client, db_session):
-        """Resolved states are final — undo only covers the mis-tap window."""
+    def test_undo_rejected_for_a_cancelled_booking(self, client, db_session):
+        """Undo covers a check-in (or, issue #189, a stray "attended" on an
+        open slot, which the roster shows as checked in). A booking with no
+        seat has nothing to undo."""
         organizer = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=organizer)
         vol = _make_volunteer(db_session)
-        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.attended)
+        signup = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.cancelled)
         db_session.add(signup)
         db_session.flush()
 

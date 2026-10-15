@@ -467,6 +467,23 @@ class TestTapsOnOpenSlots:
         undo_check_in(db_session, s.id, owner.id)
         assert s.status == SignupStatus.confirmed and s.checked_in_at is None
 
+    def test_undo_on_a_stray_attended_goes_back_to_not_checked_in(self, db_session, owner):
+        """Issue #189: the roster shows a stray "attended" on an open slot as
+        checked in, so its undo tap has to work like any other undo."""
+        event = _event(db_session, owner)
+        slot = _orientation(db_session, event)
+        s = _signup(db_session, slot, SignupStatus.attended)
+        s.checked_in_at = datetime.now(timezone.utc)
+        db_session.flush()
+
+        undo_check_in(db_session, s.id, owner.id)
+
+        assert s.status == SignupStatus.confirmed and s.checked_in_at is None
+        assert [
+            (a.extra["from"], a.extra["to"])
+            for a in _audits(db_session, entity_id=s.id, action="transition")
+        ] == [("attended", "confirmed")]
+
     @pytest.mark.parametrize("status", [SignupStatus.waitlisted, SignupStatus.cancelled])
     def test_no_seat_no_check_in(self, db_session, owner, status):
         event = _event(db_session, owner)

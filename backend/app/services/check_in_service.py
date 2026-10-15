@@ -317,7 +317,12 @@ def undo_check_in(
     if signup.status in _NOT_CHECKED_IN:
         return signup
 
-    _transition(db, signup, SignupStatus.confirmed, actor_id, via)
+    # Issue #189: the roster shows a stray "attended" on an open slot as
+    # checked in, so undoing it is the same tap.
+    _transition(
+        db, signup, SignupStatus.confirmed, actor_id, via,
+        force=signup.status == SignupStatus.attended,
+    )
     return signup
 
 
