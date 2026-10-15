@@ -39,6 +39,7 @@ from ..models import (
 )
 from ..schemas import PublicSignupCreate, PublicSignupResponse, PublicSignupResultItem
 from . import form_schema_service, shift_service
+from .check_in_service import ensure_accepts_seat
 from .phone_service import InvalidPhoneError, normalize_us_phone
 from .volunteer_service import upsert_volunteer
 from .waitlist_service import (
@@ -313,9 +314,16 @@ def _ensure_units_not_ended(db: Session, slot_ids, shift_ids) -> None:
 
     Runs before any write, alongside the other pre-flight guards, so a rejected
     signup leaves no volunteer or signup rows behind.
+
+    2026-10-13 slot lock: an orientation slot staff have closed refuses with
+    409 SLOT_CLOSED. A shift is refused only once every session is ended or
+    closed — joining mid-week, with Tuesday already closed, is legitimate.
     """
     if slot_ids:
         for slot in db.query(Slot).filter(Slot.id.in_(set(slot_ids))).all():
+            # Before the clock check, which also counts a closed slot as
+            # ended: a closed orientation takes no new seat (409 SLOT_CLOSED).
+            ensure_accepts_seat(slot)
             if slot_has_ended(slot):
                 raise HTTPException(
                     status_code=422,
@@ -556,6 +564,7 @@ def create_public_signup(
             db.query(Slot)
             .filter(Slot.id == slot_id)
             .with_for_update()
+            .populate_existing()
             .first()
         )
         if slot is None:
@@ -563,6 +572,9 @@ def create_public_signup(
             # nonexistent slot and a private event's slot must be
             # byte-identical 404s.
             raise HTTPException(status_code=404, detail=_NOT_FOUND_DETAIL)
+        # Re-checked under the lock: the slot may have closed since the
+        # pre-flight read.
+        ensure_accepts_seat(slot)
         # Phase 29 (LOCK-01) — enforce event signup window before capacity.
         # Public path always enforces; organizer/admin paths bypass via
         # other router endpoints that don't go through this service.

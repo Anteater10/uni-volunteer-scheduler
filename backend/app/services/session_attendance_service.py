@@ -37,12 +37,14 @@ ATTENDANCE_STATUSES = (
 )
 
 # Keyed by the *current* record, where None means "no row yet". Mirrors the
-# signup state machine one level down: a check-in can still be resolved or
-# undone, a resolution is terminal (the one supervised way back out is
-# reopen_event, which bypasses this table's rules on purpose).
+# signup state machine one level down. On an open session the only row there
+# is is checked_in, written by a tap or the volunteer's own QR check-in;
+# attended / no_show exist only on a closed session (2026-10-13). Closing and
+# reopening a session are the one place they are written or undone, and pass
+# `force=True` to skip this table.
 ALLOWED_ATTENDANCE_TRANSITIONS: dict[SignupStatus | None, set[SignupStatus]] = {
-    None: {SignupStatus.checked_in, SignupStatus.attended, SignupStatus.no_show},
-    SignupStatus.checked_in: {SignupStatus.attended, SignupStatus.no_show},
+    None: {SignupStatus.checked_in},
+    SignupStatus.checked_in: set(),
     SignupStatus.attended: set(),
     SignupStatus.no_show: set(),
 }
@@ -60,10 +62,12 @@ def get_attendance(
     db: Session, shift_signup_id: UUID, slot_id: UUID
 ) -> SessionAttendance | None:
     return db.execute(
-        select(SessionAttendance).where(
+        select(SessionAttendance)
+        .where(
             SessionAttendance.shift_signup_id == shift_signup_id,
             SessionAttendance.slot_id == slot_id,
         )
+        .execution_options(populate_existing=True)
     ).scalar_one_or_none()
 
 
@@ -76,10 +80,12 @@ def attendance_by_signup(
         return {}
     rows = (
         db.execute(
-            select(SessionAttendance).where(
+            select(SessionAttendance)
+            .where(
                 SessionAttendance.slot_id == slot_id,
                 SessionAttendance.shift_signup_id.in_(shift_signup_ids),
             )
+            .execution_options(populate_existing=True)
         )
         .scalars()
         .all()
@@ -110,6 +116,8 @@ def record(
     new_status: SignupStatus,
     actor_id: UUID | None,
     via: str,
+    *,
+    force: bool = False,
 ) -> tuple[SessionAttendance, bool]:
     """Write an attendance outcome for one session of one commitment.
 
@@ -120,6 +128,11 @@ def record(
     is a programming error upstream (the callers resolve the session *from*
     the shift), so it raises rather than silently writing a cross-shift row
     the unique constraint would happily accept.
+
+    `force=True` (closing / reopening a session only) skips
+    ALLOWED_ATTENDANCE_TRANSITIONS. checked_in_at is stamped on a fresh
+    check-in, kept when a reopen turns attended back into checked_in, and
+    stamped now on that reopen if the row never had one.
     """
     if new_status not in ATTENDANCE_STATUSES:
         raise ValueError(f"{new_status} is not an attendance status")
@@ -134,7 +147,7 @@ def record(
     if old == new_status:
         return row, False
 
-    if new_status not in ALLOWED_ATTENDANCE_TRANSITIONS.get(old, set()):
+    if not force and new_status not in ALLOWED_ATTENDANCE_TRANSITIONS.get(old, set()):
         raise InvalidAttendanceTransitionError(old, new_status)
 
     if row is None:
@@ -147,7 +160,9 @@ def record(
     else:
         row.status = new_status
 
-    if new_status == SignupStatus.checked_in:
+    if new_status == SignupStatus.checked_in and (
+        old != SignupStatus.attended or row.checked_in_at is None
+    ):
         row.checked_in_at = datetime.now(timezone.utc)
 
     db.add(
@@ -169,28 +184,27 @@ def record(
     return row, True
 
 
-def undo_check_in(
+def clear(
     db: Session,
     shift_signup: ShiftSignup,
     session: Slot,
     actor_id: UUID | None,
     via: str = "organizer_undo",
 ) -> bool:
-    """Reverse a mis-tapped session check-in by *deleting* the row.
+    """Clear a session back to "not checked in" by *deleting* the row.
 
     Deletion rather than a status flip because "no record" is exactly the
     state a never-checked-in session is in — leaving a row behind with some
     neutral status would make the roster show a volunteer as processed.
-    Resolved sessions (attended / no_show) are terminal here, same as the
-    signup state machine: undo covers the tap-slip, not the resolution.
-    Idempotent — no row means nothing to undo.
+    Used by the staff undo tap on an open session and by reopening a closed
+    one (a no show goes back to "not checked in"); check_in_service checks
+    the slot state before calling. Idempotent — no row means nothing to clear.
     """
     row = get_attendance(db, shift_signup.id, session.id)
     if row is None:
         return False
-    if row.status != SignupStatus.checked_in:
-        raise InvalidAttendanceTransitionError(row.status, SignupStatus.confirmed)
 
+    old = row.status
     db.delete(row)
     db.add(
         AuditLog(
@@ -199,7 +213,7 @@ def undo_check_in(
             entity_type="session_attendance",
             entity_id=str(shift_signup.id),
             extra={
-                "from": SignupStatus.checked_in.value,
+                "from": old.value,
                 "to": None,
                 "via": via,
                 "slot_id": str(session.id),
@@ -210,15 +224,3 @@ def undo_check_in(
     db.flush()
     return True
 
-
-def attended_session_count(db: Session, volunteer_id: UUID) -> int:
-    """Hours tally input: sessions this volunteer actually attended."""
-    return (
-        db.query(SessionAttendance)
-        .join(ShiftSignup, ShiftSignup.id == SessionAttendance.shift_signup_id)
-        .filter(
-            ShiftSignup.volunteer_id == volunteer_id,
-            SessionAttendance.status == SignupStatus.attended,
-        )
-        .count()
-    )

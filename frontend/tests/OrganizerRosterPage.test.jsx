@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../src/api/roster", () => ({
   fetchRoster: vi.fn(),
   checkInSignup: vi.fn(),
-  resolveEvent: vi.fn(),
+  resolveSlot: vi.fn(),
 }));
 
 // Mock authStorage
@@ -24,7 +24,7 @@ vi.mock("../src/lib/authStorage", () => ({
 }));
 
 import OrganizerRosterPage from "../src/pages/OrganizerRosterPage";
-import { fetchRoster, checkInSignup, resolveEvent } from "../src/api/roster";
+import { fetchRoster, checkInSignup, resolveSlot } from "../src/api/roster";
 import { AuthContext } from "../src/state/AuthContext";
 
 const MOCK_AUTH = {
@@ -49,6 +49,7 @@ const MOCK_ROSTER = {
       signup_id: "s1",
       student_name: "Alice",
       status: "confirmed",
+      slot_id: "slot-10",
       slot_time: "2026-04-10T10:00:00Z",
       checked_in_at: null,
     },
@@ -56,6 +57,7 @@ const MOCK_ROSTER = {
       signup_id: "s2",
       student_name: "Bob",
       status: "checked_in",
+      slot_id: "slot-10",
       slot_time: "2026-04-10T10:00:00Z",
       checked_in_at: "2026-04-10T10:05:00Z",
     },
@@ -63,6 +65,7 @@ const MOCK_ROSTER = {
       signup_id: "s3",
       student_name: "Carol",
       status: "confirmed",
+      slot_id: "slot-11",
       slot_time: "2026-04-10T11:00:00Z",
       checked_in_at: null,
     },
@@ -97,7 +100,7 @@ describe("OrganizerRosterPage", () => {
     vi.clearAllMocks();
     fetchRoster.mockResolvedValue(MOCK_ROSTER);
     checkInSignup.mockResolvedValue({ status: "checked_in" });
-    resolveEvent.mockResolvedValue(MOCK_ROSTER);
+    resolveSlot.mockResolvedValue({});
   });
 
   it("shows checked-in count in header", async () => {
@@ -129,7 +132,9 @@ describe("OrganizerRosterPage", () => {
     await waitFor(() => {
       // Modal should show the resolve dialog with role="dialog"
       expect(screen.getByRole("dialog")).toBeInTheDocument();
-      // Alice and Carol appear in both roster and modal, so use getAllByText
+      // Alice and Carol appear in both roster and modal, so use getAllByText.
+      // Their sessions started in the past and are still open, so End event
+      // offers them.
       expect(screen.getAllByText("Alice").length).toBeGreaterThanOrEqual(2);
       expect(screen.getAllByText("Carol").length).toBeGreaterThanOrEqual(2);
     });

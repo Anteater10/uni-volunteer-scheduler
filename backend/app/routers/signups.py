@@ -8,7 +8,7 @@ from .. import models, schemas
 from ..celery_app import send_email_notification, send_waitlist_promotion_email
 from ..database import get_db
 from ..deps import log_action, require_staff
-from ..services.check_in_service import ensure_signup_cancellable
+from ..services.check_in_service import ensure_signup_cancellable, lock_signup_with_slot
 from ..services.swap_service import swap_signup as _swap_signup
 from ..services.swap_service import swap_shift_signup as _swap_shift_signup
 
@@ -45,36 +45,19 @@ def cancel_signup(
 ):
     """
     Cancel a signup safely.
-    - Lock Signup row
-    - Lock Slot row
+    - Lock Slot row, then Signup row (check_in_service's one lock order)
     - Maintain invariant: slot.current_count == #confirmed signups
     - Never promotes — the waitlist only moves by explicit staff promotion (2026-08-02).
     """
-    # Lock the signup row
-    signup = (
-        db.query(models.Signup)
-        .filter(models.Signup.id == signup_id)
-        .with_for_update()
-        .first()
-    )
-    if not signup:
-        raise HTTPException(status_code=404, detail="Signup not found")
-
     # 2026-08-02 read-only signups: volunteer self-cancel is gone entirely —
     # cancellation is staff-only (require_staff above), via this endpoint and
     # admin.py's /admin/signups/{id}/cancel. The reaper cancels stale rows too.
     #
-    # Lock the slot row
-    # .one(), not a 404 check: the signup row is locked above, and deleting
-    # its slot or event has to delete this signup first (non-null FKs), so
-    # that delete waits on our lock. Neither can be missing here.
-    slot = (
-        db.query(models.Slot)
-        .filter(models.Slot.id == signup.slot_id)
-        .with_for_update()
-        .one()
-    )
-    event = db.query(models.Event).filter(models.Event.id == slot.event_id).one()
+    # Slot first, then the signup, both re-read under the lock.
+    try:
+        signup, slot = lock_signup_with_slot(db, signup_id, exclusive_slot=True)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Signup not found")
 
     # Defensive heal
     actual_confirmed = _confirmed_count_for_slot(db, slot.id)
@@ -87,8 +70,9 @@ def cancel_signup(
         db.refresh(signup)
         return signup
 
-    # 2026-07-29 sweep: attended/no_show are terminal, no staff exception —
-    # see check_in_service.ensure_signup_cancellable for the full rationale.
+    # attended / no_show exist only on a closed slot and are changed by
+    # reopening that slot, never by cancelling — no staff exception. See
+    # check_in_service.ensure_signup_cancellable for the full rationale.
     ensure_signup_cancellable(signup)
 
     previous_status = signup.status

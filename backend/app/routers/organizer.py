@@ -21,7 +21,10 @@ from ..services.orientation_service import (
     family_for_event,
     grant_orientation_credit,
 )
-from ..services import shift_service
+from ..services.check_in_service import (
+    lock_shift_signup_with_shift,
+    lock_signup_with_slot,
+)
 from ..services.waitlist_service import (
     SlotEndedError,
     manual_promote,
@@ -74,9 +77,7 @@ def grant_orientation_for_signup(
             detail="Signup is cancelled; cannot grant orientation credit.",
         )
 
-    volunteer = signup.volunteer
-    if not volunteer:
-        raise HTTPException(status_code=404, detail="Volunteer not found")
+    volunteer = signup.volunteer  # volunteer_id is a NOT NULL FK
 
     family = family_for_event(db, event_id)
     if not family:
@@ -182,9 +183,7 @@ def grant_orientation_for_shift_signup(
             detail="Shift signup is cancelled; cannot grant orientation credit.",
         )
 
-    volunteer = shift_signup.volunteer
-    if not volunteer:
-        raise HTTPException(status_code=404, detail="Volunteer not found")
+    volunteer = shift_signup.volunteer  # volunteer_id is a NOT NULL FK
 
     family = family_for_event(db, event_id)
     if not family:
@@ -298,22 +297,12 @@ def organizer_promote_signup(
         raise HTTPException(status_code=404, detail="Event not found")
     ensure_event_staff_access(event, current_user)
 
-    signup = (
-        db.query(models.Signup)
-        .filter(models.Signup.id == signup_id)
-        .with_for_update()
-        .first()
-    )
-    if signup is None:
+    # Slot first, then the signup (check_in_service's one lock order).
+    try:
+        signup, slot = lock_signup_with_slot(db, signup_id, exclusive_slot=True)
+    except LookupError:
         raise HTTPException(status_code=404, detail="Signup not found")
-
-    slot = (
-        db.query(models.Slot)
-        .filter(models.Slot.id == signup.slot_id)
-        .with_for_update()
-        .first()
-    )
-    if slot is None or slot.event_id != event.id:
+    if slot.event_id != event.id:
         raise HTTPException(
             status_code=400, detail="Signup does not belong to this event"
         )
@@ -382,17 +371,12 @@ def organizer_promote_shift_signup(
         raise HTTPException(status_code=404, detail="Event not found")
     ensure_event_staff_access(event, current_user)
 
-    shift_signup = (
-        db.query(models.ShiftSignup)
-        .filter(models.ShiftSignup.id == shift_signup_id)
-        .with_for_update(of=models.ShiftSignup)
-        .first()
-    )
-    if shift_signup is None:
+    # Shift first, then the commitment (check_in_service's lock order).
+    try:
+        shift_signup, shift = lock_shift_signup_with_shift(db, shift_signup_id)
+    except LookupError:
         raise HTTPException(status_code=404, detail="Shift signup not found")
-
-    shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    if shift is None or shift.event_id != event.id:
+    if shift.event_id != event.id:
         raise HTTPException(
             status_code=400, detail="Shift signup does not belong to this event"
         )

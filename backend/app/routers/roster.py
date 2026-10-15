@@ -86,6 +86,7 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
                 slot_type=slot.slot_type.value if slot else None,
                 slot_end=slot.end_time if slot else None,
                 slot_location=slot.location if slot else None,
+                slot_closed_at=slot.closed_at if slot else None,
             )
         )
 
@@ -110,6 +111,10 @@ def _build_roster(db: Session, event: Event) -> RosterResponse:
         checked_in_count=checked,
         rows=rows,
     )
+
+
+_CLOSED_RESULTS = (SignupStatus.attended, SignupStatus.no_show)
+_SEATED = (SignupStatus.pending, SignupStatus.confirmed)
 
 
 def _session_rows(
@@ -153,6 +158,16 @@ def _session_rows(
         shift = shift_signup.shift
         for session in sorted(shift.sessions, key=lambda s: (s.sort_order, s.start_time)):
             record = records.get(session.id)
+            if (
+                session.closed_at is not None
+                and shift_signup.status in _SEATED
+                and (record is None or record.status not in _CLOSED_RESULTS)
+            ):
+                # 2026-10-13: everyone seated on a closed session has a final
+                # result. A seat without one joined (or was reinstated) after
+                # it closed, so was never expected there. Cancelled and
+                # waitlisted rows stay, showing their lifecycle status.
+                continue
             status = record.status if record is not None else shift_signup.status
             statuses.append(status)
             rows.append(
@@ -170,6 +185,7 @@ def _session_rows(
                     slot_type=session.slot_type.value,
                     slot_end=session.end_time,
                     slot_location=session.location,
+                    slot_closed_at=session.closed_at,
                 )
             )
     return rows, statuses

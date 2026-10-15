@@ -1,19 +1,35 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { resolveEvent, resolveSlot } from "../api/roster";
+import React, { useMemo, useState } from "react";
+import {
+  isSlotClosedError,
+  isSlotNotStartedError,
+  resolveSlot,
+} from "../api/roster";
 import { Button, Modal } from "./ui";
 import { toast } from "../state/toast";
 
+// Rows that never hold a seat are never closed out.
+const UNSEATED = ["cancelled", "waitlisted"];
+
 /**
- * Resolve modal: shows remaining confirmed/checked_in signups.
- * Each row gets a toggle: attended (check) or no-show (x).
- * Save is disabled until every row is marked.
+ * Close-out modal: lists every seated booking (pending and confirmed are the
+ * same "not checked in" here). Each row gets a toggle: attended (check) or
+ * no-show (x). Save is disabled until every row is marked.
  *
  * Two scopes (grant-on-slot-end, 2026-07-24):
- *  - event mode (no `slot` prop): legacy "End event" across all slots
+ *  - event mode (no `slot` prop): "End event" across the event's slots
  *  - slot mode (`slot` = {id, slot_type}): "End orientation" / "End module
  *    slot" for one slot. Ending an orientation slot grants orientation
  *    credit to every volunteer marked attended — the modal says so, since
  *    that is the moment the credit commitment happens.
+ *
+ * 2026-10-13 (Kim's report): closing is per slot and can be undone. Event
+ * mode only offers slots that are still open and have already started —
+ * "End event" on a Tuesday used to mark Thursday's volunteers no-show — and
+ * saves with one POST /slots/{id}/resolve per slot, so what the organizer
+ * sees listed is exactly what gets closed. "Started" is judged against
+ * `openedAt` (ms), which the caller stamps when the End event button is
+ * pressed — a render can't read the clock, and judging it once keeps the
+ * list from shifting under the organizer's thumb while they mark it.
  *
  * 2026-08-05 shifts: a roster row is one volunteer at one *session*, so a
  * volunteer holding a Tue+Wed shift appears twice and gets two independent
@@ -25,17 +41,17 @@ import { toast } from "../state/toast";
  * marking one name enabled Save, and the request went out with nulls in it.
  */
 export default function ResolveEventModal({
-  eventId,
   signups,
   isOpen,
   onClose,
   onResolved,
   slot = null,
+  openedAt = null,
 }) {
-  const unmarked = useMemo(
+  const seated = useMemo(
     () =>
       (signups || [])
-        .filter((s) => s.status === "confirmed" || s.status === "checked_in")
+        .filter((s) => !UNSEATED.includes(s.status))
         .map((s) => ({
           ...s,
           // Exactly one of the two ids is set on a roster row.
@@ -45,6 +61,23 @@ export default function ResolveEventModal({
           key: `${s.shift_signup_id || s.signup_id}|${s.slot_id || ""}`,
         })),
     [signups],
+  );
+
+  const unmarked = useMemo(
+    () =>
+      slot
+        ? seated
+        : // Event mode: open slots that have started. A row with no slot
+          // can't be closed per slot, so it isn't offered.
+          seated.filter(
+            (s) =>
+              s.slot_id &&
+              !s.slot_closed_at &&
+              s.slot_time &&
+              openedAt !== null &&
+              new Date(s.slot_time).getTime() <= openedAt,
+          ),
+    [seated, slot, openedAt],
   );
 
   const [decisions, setDecisions] = useState({});
@@ -60,17 +93,23 @@ export default function ResolveEventModal({
   // every change would silently discard the organizer's manual overrides.
   // A signup that appears while the modal is open stays unmarked, keeping
   // Save disabled until the organizer decides that row.
-  const wasOpenRef = useRef(false);
-  useEffect(() => {
-    if (isOpen && !wasOpenRef.current) {
+  //
+  // Done during render (React's "adjust state when a prop changes" pattern)
+  // rather than in an effect, so the first frame of the open modal already
+  // has its decisions and Save is never briefly disabled.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) {
+      // Prefill every seated row; rows event mode doesn't offer are never
+      // sent, so the extra keys are harmless.
       const prefill = {};
-      for (const s of unmarked) {
+      for (const s of seated) {
         prefill[s.key] = s.status === "checked_in" ? "attended" : "no_show";
       }
       setDecisions(prefill);
     }
-    wasOpenRef.current = isOpen;
-  }, [isOpen, unmarked]);
+  }
 
   function mark(key, decision) {
     setDecisions((prev) => ({ ...prev, [key]: decision }));
@@ -93,7 +132,7 @@ export default function ResolveEventModal({
         : "End module slot"
     : "End event";
 
-  /** Split one set of rows into the two id lists the resolve endpoints take. */
+  /** Split one set of rows into the two id lists the resolve endpoint takes. */
   function split(rows) {
     const attended = [];
     const no_show = [];
@@ -109,45 +148,57 @@ export default function ResolveEventModal({
 
   async function handleSave() {
     setSaving(true);
+    // Slot mode: every row here belongs to this one slot or session already.
+    // Event mode: one close per slot (per session for shifts), which is also
+    // what lets a volunteer attend Tuesday and no-show Wednesday.
+    const bySlot = new Map();
+    for (const s of unmarked) {
+      const id = slot ? slot.id : s.slot_id;
+      if (!bySlot.has(id)) bySlot.set(id, []);
+      bySlot.get(id).push(s);
+    }
+    let alreadyClosed = 0;
+    let notStarted = 0;
     try {
-      if (slot) {
-        // Every row here belongs to this one slot or session already.
-        await resolveSlot(slot.id, split(unmarked));
-      } else {
-        // Event mode. `POST /events/{id}/resolve` applies one decision to a
-        // commitment's whole shift, which cannot express "attended Tuesday,
-        // no-show Wednesday" — so where shift rows are involved we close out
-        // one session at a time and leave the event call for the orientation
-        // and legacy rows. The per-session calls skip sessions that already
-        // hold a terminal record, so a failure part-way through is safe to
-        // retry rather than something the organizer has to unpick.
-        const bySession = new Map();
-        const plain = [];
-        for (const s of unmarked) {
-          if (s.isShift && s.slot_id) {
-            if (!bySession.has(s.slot_id)) bySession.set(s.slot_id, []);
-            bySession.get(s.slot_id).push(s);
-          } else {
-            plain.push(s);
-          }
-        }
-        for (const [slotId, rows] of bySession) {
+      for (const [slotId, rows] of bySlot) {
+        try {
           await resolveSlot(slotId, split(rows));
-        }
-        if (plain.length > 0 || bySession.size === 0) {
-          await resolveEvent(eventId, split(plain));
+        } catch (e) {
+          // Someone else closed it first (another phone, or a stale list):
+          // their close stands. Or the server's clock says it hasn't started
+          // (this device's clock ran fast): it stays open. Either way, carry
+          // on with the rest.
+          if (isSlotClosedError(e)) alreadyClosed += 1;
+          else if (isSlotNotStartedError(e)) notStarted += 1;
+          else throw e;
         }
       }
-      toast.success(
-        slot ? "Slot resolved successfully." : "Event resolved successfully.",
-      );
-      if (onResolved) onResolved();
+      if (alreadyClosed > 0) {
+        toast.info(
+          alreadyClosed === 1
+            ? "That slot was already closed by someone else — reopen it on the roster to change it."
+            : `${alreadyClosed} slots were already closed by someone else — reopen them on the roster to change them.`,
+        );
+      }
+      if (notStarted > 0) {
+        toast.info(
+          notStarted === 1
+            ? "That session hasn't started yet — you can close it once it starts."
+            : `${notStarted} sessions haven't started yet — you can close them once they start.`,
+        );
+      }
+      if (alreadyClosed === 0 && notStarted === 0) {
+        toast.success(slot ? "Slot closed." : "Event closed.");
+      }
       if (onClose) onClose();
       setDecisions({});
     } catch (e) {
-      toast.error(e?.message || "Resolve failed");
+      toast.error(e?.message || "Close failed");
     } finally {
       setSaving(false);
+      // Refresh either way: a failure part-way through event mode may still
+      // have closed the slots before it.
+      if (onResolved) onResolved();
     }
   }
 
@@ -162,7 +213,9 @@ export default function ResolveEventModal({
       {unmarked.length === 0 ? (
         <div>
           <p className="text-sm text-[var(--color-fg-muted)] mb-4">
-            All attendees marked.
+            {slot
+              ? "Nobody is booked into this slot, so there is nothing to close."
+              : "Nothing to close yet — only sessions that have started can be closed."}
           </p>
           <Button variant="secondary" onClick={onClose}>
             Close
@@ -172,7 +225,9 @@ export default function ResolveEventModal({
         <div>
           <p className="text-sm text-[var(--color-fg-muted)] mb-3">
             Checked-in volunteers are pre-marked attended; everyone else is
-            pre-marked no-show. Adjust anyone if needed, then save.
+            pre-marked no-show. Adjust anyone if needed, then save. Closing
+            locks attendance — you can reopen the slot later from the roster
+            to fix a mistake.
           </p>
           {isOrientation && (
             <p className="text-sm font-medium text-[var(--color-fg)] mb-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">

@@ -8,9 +8,9 @@ ORIENTATION_CREDIT_EXPIRY_DAYS env hack (still retired — no expiry of any
 kind).
 
 Design 2026-07-24 (grant-on-slot-end): attendance earns credit when the
-orientation slot is *resolved* (``resolve_slot`` writes the row) — a raw
+orientation slot is *resolved* (``close_slot`` writes the row) — a raw
 attended signup with no credit row grants nothing. Attendance scenarios below
-route through ``resolve_slot`` accordingly.
+route through ``close_slot`` accordingly.
 
 Cases:
   (a) same-week same-module (credit via resolved orientation)
@@ -165,7 +165,7 @@ def _attended_signup(db, volunteer, slot, *, checked_in_at: datetime | None = No
 
 def _earn_credit(db, actor_id, volunteer, slot, *, checked_in_at=None):
     """Attend an orientation the new way: check in, then resolve the slot."""
-    from app.services.check_in_service import resolve_slot
+    from app.services.check_in_service import close_slot
 
     s = Signup(
         id=uuid.uuid4(),
@@ -176,7 +176,7 @@ def _earn_credit(db, actor_id, volunteer, slot, *, checked_in_at=None):
     )
     db.add(s)
     db.flush()
-    resolve_slot(db, slot.id, actor_id, [s.id], [])
+    close_slot(db, slot.id, actor_id, [s.id], [])
     return s
 
 

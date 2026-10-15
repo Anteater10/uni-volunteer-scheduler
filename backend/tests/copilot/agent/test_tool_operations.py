@@ -3,11 +3,12 @@
 Moving somebody between shifts of one event, and recording who turned up.
 Both go through the services the admin UI uses, so the interesting tests
 here are the ones about the seams: that a full shift is refused, that a
-part-attended shift is refused, and that marking an orientation attended is
-what grants permanent credit.
+part-attended shift is refused, and that on an open slot marking someone is
+only a check-in — attended / no show and orientation credit wait for staff to
+close the slot (2026-10-13).
 """
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
@@ -27,6 +28,7 @@ from app.copilot.agent.tools.orientation_credits import (
 from app.models import (
     Module,
     OrientationCredit,
+    SessionAttendance,
     ShiftSignup,
     Signup,
     SignupStatus,
@@ -341,6 +343,73 @@ class TestMoveVolunteerToShift:
     def test_organizers_can_move(self):
         assert "organizer" in MOVE_VOLUNTEER_TO_SHIFT_TOOL.allowed_roles
 
+    def test_junk_ids_are_an_error_not_a_crash(self, db_session, event, jane):
+        _, result = _run(
+            db_session,
+            MOVE_VOLUNTEER_TO_SHIFT_TOOL,
+            {
+                "participant_id": str(jane.id),
+                "event_id": "not-a-uuid",
+                "to_shift_id": str(event["pm"].id),
+            },
+        )
+        assert "must be ids" in result["error"]
+
+    def test_an_unknown_event(self, db_session, event, jane):
+        _, result = _run(
+            db_session,
+            MOVE_VOLUNTEER_TO_SHIFT_TOOL,
+            {
+                "participant_id": str(jane.id),
+                "event_id": str(uuid.uuid4()),
+                "to_shift_id": str(event["pm"].id),
+            },
+        )
+        assert result["error"] == "no event with that id"
+
+    def test_a_from_shift_they_are_not_on(self, db_session, event, jane):
+        _, result = _run(
+            db_session,
+            MOVE_VOLUNTEER_TO_SHIFT_TOOL,
+            {
+                "participant_id": str(jane.id),
+                "event_id": str(event["event"].id),
+                "from_shift_id": str(event["pm"].id),
+                "to_shift_id": str(event["pm"].id),
+            },
+        )
+        assert "not on the shift you named" in result["error"]
+
+    def test_moving_a_waitlisted_booking_sends_the_promotion_email(
+        self, db_session, event, _no_real_email
+    ):
+        later = date.today() + timedelta(days=7)
+        future = ShiftFactory(event=event["event"], name="Later", capacity=3)
+        SlotFactory(
+            event=event["event"],
+            shift=future,
+            slot_type=SlotType.PERIOD,
+            start_time=at(later, "13:00"),
+            end_time=at(later, "15:00"),
+            date=later,
+        )
+        sam = VolunteerFactory(email="sam.waitlisted@ucsb.edu")
+        book_shift(db_session, event["am"], sam, status=SignupStatus.waitlisted)
+        db_session.flush()
+
+        _, result = _run(
+            db_session,
+            MOVE_VOLUNTEER_TO_SHIFT_TOOL,
+            {
+                "participant_id": str(sam.id),
+                "event_id": str(event["event"].id),
+                "to_shift_id": str(future.id),
+            },
+        )
+        assert result["moved"] is True
+        assert result["promotion_email_sent"] is True
+        assert len(_no_real_email) == 1
+
 
 class TestMarkAttendance:
     def test_records_a_session_attendance(self, db_session, event, jane):
@@ -358,6 +427,9 @@ class TestMarkAttendance:
         )
         assert result["recorded"] is True
         assert result["outcome"] == "attended"
+        assert db_session.query(SessionAttendance).one().status == (
+            SignupStatus.checked_in
+        )
 
     def test_a_session_grants_no_orientation_credit(
         self, db_session, event, jane
@@ -378,15 +450,16 @@ class TestMarkAttendance:
         assert result["orientation_credit_granted"] is False
         assert db_session.query(OrientationCredit).count() == 0
 
-    def test_attending_an_orientation_grants_permanent_credit(
+    def test_attended_on_an_open_orientation_checks_them_in_without_credit(
         self, db_session, event, jane
     ):
-        """The consequence that outlives the day — and the reason this goes
-        through check_in_service rather than writing a status directly."""
+        """2026-10-13: attended / no show exist only on a closed slot, so on an
+        open orientation "attended" is a check-in. Credit is settled when
+        staff close the slot — never here."""
         SignupFactory(
             volunteer=jane,
             slot=event["orientation"],
-            status=SignupStatus.confirmed,
+            status=SignupStatus.pending,
         )
         db_session.flush()
         _, result = _run(
@@ -398,20 +471,29 @@ class TestMarkAttendance:
                 "outcome": "attended",
             },
         )
-        assert result["orientation_credit_granted"] is True
+        assert result["recorded"] is True
+        assert result["orientation_credit_granted"] is False
+        assert "Checked in." in result["note"]
+        assert "when staff close the slot" in result["note"]
+        signup = db_session.query(Signup).one()
+        # Pending auto-confirms first, exactly like a staff tap.
+        assert signup.status == SignupStatus.checked_in
+        assert db_session.query(OrientationCredit).count() == 0
 
         _, check = _run(
             db_session,
             CHECK_ORIENTATION_CREDIT_TOOL,
             {"email": jane.email, "module_slug": "bioinformatics"},
         )
-        assert check["has_credit"] is True
+        assert check["has_credit"] is False
 
-    def test_a_no_show_grants_nothing(self, db_session, event, jane):
+    def test_no_show_on_an_open_orientation_clears_the_check_in(
+        self, db_session, event, jane
+    ):
         SignupFactory(
             volunteer=jane,
             slot=event["orientation"],
-            status=SignupStatus.confirmed,
+            status=SignupStatus.checked_in,
         )
         db_session.flush()
         _, result = _run(
@@ -424,9 +506,82 @@ class TestMarkAttendance:
             },
         )
         assert result["orientation_credit_granted"] is False
+        assert "Check-in cleared." in result["note"]
         assert db_session.query(OrientationCredit).count() == 0
         signup = db_session.query(Signup).one()
-        assert signup.status == SignupStatus.no_show
+        assert signup.status == SignupStatus.confirmed
+        assert signup.checked_in_at is None
+
+    def test_no_show_on_an_open_session_deletes_the_check_in_row(
+        self, db_session, event, jane
+    ):
+        book_shift(db_session, event["pm"], jane, status=SignupStatus.confirmed)
+        args = {
+            "participant_id": str(jane.id),
+            "slot_id": str(event["pm_session"].id),
+        }
+        _run(db_session, MARK_ATTENDANCE_TOOL, {**args, "outcome": "attended"})
+        assert db_session.query(SessionAttendance).one().status == (
+            SignupStatus.checked_in
+        )
+
+        _, result = _run(db_session, MARK_ATTENDANCE_TOOL, {**args, "outcome": "no_show"})
+        assert result["recorded"] is True
+        assert db_session.query(SessionAttendance).count() == 0
+
+    @pytest.mark.parametrize("outcome", ["attended", "no_show"])
+    def test_a_closed_orientation_is_refused(self, db_session, event, jane, outcome):
+        SignupFactory(
+            volunteer=jane,
+            slot=event["orientation"],
+            status=SignupStatus.attended,
+        )
+        event["orientation"].closed_at = datetime.now(timezone.utc)
+        db_session.flush()
+        _, result = _run(
+            db_session,
+            MARK_ATTENDANCE_TOOL,
+            {
+                "participant_id": str(jane.id),
+                "slot_id": str(event["orientation"].id),
+                "outcome": outcome,
+            },
+        )
+        assert "slot is closed" in result["error"]
+        assert "reopen it on the roster page" in result["error"]
+        assert db_session.query(Signup).one().status == SignupStatus.attended
+
+    def test_a_closed_session_is_refused(self, db_session, event, jane):
+        book_shift(db_session, event["pm"], jane, status=SignupStatus.confirmed)
+        event["pm_session"].closed_at = datetime.now(timezone.utc)
+        db_session.flush()
+        _, result = _run(
+            db_session,
+            MARK_ATTENDANCE_TOOL,
+            {
+                "participant_id": str(jane.id),
+                "slot_id": str(event["pm_session"].id),
+                "outcome": "attended",
+            },
+        )
+        assert "slot is closed" in result["error"]
+        assert db_session.query(SessionAttendance).count() == 0
+
+    def test_a_waitlisted_booking_has_nothing_to_check_in(
+        self, db_session, event, jane
+    ):
+        book_shift(db_session, event["pm"], jane, status=SignupStatus.waitlisted)
+        _, result = _run(
+            db_session,
+            MARK_ATTENDANCE_TOOL,
+            {
+                "participant_id": str(jane.id),
+                "slot_id": str(event["pm_session"].id),
+                "outcome": "attended",
+            },
+        )
+        assert "not allowed" in result["error"]
+        assert db_session.query(SessionAttendance).count() == 0
 
     def test_it_never_assumes_the_outcome(self, db_session, event, jane):
         """Defaulting to attended would grant permanent credit to somebody
@@ -533,6 +688,35 @@ class TestMarkAttendance:
         )
         assert out["status"] == "pending_confirmation"
         assert db_session.query(OrientationCredit).count() == 0
+
+
+class TestAttendanceHandlerDirect:
+    def test_a_bad_outcome_reaching_the_handler_is_an_error(self, db_session, event):
+        """The precheck asks first; the handler still refuses on its own."""
+        from app.copilot.agent.tools.operations import _attendance_handler
+
+        result = _attendance_handler(
+            db_session,
+            scope_for(role="admin", caller_id=None),
+            {
+                "participant_id": str(uuid.uuid4()),
+                "slot_id": str(event["orientation"].id),
+                "outcome": "maybe",
+            },
+        )
+        assert result == {"error": "outcome must be 'attended' or 'no_show'"}
+
+    def test_an_unknown_volunteer(self, db_session, event):
+        _, result = _run(
+            db_session,
+            MARK_ATTENDANCE_TOOL,
+            {
+                "participant_id": str(uuid.uuid4()),
+                "slot_id": str(event["orientation"].id),
+                "outcome": "attended",
+            },
+        )
+        assert result == {"error": "no volunteer with that id"}
 
 
 class TestEveryWriteHereAsksFirst:

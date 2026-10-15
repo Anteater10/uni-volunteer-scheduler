@@ -136,7 +136,7 @@ describe("OrganizerRosterPage — shift sessions", () => {
     await waitFor(() =>
       expect(screen.getAllByText("checked in")).toHaveLength(1),
     );
-    expect(screen.getAllByText("confirmed")).toHaveLength(1);
+    expect(screen.getAllByText("not checked in")).toHaveLength(1);
   });
 
   it("undo reverts the session it was tapped on", async () => {

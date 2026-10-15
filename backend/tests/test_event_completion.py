@@ -204,9 +204,11 @@ class TestReopenEvent:
         # Real check-in kept: attended -> checked_in, timestamp intact.
         assert was_checked_in.status == SignupStatus.checked_in
         assert was_checked_in.checked_in_at is not None
-        # Walk-in never checked in: attended -> confirmed.
-        assert walk_in.status == SignupStatus.confirmed
-        assert walk_in.checked_in_at is None
+        # Walk-in marked attended at close: back to checked in (2026-10-13 —
+        # attended always reopens as checked in), stamped at the reopen since
+        # it never had a check-in time — a checked-in booking always has one.
+        assert walk_in.status == SignupStatus.checked_in
+        assert walk_in.checked_in_at is not None
         # No-show returns to the expected roster.
         assert absent.status == SignupStatus.confirmed
 

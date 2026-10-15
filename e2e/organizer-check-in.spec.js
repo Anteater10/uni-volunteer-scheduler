@@ -9,8 +9,10 @@
 //
 // Roster uses OrganizerRosterPage.jsx which:
 //   - Shows each signup as a <button> row
-//   - Status chips from STATUS_CHIP map
-//   - Rows are disabled+unclickable when status != "confirmed" and != "pending"
+//   - On an open slot, chips read "not checked in" (pending and confirmed
+//     look the same) or "checked in"; attended / no show exist only once
+//     staff close the slot (2026-10-13, attendance lock per slot)
+//   - Only "not checked in" rows check in on tap ("checked in" rows undo)
 //   - POST /signups/{signup_id}/check-in on click
 
 import { test, expect } from '@playwright/test';
@@ -85,17 +87,21 @@ test('organizer can view roster and check in a signup', async ({ page }) => {
   await expect(page.getByText(/checked in/i).first()).toBeVisible({ timeout: 10000 });
 
   // The roster must contain a row for our signup
-  // Rows are <button> elements containing student_name and a status chip
-  // Status chip shows "confirmed" or "pending" text
-  const rosterRow = page.locator('ul li button').filter({ hasText: /confirmed|pending/i }).first();
+  // Rows are <button> elements containing student_name and a status chip.
+  // Match the chip exactly: "not checked in" also contains "checked in".
+  const notCheckedIn = page.locator('span').filter({ hasText: /^not checked in$/i });
+  const rosterRow = page.locator('ul li button').filter({ has: notCheckedIn }).first();
   await expect(rosterRow).toBeVisible({ timeout: 5000 });
+  const name = (await rosterRow.locator('span.truncate').first().textContent()).trim();
 
   // Step 5: Click the row to check in
   await rosterRow.click();
 
-  // After optimistic update, the row status should change to "checked in"
-  // Use the status chip specifically — <span> with text "checked in" in a button row
+  // After the optimistic update, that same volunteer's chip reads exactly
+  // "checked in" (and the card offers "tap again to undo").
+  const sameRow = page.locator('ul li button').filter({ hasText: name }).first();
   await expect(
-    page.locator('ul li button span').filter({ hasText: /^checked in$/i }).first()
+    sameRow.locator('span').filter({ hasText: /^checked in$/i })
   ).toBeVisible({ timeout: 8000 });
+  await expect(sameRow).toContainText(/tap again to undo/i);
 });

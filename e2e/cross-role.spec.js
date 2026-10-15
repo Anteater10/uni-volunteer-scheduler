@@ -248,28 +248,27 @@ test.describe.serial('cross-role Scenario 1: canonical admin -> participant -> o
 
     // Match the row by our unique last-name tag. Scenario 1A signed up for
     // both orientation AND period, so TWO rows may render — pick the first
-    // one that is still in a click-able state (confirmed or pending; not
-    // already checked_in from a previous partial run).
+    // one that is still in a click-able state ("not checked in" covers
+    // confirmed and pending alike; not already checked in from a previous
+    // partial run).
     const ourRows = page
       .locator('ul li button')
       .filter({ hasText: new RegExp(lastNameTag, 'i') });
     await expect(ourRows.first()).toBeVisible({ timeout: 10000 });
 
     const clickable = ourRows
-      .filter({ hasText: /confirmed|pending/i })
+      .filter({ hasText: /not checked in/i })
       .first();
     await expect(clickable).toBeVisible({ timeout: 10000 });
     await clickable.click();
 
-    // Post-click the chip flips from "confirmed"/"pending" to "checked in",
-    // so the pre-click filter on /confirmed|pending/i no longer matches. Re-
-    // locate the row by our unique last-name tag + "checked in" substring in
-    // the accessible name. The button's full text is e.g.
-    // "E2E <lastNameTag> 02:00 AM checked in".
+    // Post-click the chip flips from "not checked in" to "checked in" with a
+    // "tap again to undo" hint. Re-locate the row by our unique last-name tag
+    // plus that hint, which only a checked-in card shows.
     const checkedInRow = page
       .locator('ul li button')
       .filter({ hasText: new RegExp(lastNameTag, 'i') })
-      .filter({ hasText: /checked in/i });
+      .filter({ hasText: /tap again to undo/i });
     await expect(checkedInRow.first()).toBeVisible({ timeout: 8000 });
   });
 
@@ -686,15 +685,17 @@ async function apiCreateTwoSessionShiftEvent(tag) {
     'no quarter configured — seed_e2e.py must run first',
   ).toBeTruthy();
 
-  // Anchored a day out so the whole event sits inside its own range whatever
-  // time of day the suite runs at. Nothing here gates on the sessions being
-  // over: closing out early is exactly what an organizer does at the door.
+  // Period 2 is anchored a day out so it is always in the future. Period 1
+  // started half an hour ago: a session can only be closed once it has
+  // started (closing Thursday on Tuesday is the bug that rule exists for),
+  // and it is still running, so the public page still takes the booking.
   const day = (n, hour) => {
     const d = new Date();
     d.setUTCDate(d.getUTCDate() + n);
     d.setUTCHours(hour, 0, 0, 0);
     return d.toISOString();
   };
+  const minutesFromNow = (m) => new Date(Date.now() + m * 60000).toISOString();
   const shiftName = `XRole6 Shift ${tag}`;
 
   const resp = await fetch(`${API_BASE}/api/v1/events/`, {
@@ -708,7 +709,7 @@ async function apiCreateTwoSessionShiftEvent(tag) {
       description: 'cross-role Scenario 6 — safe to delete',
       location: 'E2E Hall',
       visibility: 'public',
-      start_date: day(1, 9),
+      start_date: minutesFromNow(-60),
       end_date: day(2, 18),
       quarter: week.quarter,
       year: week.year,
@@ -733,8 +734,8 @@ async function apiCreateTwoSessionShiftEvent(tag) {
             {
               name: 'Period 1',
               sort_order: 0,
-              start_time: day(1, 10),
-              end_time: day(1, 12),
+              start_time: minutesFromNow(-30),
+              end_time: minutesFromNow(90),
               location: 'E2E Hall Room B',
             },
             {
@@ -841,29 +842,35 @@ test('cross-role Scenario 6: one shift booking spans two sessions, and ending on
     sessionTwo.locator('ul li button').filter({ hasText: new RegExp(lastNameTag, 'i') }),
   ).toHaveCount(1);
 
-  // Step 4 — end the first session only. The modal prefills every unmarked
-  // row (checked-in → attended, everyone else → no-show), so Save is live
-  // straight away.
-  await sessionOne.getByRole('button', { name: /^end slot$/i }).click();
+  // Step 4 — close the first session only. The modal prefills every row
+  // (checked-in → attended, everyone else → no-show), so Save is live
+  // straight away. The button's accessible name carries the session, so
+  // match its start.
+  await sessionOne.getByRole('button', { name: /^end slot/i }).click();
   const modal = page.getByRole('dialog');
   await expect(modal.getByText(/^end session$/i).first()).toBeVisible({
     timeout: 8000,
   });
   await modal.getByRole('button', { name: /^save$/i }).click();
-  await expect(page.getByText(/slot resolved successfully/i)).toBeVisible({
+  await expect(page.getByText(/^slot closed\.$/i)).toBeVisible({
     timeout: 8000,
   });
 
-  // Step 5 — the ending is per session. Period 1 is spent; Period 2 is still
-  // answerable. If the close-out had settled the whole commitment, the second
-  // section would read "Slot ended" too and Wednesday's attendance would be a
-  // guess the organizer never made.
-  await expect(sessionOne.getByText(/ended/i).first()).toBeVisible({
+  // Step 5 — closing is per session. Period 1 is closed (and can be
+  // reopened); Period 2 is untouched. If the close-out had settled the whole
+  // commitment, Period 2 would read "Closed" too and the next day's
+  // attendance would be a guess the organizer never made. Period 2 hasn't
+  // started, so its End slot stays disabled until it does.
+  await expect(sessionOne.getByText(/^✓?\s*closed$/i).first()).toBeVisible({
     timeout: 8000,
   });
   await expect(
-    sessionTwo.getByRole('button', { name: /^end slot$/i }),
+    sessionOne.getByRole('button', { name: /^reopen slot/i }),
   ).toBeEnabled();
+  await expect(sessionTwo.getByText(/^✓?\s*closed$/i)).toHaveCount(0);
+  await expect(
+    sessionTwo.getByRole('button', { name: /^end slot/i }),
+  ).toBeDisabled();
 
   assertNoErrors(testInfo);
 });

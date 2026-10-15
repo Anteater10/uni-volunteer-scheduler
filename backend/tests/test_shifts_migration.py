@@ -23,6 +23,11 @@ import pytest
 from sqlalchemy import text
 
 _PRE = "0036_add_site_settings_contact_email"
+# Stop just before 0044: that migration repairs attended / no_show on slots it
+# leaves open (they exist only on a closed slot since 2026-10-13), which is its
+# own behaviour, tested in test_slot_lock_migration.py. These tests pin what
+# the shifts migration itself produced.
+_POST = "0043_add_event_display_week"
 
 # Fixed ids keep the assertions readable.
 OWNER = "11111111-1111-1111-1111-111111111111"
@@ -205,7 +210,7 @@ def migrated(alembic_engine, alembic_command):
     alembic_command.downgrade(_PRE)
     with alembic_engine.begin() as conn:
         _seed_old_shape(conn, tag="a")
-    alembic_command.upgrade("head")
+    alembic_command.upgrade(_POST)
     return alembic_engine
 
 
@@ -430,7 +435,7 @@ def test_downgrade_rebuilds_slot_signups_then_round_trips(
     alembic_command.downgrade(_PRE)
     with alembic_engine.begin() as conn:
         _seed_old_shape(conn, tag="rt")
-    alembic_command.upgrade("head")
+    alembic_command.upgrade(_POST)
 
     alembic_command.downgrade(_PRE)
     with alembic_engine.connect() as conn:
@@ -456,7 +461,7 @@ def test_downgrade_rebuilds_slot_signups_then_round_trips(
 
     # Re-upgrading must not trip DuplicateObject: 0037 creates no enum types,
     # unlike the migrations noted in CLAUDE.md.
-    alembic_command.upgrade("head")
+    alembic_command.upgrade(_POST)
     with alembic_engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM shifts")).scalar() == 3
         assert conn.execute(text("SELECT count(*) FROM shift_signups")).scalar() == 7

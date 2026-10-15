@@ -6,7 +6,11 @@ Contract
 --------
 - Single transaction.
 - Acquires ``SELECT ... FOR UPDATE`` on both source and target slots (in id
-  order to avoid deadlocks).
+  order), then on the signup — slots first, the lock order every writer
+  follows (see check_in_service). Locked rows are re-read
+  (populate_existing), never trusted from the session.
+- Refuses with 409 ``SLOT_CLOSED`` when either slot is closed
+  (2026-10-13 slot lock).
 - Rejects cross-event swaps with HTTP 400.
 - Rejects target-full swaps with HTTP 409 — **hard fail, no waitlist
   fallback**. Callers who want fallback behavior should use the admin-move
@@ -67,6 +71,7 @@ from ..signup_service import (
     mark_promoted_pending,
     mark_shift_promoted_pending,
 )
+from .check_in_service import ensure_accepts_seat, lock_shift_sessions
 from .waitlist_service import SlotEndedError
 
 
@@ -83,6 +88,48 @@ class SwapResult(NamedTuple):
     promotion: Optional[PromotionResult]
 
 
+def _ensure_swappable(signup: models.Signup) -> None:
+    """2026-07-29 sweep: cancelled/no_show are terminal as far as swap is
+    concerned — refuse regardless of actor or target capacity. A cancelled
+    signup must re-enter through the validated signup path (orientation,
+    one-event-per-batch, signup window, visibility); a no_show only exists on
+    a closed slot and is changed by reopening that slot, not by relocating
+    it. Checked on the first read, before any lock, and again once the
+    signup is locked."""
+    if signup.status in (models.SignupStatus.cancelled, models.SignupStatus.no_show):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "SIGNUP_NOT_SWAPPABLE",
+                "message": (
+                    f"Cannot swap a signup with status '{signup.status.value}'."
+                ),
+            },
+        )
+
+
+def _ensure_no_attendance(db: Session, shift_signup_id) -> None:
+    """Recorded attendance blocks a shift move (see swap_shift_signup).
+    Queried, not read off the relationship, so a cached list can't hide a
+    row written since."""
+    recorded = (
+        db.query(models.SessionAttendance.id)
+        .filter(models.SessionAttendance.shift_signup_id == shift_signup_id)
+        .first()
+    )
+    if recorded is not None:
+        raise HTTPException(status_code=422, detail=ATTENDANCE_RECORDED)
+
+
+ATTENDANCE_RECORDED = {
+    "code": "SIGNUP_NOT_SWAPPABLE",
+    "message": (
+        "Attendance has already been recorded for this shift. "
+        "Correct the attendance first, or cancel and re-book."
+    ),
+}
+
+
 def _lock_slots_in_order(db: Session, slot_a_id, slot_b_id) -> tuple[models.Slot, models.Slot]:
     """Lock two slot rows FOR UPDATE, ordered by id to avoid deadlocks.
 
@@ -95,6 +142,7 @@ def _lock_slots_in_order(db: Session, slot_a_id, slot_b_id) -> tuple[models.Slot
         .filter(models.Slot.id.in_(ids))
         .order_by(models.Slot.id.asc())
         .with_for_update()
+        .populate_existing()
         .all()
     )
     by_id = {str(r.id): r for r in rows}
@@ -145,27 +193,12 @@ def swap_signup(
             would promote a waitlisted signup onto a slot that has already
             ended.
     """
-    # Look up the signup (no lock yet — slots are the contention point).
+    # Look up the signup (no lock yet — the slots are locked first, then the
+    # signup is re-read under its own lock; check_in_service's lock order).
     signup = db.query(models.Signup).filter(models.Signup.id == signup_id).first()
     if signup is None:
         raise HTTPException(status_code=404, detail="Signup not found")
-
-    # 2026-07-29 sweep: cancelled/no_show are terminal as far as swap is
-    # concerned — refuse before any lock or mutation, regardless of actor
-    # or target capacity. A cancelled signup must re-enter through the
-    # validated signup path (orientation, one-event-per-batch, signup
-    # window, visibility); a no_show is an attendance record staff correct
-    # via the roster's attendance controls, not by relocating it.
-    if signup.status in (models.SignupStatus.cancelled, models.SignupStatus.no_show):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "SIGNUP_NOT_SWAPPABLE",
-                "message": (
-                    f"Cannot swap a signup with status '{signup.status.value}'."
-                ),
-            },
-        )
+    _ensure_swappable(signup)
 
     source_slot_id = signup.slot_id
     if str(source_slot_id) == str(target_slot_id):
@@ -173,9 +206,8 @@ def swap_signup(
             status_code=400, detail="Target slot must be different from source"
         )
 
+    # The source always exists (signups.slot_id is a NOT NULL FK).
     source_slot, target_slot = _lock_slots_in_order(db, source_slot_id, target_slot_id)
-    if source_slot is None:
-        raise HTTPException(status_code=404, detail="Source slot not found")
     if target_slot is None:
         raise HTTPException(status_code=404, detail="Target slot not found")
 
@@ -183,6 +215,30 @@ def swap_signup(
         raise HTTPException(
             status_code=400, detail="Target slot must be in the same event"
         )
+
+    # Slots are locked; now the signup, re-read so a concurrent cancel or
+    # move is seen rather than overwritten.
+    signup = (
+        db.query(models.Signup)
+        .filter(models.Signup.id == signup_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if signup is None or str(signup.slot_id) != str(source_slot_id):
+        raise HTTPException(
+            status_code=409,
+            detail="That signup changed while it was being moved — try again.",
+        )
+    _ensure_swappable(signup)
+
+    # 2026-10-13 slot lock: a closed slot's attendance is read-only, and
+    # attended / no_show exist only on a closed slot. Moving a booking out of
+    # one would carry a final result onto an open slot; moving one in would
+    # seat somebody on a closed slot with no result. Staff reopen the slot
+    # (which turns attended back into checked in) and move them then.
+    ensure_accepts_seat(source_slot)
+    ensure_accepts_seat(target_slot)
 
     # 2026-08-05 shifts: a session inside a shift is not a destination for a
     # slot-level signup. Allowing it would write the one row shape production no
@@ -281,6 +337,7 @@ def _lock_shifts_in_order(db: Session, shift_a_id, shift_b_id):
         .filter(models.Shift.id.in_(ids))
         .order_by(models.Shift.id.asc())
         .with_for_update()
+        .populate_existing()
         .all()
     )
     by_id = {str(r.id): r for r in rows}
@@ -309,9 +366,10 @@ def swap_shift_signup(
       at the *old* shift's sessions. Moving the commitment would leave them
       dangling against sessions the volunteer no longer holds, so a
       part-attended shift is refused outright rather than moved and quietly
-      corrupted. The slot-level code could allow this (an attended signup moved
-      laterally kept its own status), but there the status travelled with the
-      row; here it doesn't.
+      corrupted. (A checked-in orientation signup can move, because there the
+      status travels with the row; here it doesn't.) Moving into a shift with
+      some sessions already closed is allowed — mid-week moves are real; on a
+      closed session the newcomer simply has no result and is not listed.
     - **Capacity is all-or-nothing.** One seat in the target covers every
       session in it, so there is no partial move — the same reason a shift has
       one capacity number.
@@ -333,17 +391,7 @@ def swap_shift_signup(
             },
         )
 
-    if shift_signup.session_attendance:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "SIGNUP_NOT_SWAPPABLE",
-                "message": (
-                    "Attendance has already been recorded for this shift. "
-                    "Correct the attendance first, or cancel and re-book."
-                ),
-            },
-        )
+    _ensure_no_attendance(db, shift_signup.id)
 
     source_shift_id = shift_signup.shift_id
     if str(source_shift_id) == str(target_shift_id):
@@ -351,17 +399,42 @@ def swap_shift_signup(
             status_code=400, detail="Target shift must be different from source"
         )
 
+    # Lock order (check_in_service): the source shift's sessions first, so a
+    # tap or close on one of them is either done or waits; then both shifts
+    # in id order; then the commitment. The source always exists
+    # (shift_signups.shift_id is a NOT NULL FK).
+    lock_shift_sessions(db, source_shift_id)
     source_shift, target_shift = _lock_shifts_in_order(
         db, source_shift_id, target_shift_id
     )
-    if source_shift is None:
-        raise HTTPException(status_code=404, detail="Source shift not found")
     if target_shift is None:
         raise HTTPException(status_code=404, detail="Target shift not found")
     if source_shift.event_id != target_shift.event_id:
         raise HTTPException(
             status_code=400, detail="Target shift must be in the same event"
         )
+
+    # Shifts are locked; now the commitment itself, re-read so a concurrent
+    # cancel or move is seen rather than overwritten.
+    shift_signup = (
+        db.query(models.ShiftSignup)
+        .filter(models.ShiftSignup.id == shift_signup_id)
+        .with_for_update(of=models.ShiftSignup)
+        .populate_existing()
+        .first()
+    )
+    if (
+        shift_signup is None
+        or str(shift_signup.shift_id) != str(source_shift_id)
+        or shift_signup.status == models.SignupStatus.cancelled
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="That booking changed while it was being moved — try again.",
+        )
+    # Re-checked under the lock: a check-in may have landed since the first
+    # read.
+    _ensure_no_attendance(db, shift_signup.id)
 
     existing = (
         db.query(models.ShiftSignup)

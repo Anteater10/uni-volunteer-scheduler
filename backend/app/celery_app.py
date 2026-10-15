@@ -1211,17 +1211,36 @@ def expire_pending_signups() -> None:
             .exists()
         )
 
-        rows = (
-            db.query(models.Signup, models.Slot)
-            .join(models.Slot, models.Signup.slot_id == models.Slot.id)
+        reapable = (
+            models.Signup.status == models.SignupStatus.pending,
+            any_token_exists,
+            ~live_token_exists,
+        )
+        # Slot first, then signups — check_in_service's one lock order, so the
+        # sweep can never deadlock against a tap or a slot close. Both locked
+        # reads refresh anything this session already holds.
+        slots = {
+            slot.id: slot
+            for slot in db.query(models.Slot)
             .filter(
-                models.Signup.status == models.SignupStatus.pending,
-                any_token_exists,
-                ~live_token_exists,
+                models.Slot.id.in_(
+                    db.query(models.Signup.slot_id).filter(*reapable)
+                )
             )
-            .with_for_update()
+            .order_by(models.Slot.id)
+            .with_for_update(of=models.Slot)
+            .populate_existing()
+            .all()
+        }
+        signups = (
+            db.query(models.Signup)
+            .filter(*reapable, models.Signup.slot_id.in_(list(slots)))
+            .order_by(models.Signup.id)
+            .with_for_update(of=models.Signup)
+            .populate_existing()
             .all()
         )
+        rows = [(signup, slots[signup.slot_id]) for signup in signups]
 
         tokenless = (
             db.query(func.count(models.Signup.id))

@@ -3,9 +3,14 @@
 A quarter is read-only once it is archived OR its end_date has passed (UTC
 today) — see quarter_service.is_quarter_read_only. Event-mutation endpoints
 (create/update/delete/reopen) reject with 422 QUARTER_READONLY once the
-relevant quarter is read-only. reopen additionally 409s when the event was
-never completed. Slot/event resolve (attendance) is explicitly NOT gated —
-organizers must be able to close out attendance right after an event ends.
+relevant quarter is read-only.
+
+Attendance close / reopen (POST /slots/{id}/resolve|reopen,
+/events/{id}/resolve|reopen) follow a narrower rule since the 2026-10-13 slot
+lock: they stay allowed once a quarter has *ended* — organizers close out
+attendance right after the last day and must be able to fix a mistake the week
+after — and are refused only once it is *archived*. Reopening an event no
+longer requires it to have been completed first.
 """
 # 2026-08-05 shifts: the slots below are ORIENTATION, not PERIOD.
 #
@@ -272,30 +277,53 @@ class TestDeleteEventQuarterReadonly:
 # ---------- reopen ----------
 
 
-class TestReopenQuarterReadonlyAndCompletionGate:
-    def test_reopen_rejected_when_quarter_ended_even_if_completed(
+class TestReopenQuarterGate:
+    def test_reopen_allowed_when_quarter_ended_but_not_archived(
         self, client, db_session, organizer, organizer_headers
     ):
         q = _ended_quarter(db_session)
         event, (slot,) = _event_in_quarter(
             db_session, q, owner=organizer, completed_at=datetime.now(timezone.utc)
         )
-        _signup(db_session, slot, status=SignupStatus.attended)
+        slot.closed_at = datetime.now(timezone.utc)
+        s = _signup(db_session, slot, status=SignupStatus.attended)
+
+        resp = client.post(f"/api/v1/events/{event.id}/reopen", headers=organizer_headers)
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        assert s.status == SignupStatus.checked_in
+        assert slot.closed_at is None
+        assert event.completed_at is None
+
+    def test_reopen_rejected_when_quarter_archived(
+        self, client, db_session, organizer, organizer_headers
+    ):
+        q = _ended_quarter(db_session, archived=True)
+        event, (slot,) = _event_in_quarter(
+            db_session, q, owner=organizer, completed_at=datetime.now(timezone.utc)
+        )
+        slot.closed_at = datetime.now(timezone.utc)
+        s = _signup(db_session, slot, status=SignupStatus.attended)
 
         resp = client.post(f"/api/v1/events/{event.id}/reopen", headers=organizer_headers)
         assert resp.status_code == 422, resp.text
         assert resp.json()["code"] == "QUARTER_READONLY"
+        db_session.expire_all()
+        assert s.status == SignupStatus.attended
+        assert slot.closed_at is not None
 
-    def test_reopen_requires_completed_event(
+    def test_reopen_no_longer_requires_a_completed_event(
         self, client, db_session, organizer, organizer_headers
     ):
+        """Nothing closed is fine: reopen is a no-op that still answers 200."""
         q = _active_quarter(db_session)
         event, (slot,) = _event_in_quarter(db_session, q, owner=organizer, completed_at=None)
-        _signup(db_session, slot, status=SignupStatus.confirmed)
+        s = _signup(db_session, slot, status=SignupStatus.confirmed)
 
         resp = client.post(f"/api/v1/events/{event.id}/reopen", headers=organizer_headers)
-        assert resp.status_code == 409, resp.text
-        assert resp.json()["code"] == "EVENT_NOT_COMPLETED"
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        assert s.status == SignupStatus.confirmed
 
     def test_reopen_allowed_when_completed_and_quarter_active(
         self, client, db_session, organizer, organizer_headers
@@ -313,7 +341,7 @@ class TestReopenQuarterReadonlyAndCompletionGate:
         self, client, db_session, organizer, organizer_headers
     ):
         # Legacy/orphaned events (quarter_id NULL after a shrunk quarter) have
-        # no history state to protect — reopen still works if completed.
+        # no history state to protect — reopen still works.
         _bind(db_session)
         start = datetime.now(timezone.utc) - timedelta(hours=3)
         event = EventFactory(owner=organizer, start_date=start, end_date=start + timedelta(hours=2))
@@ -325,6 +353,7 @@ class TestReopenQuarterReadonlyAndCompletionGate:
             slot_type=SlotType.ORIENTATION,
             capacity=5,
         )
+        slot.closed_at = datetime.now(timezone.utc)
         db_session.flush()
         _signup(db_session, slot, status=SignupStatus.attended)
 
@@ -332,7 +361,7 @@ class TestReopenQuarterReadonlyAndCompletionGate:
         assert resp.status_code == 200, resp.text
 
 
-# ---------- allowed: attendance resolution keeps working in an ended quarter ----------
+# ---------- attendance close/reopen: allowed once ended, refused once archived ----------
 
 
 class TestAttendanceResolutionStaysAllowedInEndedQuarter:
@@ -350,7 +379,7 @@ class TestAttendanceResolutionStaysAllowedInEndedQuarter:
         )
         assert resp.status_code == 200, resp.text
 
-    def test_slot_resolve_allowed_in_ended_quarter(
+    def test_slot_resolve_and_reopen_allowed_in_ended_quarter(
         self, client, db_session, organizer, organizer_headers
     ):
         q = _ended_quarter(db_session)
@@ -363,20 +392,44 @@ class TestAttendanceResolutionStaysAllowedInEndedQuarter:
             headers=organizer_headers,
         )
         assert resp.status_code == 200, resp.text
+        resp = client.post(f"/api/v1/slots/{slot.id}/reopen", headers=organizer_headers)
+        assert resp.status_code == 200, resp.text
 
-    def test_event_resolve_allowed_in_archived_quarter(
-        self, client, db_session, organizer, organizer_headers
+    @pytest.mark.parametrize(
+        "path", ["events/{event}/resolve", "slots/{slot}/resolve"]
+    )
+    def test_close_rejected_in_archived_quarter(
+        self, client, db_session, organizer, organizer_headers, path
     ):
         q = _ended_quarter(db_session, archived=True)
         event, (slot,) = _event_in_quarter(db_session, q, owner=organizer)
         a = _signup(db_session, slot)
 
         resp = client.post(
-            f"/api/v1/events/{event.id}/resolve",
+            "/api/v1/" + path.format(event=event.id, slot=slot.id),
             json={"attended": [str(a.id)], "no_show": []},
             headers=organizer_headers,
         )
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+        db_session.expire_all()
+        assert a.status == SignupStatus.confirmed
+        assert slot.closed_at is None
+
+    def test_slot_reopen_rejected_in_archived_quarter(
+        self, client, db_session, organizer, organizer_headers
+    ):
+        q = _ended_quarter(db_session, archived=True)
+        event, (slot,) = _event_in_quarter(db_session, q, owner=organizer)
+        slot.closed_at = datetime.now(timezone.utc)
+        a = _signup(db_session, slot, status=SignupStatus.no_show)
+
+        resp = client.post(f"/api/v1/slots/{slot.id}/reopen", headers=organizer_headers)
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["code"] == "QUARTER_READONLY"
+        db_session.expire_all()
+        assert a.status == SignupStatus.no_show
+        assert slot.closed_at is not None
 
 
 # ---------- fix round 1: slot-level mutations were still ungated ----------

@@ -59,3 +59,14 @@ export function fmtVenueWeekday(iso, fallback = "") {
     weekday: "long",
   });
 }
+
+/** "9:00 AM" in venue time. */
+export function fmtVenueTime(iso, fallback = "") {
+  const d = toDate(iso);
+  if (!d) return fallback;
+  return d.toLocaleTimeString("en-US", {
+    timeZone: VENUE_TZ,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}

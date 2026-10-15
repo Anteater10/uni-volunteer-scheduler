@@ -445,9 +445,9 @@ def test_staff_swap_of_no_show_signup_is_refused(db_session):
 # ---------------------------------------------------------------------------
 # swap_signup is staff-only (2026-08-02: the volunteer self-swap endpoint
 # was removed, along with the participant-attended guard this section used
-# to test). Staff may still swap an attended signup (e.g. to correct a
-# mis-resolved slot) even though attended is otherwise terminal
-# (ALLOWED_TRANSITIONS[attended] == set(), check_in_service.py).
+# to test). 2026-10-13 slot lock: attended exists only on a closed slot, and a
+# closed slot is read-only, so moving an attended signup is refused — staff
+# reopen the slot (attended -> checked in) and move the checked-in signup.
 # ---------------------------------------------------------------------------
 
 
@@ -460,25 +460,66 @@ def _make_attended_signup(db_session, slot):
     )
 
 
-def test_staff_swap_of_attended_signup_succeeds(db_session):
-    """staff may swap an attended signup (e.g. to correct a mis-resolved
-    slot); attended is otherwise terminal
-    (``ALLOWED_TRANSITIONS[attended] == set()`` in check_in_service.py)."""
+def test_swap_out_of_a_closed_slot_is_refused(db_session):
     _bind_factories(db_session)
     _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
     signup = _make_attended_signup(db_session, slot_a)
     slot_a.current_count = 1
+    slot_a.closed_at = datetime.now(timezone.utc)
     db_session.flush()
 
-    result = swap_signup(
-        db_session, signup_id=signup.id, target_slot_id=slot_b.id,
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(db_session, signup_id=signup.id, target_slot_id=slot_b.id)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "SLOT_CLOSED"
+    assert exc.value.detail["slot_id"] == str(slot_a.id)
+    assert signup.slot_id == slot_a.id
+    assert signup.status == models.SignupStatus.attended
+    assert (slot_a.current_count, slot_b.current_count) == (1, 0)
+
+
+def test_swap_into_a_closed_slot_is_refused(db_session):
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, volunteer_id=vol.id, slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.confirmed,
     )
+    slot_a.current_count = 1
+    slot_b.closed_at = datetime.now(timezone.utc)
+    db_session.flush()
+
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(db_session, signup_id=signup.id, target_slot_id=slot_b.id)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["slot_id"] == str(slot_b.id)
+    assert signup.slot_id == slot_a.id
+
+
+def test_a_checked_in_signup_moves_between_open_slots_and_stays_checked_in(
+    db_session,
+):
+    """The correction path after a reopen: the attended signup is checked in
+    again, and moving it keeps that (and its holding a seat)."""
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session, cap_a=1, cap_b=2)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, volunteer_id=vol.id, slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.checked_in,
+    )
+    slot_a.current_count = 1
+    db_session.flush()
+
+    result = swap_signup(db_session, signup_id=signup.id, target_slot_id=slot_b.id)
     db_session.flush()
 
     assert result.signup.slot_id == slot_b.id
-    assert result.signup.status == models.SignupStatus.attended
-    assert slot_a.current_count == 0
-    assert slot_b.current_count == 1
+    assert result.signup.status == models.SignupStatus.checked_in
+    assert (slot_a.current_count, slot_b.current_count) == (0, 1)
 
 
 def test_swap_onto_a_shift_session_is_refused(db_session):
@@ -520,3 +561,225 @@ def test_swap_onto_a_shift_session_is_refused(db_session):
     db_session.expire_all()
     assert str(db_session.get(models.Signup, signup.id).slot_id) == str(orient.id)
     assert db_session.get(models.Slot, session.id).current_count == 0
+
+
+# ---------------------------------------------------------------------------
+# swap_signup guard rails not exercised above.
+# ---------------------------------------------------------------------------
+
+
+def test_swap_unknown_signup_is_404(db_session):
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(db_session, signup_id=uuid4(), target_slot_id=uuid4())
+    assert exc.value.status_code == 404
+
+
+def test_swap_onto_its_own_slot_is_400(db_session):
+    _bind_factories(db_session)
+    _event, slot_a, _slot_b = _make_event_with_two_slots(db_session)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, volunteer_id=vol.id, slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.confirmed,
+    )
+    db_session.flush()
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(db_session, signup_id=signup.id, target_slot_id=slot_a.id)
+    assert exc.value.status_code == 400
+
+
+def test_swap_onto_an_unknown_slot_is_404(db_session):
+    _bind_factories(db_session)
+    _event, slot_a, _slot_b = _make_event_with_two_slots(db_session)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, volunteer_id=vol.id, slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.confirmed,
+    )
+    db_session.flush()
+    with pytest.raises(HTTPException) as exc:
+        swap_signup(db_session, signup_id=signup.id, target_slot_id=uuid4())
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Target slot not found"
+
+
+def test_swap_from_a_slot_whose_count_already_reads_zero_does_not_go_negative(
+    db_session,
+):
+    _bind_factories(db_session)
+    _event, slot_a, slot_b = _make_event_with_two_slots(db_session)
+    vol = VolunteerFactory()
+    signup = SignupFactory(
+        volunteer=vol, volunteer_id=vol.id, slot=slot_a, slot_id=slot_a.id,
+        status=models.SignupStatus.confirmed,
+    )
+    slot_a.current_count = 0
+    db_session.flush()
+
+    swap_signup(db_session, signup_id=signup.id, target_slot_id=slot_b.id)
+    assert (slot_a.current_count, slot_b.current_count) == (0, 1)
+
+
+# ---------------------------------------------------------------------------
+# swap_shift_signup — moving a commitment between shifts of one event.
+# ---------------------------------------------------------------------------
+
+
+def _two_shifts(db, *, cap_b=5, past_b=False):
+    from tests.fixtures.helpers import make_shift
+
+    owner = UserFactory(role=models.UserRole.admin)
+    event = EventFactory(owner=owner, owner_id=owner.id)
+    db.flush()
+    shifts = []
+    for name, past in (("A", False), ("B", past_b)):
+        shift = make_shift(db, event.id, name=name, capacity=cap_b if name == "B" else 5)
+        start = datetime.now(timezone.utc) + timedelta(days=-3 if past else 3)
+        db.add(
+            models.Slot(
+                event_id=event.id, shift_id=shift.id, sort_order=0,
+                slot_type=models.SlotType.PERIOD, capacity=5, current_count=0,
+                start_time=start, end_time=start + timedelta(hours=1),
+                date=start.date(),
+            )
+        )
+        shifts.append(shift)
+    db.flush()
+    return event, shifts[0], shifts[1]
+
+
+def _book(db, shift, status=models.SignupStatus.confirmed, volunteer=None):
+    from tests.fixtures.helpers import book_shift
+
+    return book_shift(db, shift, volunteer or VolunteerFactory(), status=status)
+
+
+class TestSwapShiftSignup:
+    def test_unknown_commitment_is_404(self, db_session):
+        from app.services.swap_service import swap_shift_signup
+
+        with pytest.raises(HTTPException) as exc:
+            swap_shift_signup(db_session, shift_signup_id=uuid4(), target_shift_id=uuid4())
+        assert exc.value.status_code == 404
+
+    def test_cancelled_is_not_swappable(self, db_session):
+        from app.services.swap_service import swap_shift_signup
+
+        _bind_factories(db_session)
+        _e, a, b = _two_shifts(db_session)
+        c = _book(db_session, a, models.SignupStatus.cancelled)
+        with pytest.raises(HTTPException) as exc:
+            swap_shift_signup(db_session, shift_signup_id=c.id, target_shift_id=b.id)
+        assert exc.value.status_code == 422
+        assert exc.value.detail["code"] == "SIGNUP_NOT_SWAPPABLE"
+
+    def test_recorded_attendance_blocks_the_move(self, db_session):
+        from app.services.swap_service import swap_shift_signup
+
+        _bind_factories(db_session)
+        _e, a, b = _two_shifts(db_session)
+        c = _book(db_session, a)
+        db_session.add(
+            models.SessionAttendance(
+                shift_signup_id=c.id, slot_id=a.sessions[0].id,
+                status=models.SignupStatus.checked_in,
+            )
+        )
+        db_session.flush()
+        db_session.refresh(c)
+        with pytest.raises(HTTPException) as exc:
+            swap_shift_signup(db_session, shift_signup_id=c.id, target_shift_id=b.id)
+        assert exc.value.status_code == 422
+        assert "Attendance has already been recorded" in exc.value.detail["message"]
+
+    def test_same_shift_unknown_target_and_other_event(self, db_session):
+        from app.services.swap_service import swap_shift_signup
+
+        _bind_factories(db_session)
+        _e, a, _b = _two_shifts(db_session)
+        _e2, elsewhere, _ = _two_shifts(db_session)
+        c = _book(db_session, a)
+        for target, code, detail in (
+            (a.id, 400, "Target shift must be different from source"),
+            (uuid4(), 404, "Target shift not found"),
+            (elsewhere.id, 400, "Target shift must be in the same event"),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                swap_shift_signup(db_session, shift_signup_id=c.id, target_shift_id=target)
+            assert (exc.value.status_code, exc.value.detail) == (code, detail)
+
+    def test_already_booked_on_the_target_is_409(self, db_session):
+        from app.services.swap_service import swap_shift_signup
+
+        _bind_factories(db_session)
+        _e, a, b = _two_shifts(db_session)
+        vol = VolunteerFactory()
+        c = _book(db_session, a, volunteer=vol)
+        _book(db_session, b, models.SignupStatus.cancelled, volunteer=vol)
+        with pytest.raises(HTTPException) as exc:
+            swap_shift_signup(db_session, shift_signup_id=c.id, target_shift_id=b.id)
+        assert exc.value.status_code == 409
+
+    def test_a_full_target_is_409(self, db_session):
+        from app.services.swap_service import swap_shift_signup
+
+        _bind_factories(db_session)
+        _e, a, b = _two_shifts(db_session, cap_b=1)
+        b.current_count = 1
+        db_session.flush()
+        c = _book(db_session, a)
+        with pytest.raises(HTTPException) as exc:
+            swap_shift_signup(db_session, shift_signup_id=c.id, target_shift_id=b.id)
+        assert exc.value.detail == "target shift full"
+
+    @pytest.mark.parametrize("source_count", [1, 0])
+    def test_a_confirmed_commitment_moves_its_seat(self, db_session, source_count):
+        from app.services.swap_service import swap_shift_signup
+
+        _bind_factories(db_session)
+        _e, a, b = _two_shifts(db_session)
+        c = _book(db_session, a)
+        a.current_count = source_count
+        b.current_count = 0
+        db_session.flush()
+
+        result = swap_shift_signup(
+            db_session, shift_signup_id=c.id, target_shift_id=b.id, actor_label="copilot"
+        )
+
+        assert result.shift_signup.shift_id == b.id
+        assert result.promotion is None
+        assert (a.current_count, b.current_count) == (0, 1)
+        audit = (
+            db_session.query(models.AuditLog)
+            .filter(models.AuditLog.action == "shift_signup_swap")
+            .one()
+        )
+        assert audit.extra["actor"] == "copilot"
+
+    def test_a_waitlisted_commitment_is_promoted_into_the_target(self, db_session):
+        from app.services.swap_service import swap_shift_signup
+
+        _bind_factories(db_session)
+        _e, a, b = _two_shifts(db_session)
+        c = _book(db_session, a, models.SignupStatus.waitlisted)
+        b.current_count = 0
+        db_session.flush()
+
+        result = swap_shift_signup(db_session, shift_signup_id=c.id, target_shift_id=b.id)
+
+        assert result.shift_signup.status == models.SignupStatus.pending
+        assert result.promotion is not None
+        assert b.current_count == 1
+
+    def test_a_waitlisted_commitment_cannot_be_promoted_onto_an_ended_shift(
+        self, db_session
+    ):
+        from app.services.swap_service import swap_shift_signup
+
+        _bind_factories(db_session)
+        _e, a, b = _two_shifts(db_session, past_b=True)
+        c = _book(db_session, a, models.SignupStatus.waitlisted)
+        with pytest.raises(HTTPException) as exc:
+            swap_shift_signup(db_session, shift_signup_id=c.id, target_shift_id=b.id)
+        assert exc.value.status_code == 422

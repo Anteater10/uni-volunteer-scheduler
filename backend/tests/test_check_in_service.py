@@ -31,7 +31,7 @@ from app.services.check_in_service import (
     check_in_signup,
     ensure_signup_cancellable,
     event_check_in_by_email,
-    resolve_event,
+    close_event,
     self_check_in,
 )
 
@@ -150,16 +150,31 @@ class TestIdempotentRepeat:
 
 class TestInvalidTransition:
     def test_attended_to_checked_in_raises(self, db_session):
-        """Attempt attended -> checked_in raises InvalidTransitionError."""
+        """Attempt attended -> checked_in raises InvalidTransitionError: only
+        reopening a slot (force=True) leaves attended."""
         volunteer, owner, event, slot, signup = _make_event_slot_signup(
             db_session, status=SignupStatus.confirmed
         )
-        # First get to checked_in, then attended
+        # First get to checked_in, then attended (as closing the slot does)
         _transition(db_session, signup, SignupStatus.checked_in, owner.id, "test")
-        _transition(db_session, signup, SignupStatus.attended, owner.id, "test")
+        _transition(db_session, signup, SignupStatus.attended, owner.id, "test", force=True)
 
         with pytest.raises(InvalidTransitionError):
             _transition(db_session, signup, SignupStatus.checked_in, owner.id, "test")
+
+    @pytest.mark.parametrize("start", [SignupStatus.confirmed, SignupStatus.checked_in])
+    @pytest.mark.parametrize("target", [SignupStatus.attended, SignupStatus.no_show])
+    def test_attended_and_no_show_are_unreachable_without_closing(
+        self, db_session, start, target
+    ):
+        """2026-10-13: attended / no show exist only on a closed slot, so the
+        whitelist never reaches them — closing a slot is the one writer."""
+        volunteer, owner, event, slot, signup = _make_event_slot_signup(
+            db_session, status=start
+        )
+        assert target not in ALLOWED_TRANSITIONS[start]
+        with pytest.raises(InvalidTransitionError):
+            _transition(db_session, signup, target, owner.id, "test")
 
 
 class TestSelfCheckIn:
@@ -267,8 +282,10 @@ class TestResolveEvent:
         attended_ids = [signups[0].id, signups[1].id]
         no_show_ids = [signups[2].id]
 
-        updated = resolve_event(db_session, event.id, owner.id, attended_ids, no_show_ids)
-        assert len(updated) == 3
+        closed = close_event(db_session, event.id, owner.id, attended_ids, no_show_ids)
+        assert closed == [slot]
+        assert slot.closed_at is not None
+        assert slot.closed_by == owner.id
 
         assert signups[0].status == SignupStatus.attended
         assert signups[1].status == SignupStatus.attended
@@ -276,18 +293,22 @@ class TestResolveEvent:
 
         logs = db_session.query(AuditLog).filter(
             AuditLog.action == "transition",
-            AuditLog.extra["via"].as_string() == "resolve_event",
+            AuditLog.extra["via"].as_string() == "close_event",
         ).all()
         assert len(logs) == 3
 
-    def test_resolve_rollback_on_invalid(self, db_session):
-        """Resolve with already-attended signup raises and DB is unchanged."""
+    def test_stray_attended_on_an_open_slot_is_kept_without_a_new_transition(
+        self, db_session
+    ):
+        """An attended row on an open slot (pre-0044 data) is still a seat:
+        closing keeps it attended and writes no transition for it, while the
+        checked-in neighbour becomes attended as usual."""
         owner = _make_user(db_session, role="organizer")
         now = datetime.now(timezone.utc)
         event = Event(
             id=uuid.uuid4(),
             owner_id=owner.id,
-            title="Resolve Rollback",
+            title="Stray attended",
             start_date=now,
             end_date=now + timedelta(days=1),
         )
@@ -305,29 +326,27 @@ class TestResolveEvent:
         db_session.add(slot)
         db_session.flush()
 
-        vol1 = _make_volunteer(db_session)
         s1 = Signup(
             id=uuid.uuid4(),
-            volunteer_id=vol1.id,
+            volunteer_id=_make_volunteer(db_session).id,
             slot_id=slot.id,
-            status=SignupStatus.attended,  # Already attended — invalid to transition again
+            status=SignupStatus.attended,
         )
-        db_session.add(s1)
-
-        vol2 = _make_volunteer(db_session)
         s2 = Signup(
             id=uuid.uuid4(),
-            volunteer_id=vol2.id,
+            volunteer_id=_make_volunteer(db_session).id,
             slot_id=slot.id,
             status=SignupStatus.checked_in,
         )
-        db_session.add(s2)
+        db_session.add_all([s1, s2])
         db_session.flush()
 
-        # Try to mark both as attended — s1 is already attended, so attended->attended is invalid
-        with pytest.raises(InvalidTransitionError):
-            resolve_event(db_session, event.id, owner.id, [s1.id, s2.id], [])
+        close_event(db_session, event.id, owner.id, [s1.id, s2.id], [])
 
+        assert (s1.status, s2.status) == (SignupStatus.attended, SignupStatus.attended)
+        assert db_session.query(AuditLog).filter(
+            AuditLog.action == "transition", AuditLog.entity_id == str(s1.id)
+        ).count() == 0
 
 def _signups_of(result):
     """Unwrap ``event_check_in_by_email``'s result into its Signup rows.
