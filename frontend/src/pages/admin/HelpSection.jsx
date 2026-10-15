@@ -45,7 +45,7 @@ const SECTIONS = [
   },
   {
     title: "How to close out a session once it's over",
-    body: "On the live roster, click 'End slot' (or 'End event' to do them all). Everyone still not checked in is set to no-show by default — tick anyone who did turn up but wasn't tapped in, then Save. Ending a session is what records attendance, so do it before you leave.",
+    body: "On the live roster, click 'End slot' (or 'End event' to close every session that has already started — sessions later in the week are left alone). Everyone still not checked in is set to no-show by default — tick anyone who did turn up but wasn't tapped in, then Save. Ending a session is what records attendance, so do it before you leave. Nothing ends on its own, and nothing is final: if you got someone wrong, click 'Reopen slot', fix it, and end the slot again.",
   },
   {
     title: "How to promote someone off the waitlist",

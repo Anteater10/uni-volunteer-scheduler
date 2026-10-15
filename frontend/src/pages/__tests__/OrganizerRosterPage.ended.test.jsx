@@ -1,10 +1,11 @@
 // src/pages/__tests__/OrganizerRosterPage.ended.test.jsx
 //
-// Ending a slot is irreversible from the live-roster screen, and the only
-// signal that it happened is that every expected signup has been resolved to
-// attended/no_show. These cover that derivation: an ended slot must announce
-// itself and lock its "End …" button, while a live slot beside it stays fully
-// actionable.
+// 2026-10-13 (Kim's report): a slot is closed when, and only when, the slot
+// itself says so (`slot_closed_at`). It used to be inferred from every signup
+// being attended/no_show, so a future session whose volunteers had been
+// wrongly marked no-show read as "Ended" with nothing a person had pressed.
+// A closed slot announces itself and offers "Reopen …"; an open slot beside
+// it stays fully actionable.
 
 import React from "react";
 import { render, screen } from "@testing-library/react";
@@ -35,14 +36,18 @@ function row(overrides) {
     slot_time: overrides.slot_time,
     slot_end: overrides.slot_end,
     slot_location: "Room 12",
+    slot_closed_at: overrides.slot_closed_at ?? null,
   };
 }
+
+const CLOSED_AT = "2026-07-26T19:00:00Z";
 
 const ENDED_SLOT = {
   slot_id: "slot-orientation",
   slot_type: "orientation",
   slot_time: "2026-07-26T17:00:00Z",
   slot_end: "2026-07-26T18:30:00Z",
+  slot_closed_at: CLOSED_AT,
 };
 
 const LIVE_SLOT = {
@@ -51,6 +56,8 @@ const LIVE_SLOT = {
   slot_time: "2026-07-27T15:00:00Z",
   slot_end: "2026-07-27T18:00:00Z",
 };
+
+const CLOSED_MODULE = { ...LIVE_SLOT, slot_closed_at: CLOSED_AT };
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -63,12 +70,12 @@ function renderPage() {
   );
 }
 
-describe("OrganizerRosterPage — ended slots", () => {
+describe("OrganizerRosterPage — closed slots", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("marks a fully-resolved slot as ended and locks its End button", async () => {
+  it("marks a closed slot Closed and offers Reopen instead of End", async () => {
     fetchRoster.mockResolvedValue({
       event_name: "CRISPR Module 1",
       total: 4,
@@ -83,29 +90,36 @@ describe("OrganizerRosterPage — ended slots", () => {
 
     renderPage();
 
-    // Ended orientation: badge, attended/no-show tally, disabled button.
-    expect(await screen.findByText(/Ended/)).toBeInTheDocument();
+    // Closed orientation: badge, attended/no-show tally, enabled Reopen.
+    expect(await screen.findByText("Closed")).toBeInTheDocument();
     expect(screen.getByText("1 attended · 1 no show")).toBeInTheDocument();
-    const endedBtn = screen.getByRole("button", { name: /Orientation ended/i });
-    expect(endedBtn).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /^Reopen orientation\b/i }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: /^End orientation\b/i }),
+    ).not.toBeInTheDocument();
+    // Its cards are read-only.
+    expect(screen.getByText("Alina Rahman").closest("button")).toBeDisabled();
+    expect(screen.getByText("Marcus Delgado").closest("button")).toBeDisabled();
 
     // The live module slot beside it is untouched.
-    const liveBtn = screen.getByRole("button", { name: /^End slot$/i });
+    const liveBtn = screen.getByRole("button", { name: /^End slot\b/i });
     expect(liveBtn).toBeEnabled();
     expect(screen.getByText("1/2 checked in")).toBeInTheDocument();
 
-    // Not every slot is resolved, so the event-level action stays available.
+    // Not every slot is closed, so the event-level action stays available.
     expect(screen.getByRole("button", { name: /^End event$/i })).toBeEnabled();
   });
 
-  it("locks the event-level End button once every slot is resolved", async () => {
+  it("locks the event-level End button once every slot is closed", async () => {
     fetchRoster.mockResolvedValue({
       event_name: "CRISPR Module 1",
       total: 2,
       checked_in_count: 1,
       rows: [
         row({ ...ENDED_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "attended" }),
-        row({ ...LIVE_SLOT, signup_id: "s2", student_name: "Jonah Whitfield", status: "no_show" }),
+        row({ ...CLOSED_MODULE, signup_id: "s2", student_name: "Jonah Whitfield", status: "no_show" }),
       ],
     });
 
@@ -115,28 +129,47 @@ describe("OrganizerRosterPage — ended slots", () => {
     expect(eventBtn).toBeDisabled();
   });
 
-  it("leaves a slot live while anyone is still unresolved", async () => {
+  it("never infers Closed from statuses: an all-no-show open slot stays open", async () => {
     fetchRoster.mockResolvedValue({
       event_name: "CRISPR Module 1",
       total: 2,
       checked_in_count: 1,
       rows: [
-        row({ ...ENDED_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "attended" }),
-        // Still checked in, not yet resolved — the slot is not over.
-        row({ ...ENDED_SLOT, signup_id: "s2", student_name: "Marcus Delgado", status: "checked_in" }),
+        // The Thursday case: everyone marked no_show, but nobody closed the
+        // slot. It must not read as Closed, and the event isn't done.
+        row({ ...ENDED_SLOT, slot_closed_at: null, signup_id: "s1", student_name: "Alina Rahman", status: "no_show" }),
+        row({ ...ENDED_SLOT, slot_closed_at: null, signup_id: "s2", student_name: "Marcus Delgado", status: "no_show" }),
       ],
     });
 
     renderPage();
 
-    const btn = await screen.findByRole("button", { name: /^End orientation$/i });
+    const btn = await screen.findByRole("button", { name: /^End orientation\b/i });
     expect(btn).toBeEnabled();
-    expect(screen.queryByText(/Ended/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Closed")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("event-complete-banner")).not.toBeInTheDocument();
+    expect(screen.getByText("0/2 checked in")).toBeInTheDocument();
   });
 
-  // PR #51 — a fully-ended event gets an animated completion banner.
+  it("shows Closed on a closed slot even when nobody in it is attended/no_show", async () => {
+    fetchRoster.mockResolvedValue({
+      event_name: "CRISPR Module 1",
+      total: 1,
+      checked_in_count: 0,
+      rows: [
+        row({ ...CLOSED_MODULE, signup_id: "s1", student_name: "Wait Listed", status: "waitlisted" }),
+      ],
+    });
 
-  it("celebrates a fully-ended event with the completion banner", async () => {
+    renderPage();
+
+    expect(await screen.findByText("Closed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reopen slot\b/i })).toBeEnabled();
+  });
+
+  // PR #51 — a fully-closed event gets an animated completion banner.
+
+  it("celebrates a fully-closed event with the completion banner", async () => {
     fetchRoster.mockResolvedValue({
       event_name: "CRISPR Module 1",
       total: 3,
@@ -144,7 +177,9 @@ describe("OrganizerRosterPage — ended slots", () => {
       rows: [
         row({ ...ENDED_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "attended" }),
         row({ ...ENDED_SLOT, signup_id: "s2", student_name: "Marcus Delgado", status: "no_show" }),
-        row({ ...LIVE_SLOT, signup_id: "s3", student_name: "Priya Venkatesan", status: "attended" }),
+        row({ ...CLOSED_MODULE, signup_id: "s3", student_name: "Priya Venkatesan", status: "attended" }),
+        // A slot nobody is seated in doesn't hold the event open.
+        row({ slot_id: "empty", slot_type: "period", slot_time: "2026-07-28T15:00:00Z", signup_id: "s4", student_name: "Can Celled", status: "cancelled" }),
       ],
     });
 
@@ -153,7 +188,29 @@ describe("OrganizerRosterPage — ended slots", () => {
     const banner = await screen.findByTestId("event-complete-banner");
     expect(banner).toHaveTextContent(/event complete/i);
     expect(banner).toHaveTextContent(/2 attended/i);
-    expect(banner).toHaveTextContent(/1 no.show/i);
+    expect(banner).toHaveTextContent(/1 no-show on the books/i);
+    expect(banner).toHaveTextContent(
+      /Orientation credit was granted with each closed orientation\./,
+    );
+    expect(banner).toHaveTextContent(/Reopen a slot to fix a mistake/i);
+  });
+
+  it("pluralises no-shows and skips the credit line without orientation", async () => {
+    fetchRoster.mockResolvedValue({
+      event_name: "CRISPR Module 1",
+      total: 2,
+      checked_in_count: 0,
+      rows: [
+        row({ ...CLOSED_MODULE, signup_id: "s1", student_name: "Alina Rahman", status: "no_show" }),
+        row({ ...CLOSED_MODULE, signup_id: "s2", student_name: "Marcus Delgado", status: "no_show" }),
+      ],
+    });
+
+    renderPage();
+
+    const banner = await screen.findByTestId("event-complete-banner");
+    expect(banner).toHaveTextContent(/2 no-shows on the books/i);
+    expect(banner).not.toHaveTextContent(/Orientation credit/i);
   });
 
   it("offers the reopen undo from the completion banner", async () => {
@@ -204,21 +261,21 @@ describe("OrganizerRosterPage — ended slots", () => {
     expect(screen.queryByTestId("event-complete-banner")).not.toBeInTheDocument();
   });
 
-  it("does not treat a cancelled-only slot as ended", async () => {
+  it("does not treat a cancelled-only open slot as closed", async () => {
     fetchRoster.mockResolvedValue({
       event_name: "CRISPR Module 1",
       total: 1,
       checked_in_count: 0,
       rows: [
         // Cancelled rows are excluded from `expected`, so the slot has nothing
-        // to resolve — it must not silently read as finished.
-        row({ ...ENDED_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "cancelled" }),
+        // to close — it must not silently read as finished.
+        row({ ...ENDED_SLOT, slot_closed_at: null, signup_id: "s1", student_name: "Alina Rahman", status: "cancelled" }),
       ],
     });
 
     renderPage();
 
-    const btn = await screen.findByRole("button", { name: /^End orientation$/i });
+    const btn = await screen.findByRole("button", { name: /^End orientation\b/i });
     expect(btn).toBeEnabled();
   });
 });

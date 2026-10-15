@@ -8,7 +8,11 @@ summed from those records, so this is the path that has to be right.
 
 Two shapes of close-out:
   * `POST /slots/{session_id}/resolve` — end Tuesday, leave Wednesday open.
-  * `POST /events/{id}/resolve` — settle every session in the shift at once.
+  * `POST /events/{id}/resolve` — close every session that has started.
+
+2026-10-13 slot lock: closing is per session (`slots.closed_at`), a closed
+session is read-only until reopened, and "End event" never closes a session
+that has not started yet.
 """
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -137,11 +141,12 @@ class TestPerSessionCloseOut:
             == models.SignupStatus.confirmed
         )
 
-    def test_closing_a_session_twice_keeps_the_first_answer(
+    def test_closing_a_session_twice_is_409_and_keeps_the_first_answer(
         self, client, db_session, two_day_shift
     ):
-        """Re-running a close-out must not silently rewrite what was recorded,
-        and must not 409 either — staff re-open the event to change an answer."""
+        """Re-running a close-out must not silently rewrite what was recorded:
+        a closed session answers 409 SLOT_CLOSED — staff reopen it to change
+        an answer."""
         event, shift, sessions, commitment = two_day_shift
         headers = auth_headers(client, event.owner)
 
@@ -153,11 +158,39 @@ class TestPerSessionCloseOut:
             f"/api/v1/slots/{sessions[0].id}/resolve",
             json={"attended": [], "no_show": [str(commitment.id)]}, headers=headers,
         )
-        assert again.status_code == 200, again.text
+        assert again.status_code == 409, again.text
+        assert again.json()["code"] == "SLOT_CLOSED"
 
         db_session.expire_all()
         assert _attendance(db_session, commitment.id) == {
             sessions[0].id: models.SignupStatus.attended
+        }
+
+    def test_reopen_then_close_changes_the_answer(
+        self, client, db_session, two_day_shift
+    ):
+        event, shift, sessions, commitment = two_day_shift
+        headers = auth_headers(client, event.owner)
+
+        client.post(
+            f"/api/v1/slots/{sessions[0].id}/resolve",
+            json={"attended": [str(commitment.id)], "no_show": []}, headers=headers,
+        )
+        reopened = client.post(f"/api/v1/slots/{sessions[0].id}/reopen", headers=headers)
+        assert reopened.status_code == 200, reopened.text
+        db_session.expire_all()
+        assert _attendance(db_session, commitment.id) == {
+            sessions[0].id: models.SignupStatus.checked_in
+        }
+
+        again = client.post(
+            f"/api/v1/slots/{sessions[0].id}/resolve",
+            json={"attended": [], "no_show": [str(commitment.id)]}, headers=headers,
+        )
+        assert again.status_code == 200, again.text
+        db_session.expire_all()
+        assert _attendance(db_session, commitment.id) == {
+            sessions[0].id: models.SignupStatus.no_show
         }
 
     def test_a_session_grants_no_orientation_credit(
@@ -227,6 +260,34 @@ class TestEventWideCloseOut:
             sessions[0].id: models.SignupStatus.attended,
             sessions[1].id: models.SignupStatus.attended,
         }
+
+    def test_ending_the_event_never_closes_a_session_that_has_not_started(
+        self, client, db_session, two_day_shift
+    ):
+        """Kim's report: "End event" on Tuesday marked Thursday's volunteers
+        no-show. A future session stays open, with nobody marked."""
+        event, shift, sessions, commitment = two_day_shift
+        future = datetime.now(timezone.utc) + timedelta(days=2)
+        sessions[1].start_time = future
+        sessions[1].end_time = future + timedelta(hours=2)
+        sessions[1].date = future.date()
+        db_session.commit()
+
+        resp = client.post(
+            f"/api/v1/events/{event.id}/resolve",
+            json={"attended": [], "no_show": []},
+            headers=auth_headers(client, event.owner),
+        )
+        assert resp.status_code == 200, resp.text
+
+        db_session.expire_all()
+        assert _attendance(db_session, commitment.id) == {
+            sessions[0].id: models.SignupStatus.no_show,
+        }
+        assert sessions[0].closed_at is not None
+        assert sessions[1].closed_at is None
+        # One session still open with someone seated: not complete.
+        assert db_session.get(models.Event, event.id).completed_at is None
 
     def test_ending_the_event_after_a_per_session_close_out_is_a_no_op(
         self, client, db_session, two_day_shift

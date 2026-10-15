@@ -79,12 +79,19 @@ def _orientation_slot(db_session, event, *, capacity=25):
 
 
 def _missed_shift(
-    db_session, owner, volunteer, *, sessions=3, title="A week", days_ago=7
+    db_session, owner, volunteer, *, sessions=3, title="A week", days_ago=7,
+    closed=True,
 ):
-    """Book a whole shift and mark every one of its sessions a no-show."""
+    """Book a whole shift and mark every one of its sessions a no-show.
+
+    The sessions are closed by default: since 2026-10-13 a no-show only
+    exists on a slot staff have closed, and only those count."""
     event = _event(db_session, owner, title=title, days_ago=days_ago)
     shift = make_shift(db_session, event.id, capacity=6)
     slots = _sessions(db_session, event, shift, sessions)
+    if closed:
+        for slot in slots:
+            slot.closed_at = datetime.now(timezone.utc)
     booking = book_shift(
         db_session, shift, volunteer, status=models.SignupStatus.confirmed
     )
@@ -101,10 +108,12 @@ def _missed_shift(
 
 
 def _missed_orientation(
-    db_session, owner, volunteer, *, title="Orientation", days_ago=7
+    db_session, owner, volunteer, *, title="Orientation", days_ago=7, closed=True
 ):
     event = _event(db_session, owner, title=title, days_ago=days_ago)
     slot = _orientation_slot(db_session, event)
+    if closed:
+        slot.closed_at = datetime.now(timezone.utc)
     SignupFactory(
         slot=slot, volunteer=volunteer, status=models.SignupStatus.no_show
     )
@@ -161,6 +170,77 @@ class TestCounting:
 
     def test_an_empty_id_list_asks_the_database_nothing(self, db_session, owner):
         assert attendance_facts.no_show_counts(db_session, []) == {}
+
+
+class TestOnlyClosedStartedSlotsCount:
+    """2026-10-13 (Kim's report): the old "End event" marked Thursday's
+    volunteers no-show on Tuesday, and half-closed slots left stray no-shows
+    behind. Neither may redden anyone's flag: only a no-show on a slot staff
+    closed, that has already started, is a no-show."""
+
+    def test_a_no_show_on_an_open_session_does_not_count(self, db_session, owner):
+        volunteer = VolunteerFactory()
+        _missed_shift(db_session, owner, volunteer, sessions=2, closed=False)
+        db_session.commit()
+
+        assert attendance_facts.no_show_counts(db_session, [volunteer.id]) == {}
+
+    def test_a_no_show_on_an_open_orientation_does_not_count(
+        self, db_session, owner
+    ):
+        volunteer = VolunteerFactory()
+        _missed_orientation(db_session, owner, volunteer, closed=False)
+        db_session.commit()
+
+        assert attendance_facts.no_show_counts(db_session, [volunteer.id]) == {}
+
+    def test_a_closed_session_that_has_not_started_does_not_count(
+        self, db_session, owner
+    ):
+        volunteer = VolunteerFactory()
+        # days_ago=-2: the whole shift is in the future, yet closed.
+        _missed_shift(db_session, owner, volunteer, sessions=2, days_ago=-2)
+        db_session.commit()
+
+        assert attendance_facts.no_show_counts(db_session, [volunteer.id]) == {}
+
+    def test_a_shift_closed_only_for_its_past_day_counts_once(
+        self, db_session, owner
+    ):
+        """Tuesday happened and was closed; Thursday is still to come."""
+        volunteer = VolunteerFactory()
+        event = _event(db_session, owner, days_ago=1)
+        shift = make_shift(db_session, event.id, capacity=6)
+        tue, _wed, thu = _sessions(db_session, event, shift, 3)
+        booking = book_shift(
+            db_session, shift, volunteer, status=models.SignupStatus.confirmed
+        )
+        tue.closed_at = datetime.now(timezone.utc)
+        for slot in (tue, thu):
+            db_session.add(
+                models.SessionAttendance(
+                    shift_signup_id=booking.id,
+                    slot_id=slot.id,
+                    status=models.SignupStatus.no_show,
+                )
+            )
+        db_session.commit()
+
+        assert attendance_facts.no_show_counts(db_session, [volunteer.id]) == {
+            volunteer.id: 1
+        }
+
+    def test_without_a_window_the_open_slot_rule_still_holds(
+        self, db_session, owner
+    ):
+        volunteer = VolunteerFactory()
+        _missed_orientation(db_session, owner, volunteer, closed=False)
+        _missed_shift(db_session, owner, volunteer, sessions=1, days_ago=500)
+        db_session.commit()
+
+        assert attendance_facts.no_show_counts(
+            db_session, [volunteer.id], window=None
+        ) == {volunteer.id: 1}
 
 
 class TestWindow:

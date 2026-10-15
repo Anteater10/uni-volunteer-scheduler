@@ -12,9 +12,14 @@ Credit sources
 Explicit ``orientation_credits`` rows are the ONLY source of credit (design
 2026-07-24 — grant-on-slot-end). ``source`` records how the row came to be:
 
-1. ``attendance`` — written automatically when an organizer *ends* an
-   orientation slot (``check_in_service.resolve_slot`` / ``resolve_event``)
-   for every volunteer marked attended. Check-in alone grants nothing.
+1. ``attendance`` — written automatically when an organizer *closes* an
+   orientation slot (``check_in_service.close_slot`` / ``close_event``), for
+   every volunteer marked attended. Check-in alone grants nothing, and the
+   copilot's mark_attendance only checks people in, so it grants nothing
+   either. The row carries ``source_signup_id``; if the slot is reopened and
+   closed again with that signup marked no-show, that row (and only that
+   row) is revoked — and if the volunteer attended another closed
+   orientation of the same family, that one earns a fresh row.
 2. ``grant`` — written manually by an organizer ("vouched for") or admin.
 
 Revoking a row genuinely removes credit — nothing re-derives it from the
@@ -203,12 +208,14 @@ def grant_orientation_credit(
     granted_by_user_id: Optional[UUID] = None,
     notes: Optional[str] = None,
     source: OrientationCreditSource = OrientationCreditSource.grant,
+    source_signup_id: Optional[UUID] = None,
 ) -> OrientationCredit:
     """Create an explicit orientation_credits row.
 
     ``quarter_id`` records which quarter the credit was earned in — display
     metadata only; the credit is honored in every quarter regardless.
-    ``source=attendance`` marks rows written by the slot-resolve auto-grant.
+    ``source=attendance`` marks rows written by the slot-close auto-grant,
+    which also passes the ``source_signup_id`` that earned it.
 
     Caller owns the transaction (no commit here). Duplicates are allowed — the
     table is an append-only audit trail; the lookup collapses them to the most
@@ -221,6 +228,7 @@ def grant_orientation_credit(
         source=source,
         granted_by_user_id=granted_by_user_id,
         notes=notes,
+        source_signup_id=source_signup_id,
     )
     db.add(credit)
     db.flush()

@@ -10,7 +10,9 @@ the shape they already speak: one row per (volunteer, slot) with an effective
 status. The shift half is a LEFT JOIN with COALESCE, which encodes the same
 rule the roster uses — a session with no attendance record inherits its
 commitment's lifecycle status, so an unmarked session counts as `confirmed`
-exactly like an unmarked slot signup did.
+exactly like an unmarked slot signup did — except on a *closed* session, where
+everyone seated has a final record; a pending / confirmed booking with none
+there is left out (cancelled and waitlisted rows stay).
 
 Columns: `volunteer_id`, `slot_id`, `event_id`, `status`, `checked_in_at`,
 `source` ('orientation' | 'session'), `booking_id` (the signup or shift-signup
@@ -49,6 +51,10 @@ SEAT_HOLDING_STATUSES = (
 )
 
 
+_SEATED_SHIFT = (SignupStatus.pending, SignupStatus.confirmed)
+_FINAL = (SignupStatus.attended, SignupStatus.no_show)
+
+
 def facts() -> Subquery:
     """The union, as a named subquery ready to join against."""
     orientation = select(
@@ -81,6 +87,15 @@ def facts() -> Subquery:
             (SessionAttendance.shift_signup_id == ShiftSignup.id)
             & (SessionAttendance.slot_id == Slot.id),
         )
+        # 2026-10-13: a seat (pending / confirmed) with no final record on a
+        # closed session joined after the close, so was never expected
+        # there — not "confirmed". Cancelled / waitlisted rows stay as they
+        # are. (A NULL status fails the IN, so "no record" is excluded too.)
+        .where(
+            Slot.closed_at.is_(None)
+            | ShiftSignup.status.not_in(_SEATED_SHIFT)
+            | SessionAttendance.status.in_(_FINAL)
+        )
     )
 
     return union_all(orientation, sessions).subquery("attendance_facts")
@@ -110,19 +125,30 @@ def no_show_counts(
     so a no-show ages out a year after it happened, not a year after the event
     was created. ``window=None`` counts their whole history.
 
+    Only no-shows from a slot staff have *closed*, and that has already
+    started, count (2026-10-13). On an open slot "no show" does not exist yet
+    — the person is just not checked in — and a stray row from before the
+    slot lock, or a session that has not happened, must never redden someone's
+    flag.
+
     Volunteers with no no-shows are absent from the mapping — callers default
     them to 0.
     """
     af = facts()
+    now = datetime.now(timezone.utc)
     q = (
         select(af.c.volunteer_id, func.count(distinct(af.c.booking_id)))
         .select_from(af)
-        .where(af.c.status == SignupStatus.no_show)
+        .join(Slot, Slot.id == af.c.slot_id)
+        .where(
+            af.c.status == SignupStatus.no_show,
+            Slot.closed_at.is_not(None),
+            Slot.start_time <= now,
+        )
         .group_by(af.c.volunteer_id)
     )
     if window is not None:
-        cutoff = datetime.now(timezone.utc) - window
-        q = q.join(Slot, Slot.id == af.c.slot_id).where(Slot.start_time >= cutoff)
+        q = q.where(Slot.start_time >= now - window)
     if volunteer_ids is not None:
         ids = list(volunteer_ids)
         if not ids:

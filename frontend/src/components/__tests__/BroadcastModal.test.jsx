@@ -1,3 +1,4 @@
+/* global process -- the venue-time tests switch the machine's timezone */
 // Phase 26 — BroadcastModal tests.
 //
 // Covers the three paths the UI owns end-to-end: recipient-count preview,
@@ -189,6 +190,65 @@ describe("BroadcastModal", () => {
     expect(alert).toBeTruthy();
   });
 
+  it("shows any other send failure, falling back to a generic message", async () => {
+    api.admin.broadcastRecipientCount.mockResolvedValue({ recipient_count: 3 });
+    api.admin.sendBroadcast
+      .mockRejectedValueOnce(new Error("Event is archived"))
+      .mockRejectedValueOnce({});
+
+    render(<BroadcastModal open onClose={() => {}} eventId="evt-3" scope="admin" />);
+
+    await screen.findByTestId("broadcast-recipient-count");
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Subject"), "Hello");
+    await user.type(screen.getByLabelText(/Message \(Markdown\)/i), "again");
+
+    await user.click(screen.getByTestId("broadcast-send"));
+    await user.click(await screen.findByTestId("broadcast-confirm"));
+    expect(await screen.findByText("Event is archived")).toBeTruthy();
+
+    await user.click(screen.getByTestId("broadcast-send"));
+    await user.click(await screen.findByTestId("broadcast-confirm"));
+    expect(await screen.findByText("Broadcast failed")).toBeTruthy();
+  });
+
+  it("explains a recipient count it couldn't load", async () => {
+    api.admin.broadcastRecipientCount
+      .mockRejectedValueOnce(new Error("Event not found"));
+    const { rerender } = render(
+      <BroadcastModal open onClose={() => {}} eventId="evt-4" scope="admin" />,
+    );
+    expect(await screen.findByText("Event not found")).toBeTruthy();
+
+    api.admin.broadcastRecipientCount.mockRejectedValueOnce({});
+    rerender(<BroadcastModal open onClose={() => {}} eventId="evt-5" scope="admin" />);
+    expect(await screen.findByText("Could not load recipient count")).toBeTruthy();
+  });
+
+  it("previews a bulleted list", async () => {
+    api.admin.broadcastRecipientCount.mockResolvedValue({ recipient_count: 1 });
+    render(<BroadcastModal open onClose={() => {}} eventId="evt-6" scope="admin" />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/Message \(Markdown\)/i), "- one{enter}* two");
+    const preview = screen.getByTestId("broadcast-preview");
+    expect(preview.innerHTML).toBe("<ul><li>one</li><li>two</li></ul>");
+  });
+
+  it("drops a schedule that arrives after the modal closed", async () => {
+    let finish;
+    api.listSlots.mockReturnValue(new Promise((r) => (finish = r)));
+    api.admin.broadcastRecipientCount.mockResolvedValue({ recipient_count: 1 });
+    const { rerender } = render(
+      <BroadcastModal open onClose={() => {}} eventId="evt-7" scope="admin" />,
+    );
+    await waitFor(() => expect(api.listSlots).toHaveBeenCalled());
+    rerender(<BroadcastModal open={false} onClose={() => {}} eventId="evt-7" scope="admin" />);
+    await act(async () => {
+      finish([SLOT_B, { ...SLOT_B, id: "slot-c" }]);
+    });
+    expect(screen.queryByTestId("broadcast-slot-select")).toBeNull();
+  });
+
   // ------------------------------------------------------------------
   // Slot-scoped sending — organizer targets one slot's roster;
   // "All slots" (the default) preserves the whole-event behavior.
@@ -233,6 +293,76 @@ describe("BroadcastModal", () => {
     expect(labels[1]).toMatch(/Apr 21/);
 
     expect(api.organizer.broadcastRecipientCount).toHaveBeenCalledWith("evt-1");
+  });
+
+  // 2026-10-14 — the picker printed the browser's timezone and called every
+  // session "Slot". Labels now read like the live roster, in Pacific time.
+  describe("labels in venue time", () => {
+    const originalTz = process.env.TZ;
+    beforeEach(() => {
+      process.env.TZ = "America/New_York";
+    });
+    afterEach(() => {
+      process.env.TZ = originalTz;
+    });
+
+    async function optionLabels(slots, shifts) {
+      api.listSlots.mockResolvedValue(slots);
+      api.shifts.list.mockResolvedValue(shifts);
+      api.organizer.broadcastRecipientCount.mockResolvedValue({ recipient_count: 1 });
+      render(
+        <BroadcastModal open onClose={() => {}} eventId="evt-1" scope="organizer" />,
+      );
+      const select = await screen.findByTestId("broadcast-slot-select");
+      return [...select.options].map((o) => o.textContent);
+    }
+
+    it("names sessions and prints Pacific times from a New York browser", async () => {
+      const named = {
+        ...SHIFT_A,
+        // Out of order on purpose: sort_order decides.
+        sessions: [
+          { ...SESSION_A2, name: "Day 2" },
+          { ...SESSION_A1, name: "Day 1" },
+        ],
+      };
+      const labels = await optionLabels([SLOT_B], [named]);
+
+      // 16:00Z is 9:00 AM Pacific (noon in New York).
+      expect(labels[1]).toBe(
+        "Tue morning · Day 1 (Mon, Apr 20, 9:00 AM–11:00 AM) + Day 2 (Tue, Apr 21, 9:00 AM–11:00 AM)",
+      );
+      // 19:00Z is noon Pacific.
+      expect(labels[2]).toBe("Orientation · Mon, Apr 20 · 12:00 PM–1:00 PM");
+      expect(labels.join(" ")).not.toMatch(/\bSlot\b/);
+      expect(labels.join(" ")).not.toMatch(/3:00 PM/);
+    });
+
+    it("keeps offset timestamps, unnamed sessions, and sparse slots readable", async () => {
+      const labels = await optionLabels(
+        [
+          {
+            id: "slot-c",
+            slot_type: "orientation",
+            date: "2026-04-22",
+            start_time: "2026-04-22T16:00:00+00:00",
+            end_time: null,
+            location: "Library",
+          },
+          // Neither type nor times: just its date.
+          { id: "slot-d", slot_type: null, date: "2026-04-23", start_time: null, end_time: null },
+          { id: "slot-e", slot_type: "period", date: "2026-04-24", start_time: "2026-04-24T16:00:00Z", end_time: "2026-04-24T17:00:00Z" },
+        ],
+        [{ ...SHIFT_A, name: null, sessions: [{ ...SESSION_A1, sort_order: undefined }, { ...SESSION_A2, sort_order: undefined }] }],
+      );
+
+      expect(labels[1]).toBe(
+        "Mon, Apr 20, 9:00 AM–11:00 AM + Tue, Apr 21, 9:00 AM–11:00 AM",
+      );
+      expect(labels[2]).toBe("Orientation · Wed, Apr 22 · 9:00 AM · Library");
+      expect(labels[3]).toBe("Thu, Apr 23");
+      expect(labels[4]).toBe("Module · Fri, Apr 24 · 9:00 AM–10:00 AM");
+    });
   });
 
   it("previews the recipient count for a chosen shift", async () => {

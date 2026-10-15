@@ -1,8 +1,13 @@
+/* global process -- tests switch the machine's timezone via process.env.TZ */
 // src/pages/__tests__/OrganizerRosterPage.slotdates.test.jsx
 //
 // Slot section headers must carry the slot's date, not just its time range —
 // a multi-day event otherwise renders two identical-looking "9:00 AM" sections
 // and the organizer can't tell which day they're checking in.
+//
+// 2026-10-13: and in venue (Pacific) time, like the public page. These run
+// with the machine's clock in New York so a browser-timezone formatter would
+// print the wrong hour (and, late in the evening, the wrong day).
 
 import React from "react";
 import { render, screen } from "@testing-library/react";
@@ -20,6 +25,7 @@ vi.mock("../../state/useAuth", () => ({
   useAuth: () => ({ role: "organizer" }),
 }));
 
+import { afterAll, beforeAll } from "vitest";
 import { fetchRoster } from "../../api/roster";
 import OrganizerRosterPage from "../OrganizerRosterPage";
 
@@ -50,19 +56,21 @@ const DAY_TWO_SLOT = {
   slot_end: "2026-07-27T18:30:00Z",
 };
 
-// Same formatting call the page makes, so the assertion is timezone-agnostic
-// regardless of the TZ the test runner happens to use.
-function expectedDateLabel(iso) {
-  return new Date(iso).toLocaleDateString([], {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
+const LATE_SLOT = {
+  slot_id: "slot-late",
+  slot_type: "period",
+  // 9pm Pacific on Sun Jul 26 — already Monday in New York.
+  slot_time: "2026-07-27T04:00:00Z",
+  slot_end: "2026-07-27T05:00:00Z",
+};
 
-function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+const originalTz = process.env.TZ;
+beforeAll(() => {
+  process.env.TZ = "America/New_York";
+});
+afterAll(() => {
+  process.env.TZ = originalTz;
+});
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -80,7 +88,7 @@ describe("OrganizerRosterPage — slot header dates", () => {
     vi.clearAllMocks();
   });
 
-  it("shows each slot's date in its section header", async () => {
+  it("shows each slot's Pacific date and time range in its section header", async () => {
     fetchRoster.mockResolvedValue({
       event_name: "CRISPR Module 1",
       total: 2,
@@ -94,37 +102,54 @@ describe("OrganizerRosterPage — slot header dates", () => {
     renderPage();
     await screen.findByText("CRISPR Module 1");
 
-    const dayOne = expectedDateLabel(DAY_ONE_SLOT.slot_time);
-    const dayTwo = expectedDateLabel(DAY_TWO_SLOT.slot_time);
+    // 17:00Z is 10:00 AM Pacific (1:00 PM in New York, where this runs).
     expect(
-      screen.getByRole("heading", { level: 2, name: new RegExp(escapeRegExp(dayOne)) }),
+      screen.getByRole("heading", { level: 2, name: /Sun, Jul 26 · 10:00 AM – 11:30 AM/ }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { level: 2, name: new RegExp(escapeRegExp(dayTwo)) }),
+      screen.getByRole("heading", { level: 2, name: /Mon, Jul 27 · 10:00 AM – 11:30 AM/ }),
     ).toBeInTheDocument();
+    // Card times are Pacific too.
+    expect(screen.getAllByText("10:00 AM")).toHaveLength(2);
+    expect(screen.queryByText(/1:00 PM/)).not.toBeInTheDocument();
   });
 
-  it("still shows the time range alongside the date", async () => {
+  it("keeps a late-evening session on its Pacific day", async () => {
     fetchRoster.mockResolvedValue({
       event_name: "CRISPR Module 1",
       total: 1,
       checked_in_count: 0,
       rows: [
-        row({ ...DAY_ONE_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "confirmed" }),
+        row({ ...LATE_SLOT, signup_id: "s1", student_name: "Alina Rahman", status: "confirmed" }),
       ],
     });
 
     renderPage();
     await screen.findByText("CRISPR Module 1");
 
-    const start = new Date(DAY_ONE_SLOT.slot_time).toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
+    expect(
+      screen.getByRole("heading", { level: 2, name: /Sun, Jul 26 · 9:00 PM – 10:00 PM/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("copes with a slot that has only an end time, or no times at all", async () => {
+    fetchRoster.mockResolvedValue({
+      event_name: "CRISPR Module 1",
+      total: 2,
+      checked_in_count: 0,
+      rows: [
+        row({ slot_id: "end-only", slot_type: "period", slot_time: null, slot_end: DAY_ONE_SLOT.slot_end, signup_id: "s1", student_name: "Alina Rahman", status: "confirmed" }),
+        row({ slot_id: "no-times", slot_type: "period", slot_time: null, slot_end: null, signup_id: "s2", student_name: "Marcus Delgado", status: "confirmed" }),
+      ],
     });
-    const heading = screen.getByRole("heading", {
-      level: 2,
-      name: new RegExp(escapeRegExp(start)),
-    });
-    expect(heading).toHaveTextContent(expectedDateLabel(DAY_ONE_SLOT.slot_time));
+
+    renderPage();
+    await screen.findByText("CRISPR Module 1");
+
+    // Date from the end time, with " – 11:30 AM" as the range.
+    expect(
+      screen.getByRole("heading", { level: 2, name: /Sun, Jul 26 · – 11:30 AM/ }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(2);
   });
 });

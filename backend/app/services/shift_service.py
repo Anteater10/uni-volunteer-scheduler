@@ -279,11 +279,14 @@ def waitlist_position(db: Session, shift_signup: models.ShiftSignup) -> int | No
 
 def lock_shift(db: Session, shift_id) -> models.Shift | None:
     """SELECT ... FOR UPDATE on the shift row — the capacity gate. Every path
-    that increments `current_count` must go through this."""
+    that increments `current_count` must go through this. populate_existing:
+    a Shift this session already holds is re-read under the lock, so the
+    count it gates on is the committed one, not a stale copy."""
     return (
         db.query(models.Shift)
         .filter(models.Shift.id == shift_id)
         .with_for_update()
+        .populate_existing()
         .first()
     )
 

@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Card, Button, Input, Label, FieldError } from "../components/ui";
+import { fmtVenueTime } from "../lib/venueTime";
 
 // Mirror of the backend check-in window (check_in_service.py): a slot opens
 // 30 minutes before its start and closes 30 minutes after. Only drives the
@@ -10,17 +11,9 @@ import { Card, Button, Input, Label, FieldError } from "../components/ui";
 const WINDOW_BEFORE_MS = 30 * 60 * 1000;
 const WINDOW_AFTER_MS = 30 * 60 * 1000;
 
-function fmtTime(iso) {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleTimeString(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
-  }
-}
+// Venue (Pacific) time, like every other page: a volunteer's phone may be
+// set to another timezone, and the schedule is the venue's wall clock.
+const fmtTime = (iso) => fmtVenueTime(iso);
 
 function slotTypeLabel(slotType) {
   return slotType === "orientation" ? "Orientation" : "Module";
@@ -178,7 +171,9 @@ export default function EventCheckInPage() {
 
   const eventTitle = eventQ.data?.title || "Event check-in";
 
-  const now = Date.now();
+  // The schedule's clock is the time of its last fetch (refetched every
+  // minute), since a render can't read the clock itself.
+  const now = slotsQ.dataUpdatedAt;
   const slots = Array.isArray(slotsQ.data)
     ? [...slotsQ.data].sort(
         (a, b) => new Date(a.start_time) - new Date(b.start_time),
@@ -188,7 +183,15 @@ export default function EventCheckInPage() {
     const start = new Date(s.start_time).getTime();
     const opensAt = start - WINDOW_BEFORE_MS;
     const closesAt = start + WINDOW_AFTER_MS;
-    const state = now < opensAt ? "upcoming" : now > closesAt ? "closed" : "open";
+    // A slot staff have closed is closed whatever the clock says — the same
+    // rule the server's window_state applies after lookup.
+    const state = s.closed_at
+      ? "closed"
+      : now < opensAt
+        ? "upcoming"
+        : now > closesAt
+          ? "closed"
+          : "open";
     return { slot: s, state, opensAt };
   });
   const anyOpen = slotStates.some((e) => e.state === "open");

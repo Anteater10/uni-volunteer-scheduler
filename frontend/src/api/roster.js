@@ -1,6 +1,4 @@
 // Phase 3: Roster API helpers
-// Re-exports convenience functions that use the main api module's request()
-import api from "../lib/api";
 
 export async function fetchRoster(eventId) {
   // api module doesn't expose raw request, so add to nested shape
@@ -35,20 +33,44 @@ export async function undoCheckInSession(shiftSignupId, slotId) {
   );
 }
 
-export async function resolveEvent(eventId, { attended, no_show }) {
-  return _authedRequest("POST", `/events/${eventId}/resolve`, { attended, no_show });
-}
-
 // Grant-on-slot-end (2026-07-24): per-slot "End slot". Ending an orientation
 // slot auto-grants orientation credit to every volunteer marked attended.
+// 2026-10-13: closing locks the slot's attendance until someone reopens it;
+// 409 SLOT_CLOSED if it is already closed. "End event" also closes one slot
+// at a time through here, so a session that hasn't started is never touched.
 export async function resolveSlot(slotId, { attended, no_show }) {
   return _authedRequest("POST", `/slots/${slotId}/resolve`, { attended, no_show });
 }
 
-// fix/ux-quarter-batch — undo "End event": resolved signups return to the
-// live roster and the event's completed_at stamp clears.
+// 2026-10-13: undo one closed slot. attended goes back to checked in (keeping
+// the check-in time), no show back to not checked in. Returns the fresh roster.
+export async function reopenSlot(slotId) {
+  return _authedRequest("POST", `/slots/${slotId}/reopen`);
+}
+
+// fix/ux-quarter-batch — undo "End event": every closed slot on the event
+// reopens and the event's completed_at stamp clears.
 export async function reopenEvent(eventId) {
   return _authedRequest("POST", `/events/${eventId}/reopen`);
+}
+
+// 2026-10-13: a tap or close that lands on a closed slot gets a 409 with code
+// SLOT_CLOSED. The app's global HTTP error handler flattens the body to
+// {error, code, detail: "<message>"}, so the code is top-level; the nested
+// detail.code shape is accepted too in case a route ever bypasses it.
+function hasCode(err, code) {
+  const data = err?.response?.data;
+  return data?.code === code || data?.detail?.code === code;
+}
+
+export function isSlotClosedError(err) {
+  return hasCode(err, "SLOT_CLOSED");
+}
+
+// 2026-10-14: a slot can't be closed before it starts (409 SLOT_NOT_STARTED)
+// — no-shows only exist for a session that has begun.
+export function isSlotNotStartedError(err) {
+  return hasCode(err, "SLOT_NOT_STARTED");
 }
 
 // Internal: thin wrapper matching the api.js request pattern

@@ -316,8 +316,8 @@ class Event(Base):
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    # fix/ux-quarter-batch: stamped when the last expected signup lands on a
-    # terminal status (attended/no_show), cleared by the reopen undo. The
+    # fix/ux-quarter-batch: stamped when every slot with a seated booking is
+    # closed (slots.closed_at, 2026-10-13), cleared when any is reopened. The
     # events list uses it to badge completed events and file them under Past.
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -463,6 +463,16 @@ class Slot(Base):
     # derived _periodLabel numbering, which had no database backing.
     name = Column(String(255), nullable=True)
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+
+    # 2026-10-13: closing a slot is an explicit, reversible staff act. While
+    # closed, its attendance is read-only; reopening clears these and keeps
+    # every recorded result. Nothing closes a slot on a timer.
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    closed_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     __table_args__ = (
         Index("ix_slots_start_time", "start_time"),
@@ -1001,6 +1011,15 @@ class OrientationCredit(Base):
     )
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     notes = Column(Text, nullable=True)
+    # The orientation signup whose close-out granted this credit. Only set on
+    # auto-grants; re-closing that slot with the signup marked no-show revokes
+    # it. NULL (hand grants, pre-0044 rows) is never auto-revoked.
+    source_signup_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("signups.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

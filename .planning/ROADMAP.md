@@ -264,6 +264,14 @@ A student's screenshot, raised by Andy on 2026-10-04. Production did not yet hav
 |---|---|---|---|---|---|
 | 186 | A volunteer who booked orientation alone puts that same orientation back in her cart with the module | 409 "already signed up", and since a signup is all-or-nothing the module seats are thrown away too. #182 stops the page asking for orientation again, but not a student re-adding it herself | Skip a slot she already holds a live booking on and book the rest; still 409 when everything picked is already held, or the earlier booking was cancelled | — | **In progress — branch `fix/186-rebooked-orientation`.** Andy chose it, 2026-10-05 [SCRUM-239] |
 
+## Staff requests — 2026-10-13 — **0 of 1 done**
+
+Kim Ciancio (2026-10-13, Week 3 - Conservation of Mass - SBJH): office internet is unreliable, so she marks attendance after the shift, and could not change anyone shown as "no show".
+
+| # | Current situation | What's wrong | Recommendation | Blocks | Decision |
+|---|---|---|---|---|---|
+| 189 | attended / no_show were final per person; "ended" was guessed from statuses; the close-out skipped pending people; "End event" closed every session, including future ones | A no-show could never be fixed, slots half-closed with no undo, Thursday got no-shows on Tuesday, the no-show flag counted them, and admin times were 3 hours off outside Pacific | A real open/closed switch per slot (`slots.closed_at`, migration 0044): only a person closes or reopens it; attended/no_show exist only on closed slots; pending = confirmed; no closing before a session starts; flag counts closed, started slots only; credit follows attendance; migration repairs existing data; Pacific times on the roster | Deploy (Rafael) | **In progress — branch `feature/L-attendance-lock-per-slot`.** Andy chose the slot-level lock and every rule above, 2026-10-13 [SCRUM-243] |
+
 ## Phase L5 — Hardening and scale (2–3 days) — *the missing Phase 37*
 
 | # | Current situation | What's wrong | Recommendation | Blocks | Decision |

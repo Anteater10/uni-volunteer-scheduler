@@ -56,7 +56,14 @@ def slot_has_ended(slot: models.Slot, now: datetime | None = None) -> bool:
     session that's already over. Timestamps come back from Postgres
     tz-aware; the naive fallback keeps the comparison from blowing up if a
     caller hands over a hand-built slot.
+
+    2026-10-13 slot lock: a slot staff have *closed* counts as ended too, so
+    no promotion path offers a seat on it (everyone on a closed slot already
+    has a final result). Through ``shift_has_ended`` that makes a shift whose
+    sessions are all ended-or-closed ended as well.
     """
+    if getattr(slot, "closed_at", None) is not None:
+        return True
     end_time = slot.end_time
     if end_time is None:
         return False
@@ -66,7 +73,7 @@ def slot_has_ended(slot: models.Slot, now: datetime | None = None) -> bool:
 
 
 def shift_has_ended(shift: models.Shift, now: datetime | None = None) -> bool:
-    """True when every session in ``shift`` is over.
+    """True when every session in ``shift`` is over (ended or closed).
 
     A shift is judged on its **last** session, not its first: a Tue+Wed shift
     still has Wednesday's classroom to staff on Tuesday evening, so calling it

@@ -152,6 +152,10 @@ class SlotRead(ORMBase, SlotBase):
     shift_id: Optional[UUID] = None
     name: Optional[str] = None
     sort_order: int = 0
+    # Set while staff have the slot closed (attendance locked until reopened).
+    # The public QR check-in page reads it so a closed slot doesn't say
+    # "Open now" just because the clock is inside its window.
+    closed_at: Optional[datetime] = None
 
     # Same method name as SlotBase's validator → replaces it, so Read
     # payloads keep the UTC offset instead of stripping it.
@@ -356,8 +360,8 @@ class EventRead(ORMBase, EventBase):
     display_week: Optional[int] = None
     quarter_id: Optional[UUID] = None
     created_at: Optional[datetime] = None
-    # Set once every expected signup is resolved (attended/no_show); null
-    # again after a reopen. The admin list derives its Completed badge here.
+    # Set once every slot with a seated booking is closed; null again after
+    # any of them is reopened. The admin list derives its Completed badge here.
     completed_at: Optional[datetime] = None
     # `slots` stays the flat list (orientation slots plus every shift's
     # sessions) so check-in windows and ICS generation keep one place to look;
@@ -654,6 +658,9 @@ class RosterRow(BaseModel):
     slot_type: str | None = None
     slot_end: datetime | None = None
     slot_location: str | None = None
+    # Set while staff have the slot closed: its attendance is read-only until
+    # someone reopens it. The roster's "ENDED" badge reads this, nothing else.
+    slot_closed_at: datetime | None = None
     # This volunteer's no-shows over the last 12 months, across all events —
     # not this event's. Staff see it as a flag on repeat no-shows; the raw
     # number travels so the threshold lives in one place in the UI.

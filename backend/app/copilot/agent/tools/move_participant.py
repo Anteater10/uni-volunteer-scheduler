@@ -65,7 +65,8 @@ from app.copilot.agent.boundary.role_scope import Scope
 from app.copilot.agent.boundary.schema_filter import apply as schema_apply
 from app.copilot.agent.tools._ask import ask_for
 from app.copilot.agent.tools.base import Tool
-from app.models import Shift, ShiftSignup, Signup, SignupStatus, Slot
+from app.models import SessionAttendance, Shift, ShiftSignup, Signup, SignupStatus, Slot
+from app.services.swap_service import ATTENDANCE_RECORDED
 from app.services.waitlist_service import SlotEndedError
 from app.signup_service import mark_promoted_pending, mark_shift_promoted_pending
 
@@ -80,6 +81,13 @@ _NOT_FOUND_SHIFT = {
     )
 }
 _ENDED_SLOT = {"error": "destination slot has already ended — nobody can be promoted into it"}
+_CLOSED_SOURCE = {
+    "error": (
+        "their current orientation slot is closed, so its attendance is locked. "
+        "Ask staff to reopen it on the roster page before moving them."
+    )
+}
+_CHANGED = {"error": "that signup changed while it was being moved — try again"}
 
 # Mirrors admin.py::admin_move_signup's _confirmed_count_for_slot invariant:
 # only these two statuses hold a seat's capacity.
@@ -87,13 +95,13 @@ _HOLDS_CAPACITY = (SignupStatus.confirmed, SignupStatus.pending)
 
 
 def _move_signup(db: Session, participant_id, from_module, to_module, signup_id):
-    """The orientation branch — a Signup on a slot booked in its own right."""
-    # Locate by id first, then re-fetch under FOR UPDATE: the lookup below
-    # joins Slot, and locking that join would also lock the source slot row
-    # out of the id-ordered pair-lock a few lines down.
-    signup = (
-        db.query(Signup).filter(Signup.id == signup_id).with_for_update().first()
-    )
+    """The orientation branch — a Signup on a slot booked in its own right.
+
+    Lock order is check_in_service's: both slots (id order) first, then the
+    signup, re-read under its lock. A closed slot is never a destination and
+    a signup on a closed slot does not move (2026-10-13 slot lock).
+    """
+    source_slot_id = db.query(Signup.slot_id).filter(Signup.id == signup_id).scalar()
 
     # Shift-less only: a Signup on a session slot is not a bookable state.
     #
@@ -107,7 +115,11 @@ def _move_signup(db: Session, participant_id, from_module, to_module, signup_id)
     # id, so the choice is reproducible.
     dest_slot_id = (
         db.query(Slot.id)
-        .filter(Slot.event_id == to_module, Slot.shift_id.is_(None))
+        .filter(
+            Slot.event_id == to_module,
+            Slot.shift_id.is_(None),
+            Slot.closed_at.is_(None),
+        )
         .order_by(
             (Slot.current_count < Slot.capacity).desc(),
             Slot.start_time.asc(),
@@ -118,25 +130,39 @@ def _move_signup(db: Session, participant_id, from_module, to_module, signup_id)
     if dest_slot_id is None:
         return dict(_NOT_FOUND_SLOT)
 
-    source_slot_id = signup.slot_id
     slot_ids = sorted([str(source_slot_id), str(dest_slot_id[0])])
     slots = (
         db.query(Slot)
         .filter(Slot.id.in_(slot_ids))
         .order_by(Slot.id.asc())
         .with_for_update()
+        .populate_existing()
         .all()
     )
     slot_map = {str(s.id): s for s in slots}
-    source_slot = slot_map.get(str(source_slot_id))
+    source_slot = slot_map[str(source_slot_id)]
     dest_slot = slot_map[str(dest_slot_id[0])]
+    if source_slot.closed_at is not None:
+        return dict(_CLOSED_SOURCE)
+
+    signup = (
+        db.query(Signup)
+        .filter(Signup.id == signup_id, Signup.slot_id == source_slot_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if signup is None or dest_slot.closed_at is not None:
+        # Moved, cancelled-and-deleted, or the destination closed between the
+        # pick and the lock.
+        return dict(_CHANGED)
 
     previous_status = signup.status
     held_source_capacity = previous_status in _HOLDS_CAPACITY
     target_has_room = dest_slot.current_count < dest_slot.capacity
     promoting = previous_status == SignupStatus.waitlisted and target_has_room
 
-    if held_source_capacity and source_slot is not None and source_slot.current_count > 0:
+    if held_source_capacity and source_slot.current_count > 0:
         source_slot.current_count -= 1
 
     if target_has_room:
@@ -204,12 +230,12 @@ def _move_shift_signup(
     means (a shift's last session, not a slot's end time) and in which
     promotion choke point owns the waitlisted->pending flip — collapsing them
     would mean a flag deciding both, which is how a wrong pairing gets shipped.
+
+    Lock order is check_in_service's: both shifts (id order) first, then the
+    commitment, re-read under its lock.
     """
     commitment = (
-        db.query(ShiftSignup)
-        .filter(ShiftSignup.id == shift_signup_id)
-        .with_for_update(of=ShiftSignup)
-        .first()
+        db.query(ShiftSignup).filter(ShiftSignup.id == shift_signup_id).first()
     )
 
     # K27: same unordered ``.first()`` as the slot path had, with the same two
@@ -248,22 +274,41 @@ def _move_shift_signup(
         .filter(Shift.id.in_(ids))
         .order_by(Shift.id.asc())
         .with_for_update()
+        .populate_existing()
         .all()
     )
     shift_map = {str(sh.id): sh for sh in shifts}
-    source_shift = shift_map.get(str(source_shift_id))
+    source_shift = shift_map[str(source_shift_id)]
     dest_shift = shift_map[str(dest_shift_id[0])]
+
+    commitment = (
+        db.query(ShiftSignup)
+        .filter(
+            ShiftSignup.id == shift_signup_id,
+            ShiftSignup.shift_id == source_shift_id,
+        )
+        .with_for_update(of=ShiftSignup)
+        .populate_existing()
+        .first()
+    )
+    if commitment is None:
+        return dict(_CHANGED)
+    # Same rule as swap_service.swap_shift_signup: attendance rows point at
+    # the source shift's sessions, so a commitment with any can't move.
+    if (
+        db.query(SessionAttendance.id)
+        .filter(SessionAttendance.shift_signup_id == commitment.id)
+        .first()
+        is not None
+    ):
+        return {"error": ATTENDANCE_RECORDED["message"]}
 
     previous_status = commitment.status
     held_source_capacity = previous_status in _HOLDS_CAPACITY
     target_has_room = dest_shift.current_count < dest_shift.capacity
     promoting = previous_status == SignupStatus.waitlisted and target_has_room
 
-    if (
-        held_source_capacity
-        and source_shift is not None
-        and source_shift.current_count > 0
-    ):
+    if held_source_capacity and source_shift.current_count > 0:
         source_shift.current_count -= 1
 
     if target_has_room:

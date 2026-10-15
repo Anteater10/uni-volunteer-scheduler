@@ -343,9 +343,9 @@ class TestPublicCheckNoQuarterEvent:
         db_session.add(signup)
         db_session.flush()
         # Grant-on-slot-end: credit is written when the slot is resolved.
-        from app.services.check_in_service import resolve_slot
+        from app.services.check_in_service import close_slot
 
-        resolve_slot(db_session, slot.id, owner.id, [signup.id], [])
+        close_slot(db_session, slot.id, owner.id, [signup.id], [])
         uncovered = _make_event(
             db_session, owner_id=owner.id, module_slug="crispr", quarter=None
         )

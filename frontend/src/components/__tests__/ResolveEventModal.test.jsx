@@ -1,18 +1,25 @@
-// Grant-on-slot-end (2026-07-24) — ResolveEventModal slot mode.
+// Grant-on-slot-end (2026-07-24) + attendance lock per slot (2026-10-13).
 //
-// The modal now works in two scopes:
-//   - event mode (no `slot` prop): legacy "End event" — resolves via
-//     resolveEvent(eventId, ...)
+// The modal works in two scopes:
+//   - event mode (no `slot` prop): "End event" — closes every OPEN slot that
+//     has already started, one POST /slots/{id}/resolve per slot. Future
+//     sessions are left alone: "End event" on a Tuesday used to mark
+//     Thursday's volunteers no-show.
 //   - slot mode (`slot` prop): "End orientation" / "End module slot" —
 //     resolves via resolveSlot(slot.id, ...); the orientation variant warns
 //     that attended volunteers will be granted orientation credit.
+//
+// Pending and confirmed are the same "not checked in" here: both are listed
+// and both are pre-marked no-show.
 
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-vi.mock("../../api/roster", () => ({
-  resolveEvent: vi.fn().mockResolvedValue({}),
+// The real SLOT_CLOSED check, so these tests exercise the actual error shape.
+vi.mock("../../api/roster", async (importOriginal) => ({
+  isSlotClosedError: (await importOriginal()).isSlotClosedError,
+  isSlotNotStartedError: (await importOriginal()).isSlotNotStartedError,
   resolveSlot: vi.fn().mockResolvedValue({}),
 }));
 
@@ -20,25 +27,47 @@ vi.mock("../../state/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-import { resolveEvent, resolveSlot } from "../../api/roster";
+import { resolveSlot } from "../../api/roster";
+import { toast } from "../../state/toast";
 import ResolveEventModal from "../ResolveEventModal";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resolveEvent.mockResolvedValue({});
   resolveSlot.mockResolvedValue({});
 });
 
+// Far enough either side of "now" that the test never depends on the clock.
+const PAST = "2020-01-06T17:00:00Z";
+const PAST_2 = "2020-01-07T17:00:00Z";
+const FUTURE = "2099-01-06T17:00:00Z";
+
+const ORIENT = "slot-orient";
+
 const SIGNUPS = [
-  { signup_id: "s-1", student_name: "Ada Lovelace", status: "checked_in" },
-  { signup_id: "s-2", student_name: "Grace Hopper", status: "confirmed" },
+  { signup_id: "s-1", student_name: "Ada Lovelace", status: "checked_in", slot_id: ORIENT, slot_time: PAST },
+  { signup_id: "s-2", student_name: "Grace Hopper", status: "confirmed", slot_id: ORIENT, slot_time: PAST },
 ];
+
+function slotClosed(code = "SLOT_CLOSED") {
+  const err = new Error("This slot is closed. Reopen it to change attendance.");
+  err.status = 409;
+  // The real body: main.py's global handler flattens every HTTPException to
+  // {error, code, detail: "<message>"}, so the code is top-level.
+  err.response = {
+    status: 409,
+    data: { error: "http_409", code, detail: err.message },
+  };
+  return err;
+}
+
+// What the roster page stamps when End event is pressed.
+const NOW = Date.now();
 
 function renderModal(props = {}) {
   return render(
     <ResolveEventModal
-      eventId="ev-1"
       signups={SIGNUPS}
+      openedAt={NOW}
       isOpen
       onClose={() => {}}
       onResolved={() => {}}
@@ -54,20 +83,269 @@ async function markAllAndSave(user) {
 }
 
 describe("event mode (no slot prop)", () => {
-  it("keeps the legacy End event flow via resolveEvent", async () => {
+  it("closes each started slot with its own resolveSlot call", async () => {
     const user = userEvent.setup();
-    renderModal();
+    const onClose = vi.fn();
+    const onResolved = vi.fn();
+    renderModal({ onClose, onResolved });
 
     expect(screen.getByText("End event")).toBeInTheDocument();
+    // The copy says the close can be undone.
+    expect(screen.getByText(/reopen the slot later/i)).toBeInTheDocument();
     await markAllAndSave(user);
 
     await waitFor(() =>
-      expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+      expect(resolveSlot).toHaveBeenCalledWith(ORIENT, {
         attended: ["s-1"],
         no_show: ["s-2"],
       }),
     );
+    expect(resolveSlot).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith("Event closed.");
+    expect(onClose).toHaveBeenCalled();
+    expect(onResolved).toHaveBeenCalled();
+  });
+
+  it("never offers a session that hasn't started yet", async () => {
+    const user = userEvent.setup();
+    renderModal({
+      signups: [
+        ...SIGNUPS,
+        { signup_id: "s-thu", student_name: "Thursday Person", status: "confirmed", slot_id: "slot-thu", slot_time: FUTURE },
+      ],
+    });
+
+    expect(screen.queryByText("Thursday Person")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => expect(resolveSlot).toHaveBeenCalledTimes(1));
+    expect(resolveSlot).not.toHaveBeenCalledWith("slot-thu", expect.anything());
+  });
+
+  it("skips slots that are already closed, and rows with no slot or time", async () => {
+    const user = userEvent.setup();
+    renderModal({
+      signups: [
+        ...SIGNUPS,
+        { signup_id: "s-c", student_name: "Closed Person", status: "attended", slot_id: "slot-closed", slot_time: PAST, slot_closed_at: PAST_2 },
+        { signup_id: "s-n", student_name: "No Slot", status: "confirmed", slot_id: null, slot_time: PAST },
+        { signup_id: "s-t", student_name: "No Time", status: "confirmed", slot_id: "slot-x", slot_time: null },
+      ],
+    });
+
+    expect(screen.queryByText("Closed Person")).not.toBeInTheDocument();
+    expect(screen.queryByText("No Slot")).not.toBeInTheDocument();
+    expect(screen.queryByText("No Time")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(resolveSlot).toHaveBeenCalledTimes(1));
+    expect(resolveSlot).toHaveBeenCalledWith(ORIENT, expect.anything());
+  });
+
+  it("mixes future, closed and started slots: only the started open ones close", async () => {
+    const user = userEvent.setup();
+    renderModal({
+      signups: [
+        { signup_id: "a", student_name: "Tue One", status: "pending", slot_id: "tue-1", slot_time: PAST },
+        { signup_id: "b", student_name: "Tue Two", status: "checked_in", slot_id: "tue-2", slot_time: PAST_2 },
+        { signup_id: "c", student_name: "Tue Closed", status: "no_show", slot_id: "tue-3", slot_time: PAST, slot_closed_at: PAST_2 },
+        { signup_id: "d", student_name: "Thu", status: "confirmed", slot_id: "thu-1", slot_time: FUTURE },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(resolveSlot).toHaveBeenCalledTimes(2));
+    expect(resolveSlot).toHaveBeenCalledWith("tue-1", { attended: [], no_show: ["a"] });
+    expect(resolveSlot).toHaveBeenCalledWith("tue-2", { attended: ["b"], no_show: [] });
+  });
+
+  it("says there is nothing to close yet when no session has started", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderModal({
+      onClose,
+      signups: [
+        { signup_id: "d", student_name: "Thu", status: "confirmed", slot_id: "thu-1", slot_time: FUTURE },
+      ],
+    });
+
+    expect(
+      screen.getByText(
+        "Nothing to close yet — only sessions that have started can be closed.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    expect(onClose).toHaveBeenCalled();
     expect(resolveSlot).not.toHaveBeenCalled();
+  });
+
+  it("offers nothing when the caller gave no open time", () => {
+    renderModal({ openedAt: undefined });
+    expect(screen.getByText(/Nothing to close yet/)).toBeInTheDocument();
+  });
+
+  it("judges 'started' against the open time, not the clock", () => {
+    // A session at 10:00 opened at 09:59 isn't offered, at 10:00 it is.
+    const at = new Date(PAST).getTime();
+    const { rerender } = renderModal({ openedAt: at - 60_000 });
+    expect(screen.queryByText("Ada Lovelace")).not.toBeInTheDocument();
+    rerender(
+      <ResolveEventModal signups={SIGNUPS} openedAt={at} isOpen onClose={() => {}} />,
+    );
+    expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+  });
+
+  it("is prefilled on the very first render, with Save already enabled", () => {
+    renderModal();
+    expect(screen.getByRole("button", { name: /save/i })).toBeEnabled();
+    expect(screen.getByLabelText("Mark Ada Lovelace attended").className).toMatch(/bg-green-500/);
+  });
+
+  it("treats an empty or missing roster as nothing to close", () => {
+    renderModal({ signups: undefined });
+    expect(screen.getByText(/Nothing to close yet/)).toBeInTheDocument();
+  });
+
+  it("carries on past a slot someone else already closed", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    resolveSlot
+      .mockRejectedValueOnce(slotClosed())
+      .mockResolvedValueOnce({});
+    renderModal({
+      onClose,
+      signups: [
+        { signup_id: "a", student_name: "Tue One", status: "confirmed", slot_id: "tue-1", slot_time: PAST },
+        { signup_id: "b", student_name: "Tue Two", status: "confirmed", slot_id: "tue-2", slot_time: PAST },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(resolveSlot).toHaveBeenCalledTimes(2));
+    expect(toast.info).toHaveBeenCalledWith(
+      expect.stringMatching(/already closed by someone else/),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("counts several slots that were already closed", async () => {
+    const user = userEvent.setup();
+    resolveSlot.mockRejectedValue(slotClosed());
+    renderModal({
+      signups: [
+        { signup_id: "a", student_name: "Tue One", status: "confirmed", slot_id: "tue-1", slot_time: PAST },
+        { signup_id: "b", student_name: "Tue Two", status: "confirmed", slot_id: "tue-2", slot_time: PAST },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        "2 slots were already closed by someone else — reopen them on the roster to change them.",
+      ),
+    );
+  });
+
+  it("leaves sessions the server says haven't started open, and says so", async () => {
+    // This device's clock ran ahead of the server's.
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    resolveSlot
+      .mockRejectedValueOnce(slotClosed("SLOT_NOT_STARTED"))
+      .mockRejectedValueOnce(slotClosed("SLOT_NOT_STARTED"))
+      .mockRejectedValueOnce(slotClosed("SLOT_CLOSED"));
+    renderModal({
+      onClose,
+      signups: [
+        { signup_id: "a", student_name: "One", status: "confirmed", slot_id: "s-1", slot_time: PAST },
+        { signup_id: "b", student_name: "Two", status: "confirmed", slot_id: "s-2", slot_time: PAST },
+        { signup_id: "c", student_name: "Three", status: "confirmed", slot_id: "s-3", slot_time: PAST },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(resolveSlot).toHaveBeenCalledTimes(3));
+    expect(toast.info).toHaveBeenCalledWith(
+      "2 sessions haven't started yet — you can close them once they start.",
+    );
+    expect(toast.info).toHaveBeenCalledWith(
+      "That slot was already closed by someone else — reopen it on the roster to change it.",
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("says a single slot hasn't started yet", async () => {
+    const user = userEvent.setup();
+    resolveSlot.mockRejectedValueOnce(slotClosed("SLOT_NOT_STARTED"));
+    renderModal({ slot: { id: "slot-9", slot_type: "orientation" } });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        "That session hasn't started yet — you can close it once it starts.",
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("stops on any other failure, keeps the modal open, and still refreshes", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onResolved = vi.fn();
+    resolveSlot.mockRejectedValueOnce(slotClosed("SOMETHING_ELSE"));
+    renderModal({
+      onClose,
+      onResolved,
+      signups: [
+        { signup_id: "a", student_name: "Tue One", status: "confirmed", slot_id: "tue-1", slot_time: PAST },
+        { signup_id: "b", student_name: "Tue Two", status: "confirmed", slot_id: "tue-2", slot_time: PAST },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(resolveSlot).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    // The slots before the failure may have closed; the roster must show it.
+    expect(onResolved).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /save/i })).toBeEnabled();
+  });
+
+  it("falls back to a generic message for an error without one", async () => {
+    const user = userEvent.setup();
+    resolveSlot.mockRejectedValueOnce({});
+    renderModal({ onClose: undefined, onResolved: undefined });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Close failed"));
+  });
+});
+
+describe("who is listed", () => {
+  it("lists pending exactly like confirmed and leaves out waitlisted/cancelled", async () => {
+    const user = userEvent.setup();
+    renderModal({
+      slot: { id: ORIENT, slot_type: "orientation" },
+      signups: [
+        ...SIGNUPS,
+        { signup_id: "s-3", student_name: "Parker Unconfirmed", status: "pending", slot_id: ORIENT },
+        { signup_id: "s-4", student_name: "Wait Listed", status: "waitlisted", slot_id: ORIENT },
+        { signup_id: "s-5", student_name: "Can Celled", status: "cancelled", slot_id: ORIENT },
+      ],
+    });
+
+    expect(screen.getByText("Parker Unconfirmed")).toBeInTheDocument();
+    expect(screen.queryByText("Wait Listed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Can Celled")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(resolveSlot).toHaveBeenCalledWith(ORIENT, {
+        attended: ["s-1"],
+        no_show: ["s-2", "s-3"],
+      }),
+    );
   });
 });
 
@@ -85,6 +363,7 @@ describe("prefill from check-in state (2026-07-24 fix)", () => {
         no_show: ["s-2"],
       }),
     );
+    expect(toast.success).toHaveBeenCalledWith("Slot closed.");
   });
 
   it("organizer can override a prefilled decision before saving", async () => {
@@ -107,8 +386,8 @@ describe("live roster updates while open (poll/optimistic refresh)", () => {
   function rerenderModal(rerender, props = {}) {
     rerender(
       <ResolveEventModal
-        eventId="ev-1"
         signups={SIGNUPS}
+        openedAt={NOW}
         isOpen
         onClose={() => {}}
         onResolved={() => {}}
@@ -128,7 +407,7 @@ describe("live roster updates while open (poll/optimistic refresh)", () => {
 
     await user.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() =>
-      expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+      expect(resolveSlot).toHaveBeenCalledWith(ORIENT, {
         attended: [],
         no_show: ["s-1", "s-2"],
       }),
@@ -142,7 +421,7 @@ describe("live roster updates while open (poll/optimistic refresh)", () => {
     rerenderModal(rerender, {
       signups: [
         ...SIGNUPS,
-        { signup_id: "s-3", student_name: "Katherine Johnson", status: "checked_in" },
+        { signup_id: "s-3", student_name: "Katherine Johnson", status: "checked_in", slot_id: ORIENT, slot_time: PAST },
       ],
     });
 
@@ -152,7 +431,7 @@ describe("live roster updates while open (poll/optimistic refresh)", () => {
     await user.click(screen.getByLabelText("Mark Katherine Johnson attended"));
     await user.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() =>
-      expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+      expect(resolveSlot).toHaveBeenCalledWith(ORIENT, {
         attended: ["s-1", "s-3"],
         no_show: ["s-2"],
       }),
@@ -168,15 +447,12 @@ describe("live roster updates while open (poll/optimistic refresh)", () => {
 
     // Grace checked in while the modal was closed.
     rerenderModal(rerender, {
-      signups: [
-        SIGNUPS[0],
-        { ...SIGNUPS[1], status: "checked_in" },
-      ],
+      signups: [SIGNUPS[0], { ...SIGNUPS[1], status: "checked_in" }],
     });
 
     await user.click(screen.getByRole("button", { name: /save/i }));
     await waitFor(() =>
-      expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+      expect(resolveSlot).toHaveBeenCalledWith(ORIENT, {
         attended: ["s-1", "s-2"],
         no_show: [],
       }),
@@ -202,7 +478,7 @@ describe("slot mode", () => {
         no_show: ["s-2"],
       }),
     );
-    expect(resolveEvent).not.toHaveBeenCalled();
+    expect(resolveSlot).toHaveBeenCalledTimes(1);
   });
 
   it("period slot: End module slot title, no credit warning", () => {
@@ -212,6 +488,59 @@ describe("slot mode", () => {
     expect(
       screen.queryByText(/orientation credit/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers a slot regardless of its start time — the organizer chose it", () => {
+    renderModal({
+      slot: { id: "thu-1", slot_type: "period" },
+      signups: [
+        { signup_id: "d", student_name: "Thu", status: "confirmed", slot_id: "thu-1", slot_time: FUTURE },
+      ],
+    });
+    expect(screen.getByText("Thu")).toBeInTheDocument();
+  });
+
+  it("says a slot with nobody booked has nothing to close", () => {
+    renderModal({
+      slot: { id: "slot-3", slot_type: "period" },
+      signups: [
+        { signup_id: "w", student_name: "Wait", status: "waitlisted", slot_id: "slot-3" },
+      ],
+    });
+    expect(
+      screen.getByText("Nobody is booked into this slot, so there is nothing to close."),
+    ).toBeInTheDocument();
+  });
+
+  it("works without onClose/onResolved and with no signups at all", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderModal({
+      slot: { id: "slot-3", slot_type: "period" },
+      signups: undefined,
+    });
+    expect(screen.getByText(/Nobody is booked/)).toBeInTheDocument();
+    unmount();
+
+    renderModal({
+      slot: { id: "slot-9", slot_type: "orientation" },
+      onClose: undefined,
+      onResolved: undefined,
+    });
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Slot closed."));
+  });
+
+  it("reports a slot that was closed elsewhere first", async () => {
+    const user = userEvent.setup();
+    resolveSlot.mockRejectedValueOnce(slotClosed());
+    renderModal({ slot: { id: "slot-9", slot_type: "orientation" } });
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith(
+        "That slot was already closed by someone else — reopen it on the roster to change it.",
+      ),
+    );
   });
 });
 
@@ -234,6 +563,7 @@ const SHIFT_ROWS = [
     shift_signup_id: "c-1",
     signup_id: null,
     slot_id: TUE,
+    slot_time: PAST,
     shift_name: "Tue morning",
     session_name: "Period 1",
     student_name: "Ada Lovelace",
@@ -243,6 +573,7 @@ const SHIFT_ROWS = [
     shift_signup_id: "c-1",
     signup_id: null,
     slot_id: WED,
+    slot_time: PAST_2,
     shift_name: "Tue morning",
     session_name: "Period 2",
     student_name: "Ada Lovelace",
@@ -269,7 +600,7 @@ describe("shift close-out", () => {
         no_show: [],
       }),
     );
-    expect(resolveEvent).not.toHaveBeenCalled();
+    expect(resolveSlot).toHaveBeenCalledTimes(1);
   });
 
   it("gives one volunteer independent decisions per session", async () => {
@@ -311,6 +642,7 @@ describe("shift close-out", () => {
           student_name: "Grace Hopper",
           status: "confirmed",
           slot_id: "slot-orient",
+          slot_time: PAST,
         },
       ],
     });
@@ -320,8 +652,8 @@ describe("shift close-out", () => {
     // to pass after one click.
     await user.click(screen.getByRole("button", { name: /save/i }));
 
-    await waitFor(() => expect(resolveEvent).toHaveBeenCalledTimes(1));
-    expect(resolveEvent).toHaveBeenCalledWith("ev-1", {
+    await waitFor(() => expect(resolveSlot).toHaveBeenCalledTimes(3));
+    expect(resolveSlot).toHaveBeenCalledWith("slot-orient", {
       attended: [],
       no_show: ["s-9"],
     });
@@ -333,11 +665,17 @@ describe("shift close-out", () => {
       attended: [],
       no_show: ["c-1"],
     });
-    const allIds = [
-      ...resolveEvent.mock.calls,
-      ...resolveSlot.mock.calls,
-    ].flatMap(([, body]) => [...body.attended, ...body.no_show]);
+    const allIds = resolveSlot.mock.calls.flatMap(([, body]) => [
+      ...body.attended,
+      ...body.no_show,
+    ]);
     expect(allIds.every(Boolean)).toBe(true);
   });
 
+  it("labels a shift row with only one of shift/session names", () => {
+    renderModal({
+      signups: [{ ...SHIFT_ROWS[0], session_name: null }],
+    });
+    expect(screen.getByText("Tue morning")).toBeInTheDocument();
+  });
 });

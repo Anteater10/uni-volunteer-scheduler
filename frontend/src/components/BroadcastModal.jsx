@@ -14,6 +14,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import api from "../lib/api";
 import { Button, Modal, Label, Input, FieldError } from "./ui";
 import { toast } from "../state/toast";
+import { fmtVenueDate, fmtVenueTime } from "../lib/venueTime";
 
 const SUBJECT_MAX = 200;
 const BODY_MAX = 20000;
@@ -63,34 +64,50 @@ function previewMarkdown(md) {
   return html;
 }
 
+// Backend timestamps may arrive naive (UTC without an offset); pin them to UTC
+// before formatting, or the browser reads them as its own local time.
+function asUtc(ts) {
+  return ts && !/[Zz]|[+-]\d\d:?\d\d$/.test(ts) ? `${ts}Z` : ts;
+}
+
+/** "9:00 AM–11:00 AM" in venue (Pacific) time, or just the start. */
+function timeRange(slot) {
+  const start = fmtVenueTime(asUtc(slot.start_time));
+  const end = fmtVenueTime(asUtc(slot.end_time));
+  return start && end ? `${start}–${end}` : start;
+}
+
+/** "Mon, Apr 20" in venue time — from the start instant, else the date. */
+function dayOf(slot) {
+  return fmtVenueDate(asUtc(slot.start_time) || slot.date);
+}
+
 /**
- * Slots have no name field — label them by type + date + time + location,
- * mirroring SignupSuccessCard's formatSlotLine (backend timestamps may be
- * naive UTC, so append "Z" before parsing).
+ * An orientation slot, labelled the way the live roster heads its section:
+ * "Orientation · Mon, Apr 20 · 12:00 PM–1:00 PM · Library", in venue time.
+ * 2026-10-14: this used the browser's timezone and called anything without a
+ * type "Slot", so a laptop east of Pacific offered the wrong hours.
  */
 function formatSlotOption(slot) {
-  const type = slot.slot_type
-    ? slot.slot_type.charAt(0).toUpperCase() + slot.slot_type.slice(1)
-    : "Slot";
-  const date = slot.date
-    ? new Date(
-        slot.date.includes("T") ? slot.date : `${slot.date}T00:00:00`,
-      ).toLocaleDateString("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      })
-    : "";
-  const toTime = (ts) =>
-    ts
-      ? new Date(
-          ts.includes("Z") || ts.includes("+") ? ts : `${ts}Z`,
-        ).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-      : "";
-  const start = toTime(slot.start_time);
-  const end = toTime(slot.end_time);
-  const timeRange = start && end ? `${start}–${end}` : start;
-  return [type, date, timeRange, slot.location].filter(Boolean).join(" · ");
+  const type =
+    slot.slot_type === "orientation"
+      ? "Orientation"
+      : slot.slot_type
+        ? "Module"
+        : null;
+  return [type, dayOf(slot), timeRange(slot), slot.location]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * One session inside a shift label, by its own name like the roster does:
+ * "Day 1 (Mon, Apr 20, 9:00 AM–11:00 AM)", or just the day and time when
+ * the session has no name.
+ */
+function formatSession(session) {
+  const when = [dayOf(session), timeRange(session)].filter(Boolean).join(", ");
+  return session.name ? `${session.name} (${when})` : when;
 }
 
 /**
@@ -109,9 +126,7 @@ function buildUnits(slots, shifts) {
     const sessions = (shift.sessions || [])
       .slice()
       .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-    const days = sessions
-      .map((x) => formatSlotOption({ ...x, slot_type: null }))
-      .filter(Boolean);
+    const days = sessions.map(formatSession).filter(Boolean);
     units.push({
       key: `shift:${shift.id}`,
       param: { shift_id: shift.id },

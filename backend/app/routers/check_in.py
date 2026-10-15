@@ -26,15 +26,18 @@ from ..services.check_in_service import (
     CheckInWindowError,
     InvalidTransitionError,
     NoSignupForEmailError,
+    SlotClosedError,
+    SlotNotStartedError,
     VenueCodeError,
     check_in_selected,
     check_in_session,
     check_in_signup,
+    close_event,
+    close_slot,
     event_check_in_by_email,
     lookup_check_in_options,
     reopen_event,
-    resolve_event,
-    resolve_slot,
+    reopen_slot,
     self_check_in,
     undo_check_in,
     undo_session_check_in,
@@ -141,11 +144,8 @@ def _load_signup_event(db: Session, signup_id: UUID) -> Event:
     signup = db.get(Signup, signup_id)
     if signup is None:
         raise HTTPException(status_code=404, detail="Signup not found")
-    slot = db.get(Slot, signup.slot_id)
-    event = db.get(Event, slot.event_id) if slot else None
-    if event is None:
-        raise HTTPException(status_code=404, detail="Signup not found")
-    return event
+    # slot_id and event_id are NOT NULL FKs, so both rows exist.
+    return db.get(Slot, signup.slot_id).event
 
 
 @router.post(
@@ -158,8 +158,9 @@ def organizer_check_in(
     db: Session = Depends(get_db),
     current_user=Depends(require_staff),
 ):
-    """Organizer one-tap check-in. Idempotent. Staff-scoped: any admin or
-    organizer may act on any event."""
+    """Organizer tap on a "not checked in" booking: check them in. Idempotent.
+    409 SLOT_CLOSED on a closed slot. Staff-scoped: any admin or organizer may
+    act on any event."""
     event = _load_signup_event(db, signup_id)
     ensure_event_staff_access(event, current_user)
     try:
@@ -168,7 +169,11 @@ def organizer_check_in(
         db.refresh(signup)
         return signup
     except LookupError:
+        # Moved to another slot (or removed) between the access check and
+        # the lock.
         raise HTTPException(status_code=404, detail="Signup not found")
+    except SlotClosedError as e:
+        raise e.http()
     except InvalidTransitionError as e:
         raise HTTPException(
             status_code=409,
@@ -190,10 +195,9 @@ def organizer_undo_check_in(
     db: Session = Depends(get_db),
     current_user=Depends(require_staff),
 ):
-    """Issue #31: revert a mis-tapped check-in (checked_in → confirmed).
-
-    Idempotent; resolved states (attended/no_show) 409 — undo covers the
-    tap-slip, not resolution. Staff-scoped like organizer_check_in.
+    """Organizer tap on a checked-in booking: back to "not checked in"
+    (confirmed). Idempotent. 409 SLOT_CLOSED on a closed slot. Staff-scoped
+    like organizer_check_in.
     """
     event = _load_signup_event(db, signup_id)
     ensure_event_staff_access(event, current_user)
@@ -203,7 +207,11 @@ def organizer_undo_check_in(
         db.refresh(signup)
         return signup
     except LookupError:
+        # Moved to another slot (or removed) between the access check and
+        # the lock.
         raise HTTPException(status_code=404, detail="Signup not found")
+    except SlotClosedError as e:
+        raise e.http()
     except InvalidTransitionError as e:
         raise HTTPException(
             status_code=409,
@@ -219,10 +227,8 @@ def _load_shift_signup_event(db: Session, shift_signup_id: UUID) -> Event:
     shift_signup = db.get(ShiftSignup, shift_signup_id)
     if shift_signup is None:
         raise HTTPException(status_code=404, detail="Shift signup not found")
-    event = db.get(Event, shift_signup.shift.event_id)
-    if event is None:
-        raise HTTPException(status_code=404, detail="Shift signup not found")
-    return event
+    # shift_id and event_id are NOT NULL FKs, so both rows exist.
+    return shift_signup.shift.event
 
 
 @router.post(
@@ -251,6 +257,8 @@ def organizer_check_in_session(
         return shift_signup
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except SlotClosedError as e:
+        raise e.http()
     except InvalidTransitionError as e:
         raise HTTPException(
             status_code=409,
@@ -273,8 +281,8 @@ def organizer_undo_check_in_session(
     db: Session = Depends(get_db),
     current_user=Depends(require_staff),
 ):
-    """Revert a mis-tapped session check-in. Idempotent; a session already
-    resolved to attended/no_show 409s — undo covers the tap-slip only."""
+    """Organizer tap on a checked-in session: back to "not checked in".
+    Idempotent. 409 SLOT_CLOSED on a closed session."""
     event = _load_shift_signup_event(db, shift_signup_id)
     ensure_event_staff_access(event, current_user)
     try:
@@ -286,15 +294,8 @@ def organizer_undo_check_in_session(
         return shift_signup
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except InvalidTransitionError as e:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "INVALID_TRANSITION",
-                "from": e.from_status.value,
-                "to": e.to_status.value,
-            },
-        )
+    except SlotClosedError as e:
+        raise e.http()
 
 
 @router.post(
@@ -340,6 +341,16 @@ def self_check_in_endpoint(
         raise HTTPException(status_code=404, detail="Signup or event not found")
 
 
+def _staff_slot_event(db: Session, slot_id: UUID, current_user) -> Event:
+    """The slot's event, after the 404 and staff-access checks."""
+    slot = db.get(Slot, slot_id)
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Slot not found")
+    event = slot.event  # event_id is a NOT NULL FK
+    ensure_event_staff_access(event, current_user)
+    return event
+
+
 @router.post(
     "/events/{event_id}/resolve",
     response_model=RosterResponse,
@@ -351,27 +362,17 @@ def resolve_event_endpoint(
     db: Session = Depends(get_db),
     current_user=Depends(require_staff),
 ):
-    """Batch-resolve: mark signups as attended or no-show. Atomic.
-    Staff-scoped: any admin or organizer may resolve any event."""
+    """"End event": close every open slot that has already started. Future
+    sessions are left open. Atomic. Staff-scoped: any admin or organizer."""
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     ensure_event_staff_access(event, current_user)
     try:
-        resolve_event(db, event_id, current_user.id, body.attended, body.no_show)
+        close_event(db, event_id, current_user.id, body.attended, body.no_show)
         roster = _build_roster(db, event)
         db.commit()
         return roster
-    except InvalidTransitionError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "INVALID_TRANSITION",
-                "from": e.from_status.value,
-                "to": e.to_status.value,
-            },
-        )
     except LookupError as e:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(e))
@@ -380,6 +381,7 @@ def resolve_event_endpoint(
 @router.post(
     "/slots/{slot_id}/resolve",
     response_model=RosterResponse,
+    dependencies=[Depends(rate_limit(60, 60))],
 )
 def resolve_slot_endpoint(
     slot_id: UUID,
@@ -387,35 +389,42 @@ def resolve_slot_endpoint(
     db: Session = Depends(get_db),
     current_user=Depends(require_staff),
 ):
-    """Per-slot resolve ("End slot"): mark this slot's signups attended or
-    no-show. Ending an ORIENTATION slot auto-grants orientation credit to
-    every volunteer marked attended (design 2026-07-24).
-    Staff-scoped: any admin or organizer may resolve any slot."""
-    slot = db.get(Slot, slot_id)
-    if slot is None:
-        raise HTTPException(status_code=404, detail="Slot not found")
-    event = db.get(Event, slot.event_id)
-    if event is None:
-        raise HTTPException(status_code=404, detail="Event not found")
-    ensure_event_staff_access(event, current_user)
+    """"End slot": close one slot. Everyone gets a final result (pending
+    included) and the slot locks until reopened. Closing an ORIENTATION slot
+    grants credit to attendees and revokes credit it granted earlier to anyone
+    now marked no show. 409 SLOT_CLOSED if it is already closed, 409
+    SLOT_NOT_STARTED if it hasn't started yet."""
+    event = _staff_slot_event(db, slot_id, current_user)
     try:
-        resolve_slot(db, slot_id, current_user.id, body.attended, body.no_show)
+        close_slot(db, slot_id, current_user.id, body.attended, body.no_show)
         roster = _build_roster(db, event)
         db.commit()
         return roster
-    except InvalidTransitionError as e:
+    except (SlotClosedError, SlotNotStartedError) as e:
         db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "INVALID_TRANSITION",
-                "from": e.from_status.value,
-                "to": e.to_status.value,
-            },
-        )
+        raise e.http()
     except LookupError as e:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post(
+    "/slots/{slot_id}/reopen",
+    response_model=RosterResponse,
+    dependencies=[Depends(rate_limit(60, 60))],
+)
+def reopen_slot_endpoint(
+    slot_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_staff),
+):
+    """Unlock a closed slot so attendance can be corrected. Every result is
+    kept. Idempotent on an open slot."""
+    event = _staff_slot_event(db, slot_id, current_user)
+    reopen_slot(db, slot_id, current_user.id)
+    roster = _build_roster(db, event)
+    db.commit()
+    return roster
 
 
 @router.post(
@@ -428,11 +437,9 @@ def reopen_event_endpoint(
     db: Session = Depends(get_db),
     current_user=Depends(require_staff),
 ):
-    """Undo "End event": resolved signups return to the live roster
-    (attended -> checked_in when the check-in timestamp is real, else
-    confirmed; no_show -> confirmed) and completed_at clears. Orientation
-    credits are left alone — revoke them individually if needed.
-    Staff-scoped like the resolve endpoints."""
+    """Undo "End event": reopen every closed slot on the event, keeping every
+    result. Orientation credit is reconciled when slots are closed again.
+    Staff-scoped like the close endpoints."""
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -671,21 +678,17 @@ def get_signup(
     venue_code instead) — but the response is narrowed to exactly what
     SelfCheckInPage.jsx renders.
     """
-    from ..models import Signup, Slot, Event
     signup = db.get(Signup, signup_id)
     if not signup:
         raise HTTPException(status_code=404, detail="Signup not found")
+    # slot_id/event_id are both NOT NULL FKs, so both rows exist.
     slot = db.get(Slot, signup.slot_id)
-    event = db.get(Event, slot.event_id) if slot else None
-    if event is None:
-        # slot_id/event_id are both NOT NULL FKs — unreachable in practice,
-        # same defensive shape as signups.py's ICS export.
-        raise HTTPException(status_code=404, detail="Signup not found")
+    event = slot.event
     return SelfCheckInSignupRead(
         id=signup.id,
         event_id=event.id,
         event_title=event.title,
         status=signup.status,
         checked_in_at=signup.checked_in_at,
-        slot_start_time=slot.start_time if slot else None,
+        slot_start_time=slot.start_time,
     )

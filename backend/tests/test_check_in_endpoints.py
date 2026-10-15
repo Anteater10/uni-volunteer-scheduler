@@ -186,9 +186,14 @@ class TestSelfCheckIn:
 
 
 class TestResolveEndpoint:
+    """POST /events/{id}/resolve is "End event": close every open slot that
+    has already started (2026-10-13 slot lock)."""
+
     def test_resolve_happy_path(self, client, db_session):
         organizer = make_user(db_session, role=UserRole.organizer)
-        event, slot = make_event_with_slot(db_session, owner=organizer, capacity=5)
+        event, slot = make_event_with_slot(
+            db_session, owner=organizer, capacity=5, starts_in_days=-1
+        )
 
         signups = []
         for i in range(3):
@@ -208,16 +213,22 @@ class TestResolveEndpoint:
             headers=headers,
         )
         assert resp.status_code == 200
-        data = resp.json()
-        # Should return a roster
-        assert "rows" in data
+        rows = {r["signup_id"]: r for r in resp.json()["rows"]}
+        assert [rows[str(s.id)]["status"] for s in signups] == [
+            "attended", "attended", "no_show",
+        ]
+        assert all(r["slot_closed_at"] for r in rows.values())
 
-    def test_resolve_invalid_409(self, client, db_session):
+    def test_resolve_an_id_on_a_slot_that_has_not_started_is_404(
+        self, client, db_session
+    ):
+        """End event never closes a future slot, so naming someone booked on
+        one names nobody being closed — and the whole call rolls back."""
         organizer = make_user(db_session, role=UserRole.organizer)
         event, slot = make_event_with_slot(db_session, owner=organizer)
 
         vol = _make_volunteer(db_session)
-        s = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.attended)
+        s = Signup(volunteer_id=vol.id, slot_id=slot.id, status=SignupStatus.confirmed)
         db_session.add(s)
         db_session.flush()
 
@@ -227,8 +238,11 @@ class TestResolveEndpoint:
             json={"attended": [str(s.id)], "no_show": []},
             headers=headers,
         )
-        assert resp.status_code == 409
-        assert resp.json()["code"] == "INVALID_TRANSITION"
+        assert resp.status_code == 404
+        db_session.refresh(s)
+        db_session.refresh(slot)
+        assert s.status == SignupStatus.confirmed
+        assert slot.closed_at is None
 
 
 def _make_in_window_event_with_signup(db_session, *, status=SignupStatus.confirmed, email=None):
@@ -1007,7 +1021,8 @@ class TestEventStaffAccessEnforcement:
 
     def _other_org_signup(self, db_session):
         owner = make_user(db_session, role=UserRole.organizer)
-        event, slot = make_event_with_slot(db_session, owner=owner)
+        # Started yesterday, so "End event" (resolve) has a slot to close.
+        event, slot = make_event_with_slot(db_session, owner=owner, starts_in_days=-1)
         vol = _make_volunteer(db_session)
         signup = Signup(
             volunteer_id=vol.id,

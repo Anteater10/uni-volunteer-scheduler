@@ -9,12 +9,12 @@ who already hold an active credit for the same family. Revoking a credit is
 therefore honest: nothing re-derives it behind the admin's back.
 
 Covers:
-  - resolve_slot grants credit to attended orientation volunteers
+  - close_slot grants credit to attended orientation volunteers
   - no-shows and period slots grant nothing
   - checked_in alone (slot not ended) grants nothing
   - dedup: existing active credit for (email, family) → no duplicate row
   - re-grant after revoke → fresh row
-  - resolve_event (event-wide "End event") grants for orientation slots too
+  - close_event (event-wide "End event") grants for orientation slots too
   - module-less events resolve fine with zero credits
   - POST /slots/{slot_id}/resolve endpoint: happy path, ownership, 404s
 """
@@ -36,7 +36,7 @@ from app.models import (
     UserRole,
     Volunteer,
 )
-from app.services.check_in_service import resolve_event, resolve_slot
+from app.services.check_in_service import close_event, close_slot
 from app.services.orientation_service import (
     grant_orientation_credit,
     has_orientation_credit,
@@ -139,7 +139,7 @@ class TestResolveSlotGrantsCredit:
         slot = _make_slot(db_session, event_id=event.id)
         s = _make_signup(db_session, slot=slot, email="attendee@example.com")
 
-        resolve_slot(db_session, slot.id, owner.id, [s.id], [])
+        close_slot(db_session, slot.id, owner.id, [s.id], [])
         db_session.commit()
 
         assert s.status == SignupStatus.attended
@@ -177,7 +177,7 @@ class TestResolveSlotGrantsCredit:
             status=SignupStatus.confirmed,
         )
 
-        resolve_slot(db_session, slot.id, owner.id, [s.id], [])
+        close_slot(db_session, slot.id, owner.id, [s.id], [])
         db_session.commit()
 
         assert s.status == SignupStatus.attended
@@ -193,7 +193,7 @@ class TestResolveSlotGrantsCredit:
         s = _make_signup(db_session, slot=slot, email="noshow@example.com",
                          status=SignupStatus.confirmed)
 
-        resolve_slot(db_session, slot.id, owner.id, [], [s.id])
+        close_slot(db_session, slot.id, owner.id, [], [s.id])
         db_session.commit()
 
         assert s.status == SignupStatus.no_show
@@ -229,7 +229,7 @@ class TestResolveSlotGrantsCredit:
             db_session, shift, vol, status=SignupStatus.confirmed
         )
 
-        resolve_slot(db_session, session.id, owner.id, [commitment.id], [])
+        close_slot(db_session, session.id, owner.id, [commitment.id], [])
         db_session.commit()
 
         attendance = (
@@ -261,7 +261,7 @@ class TestResolveSlotGrantsCredit:
         slot = _make_slot(db_session, event_id=event.id)
         s = _make_signup(db_session, slot=slot, email="nomodule@example.com")
 
-        resolve_slot(db_session, slot.id, owner.id, [s.id], [])
+        close_slot(db_session, slot.id, owner.id, [s.id], [])
         db_session.commit()
 
         assert s.status == SignupStatus.attended
@@ -279,7 +279,7 @@ class TestResolveSlotGrantsCredit:
         s_b = _make_signup(db_session, slot=slot_b)
 
         with pytest.raises(LookupError):
-            resolve_slot(db_session, slot_a.id, owner.id, [s_b.id], [])
+            close_slot(db_session, slot_a.id, owner.id, [s_b.id], [])
 
 
 class TestCreditDedupAndRevoke:
@@ -295,7 +295,7 @@ class TestCreditDedupAndRevoke:
         )
         db_session.commit()
 
-        resolve_slot(db_session, slot.id, owner.id, [s.id], [])
+        close_slot(db_session, slot.id, owner.id, [s.id], [])
         db_session.commit()
 
         assert len(_credits(db_session, "repeat@example.com")) == 1
@@ -317,7 +317,7 @@ class TestCreditDedupAndRevoke:
             db_session, "again@example.com", family_key="crispr"
         ).has_credit
 
-        resolve_slot(db_session, slot.id, owner.id, [s.id], [])
+        close_slot(db_session, slot.id, owner.id, [s.id], [])
         db_session.commit()
 
         rows = _credits(db_session, "again@example.com")
@@ -357,7 +357,7 @@ class TestResolveEventGrants:
             db_session, shift, period_vol, status=SignupStatus.confirmed
         )
 
-        resolve_event(
+        close_event(
             db_session, event.id, owner.id, [s_orient.id, commitment.id], []
         )
         db_session.commit()

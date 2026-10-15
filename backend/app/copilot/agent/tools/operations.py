@@ -8,12 +8,13 @@ Priya didn't".
 - ``move_volunteer_to_shift`` — a swap within one event, through
   ``swap_service`` so the capacity locking, the part-attended refusal and
   the waitlist-promotion choke point are the same ones the admin UI uses.
-- ``mark_attendance`` — attended or no-show for one person, through
-  ``check_in_service.resolve_slot``, which is also where orientation credit
-  is granted. That last part is why this tool exists rather than a raw
-  status write: marking somebody attended at an orientation is what makes
-  them eligible for the rest of the quarter, and a hand-rolled UPDATE would
-  set the status and silently skip the credit.
+- ``mark_attendance`` — check one person in ("attended") or clear their
+  check-in ("no_show") on an *open* slot, through
+  ``check_in_service.mark_present`` — the same rules as a staff tap on the
+  roster. Since 2026-10-13 attended / no show only exist on a closed slot, so
+  the result becomes final (and orientation credit is settled) only when
+  staff close the slot. It refuses a closed slot — reopening is a deliberate
+  act on the roster page — and it never closes one.
 
 Both take a **volunteer id and an event**, not a booking id. A booking id is
 not visible anywhere the copilot can reach, and asking the model to
@@ -61,6 +62,7 @@ _OPS_SCHEMA = [
     "recorded",
     "orientation_credit_granted",
     "promotion_email_sent",
+    "note",
 ]
 
 
@@ -294,8 +296,9 @@ def _attendance_precheck(
             "slot_id from get_event_schedule"
         )
     if str(args.get("outcome") or "") not in _OUTCOMES:
-        # Not defaulted to attended. A no-show recorded as attended at an
-        # orientation grants permanent credit to somebody who never came.
+        # Not defaulted to attended. Somebody wrongly checked in at an
+        # orientation becomes attended when it closes, and that grants
+        # permanent credit to somebody who never came.
         missing.append(
             "whether they attended or were a no-show ('attended' or "
             "'no_show')"
@@ -319,10 +322,7 @@ def _attendance_handler(
     if slot is None:
         return {"error": "no slot with that id"}
 
-    event = db.query(Event).filter(Event.id == slot.event_id).one_or_none()
-    if event is None:
-        return {"error": "no event with that id"}
-    denied = deny_if_not_owned(scope, event)
+    denied = deny_if_not_owned(scope, slot.event)  # event_id is NOT NULL
     if denied is not None:
         return denied
 
@@ -365,30 +365,36 @@ def _attendance_handler(
         if booking is None:
             return {"error": "that volunteer is not signed up for this slot"}
 
-    attended = [booking.id] if outcome == "attended" else []
-    no_show = [booking.id] if outcome == "no_show" else []
     try:
-        check_in_service.resolve_slot(
+        check_in_service.mark_present(
             db,
             slot_id=slot.id,
+            booking_id=booking.id,
+            present=outcome == "attended",
             actor_id=getattr(scope, "caller_id", None),
-            attended_ids=attended,
-            no_show_ids=no_show,
+            via="copilot_mark_attendance",
         )
-    except HTTPException as exc:
-        return service_error(exc)
-    except LookupError as exc:
-        return {"error": str(exc)}
-    except Exception as exc:  # InvalidTransitionError and friends
+    except check_in_service.SlotClosedError:
+        db.rollback()
+        return {
+            "error": (
+                "that slot is closed, so its attendance is locked. Ask staff to "
+                "reopen it on the roster page first."
+            )
+        }
+    except check_in_service.InvalidTransitionError as exc:
+        # A waitlisted booking has no seat, so there is nothing to check in.
         db.rollback()
         return {"error": f"that attendance change is not allowed: {exc}"}
+    except LookupError as exc:
+        # The booking moved or vanished between the lookup above and the lock.
+        db.rollback()
+        return {"error": str(exc)}
+    except HTTPException as exc:
+        db.rollback()
+        return service_error(exc)
 
     db.commit()
-
-    # Said out loud because it is the consequence that outlives the day:
-    # attending an orientation is what makes someone eligible for the rest
-    # of the quarter, and nothing else on this result hints at it.
-    granted = slot.shift_id is None and outcome == "attended"
 
     return schema_apply(
         {
@@ -397,7 +403,14 @@ def _attendance_handler(
             "slot_id": str(slot.id),
             "slot": _slot_label(slot),
             "outcome": outcome,
-            "orientation_credit_granted": granted,
+            # Never at this point: credit is settled when staff close the
+            # orientation, and only then for people who end up attended.
+            "orientation_credit_granted": False,
+            "note": (
+                "Checked in." if outcome == "attended" else "Check-in cleared."
+            )
+            + " This becomes final (attended / no show) when staff close the "
+            "slot on the roster page.",
         },
         allowed_fields=_OPS_SCHEMA,
     )
@@ -406,12 +419,15 @@ def _attendance_handler(
 MARK_ATTENDANCE_TOOL = Tool(
     name="mark_attendance",
     description=(
-        "Record that one volunteer attended, or was a no-show for, one "
-        "orientation or one session. Takes the participant_id from "
-        "get_module_roster and the slot_id from get_event_schedule. Marking "
-        "somebody attended at an ORIENTATION grants them permanent "
-        "orientation credit for that module family, so never assume the "
-        "outcome — ask. Requires user confirmation."
+        "On an OPEN orientation or session, check one volunteer in "
+        "(outcome 'attended') or clear their check-in (outcome 'no_show'). "
+        "Nothing is final yet: when staff close the slot on the roster page, "
+        "checked-in people become attended and everyone else a no-show, and "
+        "only then does attending an ORIENTATION grant orientation credit. "
+        "A closed slot is refused — staff must reopen it on the roster page "
+        "first. Takes the participant_id from get_module_roster and the "
+        "slot_id from get_event_schedule. Never assume the outcome — ask. "
+        "Requires user confirmation."
     ),
     json_schema={
         "type": "object",

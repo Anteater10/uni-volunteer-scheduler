@@ -24,7 +24,13 @@ from ..celery_app import (
     send_waitlist_promotion_email,
 )
 from ..signup_service import mark_promoted_pending
-from ..services.check_in_service import ensure_signup_cancellable
+from ..services.check_in_service import (
+    clear_open_check_ins,
+    ensure_accepts_seat,
+    ensure_signup_cancellable,
+    lock_shift_signup_with_shift,
+    lock_signup_with_slot,
+)
 from ..services.waitlist_service import SlotEndedError
 from ..services.phone_service import InvalidPhoneError, normalize_us_phone
 from ..services.volunteer_service import upsert_volunteer
@@ -48,6 +54,23 @@ def _csv_safe(value) -> str:
     if s and s[0] in ("=", "+", "-", "@"):
         return "'" + s
     return s
+
+
+def _lock_signup_and_slot(db: Session, signup_id) -> tuple:
+    """Slot first, then the signup (check_in_service's one lock order), both
+    re-read under the lock. 404 when the signup is gone."""
+    try:
+        return lock_signup_with_slot(db, signup_id, exclusive_slot=True)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Signup not found")
+
+
+def _lock_shift_signup(db: Session, shift_signup_id, *, sessions: bool = False):
+    """Sessions (optionally) -> shift -> commitment; 404 when it is gone."""
+    try:
+        return lock_shift_signup_with_shift(db, shift_signup_id, sessions=sessions)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Shift signup not found")
 
 
 def _require_found(row, detail: str) -> None:
@@ -795,24 +818,8 @@ def admin_cancel_signup(
     db: Session = Depends(get_db),
     actor: models.User = Depends(require_staff),
 ):
-    signup = (
-        db.query(models.Signup)
-        .filter(models.Signup.id == signup_id)
-        .with_for_update()
-        .first()
-    )
-    _require_found(signup, "Signup not found")
-
-    slot = (
-        db.query(models.Slot)
-        .filter(models.Slot.id == signup.slot_id)
-        .with_for_update()
-        .first()
-    )
-    _require_found(slot, "Slot not found")
-
-    event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    _require_found(event, "Event not found")
+    signup, slot = _lock_signup_and_slot(db, signup_id)
+    event = slot.event  # NOT NULL FK
 
     ensure_event_staff_access(event, actor)
 
@@ -825,8 +832,9 @@ def admin_cancel_signup(
         db.refresh(signup)
         return signup
 
-    # 2026-07-29 sweep: attended/no_show are terminal, no staff exception —
-    # see check_in_service.ensure_signup_cancellable for the full rationale.
+    # attended / no_show exist only on a closed slot and are changed by
+    # reopening that slot, never by cancelling — no staff exception. See
+    # check_in_service.ensure_signup_cancellable for the full rationale.
     ensure_signup_cancellable(signup)
 
     previous_status = signup.status
@@ -883,26 +891,11 @@ def admin_uncancel_signup(
 
     This is deliberately not "flip the enum back". A cancel frees the seat, so
     somebody else may have taken it in the meantime — the capacity guard is
-    the same one ``admin_promote_signup`` applies for the same reason.
+    the same one ``admin_promote_signup`` applies for the same reason. A
+    closed slot takes no new seat (409 SLOT_CLOSED) — reopen it first.
     """
-    signup = (
-        db.query(models.Signup)
-        .filter(models.Signup.id == signup_id)
-        .with_for_update()
-        .first()
-    )
-    _require_found(signup, "Signup not found")
-
-    slot = (
-        db.query(models.Slot)
-        .filter(models.Slot.id == signup.slot_id)
-        .with_for_update()
-        .first()
-    )
-    _require_found(slot, "Slot not found")
-
-    event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    _require_found(event, "Event not found")
+    signup, slot = _lock_signup_and_slot(db, signup_id)
+    event = slot.event  # NOT NULL FK
 
     ensure_event_staff_access(event, actor)
 
@@ -910,6 +903,7 @@ def admin_uncancel_signup(
         raise HTTPException(
             status_code=400, detail="Only cancelled signups can be reinstated"
         )
+    ensure_accepts_seat(slot)
 
     actual_confirmed = _confirmed_count_for_slot(db, slot.id)
     if slot.current_count != actual_confirmed:
@@ -948,21 +942,12 @@ def admin_uncancel_shift_signup(
     """Shift twin of ``admin_uncancel_signup`` (SCRUM-155).
 
     Capacity lives on the shift row, so that is what gets locked — same as
-    ``admin_promote_shift_signup``.
+    ``admin_promote_shift_signup``. Reinstating onto a shift with some
+    sessions already closed is allowed (2026-10-13): on those the commitment
+    has no result and is simply not listed.
     """
-    shift_signup = (
-        db.query(models.ShiftSignup)
-        .filter(models.ShiftSignup.id == shift_signup_id)
-        .with_for_update(of=models.ShiftSignup)
-        .first()
-    )
-    _require_found(shift_signup, "Shift signup not found")
-
-    shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    _require_found(shift, "Shift not found")
-
-    event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    _require_found(event, "Event not found")
+    shift_signup, shift = _lock_shift_signup(db, shift_signup_id)
+    event = shift.event  # NOT NULL FK
     ensure_event_staff_access(event, actor)
 
     if shift_signup.status != models.SignupStatus.cancelled:
@@ -1044,6 +1029,7 @@ def admin_add_volunteer(
             db.query(models.Slot)
             .filter(models.Slot.id == slot_id)
             .with_for_update()
+            .populate_existing()
             .first()
         )
         if (
@@ -1054,6 +1040,9 @@ def admin_add_volunteer(
             raise HTTPException(
                 status_code=404, detail="Orientation session not found on this event"
             )
+        # A closed orientation takes no new seat (2026-10-13). Shifts are
+        # fine even with some sessions closed — see admin_uncancel_shift_signup.
+        ensure_accepts_seat(slot)
         slots.append(slot)
 
     # 2. The volunteer, then refuse duplicates — still before any booking.
@@ -1161,24 +1150,8 @@ def admin_promote_signup(
     db: Session = Depends(get_db),
     actor: models.User = Depends(require_staff),
 ):
-    signup = (
-        db.query(models.Signup)
-        .filter(models.Signup.id == signup_id)
-        .with_for_update()
-        .first()
-    )
-    _require_found(signup, "Signup not found")
-
-    slot = (
-        db.query(models.Slot)
-        .filter(models.Slot.id == signup.slot_id)
-        .with_for_update()
-        .first()
-    )
-    _require_found(slot, "Slot not found")
-
-    event = db.query(models.Event).filter(models.Event.id == slot.event_id).first()
-    _require_found(event, "Event not found")
+    signup, slot = _lock_signup_and_slot(db, signup_id)
+    event = slot.event  # NOT NULL FK
 
     ensure_event_staff_access(event, actor)
 
@@ -1231,19 +1204,8 @@ def admin_promote_shift_signup(
     refused here exactly as it is for slots: the endpoint is the "there's a free
     seat" path, not the "squeeze someone in" path.
     """
-    shift_signup = (
-        db.query(models.ShiftSignup)
-        .filter(models.ShiftSignup.id == shift_signup_id)
-        .with_for_update(of=models.ShiftSignup)
-        .first()
-    )
-    _require_found(shift_signup, "Shift signup not found")
-
-    shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    _require_found(shift, "Shift not found")
-
-    event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    _require_found(event, "Event not found")
+    shift_signup, shift = _lock_shift_signup(db, shift_signup_id)
+    event = shift.event  # NOT NULL FK
     ensure_event_staff_access(event, actor)
 
     if shift_signup.status != models.SignupStatus.waitlisted:
@@ -1293,24 +1255,17 @@ def admin_cancel_shift_signup(
     volunteer hours are summed over attendance records, so cancelling a
     commitment that already has any would destroy the basis for someone's
     credit (or erase the audit trail of a no-show). Refuse the same way, and
-    point staff at the event-wide reopen that is the one sanctioned way back.
+    point staff at reopening the closed session, the one sanctioned way back.
+
+    A check-in on a session that is still open is not a result yet: it is
+    deleted with the cancel (audited), so a cancelled commitment never shows as
+    checked in (2026-10-13).
 
     As with slots, cancelling frees the seat but promotes nobody — the waitlist
     only moves by explicit staff promotion.
     """
-    shift_signup = (
-        db.query(models.ShiftSignup)
-        .filter(models.ShiftSignup.id == shift_signup_id)
-        .with_for_update(of=models.ShiftSignup)
-        .first()
-    )
-    _require_found(shift_signup, "Shift signup not found")
-
-    shift = shift_service.lock_shift(db, shift_signup.shift_id)
-    _require_found(shift, "Shift not found")
-
-    event = db.query(models.Event).filter(models.Event.id == shift.event_id).first()
-    _require_found(event, "Event not found")
+    shift_signup, shift = _lock_shift_signup(db, shift_signup_id, sessions=True)
+    event = shift.event  # NOT NULL FK
     ensure_event_staff_access(event, actor)
 
     # Idempotent, and checked before the attendance guard so re-clicking Cancel
@@ -1336,13 +1291,16 @@ def admin_cancel_shift_signup(
                 "message": (
                     "This commitment already has attendance recorded for "
                     f"{len(resolved)} session(s). Cancelling would erase it — "
-                    "reopen the event if the close-out was wrong."
+                    "reopen the slot if the close-out was wrong."
                 ),
             },
         )
 
     previous_status = shift_signup.status
     shift_signup.status = models.SignupStatus.cancelled
+    clear_open_check_ins(
+        db, shift_signup, actor.id, via="admin_shift_signup_cancel"
+    )
 
     # Confirmed and pending both hold a seat, same as on a slot.
     if (
@@ -1500,15 +1458,14 @@ def admin_move_signup(
     db: Session = Depends(get_db),
     actor: models.User = Depends(require_staff),
 ):
-    signup = (
-        db.query(models.Signup)
-        .filter(models.Signup.id == signup_id)
-        .with_for_update()
-        .first()
+    # Slots first, then the signup (check_in_service's one lock order): read
+    # the source slot id without a lock, lock both slots in id order, then
+    # lock and re-read the signup.
+    source_slot_id = (
+        db.query(models.Signup.slot_id).filter(models.Signup.id == signup_id).scalar()
     )
-    _require_found(signup, "Signup not found")
+    _require_found(source_slot_id, "Signup not found")
 
-    source_slot_id = signup.slot_id
     target_slot_id = payload.target_slot_id
     if str(source_slot_id) == str(target_slot_id):
         raise HTTPException(status_code=400, detail="Target slot must be different")
@@ -1519,6 +1476,7 @@ def admin_move_signup(
         .filter(models.Slot.id.in_(slot_ids))
         .order_by(models.Slot.id.asc())
         .with_for_update()
+        .populate_existing()
         .all()
     )
     slot_map = {str(s.id): s for s in slots}
@@ -1527,8 +1485,26 @@ def admin_move_signup(
     if not source_slot or not target_slot:
         raise HTTPException(status_code=404, detail="Slot not found")
 
+    signup = (
+        db.query(models.Signup)
+        .filter(
+            models.Signup.id == signup_id,
+            models.Signup.slot_id == source_slot.id,
+        )
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    _require_found(signup, "Signup not found")
+
     if source_slot.event_id != target_slot.event_id:
         raise HTTPException(status_code=400, detail="Target slot must be in the same event")
+
+    # 2026-10-13 slot lock: nothing moves into or out of a closed slot — it
+    # would carry a final result onto an open slot, or seat someone with no
+    # result on a closed one. Reopen the slot first.
+    ensure_accepts_seat(source_slot)
+    ensure_accepts_seat(target_slot)
 
     event = db.query(models.Event).filter(models.Event.id == source_slot.event_id).first()
     _require_found(event, "Event not found")

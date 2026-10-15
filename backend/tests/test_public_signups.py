@@ -818,10 +818,13 @@ class TestOrientationRequirement:
         self._template(db_session, "bio-intro", family_key="bio")
         # Prior event in the same family where this email attended orientation
         # and the organizer ended the slot (grant-on-slot-end writes the row).
-        from app.services.check_in_service import resolve_slot
+        from app.services.check_in_service import close_slot
 
         prior = _make_event(db_session, module_slug="bio-intro")
         prior_orient = _make_slot(db_session, prior.id)
+        # A slot can only be closed once it has started.
+        prior_orient.start_time = datetime.now(timezone.utc) - timedelta(hours=2)
+        prior_orient.end_time = datetime.now(timezone.utc) - timedelta(hours=1)
         vol = Volunteer(
             id=uuid.uuid4(), email=self.EMAIL, first_name="Fresh", last_name="Volunteer"
         )
@@ -835,7 +838,7 @@ class TestOrientationRequirement:
         )
         db_session.add(prior_signup)
         db_session.flush()
-        resolve_slot(db_session, prior_orient.id, None, [prior_signup.id], [])
+        close_slot(db_session, prior_orient.id, None, [prior_signup.id], [])
         event = _make_event(db_session, module_slug="bio-intro")
         shift = _make_shift(db_session, event.id)
         _make_slot(db_session, event.id)

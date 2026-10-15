@@ -1,3 +1,4 @@
+/* global process -- one test switches the machine's timezone */
 // src/pages/__tests__/EventCheckInPage.test.jsx
 //
 // Issue #31 UX rework — pick-your-shift QR check-in: the volunteer enters
@@ -6,7 +7,7 @@
 // checked in. The pre-email banner shows the whole day's schedule.
 
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -115,6 +116,24 @@ describe("EventCheckInPage", () => {
     expect(box.textContent).toMatch(/check-in closed/i);
     expect(box.textContent).toMatch(/open now/i);
     expect(box.textContent).toMatch(/opens at/i);
+  });
+
+  it("says a staff-closed slot is closed even inside its window", async () => {
+    // 2026-10-13: staff closed the session, so its attendance is locked; the
+    // clock alone would still have said "Open now".
+    api.listSlots.mockResolvedValue([
+      {
+        ...slotAt(5 * MIN, { id: "s-closed", type: "period", location: "Room 4" }),
+        closed_at: new Date().toISOString(),
+      },
+    ]);
+
+    renderPage();
+
+    const box = await screen.findByTestId("checkin-window-status");
+    expect(box.textContent).toMatch(/no shifts are open for check-in right now/i);
+    expect(box.textContent).toMatch(/check-in closed/i);
+    expect(box.textContent).not.toMatch(/open now/i);
   });
 
   it("lists the volunteer's shifts as cards after email lookup", async () => {
@@ -249,5 +268,63 @@ describe("EventCheckInPage", () => {
     expect(
       await screen.findByText(/couldn't find a signup for that email/i),
     ).toBeInTheDocument();
+  });
+
+  it("prints venue (Pacific) times on a phone set to New York", async () => {
+    const originalTz = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      api.listSlots.mockResolvedValue([
+        {
+          id: "s-fixed",
+          slot_type: "orientation",
+          // 16:00Z is 9:00 AM Pacific, noon in New York.
+          start_time: "2026-04-20T16:00:00Z",
+          end_time: "2026-04-20T17:00:00Z",
+          location: null,
+        },
+      ]);
+      renderPage();
+      const box = await screen.findByTestId("checkin-window-status");
+      expect(box.textContent).toMatch(/9:00 AM – 10:00 AM/);
+      expect(box.textContent).not.toMatch(/12:00 PM/);
+    } finally {
+      process.env.TZ = originalTz;
+    }
+  });
+
+  it("ignores a blank email", async () => {
+    renderPage();
+    const input = await screen.findByLabelText("Email");
+    fireEvent.submit(input.closest("form"));
+    expect(api.public.checkInLookup).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed check-in and lets someone else start over", async () => {
+    api.public.checkInLookup.mockResolvedValue({
+      event_id: "evt-1",
+      event_title: "Bio @ Lincoln",
+      volunteer_name: "Thanh Khuu",
+      shifts: [shiftFixture({ unitId: "su-1", type: "orientation", state: "open" })],
+    });
+    // The slot was closed by staff between lookup and tap.
+    api.public.checkInSelected.mockRejectedValue(
+      Object.assign(new Error("This slot is closed. Reopen it to change attendance."), {
+        code: "SLOT_CLOSED",
+      }),
+    );
+
+    renderPage();
+    const user = userEvent.setup();
+    await submitEmail(user);
+    await user.click(await screen.findByTestId("shift-su-1"));
+
+    expect(
+      await screen.findByText("This slot is closed. Reopen it to change attendance."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /check in someone else/i }));
+    expect(await screen.findByLabelText("Email")).toHaveValue("");
+    expect(screen.queryByTestId("shift-su-1")).not.toBeInTheDocument();
   });
 });
