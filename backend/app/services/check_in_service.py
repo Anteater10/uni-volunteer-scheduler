@@ -292,7 +292,12 @@ def check_in_signup(
 
     if signup.status == SignupStatus.pending:
         _transition(db, signup, SignupStatus.confirmed, actor_id, f"{via}_autoconfirm")
-    _transition(db, signup, SignupStatus.checked_in, actor_id, via)
+    # Issue #189: a stray no-show on an open slot is what the QR sends the
+    # volunteer to staff about, so the staff tap overwrites it.
+    _transition(
+        db, signup, SignupStatus.checked_in, actor_id, via,
+        force=signup.status == SignupStatus.no_show,
+    )
     return signup
 
 
@@ -312,7 +317,12 @@ def undo_check_in(
     if signup.status in _NOT_CHECKED_IN:
         return signup
 
-    _transition(db, signup, SignupStatus.confirmed, actor_id, via)
+    # Issue #189: the roster shows a stray "attended" on an open slot as
+    # checked in, so undoing it is the same tap.
+    _transition(
+        db, signup, SignupStatus.confirmed, actor_id, via,
+        force=signup.status == SignupStatus.attended,
+    )
     return signup
 
 
@@ -365,9 +375,13 @@ def check_in_session(
         # waitlisted / cancelled: no seat, so nothing to attend.
         raise InvalidTransitionError(shift_signup.status, SignupStatus.checked_in)
 
+    # Issue #189: a stray no-show on an open session is what the QR sends the
+    # volunteer to staff about, so the staff tap overwrites it.
+    existing = session_attendance_service.get_attendance(db, shift_signup.id, session.id)
     try:
         session_attendance_service.record(
-            db, shift_signup, session, SignupStatus.checked_in, actor_id, via
+            db, shift_signup, session, SignupStatus.checked_in, actor_id, via,
+            force=existing is not None and existing.status == SignupStatus.no_show,
         )
     except session_attendance_service.InvalidAttendanceTransitionError as exc:
         # A stray attended / no_show row on an open session (pre-0044 data the
@@ -458,9 +472,14 @@ def event_check_in_by_email(
     email: str,
     venue_code: str,
     now: datetime | None = None,
-) -> tuple[Volunteer, list[tuple[CheckInOption, bool]]]:
+) -> tuple[Volunteer, list[tuple[CheckInOption, bool]], list[CheckInOption]]:
     """Event-QR self-check-in. Finds volunteer by email, checks in every unit
     they hold on this event whose session is inside the check-in window.
+
+    Returns (volunteer, [(option, newly_checked_in)], needs_staff): the last
+    lists units in the window the QR may not check in (a stray no-show on an
+    open slot), for staff to handle. Raises InvalidTransitionError when every
+    unit in the window is one of those.
 
     Semantics:
       - Venue-code gated: the QR URL carries the code (issue #31 hardening).
@@ -482,6 +501,8 @@ def event_check_in_by_email(
         raise CheckInWindowError("No slots are open for check-in right now")
 
     eligible: list[tuple[CheckInOption, bool]] = []
+    needs_staff: list[CheckInOption] = []
+    refused: InvalidTransitionError | None = None
     for option in in_window:
         if option.already_checked_in:
             eligible.append((option, False))
@@ -495,10 +516,18 @@ def event_check_in_by_email(
             # event and shouldn't have a valid check-in blocked by an unrelated
             # waitlisted shift.
             continue
-        if _check_in_option(db, option, "self_qr"):
-            eligible.append((option, True))
+        try:
+            if _check_in_option(db, option, "self_qr"):
+                eligible.append((option, True))
+        except InvalidTransitionError as exc:
+            # Issue #189: a stray no-show on one unit must not block the
+            # others in the same scan. It is reported for staff instead.
+            needs_staff.append(option)
+            refused = refused or exc
 
-    return volunteer, eligible
+    if refused is not None and not eligible:
+        raise refused
+    return volunteer, eligible, needs_staff
 
 
 def _resolve_volunteer(
@@ -657,6 +686,13 @@ def _check_in_option(db: Session, option: CheckInOption, via: str) -> bool:
     """
     if option.already_checked_in:
         return False
+    # Issue #189: a no-show already on an open slot (the old "End event"
+    # wrote later days' no-shows) is not the volunteer's to overwrite. Refuse
+    # before writing anything; staff can check them in with a tap.
+    if option.is_session and option.attendance is not None:
+        raise InvalidTransitionError(option.attendance.status, SignupStatus.checked_in)
+    if not option.is_session and option.signup.status == SignupStatus.no_show:
+        raise InvalidTransitionError(SignupStatus.no_show, SignupStatus.checked_in)
 
     if option.is_session:
         shift_signup = option.shift_signup
@@ -760,8 +796,8 @@ def check_in_selected(
 ) -> tuple[Volunteer, list[tuple[CheckInOption, bool]]]:
     """Issue #31 UX rework, step 2: check in exactly the units the volunteer
     tapped. Every id must be one of theirs on this event (LookupError
-    otherwise) and inside its session's window (CheckInWindowError otherwise).
-    Idempotent per unit.
+    otherwise), not closed by staff (SlotClosedError otherwise) and inside its
+    session's window (CheckInWindowError otherwise). Idempotent per unit.
 
     `unit_ids` are whatever `CheckInOption.unit_id` handed out: an orientation
     signup id, or a session's slot id.
@@ -783,6 +819,9 @@ def check_in_selected(
 
     results: list[tuple[CheckInOption, bool]] = []
     for option in selected:
+        if option.slot.closed_at is not None:
+            # Staff closed it: a different answer from "the window has passed".
+            raise SlotClosedError(option.slot.id)
         if option.window_state != "open":
             raise CheckInWindowError("That shift is not open for check-in right now")
         results.append((option, _check_in_option(db, option, "self_qr_selected")))

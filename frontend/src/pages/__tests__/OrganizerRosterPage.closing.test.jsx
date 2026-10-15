@@ -325,21 +325,52 @@ describe("open slot: checked in / not checked in", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(SLOT_CLOSED_MESSAGE));
   });
 
-  it("leaves an odd status on an open slot readable but untappable", async () => {
-    // Shouldn't happen after migration 0044, but if it does, show it rather
-    // than guess, and don't let a tap fire at it.
+  it("leaves an unknown status on an open slot readable but untappable", async () => {
     fetchRoster.mockResolvedValue(
-      roster([
-        row(OPEN_SLOT, "s1", "Odd Attended", "attended"),
-        row(OPEN_SLOT, "s2", "Odd Status", "mystery_state"),
-      ]),
+      roster([row(OPEN_SLOT, "s2", "Odd Status", "mystery_state")]),
     );
     renderPage();
-    await screen.findByText("Odd Attended");
+    await screen.findByText("Odd Status");
 
-    expect(card("Odd Attended")).toBeDisabled();
     expect(chipOf("Odd Status")).toHaveTextContent("mystery state");
     expect(card("Odd Status")).toBeDisabled();
+  });
+
+  // Issue #189: attended / no show only mean something on a closed slot. A
+  // stray one left on an open slot (old "End event" data) must not block
+  // staff, because the QR page sends the volunteer to them to fix it.
+  it("shows a stray no-show on an open slot as not checked in, and a tap checks it in", async () => {
+    fetchRoster.mockResolvedValue(
+      roster([row(OPEN_SLOT, "s1", "Stray NoShow", "no_show")]),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Stray NoShow");
+
+    expect(chipOf("Stray NoShow")).toHaveTextContent("not checked in");
+    expect(screen.getByText("0/1 checked in")).toBeInTheDocument();
+    expect(card("Stray NoShow")).toBeEnabled();
+
+    await user.click(card("Stray NoShow"));
+    expect(checkInSignup).toHaveBeenCalledWith("s1");
+    expect(undoCheckInSignup).not.toHaveBeenCalled();
+  });
+
+  it("shows a stray attended on an open slot as checked in, and a tap undoes it", async () => {
+    fetchRoster.mockResolvedValue(
+      roster([row(OPEN_SLOT, "s1", "Stray Attended", "attended")]),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Stray Attended");
+
+    expect(chipOf("Stray Attended")).toHaveTextContent(/^checked in$/);
+    expect(within(card("Stray Attended")).getByText(/tap again to undo/)).toBeInTheDocument();
+    expect(screen.getByText("1/1 checked in")).toBeInTheDocument();
+
+    await user.click(card("Stray Attended"));
+    await waitFor(() => expect(undoCheckInSignup).toHaveBeenCalledWith("s1"));
+    expect(checkInSignup).not.toHaveBeenCalled();
   });
 });
 

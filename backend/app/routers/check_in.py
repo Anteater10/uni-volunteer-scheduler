@@ -7,7 +7,7 @@ from uuid import UUID
 
 from ..database import get_db
 from ..deps import ensure_event_staff_access, rate_limit, redis_client, require_staff
-from ..models import Event, ShiftSignup, Signup, Slot, UserRole
+from ..models import Event, ShiftSignup, Signup, SignupStatus, Slot, UserRole
 from ..schemas import (
     CheckInLookupResponse,
     CheckInSelectedRequest,
@@ -98,6 +98,42 @@ def _venue_code_ceiling(request: Request, event_id: UUID):
     clear_venue_code_failures(redis_client, event_id, caller)
 
 
+# Per IP + path, on the four unauthenticated volunteer check-in routes. Issue
+# #189 raised it from 30: one classroom on a school IP, with two overlapping
+# shifts in the same room, came close to 30 a minute. Wrong venue codes stay
+# capped separately (10 per 15 minutes per IP, `_venue_code_ceiling`).
+SELF_CHECK_IN_RATE_LIMIT = (120, 60)
+
+
+ASK_STAFF_MESSAGE = (
+    "We couldn't check you in for this shift. Ask a staff member to check you in."
+)
+WAITLISTED_MESSAGE = (
+    "You're on the waitlist for this shift, so there's nothing to check in to yet."
+)
+QR_SLOT_CLOSED_MESSAGE = (
+    "Staff have closed check-in for this shift. "
+    "Ask a staff member if you need to be checked in."
+)
+
+
+def _qr_refusal_detail(e: InvalidTransitionError) -> dict:
+    """The volunteer-facing 409 for a unit the QR cannot check in. A waitlisted
+    volunteer holds no seat, so there is nothing for staff to fix; anything
+    else (a stray no-show on an open slot) a staff tap does fix."""
+    message = (
+        WAITLISTED_MESSAGE
+        if e.from_status == SignupStatus.waitlisted
+        else ASK_STAFF_MESSAGE
+    )
+    return {
+        "code": "INVALID_TRANSITION",
+        "from": e.from_status.value,
+        "to": e.to_status.value,
+        "message": message,
+    }
+
+
 def _check_in_shift(option) -> CheckInShift:
     """Render one CheckInOption. Single place so the lookup step and the
     check-in step can never disagree about how a row is labelled."""
@@ -117,6 +153,7 @@ def _check_in_shift(option) -> CheckInShift:
         status=option.status,
         window_state=option.window_state,
         window_opens_at=option.window_opens_at,
+        staff_closed=slot.closed_at is not None,
     )
 
 
@@ -301,7 +338,7 @@ def organizer_undo_check_in_session(
 @router.post(
     "/events/{event_id}/self-check-in",
     response_model=SignupRead,
-    dependencies=[Depends(rate_limit(30, 60))],
+    dependencies=[Depends(rate_limit(*SELF_CHECK_IN_RATE_LIMIT))],
 )
 def self_check_in_endpoint(
     event_id: UUID,
@@ -453,7 +490,7 @@ def reopen_event_endpoint(
 @router.post(
     "/events/{event_id}/check-in-lookup",
     response_model=CheckInLookupResponse,
-    dependencies=[Depends(rate_limit(30, 60))],
+    dependencies=[Depends(rate_limit(*SELF_CHECK_IN_RATE_LIMIT))],
 )
 def check_in_lookup_endpoint(
     event_id: UUID,
@@ -500,7 +537,7 @@ def check_in_lookup_endpoint(
 @router.post(
     "/events/{event_id}/check-in-selected",
     response_model=EventCheckInByEmailResponse,
-    dependencies=[Depends(rate_limit(30, 60))],
+    dependencies=[Depends(rate_limit(*SELF_CHECK_IN_RATE_LIMIT))],
 )
 def check_in_selected_endpoint(
     event_id: UUID,
@@ -530,6 +567,18 @@ def check_in_selected_endpoint(
                 "message": "No signup found for that email on this event",
             },
         )
+    except SlotClosedError as e:
+        # Issue #189: staff closed it after the volunteer's lookup. Say so,
+        # rather than "not open right now", which reads like "come back later".
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "SLOT_CLOSED",
+                "slot_id": str(e.slot_id),
+                "message": QR_SLOT_CLOSED_MESSAGE,
+            },
+        )
     except CheckInWindowError:
         # A later shift's closed window can fire after earlier shifts already
         # transitioned in-session — discard those partial changes explicitly.
@@ -548,14 +597,7 @@ def check_in_selected_endpoint(
         # whole event, but here the volunteer tapped this row specifically and
         # deserves to be told, rather than getting a 500.
         db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "INVALID_TRANSITION",
-                "from": e.from_status.value,
-                "to": e.to_status.value,
-            },
-        )
+        raise HTTPException(status_code=409, detail=_qr_refusal_detail(e))
     except LookupError:
         db.rollback()
         raise HTTPException(status_code=404, detail="Signup or event not found")
@@ -586,7 +628,7 @@ def check_in_selected_endpoint(
 @router.post(
     "/events/{event_id}/check-in-by-email",
     response_model=EventCheckInByEmailResponse,
-    dependencies=[Depends(rate_limit(30, 60))],
+    dependencies=[Depends(rate_limit(*SELF_CHECK_IN_RATE_LIMIT))],
 )
 def event_check_in_by_email_endpoint(
     event_id: UUID,
@@ -604,7 +646,7 @@ def event_check_in_by_email_endpoint(
     """
     try:
         with _venue_code_ceiling(request, event_id):
-            volunteer, results = event_check_in_by_email(
+            volunteer, results, needs_staff = event_check_in_by_email(
                 db, event_id, body.email, body.venue_code
             )
     except VenueCodeError:
@@ -628,6 +670,13 @@ def event_check_in_by_email_endpoint(
                 "message": "No slots are open for check-in right now",
             },
         )
+    except InvalidTransitionError as e:
+        # Issue #189: every unit in the window is one the QR may not check in
+        # (a stray no-show used to escape as a 500). Units it can do are done
+        # and the rest reported in `needs_staff`; this is only the nothing-
+        # could-be-done case.
+        db.rollback()
+        raise HTTPException(status_code=409, detail=_qr_refusal_detail(e))
     except LookupError:
         raise HTTPException(status_code=404, detail="Event not found")
 
@@ -654,6 +703,7 @@ def event_check_in_by_email_endpoint(
         count_checked_in=newly_checked_in,
         count_already_checked_in=already_checked_in,
         signups=rows,
+        needs_staff=[_check_in_result(option, False) for option in needs_staff],
     )
 
 

@@ -12,6 +12,9 @@
 //   4. "End event" closes only sessions that have started — the session two
 //      days out is not offered and stays open with nobody marked
 //
+// A second test (issue #189) drives the volunteer QR page across two shifts:
+// staff close/reopen, a pending booking, and a staff tap before the scan.
+//
 // Setup is API-only and builds a fresh event per run (unique title and
 // emails), so the six browser projects can run it in parallel. Times are
 // relative to now: the orientation and the "Today" session have started, the
@@ -223,4 +226,137 @@ test('slot lock: tap/undo, close with pending, read-only, reopen + fix, End even
   await expect(dialog).toContainText('Nothing to close yet');
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toHaveCount(0);
+});
+
+// Issue #189 (Kim, 2026-10-15): students could only QR check in for the first
+// shift. One QR code serves the whole event; the server picks the session
+// whose window is open. Through one QR URL:
+//   - staff close Shift 1 -> the QR card says "Closed by staff"; staff reopen
+//     -> Quinn checks in (E1)
+//   - Rowan, a PENDING booking on Shift 2, checks in (E3)
+//   - staff tap Sage in first; Sage then scans and sees "Checked in ✓" with
+//     no error (E2)
+test('QR check-in: one QR across shifts, staff close/reopen, pending, staff tap first', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  const tag = Math.random().toString(36).slice(2, 7);
+  const admin = await login(request, ADMIN);
+  const organizer = await login(request, ORGANIZER);
+  const week = await call(request, 'GET', '/public/current-week');
+  const now = Date.now();
+  const at = (minutes) => new Date(now + minutes * 60_000).toISOString();
+
+  // Shift 1 started 5 minutes ago, Shift 2 starts in 20: both windows
+  // (30 minutes either side of the start) are open now.
+  const shift = (name, start, sortOrder) => ({
+    name,
+    capacity: 20,
+    sort_order: sortOrder,
+    sessions: [{ name: 'Today', start_time: at(start), end_time: at(start + 60), location: 'Room Q', sort_order: 0 }],
+  });
+  const title = `E2E QR Shifts ${tag}`;
+  const event = await call(request, 'POST', '/events/', {
+    token: organizer,
+    data: {
+      title,
+      description: 'attendance-lock QR e2e — safe to delete',
+      location: 'E2E Hall',
+      visibility: 'public',
+      start_date: at(-60),
+      end_date: at(180),
+      quarter: week.quarter,
+      year: week.year,
+      week_number: week.week_number,
+      module_slug: 'e2e-test',
+      school: 'E2E High School',
+      slots: [],
+      shifts: [shift('QR Shift 1', -5, 0), shift('QR Shift 2', 20, 1)],
+    },
+  });
+  const shifts = await call(request, 'GET', `/shifts/?event_id=${event.id}`, { token: admin });
+  const byName = (name) => shifts.find((s) => s.name === name);
+
+  const quinn = { first: 'Quinn', email: ephemeralEmail('qr-s1'), shift: 'QR Shift 1' };
+  const rowan = { first: 'Rowan', email: ephemeralEmail('qr-pend'), shift: 'QR Shift 2' };
+  const sage = { first: 'Sage', email: ephemeralEmail('qr-staff'), shift: 'QR Shift 2' };
+  for (const s of [quinn, sage]) {
+    await call(request, 'POST', `/admin/events/${event.id}/add-volunteer`, {
+      token: admin,
+      data: {
+        first_name: s.first, last_name: tag, email: s.email, send_email: false,
+        shift_ids: [byName(s.shift).id],
+      },
+    });
+  }
+  // Rowan books publicly and never confirms: pending. Credit first
+  // (orientation rule), then the public signup.
+  await grantOrientationCredit(rowan.email);
+  await call(request, 'POST', '/public/signups', {
+    data: {
+      first_name: rowan.first, last_name: tag, email: rowan.email, phone: '8055550142',
+      slot_ids: [], shift_ids: [byName(rowan.shift).id],
+    },
+  });
+
+  // The QR code's URL, exactly as the roster's QR modal builds it.
+  const roster = await call(request, 'GET', `/events/${event.id}/roster`, { token: organizer });
+  expect(roster.venue_code).toMatch(/^\d{4}$/);
+  const code = roster.venue_code;
+  await page.goto(`/event-check-in/${event.id}?v=${code}`);
+  // A cold dev server can take a while to serve the first page.
+  await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 15_000 });
+
+  const cardFor = (s) => page.locator('li button').filter({ hasText: s.shift });
+  const lookUp = async (s) => {
+    await page.getByLabel('Email').fill(s.email);
+    await page.getByRole('button', { name: 'Find my shifts' }).click();
+  };
+  const startOver = () => page.getByRole('button', { name: 'Check in someone else' }).click();
+
+  // E1. Staff close Shift 1: Quinn's card says so and can't be tapped.
+  const shift1Session = byName(quinn.shift).sessions[0].id;
+  await call(request, 'POST', `/slots/${shift1Session}/resolve`, {
+    token: organizer, data: { attended: [], no_show: [] },
+  });
+  await lookUp(quinn);
+  await expect(cardFor(quinn)).toContainText('Closed by staff');
+  await expect(cardFor(quinn)).toBeDisabled();
+  await startOver();
+  // Staff reopen it; the same QR now works.
+  await call(request, 'POST', `/slots/${shift1Session}/reopen`, { token: organizer });
+  await lookUp(quinn);
+  await expect(cardFor(quinn)).toContainText('Tap to check in');
+  await cardFor(quinn).click();
+  await expect(cardFor(quinn)).toContainText('Checked in ✓');
+  await expect(page.getByText(/You're checked in for QR Shift 1/)).toBeVisible();
+  await startOver();
+
+  // E3. A pending booking checks in with one tap (confirmation is an RSVP).
+  await lookUp(rowan);
+  await expect(cardFor(rowan)).toContainText('Tap to check in');
+  await cardFor(rowan).click();
+  await expect(cardFor(rowan)).toContainText('Checked in ✓');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await startOver();
+
+  // E2. Staff tap Sage in first; Sage's scan then shows checked in, no error.
+  const sageLookup = await call(request, 'POST', `/events/${event.id}/check-in-lookup`, {
+    data: { email: sage.email, venue_code: code },
+  });
+  const sageUnit = sageLookup.shifts[0];
+  await call(
+    request, 'POST',
+    `/shift-signups/${sageUnit.shift_signup_id}/sessions/${sageUnit.slot_id}/check-in`,
+    { token: organizer },
+  );
+  await lookUp(sage);
+  await expect(cardFor(sage)).toContainText('Checked in ✓');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+
+  // The server agrees for all three.
+  for (const s of [quinn, rowan, sage]) {
+    const lookup = await call(request, 'POST', `/events/${event.id}/check-in-lookup`, {
+      data: { email: s.email, venue_code: code },
+    });
+    expect(lookup.shifts.map((r) => [r.shift_name, r.status])).toEqual([[s.shift, 'checked_in']]);
+  }
 });

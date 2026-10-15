@@ -155,6 +155,16 @@ function groupLabel(group) {
 // Both read "not checked in" and both are what a tap checks in.
 const NOT_CHECKED_IN = ["pending", "confirmed"];
 
+// Issue #189: a stray attended / no show left on an OPEN slot (old "End
+// event" data) reads as what it means while the slot is open — checked in, or
+// not — so staff can tap it like any other card. The QR page sends the
+// volunteer to staff for exactly this. A closed slot shows results as they are.
+const OPEN_SLOT_STATUS = { attended: "checked_in", no_show: "confirmed" };
+
+function openSlotStatus(r) {
+  return r.slot_closed_at ? r.status : OPEN_SLOT_STATUS[r.status] || r.status;
+}
+
 // TODO(brand): final status chip palette
 const CHIP = {
   checked_in: ["checked in", "bg-green-200 text-green-800"],
@@ -386,7 +396,8 @@ export default function OrganizerRosterPage() {
   // Legacy rows without slot metadata fall into a single unlabeled group.
   const slotGroups = (() => {
     const map = new Map();
-    for (const r of roster.rows || []) {
+    for (const raw of roster.rows || []) {
+      const r = { ...raw, status: openSlotStatus(raw) };
       const key = r.slot_id || "unknown";
       if (!map.has(key)) {
         map.set(key, {

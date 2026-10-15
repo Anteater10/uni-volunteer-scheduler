@@ -1,9 +1,14 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Card, Button, Input, Label, FieldError } from "../components/ui";
-import { fmtVenueTime } from "../lib/venueTime";
+import {
+  VENUE_TZ,
+  fmtVenueDate,
+  fmtVenueTime,
+  fmtVenueWeekday,
+} from "../lib/venueTime";
 
 // Mirror of the backend check-in window (check_in_service.py): a slot opens
 // 30 minutes before its start and closes 30 minutes after. Only drives the
@@ -11,9 +16,36 @@ import { fmtVenueTime } from "../lib/venueTime";
 const WINDOW_BEFORE_MS = 30 * 60 * 1000;
 const WINDOW_AFTER_MS = 30 * 60 * 1000;
 
+// Issue #189: while any of the volunteer's shifts is still "upcoming", look
+// them up again this often, so "Check-in opens at 9:24" turns tappable on its
+// own. react-query pauses the interval while the page is hidden.
+const RELOOKUP_MS = 30 * 1000;
+
+const anyUpcoming = (data) =>
+  (data?.shifts || []).some((s) => s.window_state === "upcoming");
+
 // Venue (Pacific) time, like every other page: a volunteer's phone may be
 // set to another timezone, and the schedule is the venue's wall clock.
 const fmtTime = (iso) => fmtVenueTime(iso);
+
+// The venue calendar day of an instant, e.g. "2026-10-15". Issue #189: the
+// page is about today; a two-day shift's Tuesday is not what a student
+// scanning on Thursday is here for.
+const venueDay = (t) =>
+  new Date(t).toLocaleDateString("en-CA", { timeZone: VENUE_TZ });
+
+// Issue #189: "closed" has two causes and two different next steps. Shared by
+// the schedule and the cards so both say the same thing.
+const closedLabel = (staffClosed) =>
+  staffClosed ? "Closed by staff" : "Self check-in has ended — ask a staff member";
+
+// "Shift 2 · Thursday" for a unit this visit checked in.
+function visitLabel(row) {
+  const name =
+    row.shift_name ||
+    (row.slot_type === "orientation" ? "Orientation" : row.session_name);
+  return [name, fmtVenueWeekday(row.slot_start)].filter(Boolean).join(" · ");
+}
 
 function slotTypeLabel(slotType) {
   return slotType === "orientation" ? "Orientation" : "Module";
@@ -36,16 +68,21 @@ function TypeBadge({ slotType }) {
 // Issue #31 UX rework — one tappable card per shift the volunteer holds.
 function ShiftCard({ shift, onCheckIn, busy }) {
   const done = shift.status === "checked_in" || shift.status === "attended";
-  const open = shift.window_state === "open";
+  const waitlisted = shift.status === "waitlisted";
+  const open = shift.window_state === "open" && !waitlisted;
   const tappable = open && !done && !busy;
 
+  // A waitlisted booking holds no seat: say so up front rather than let the
+  // tap be refused.
   const stateLine = done
     ? "Checked in ✓"
-    : open
-      ? "Tap to check in"
-      : shift.window_state === "upcoming"
-        ? `Check-in opens at ${fmtTime(shift.window_opens_at)}`
-        : "Check-in closed";
+    : waitlisted
+      ? "Waitlisted — nothing to check in to yet"
+      : open
+        ? "Tap to check in"
+        : shift.window_state === "upcoming"
+          ? `Check-in opens at ${fmtTime(shift.window_opens_at)}`
+          : closedLabel(shift.staff_closed);
 
   return (
     <li>
@@ -107,9 +144,15 @@ export default function EventCheckInPage() {
   // (?v=CODE); the backend rejects lookup/check-in without it.
   const [searchParams] = useSearchParams();
   const venueCode = searchParams.get("v") || "";
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
-  const [lookup, setLookup] = useState(null);
-  const [error, setError] = useState(null);
+  // The submitted lookup: the email as sent, plus a counter that never
+  // repeats, so every submit (the same email again after an error, or after
+  // "Check in someone else") is a fresh fetch rather than a cache hit.
+  const [submitted, setSubmitted] = useState(null);
+  const attemptRef = useRef(0);
+  // What this visit checked in, for the greeting: "Shift 2 · Thursday".
+  const [visitCheckIns, setVisitCheckIns] = useState([]);
 
   const eventQ = useQuery({
     queryKey: ["publicEvent", eventId],
@@ -125,28 +168,30 @@ export default function EventCheckInPage() {
     retry: false,
     refetchInterval: 60 * 1000,
   });
-
-  const lookupMut = useMutation({
-    mutationFn: () => api.public.checkInLookup(eventId, email.trim(), venueCode),
-    onSuccess: (data) => {
-      setLookup(data);
-      setError(null);
-    },
-    onError: (err) => {
-      setError(err);
-      setLookup(null);
-    },
+  // Shift names for the schedule, so a session reads "Shift 2 · Thu" the way
+  // the roster names it, not as a bare time.
+  const shiftsQ = useQuery({
+    queryKey: ["publicEventShifts", eventId],
+    queryFn: () => api.shifts.list(eventId),
+    retry: false,
   });
 
+  const lookupKey = ["checkInLookup", eventId, venueCode, submitted];
   const checkInMut = useMutation({
     mutationFn: (unitId) =>
-      api.public.checkInSelected(eventId, email.trim(), [unitId], venueCode),
+      api.public.checkInSelected(eventId, submitted.email, [unitId], venueCode),
+    // A re-lookup still in flight was answered before this tap; drop it so it
+    // cannot land afterwards and flip the card back to "Tap to check in".
+    onMutate: () => queryClient.cancelQueries({ queryKey: lookupKey }),
+    // Then ask the server again, whatever happened: after a SLOT_CLOSED or
+    // OUTSIDE_WINDOW refusal the card has to show why.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: lookupKey }),
     onSuccess: (data) => {
       // Flip the tapped row(s) to their new status in place. Keyed on unit_id
       // because a row is now either an orientation signup or one session of a
       // shift, and only unit_id is present for both.
       const updated = new Map(data.signups.map((s) => [s.unit_id, s.status]));
-      setLookup((prev) =>
+      queryClient.setQueryData(lookupKey, (prev) =>
         prev
           ? {
               ...prev,
@@ -158,15 +203,48 @@ export default function EventCheckInPage() {
             }
           : prev,
       );
-      setError(null);
+      const fresh = data.signups.filter((row) => row.newly_checked_in);
+      setVisitCheckIns((prev) => {
+        const seen = new Set(prev.map((v) => v.unitId));
+        const next = [...prev];
+        for (const row of fresh) {
+          if (seen.has(row.unit_id)) continue;
+          seen.add(row.unit_id);
+          next.push({ unitId: row.unit_id, label: visitLabel(row) });
+        }
+        return next;
+      });
     },
-    onError: (err) => setError(err),
   });
+  const checkInError = checkInMut.error;
+  const tapping = checkInMut.isPending;
+
+  const lookupQ = useQuery({
+    queryKey: lookupKey,
+    queryFn: () =>
+      api.public.checkInLookup(eventId, submitted.email, venueCode),
+    enabled: submitted !== null,
+    retry: false,
+    staleTime: Infinity,
+    // Back on the page with a shift still upcoming: look again right away.
+    refetchOnWindowFocus: (query) =>
+      anyUpcoming(query.state.data) ? "always" : false,
+    // Paused while a tap is in flight, so no refresh lands mid-tap; the tap
+    // refreshes the cards itself when it settles.
+    refetchInterval: (query) =>
+      !tapping && anyUpcoming(query.state.data) ? RELOOKUP_MS : false,
+  });
+  // A failed background re-lookup keeps the cards it already has.
+  const lookup = submitted ? (lookupQ.data ?? null) : null;
+  const lookupError = submitted && !lookup ? lookupQ.error : null;
+
 
   const onSubmit = (e) => {
     e.preventDefault();
     if (!email.trim()) return;
-    lookupMut.mutate();
+    checkInMut.reset();
+    attemptRef.current += 1;
+    setSubmitted({ email: email.trim(), attempt: attemptRef.current });
   };
 
   const eventTitle = eventQ.data?.title || "Event check-in";
@@ -179,7 +257,14 @@ export default function EventCheckInPage() {
         (a, b) => new Date(a.start_time) - new Date(b.start_time),
       )
     : [];
-  const slotStates = slots.map((s) => {
+  const shiftNames = new Map(
+    (Array.isArray(shiftsQ.data) ? shiftsQ.data : []).map((sh) => [sh.id, sh.name]),
+  );
+  // Past days are over; the schedule is today and what is still ahead.
+  const todayKey = venueDay(now);
+  const slotStates = slots
+    .filter((s) => venueDay(s.start_time) >= todayKey)
+    .map((s) => {
     const start = new Date(s.start_time).getTime();
     const opensAt = start - WINDOW_BEFORE_MS;
     const closesAt = start + WINDOW_AFTER_MS;
@@ -192,13 +277,22 @@ export default function EventCheckInPage() {
         : now > closesAt
           ? "closed"
           : "open";
-    return { slot: s, state, opensAt };
+    const name = s.shift_id
+      ? [shiftNames.get(s.shift_id), s.name].filter(Boolean).join(" · ")
+      : null;
+    return { slot: s, state, opensAt, name };
   });
   const anyOpen = slotStates.some((e) => e.state === "open");
 
-  const checkedCount = (lookup?.shifts || []).filter(
-    (s) => s.status === "checked_in" || s.status === "attended",
-  ).length;
+  // After lookup: only today's units, by the clock of the last answer.
+  const lookupToday = venueDay(lookupQ.dataUpdatedAt);
+  const todaysShifts = (lookup?.shifts || []).filter(
+    (s) => venueDay(s.slot_start) === lookupToday,
+  );
+  const showSchedule =
+    !lookup &&
+    slotStates.length > 0 &&
+    lookupError?.code !== "WRONG_VENUE_CODE";
 
   if (!venueCode) {
     return (
@@ -227,7 +321,7 @@ export default function EventCheckInPage() {
           </p>
         </div>
 
-        {!lookup && slotStates.length > 0 ? (
+        {showSchedule ? (
           <div
             className={`rounded-lg p-3 text-sm ${
               anyOpen ? "bg-blue-50 text-blue-900" : "bg-amber-50 text-amber-900"
@@ -240,7 +334,7 @@ export default function EventCheckInPage() {
                 : "No shifts are open for check-in right now."}
             </p>
             <ul className="space-y-1.5">
-              {slotStates.map(({ slot, state, opensAt }) => (
+              {slotStates.map(({ slot, state, opensAt, name }) => (
                 <li
                   key={slot.id}
                   className={`flex flex-wrap items-center justify-between gap-1.5 ${
@@ -249,7 +343,11 @@ export default function EventCheckInPage() {
                 >
                   <span className="flex items-center gap-1.5">
                     <TypeBadge slotType={slot.slot_type} />
-                    {fmtTime(slot.start_time)} – {fmtTime(slot.end_time)}
+                    {name ? <span className="font-semibold">{name}</span> : null}
+                    <span>
+                      {fmtVenueDate(slot.start_time)} · {fmtTime(slot.start_time)} –{" "}
+                      {fmtTime(slot.end_time)}
+                    </span>
                     {slot.location ? (
                       <span className="text-[var(--color-fg-muted)]">
                         · {slot.location}
@@ -265,7 +363,7 @@ export default function EventCheckInPage() {
                       ? "Open now"
                       : state === "upcoming"
                         ? `Opens at ${fmtTime(new Date(opensAt).toISOString())}`
-                        : "Check-in closed"}
+                        : closedLabel(Boolean(slot.closed_at))}
                   </span>
                 </li>
               ))}
@@ -287,29 +385,38 @@ export default function EventCheckInPage() {
                 required
               />
             </div>
-            {error ? (
+            {lookupError ? (
               <FieldError>
-                {error?.code === "NO_SIGNUP_FOR_EMAIL"
+                {lookupError.code === "NO_SIGNUP_FOR_EMAIL"
                   ? "We couldn't find a signup for that email on this event. Double-check the spelling."
-                  : error?.code === "WRONG_VENUE_CODE"
+                  : lookupError.code === "WRONG_VENUE_CODE"
                     ? "This check-in link is out of date — ask the organizer to re-show the QR code and scan it again."
-                    : error?.message || "Something went wrong. Please try again."}
+                    : lookupError.message || "Something went wrong. Please try again."}
               </FieldError>
             ) : null}
-            <Button type="submit" disabled={lookupMut.isPending}>
-              {lookupMut.isPending ? "Looking up…" : "Find my shifts"}
+            <Button type="submit" disabled={lookupQ.isFetching}>
+              {lookupQ.isFetching ? "Looking up…" : "Find my shifts"}
             </Button>
           </form>
         ) : (
           <div className="space-y-3">
             <p className="text-sm">
               Hi <strong>{lookup.volunteer_name}</strong>
-              {checkedCount > 0
-                ? ` — checked in for ${checkedCount} shift${checkedCount === 1 ? "" : "s"}.`
-                : " — here are your shifts:"}
+              {todaysShifts.length > 0 ? " — here are today's shifts:" : ""}
             </p>
-            <ul className="space-y-2">
-              {lookup.shifts.map((shift) => (
+            {visitCheckIns.length > 0 ? (
+              <p className="text-sm font-medium text-green-700" role="status">
+                You&apos;re checked in for{" "}
+                {visitCheckIns.map((v) => v.label).join(", ")}.
+              </p>
+            ) : null}
+            {todaysShifts.length === 0 ? (
+              <p className="text-sm text-[var(--color-fg-muted)]">
+                You have no shifts today.
+              </p>
+            ) : null}
+            <ul className="space-y-2" aria-live="polite">
+              {todaysShifts.map((shift) => (
                 <ShiftCard
                   key={shift.unit_id}
                   shift={shift}
@@ -318,21 +425,22 @@ export default function EventCheckInPage() {
                 />
               ))}
             </ul>
-            {error ? (
+            {checkInError ? (
               <FieldError>
-                {error?.code === "OUTSIDE_WINDOW"
-                  ? "That shift isn't open for check-in right now — check-in opens 30 minutes before start."
-                  : error?.code === "WRONG_VENUE_CODE"
-                    ? "This check-in link is out of date — ask the organizer to re-show the QR code and scan it again."
-                    : error?.message || "Check-in failed. Please try again."}
+                {/* SLOT_CLOSED / OUTSIDE_WINDOW / INVALID_TRANSITION carry a
+                    message written for the volunteer; show it as sent. */}
+                {checkInError.code === "WRONG_VENUE_CODE"
+                  ? "This check-in link is out of date — ask the organizer to re-show the QR code and scan it again."
+                  : checkInError.message || "Check-in failed. Please try again."}
               </FieldError>
             ) : null}
             <Button
               variant="secondary"
               onClick={() => {
-                setLookup(null);
+                setSubmitted(null);
                 setEmail("");
-                setError(null);
+                setVisitCheckIns([]);
+                checkInMut.reset();
               }}
             >
               Check in someone else
