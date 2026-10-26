@@ -15,7 +15,7 @@
 # One advisory ID per line. Lines starting with # are ignored.
 # 34 advisories across 13 packages (35 after the 2026-09-08 addition below,
 # 36 after the 2026-10-05 python-jose addition, 34 after werkzeug 3.1.9
-# fixed its two on 2026-10-05)
+# fixed its two on 2026-10-05, plus 40 from the 2026-10-26 pillow/filelock addition)
 
 
 # cryptography 46.0.3  (fix available: 48.0.1)
@@ -89,3 +89,55 @@ PYSEC-2026-2290
 # the image, ROADMAP #43), not with landing this scanner. Triage under
 # SCRUM-45.
 CVE-2026-9856
+
+# Added 2026-10-26, published the week of 2026-10-19. Baselined, not fixed,
+# because the fixed releases (pillow 13.0.0, filelock 4.2.1) require Python
+# >= 3.11 and the backend image is still python:3.10-slim. Neither package is
+# imported by our code; both arrive transitively through the copilot's ML
+# stack. Python 3.10 reaches end-of-life in October 2026, so the real fix is
+# the Python 3.12 upgrade. REMOVE THESE BY 2026-11-08, once that upgrade lands.
+# certifi's advisory from the same run was fixed instead (2026.10.19).
+
+# filelock 3.32.2  (fix available: 4.2.1, needs Python >= 3.11)
+CVE-2026-112907
+CVE-2026-112913
+CVE-2026-112940
+
+# pillow 12.3.0  (fix available: 13.0.0, needs Python >= 3.11)
+CVE-2026-112390
+CVE-2026-112391
+CVE-2026-112392
+CVE-2026-112393
+CVE-2026-112395
+CVE-2026-112396
+CVE-2026-112397
+CVE-2026-112398
+CVE-2026-112399
+CVE-2026-112400
+CVE-2026-112401
+CVE-2026-112402
+CVE-2026-112404
+CVE-2026-112405
+CVE-2026-112406
+CVE-2026-112891
+CVE-2026-112892
+CVE-2026-112893
+CVE-2026-112894
+CVE-2026-112895
+CVE-2026-112896
+CVE-2026-112897
+CVE-2026-112899
+CVE-2026-112900
+CVE-2026-112901
+CVE-2026-114501
+CVE-2026-96636
+CVE-2026-96637
+CVE-2026-96638
+CVE-2026-96639
+CVE-2026-96640
+CVE-2026-96641
+CVE-2026-96642
+CVE-2026-96643
+CVE-2026-96644
+CVE-2026-96778
+GHSA-78g4-xqwv-q3g8
